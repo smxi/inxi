@@ -1,7 +1,7 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.1.5
+####  version: 0.1.6
 ####  Date: October 27 2008
 ########################################################################
 ####  inxi is a fork of infobash, the original bash sys info script by locsmif
@@ -146,7 +146,7 @@ error_handler()
 			print_screen_output "$SCRIPT_NAME: large flood danger, debug buffer full!"
 			;;
 		3) 
-			print_screen_output "$SCRIPT_NAME: error in colorscheme, or unknown parameter: $2" 
+			print_screen_output "$SCRIPT_NAME: error in colorscheme - unsupported number: $2" 
 			;;
 		4) 
 			print_screen_output "$SCRIPT_NAME: unknown verbosity level $2" 
@@ -156,6 +156,9 @@ error_handler()
 			;;
 		6) 
 			print_screen_output "$SCRIPT_NAME: /proc not found! Quitting..." 
+			;;
+		7)
+			print_screen_output "$SCRIPT_NAME: unknown parameter: $2" 
 			;;
 		*) 
 			print_screen_output "$SCRIPT_NAME: error unknown: $@" 
@@ -460,12 +463,16 @@ get_parameters()
 			exit 0
 			;;
 		*)
+			# these will need to be converted to standard type options
 			echo "$1" | grep -q '^[0-9][0-9]\?$' || error_handler 3 "$1"
 			if ! ((CSCHEME))
 			then
 				set_color_scheme "$1"
 			fi
 			;;
+# 		*)
+# 			error_handler 7 "$1"
+# 			;;
 		esac
 		shift
 	done    
@@ -689,7 +696,7 @@ CPUTMP=(${CPU[0]})
 IFS="$OIFS"
 # For the short line
 CPUMODEL="${CPU2}${CPU2+ }${CPUTMP[0]}" # clocked at [${CPU[${#CPU[@]}-1]}]"	# old CPU2
-CPUCLOCK="${CPU[${#CPU[@]}-1]}" # old CPU3
+CPUCLOCK="$CPU[${#CPU[@]}-1]" # old CPU3
 CPUFLAGS="${CPUTMP[3]}" # old CPU4
 # nx = AMD stack protection extensions
 # lm = Intel 64bit extensions
@@ -747,7 +754,8 @@ if [[ -e /proc/scsi/scsi ]]
 then
 	# Silly sata detection, will also pick up usb sticks, and it is all I will put into infobash. if you want more, infoperl is on
 	# the way :)
-	IFS=$'\n'; THDD=($(gawk '
+	IFS=$'\n'
+	THDD=($(gawk '
 	BEGIN { IGNORECASE=1 }
 	/host/ {
 		getline a[$0]
@@ -793,7 +801,7 @@ do
 done 
 if ((HDD))
 then
-	HDDUSG=$(df | gawk '
+	HDDUSG=$( df | gawk '
 	p { 
 		if (/^\/dev\/(mapper\/|[hs]d[a-z][0-9]+)/) { 
 			if (NF == 1) { 
@@ -806,7 +814,7 @@ then
 	} 
 	/^Filesystem/ { p++ } 
 	END { print c }
-	')
+	' )
 	HDDUSG="$((HDDUSG*100/HDD))%used"
 	HDD="$(($HDD*1024/1000**3))GB"
 else
@@ -814,13 +822,13 @@ else
 	HDD="unknown.."
 fi
 
-MEM=$(gawk '
+MEM=$( gawk '
 /^MemTotal:/ { tot = $2 }
 /^(MemFree|Buffers|Cached):/ { notused+=$2 }
 END {
 	used = tot-notused
 	printf("%.1f/%.1fMB\n", used/1024, tot/1024)
-}' /proc/meminfo)
+}' /proc/meminfo )
 
 PROC="$(( $( ps aux | wc -l ) - 1 ))"
 UPT=$( uptime | gawk '{ a = gensub(/^.*up *([^,]*).*$/,"\\1","g",$0); gsub(/ /,"",a); print a }' )
@@ -850,30 +858,36 @@ then
 			print(line)
 	}
 	')	
-	[[ -z $RES ]] && RES=$(xdpyinfo | gawk '/dimensions/ { print $2 }')
+	if [[ -z $RES ]]
+	then
+		RES=$( xdpyinfo | gawk '/dimensions/ { print $2 }' )
+	fi
 	
 	# X vendor and version detection.
-	XVENDOR=$(xdpyinfo | gawk -F': +' '
+	XVENDOR=$( xdpyinfo | gawk -F': +' '
 	BEGIN { IGNORECASE=1 } 
 	/vendor string/ { 
 		gsub(/the|,|inc|foundation|project|coorperation/, "", $2)
 		gsub(/^ +| +$/, "", $2); gsub(/  +/," ",$2)
 		print $2
 	} 
-	')
+	' )
 	  
 	# new method added since radeon and X.org and the disappearance of <X server name> version : ...etc 
 	# Later on, the normal textual version string returned, e.g. like: X.Org version: 6.8.2
 	# A failover mechanism is in place. (if $XVERNUM is empty, the release number is parsed instead)
-	XVERNUM=$(xdpyinfo | awk '/version:/ { print $NF }')
-	[[ -z $XVERNUM ]] && XVERNUM=$(xdpyinfo | gawk -F': +' '
-	BEGIN { IGNORECASE=1 } 
-	/vendor release number/ { 
-		gsub(/0+$/,"",$2)
-		gsub(/0+/,".",$2)
-		print $2
-	}
-	')
+	XVERNUM=$( xdpyinfo | awk '/version:/ { print $NF }' )
+	if [[ -z $XVERNUM ]]
+	then
+		XVERNUM=$(xdpyinfo | gawk -F': +' '
+					BEGIN { IGNORECASE=1 } 
+					/vendor release number/ { 
+						gsub(/0+$/,"",$2)
+						gsub(/0+/,".",$2)
+						print $2
+					}
+					')
+	fi
 
 	#X -version 2>&1 | gawk '/^X Window System Version/ { print $5 }'
 	#This method could be used in the future to detect X when X is not running,
@@ -881,7 +895,7 @@ then
 	XVER="$XVENDOR $XVERNUM"
 
 	IFS=$'\n'
-	GLX=($(glxinfo | gawk -F ': ' '
+	GLX=( $( glxinfo | gawk -F ': ' '
 	function join(arr, sep) {
 		s=""
 		i=flag=0
@@ -911,33 +925,40 @@ then
 	END { 
 		printf("%s\n%s\n%s\n", join(a,", "), join(b,", "), join(c,", "))
 	}
-	'))
+	' ) )
 	IFS="$OIFS"
-	GLXR="${GLX[0]}"; GLXV="${GLX[1]}"; GLXDR="${GLX[2]}"
+	GLXR="${GLX[0]}"
+	GLXV="${GLX[1]}"
+	GLXDR="${GLX[2]}"
 
 	# GLXR=$(glxinfo | gawk -F ': ' 'BEGIN {IGNORECASE=1} /opengl renderer/ && $2 !~ /mesa/ {seen[$2]++} END {for (i in seen) {printf("%s ",i)}}')
 	#    GLXV=$(glxinfo | gawk -F ': ' 'BEGIN {IGNORECASE=1} /opengl version/ && $2 !~ /mesa/ {seen[$2]++} END {for (i in seen) {printf("%s ",i)}}')
 	   
-	[[ -z $GLXR || -z $GLXV ]] && MESA=1
+	if [[ -z $GLXR || -z $GLXV ]]
+	then
+		MESA=1
+	fi
 	AGPMOD=$(gawk '/agp/ && !/agpgart/ && $3 > 0 { print(gensub(/(.*)_agp.*/,"\\1","g",$1)) }' /proc/modules)
 else
-	RES=$(stty -F $(readlink /proc/$PPID/fd/0) size | gawk '{ print $2"x"$1 }')
-	RUNLVL=$(runlevel | gawk '{ print $2 }')
+	RES=$( stty -F $( readlink /proc/$PPID/fd/0 ) size | gawk '{ print $2"x"$1 }' )
+	RUNLVL=$( runlevel | gawk '{ print $2 }' )
 fi
 # (IF VBL > 1)
 if ((VBL))
 then
 	if ((SHOW_HOST))
 	then
-		LNINTRO=$(printf "${C1}%-${INDENT}s${C2} \"%s\"${C1} %s " "Host/Kernel/OS" "$HN" "running") 
+		LNINTRO=$( printf "${C1}%-${INDENT}s${C2} \"%s\"${C1} %s " "Host/Kernel/OS" "$HN" "running" ) 
 	else
-		LNINTRO=$(printf "${C1}%-${INDENT}s${C2} " "OS/Kernel")
+		LNINTRO=$( printf "${C1}%-${INDENT}s${C2} " "OS/Kernel" )
 	fi
-	LNINTRO="$LNINTRO$(echo -ne "${C2}$OSKERN ${CN}[ ${C1}$DISTRO ${CN}]")"
+	LNINTRO="$LNINTRO$( echo -ne "${C2}$OSKERN ${CN}[ ${C1}$DISTRO ${CN}]" )"
 	print_screen_output "$LNINTRO"
 
 	##print_screen_output "CPU[0]=\"${CPU[0]}\""
-	IFS=","; CPUTMP=(${CPU[0]}); IFS="$OIFS" 
+	IFS=","
+	CPUTMP=(${CPU[0]})
+	IFS="$OIFS" 
 	# Strange (and also some expected) behavior encountered.
 	# If print_screen_output() uses $1 as the parameter to output to the screen, then passing "<text1> ${ARR[@]} <text2>"
 	# will output only <text1> and the first element of ARR. That "@" splits in elements and "*" _doesn't_, is to be expected.
@@ -957,15 +978,15 @@ then
 		# Array CPU always has one element: max clockfreq found. Therefore -gt and not -ge
 		unset CPUNUM
 	fi
-	LNCPU=$(printf "${C1}%-${INDENT}s${C2} %s" "CPU Info" "${CPUNUM}${CPUNUM+ }${CPUTMP[0]}")
+	LNCPU=$( printf "${C1}%-${INDENT}s${C2} %s" "CPU Info" "${CPUNUM}${CPUNUM+ }${CPUTMP[0]}" )
 	if [[ $VBL -ge 3 ]]
 	then
-		LNCPU=$(printf "%s${C2} %s %s ${C1}%s${CN}%s${C2} %s ${CN}%s" "$LNCPU" "${CPUTMP[2]}" "cache" "flags" "(" "$CPUFLAGS" ")")
+		LNCPU=$( printf "%s${C2} %s %s ${C1}%s${CN}%s${C2} %s ${CN}%s" "$LNCPU" "${CPUTMP[2]}" "cache" "flags" "(" "$CPUFLAGS" ")" )
 	fi
-	LNCPU=$(printf "%s ${C1}%s${C2} ${CN}%s${C2} %s ${CN}%s" "$LNCPU" "clocked at" "[" "${CPUTMP[1]} MHz" "]")
+	LNCPU=$( printf "%s ${C1}%s${C2} ${CN}%s${C2} %s ${CN}%s" "$LNCPU" "clocked at" "[" "${CPUTMP[1]} MHz" "]" )
 	print_screen_output "$LNCPU"
 	
-	for ((I=1;I<${#CPU[@]}-1;I++))
+	for (( I=1; I < ${#CPU[@]}-1; I++))
 	do
 		IFS=","
 		CPUTMP=(${CPU[I]})
@@ -984,12 +1005,12 @@ then
 	done
 
 
-	LNGFX=$(printf "${C1}%-${INDENT}s${C2} %s" "Videocard" "${GFX[0]}")
+	LNGFX=$( printf "${C1}%-${INDENT}s${C2} %s" "Videocard" "${GFX[0]}" )
 	if ((X))
 	then
-		LNGFX="${LNGFX}$(echo -ne "${C1}  $XVER  ${CN}[${C2} ${RES} ${CN}]")"
+		LNGFX="${LNGFX}$( echo -ne "${C1}  $XVER  ${CN}[${C2} ${RES} ${CN}]" )"
 	else
-		LNGFX="${LNGFX}$(echo -ne "${C1}  tty resolution ${CN}(${C2} ${RES} ${CN})")"
+		LNGFX="${LNGFX}$( echo -ne "${C1}  tty resolution ${CN}(${C2} ${RES} ${CN})" )"
 	fi
 
 	print_screen_output "$LNGFX"
@@ -1043,21 +1064,21 @@ then
 		if [[ -n ${LNNET[@]} ]]
 		then
 			I=0
-			print_screen_output "$(printf "${C1}%-${INDENT}s${C2} %s" "Network cards" "${LNNET[I]}")"
+			print_screen_output "$( printf "${C1}%-${INDENT}s${C2} %s" "Network cards" "${LNNET[I]}" )"
 			while [[ -n ${LNNET[++I]} ]]
 			do
-				print_screen_output "$(printf "${C1}%-${INDENT}s${C2} %s" " " "${LNNET[I]}")"
+				print_screen_output "$( printf "${C1}%-${INDENT}s${C2} %s" " " "${LNNET[I]}" )"
 			done
 		fi
 	fi
 
 	# Some code could look superfluous but BitchX doesn't like lines not ending in a newline. F*&k that bitch!
-	LNLAST=$(echo -ne "${C1}Processes${C2} ${PROC}${CN} | ${C1}Uptime${C2} ${UPT}${CN} | ${C1}Memory${C2} ${MEM}${CN}")
+	LNLAST=$( echo -ne "${C1}Processes${C2} ${PROC}${CN} | ${C1}Uptime${C2} ${UPT}${CN} | ${C1}Memory${C2} ${MEM}${CN}" )
 	if [[ $VBL -ge 2 ]]
 	then
-		LNLAST="${LNLAST}$(echo -ne " | ${C1}HDD${C2} ${HDDMOD} ${C1}Size${C2} ${HDD} (${HDDUSG})${CN}")"
+		LNLAST="${LNLAST}$( echo -ne " | ${C1}HDD${C2} ${HDDMOD} ${C1}Size${C2} ${HDD} (${HDDUSG})${CN}" )"
 	else
-		LNLAST="${LNLAST}$(echo -ne " | ${C1}HDD Size${C2} ${HDD} (${HDDUSG})${CN}")" 
+		LNLAST="${LNLAST}$( echo -ne " | ${C1}HDD Size${C2} ${HDD} (${HDDUSG})${CN}" )" 
 	fi
 
 	if ((X)) && ! ((MESA))
@@ -1088,13 +1109,37 @@ else # (IF VBL > 1 ... ELSE)
 	#set_color_scheme 12
 	if ! ((IBSHELL))
 	then
-		for I in $C1 $C2 $CN ; do case "$I" in "$GREEN"|"$WHITE"|"$YELLOW"|"$CYAN") BGBLACK=1 ;; esac ; done
-		((BGBLACK)) && { for I in C1 C2 CN ; do [[ "${!I}" = "$NORMAL" ]] && declare $I="${!I}15,1" || declare $I="${!I},1" ; done ; }
-		#C1="${C1},1"; C2="${C2},1"; CN="${CN},1"
+		for I in $C1 $C2 $CN
+		do
+			case "$I" in 
+				"$GREEN"|"$WHITE"|"$YELLOW"|"$CYAN") BGBLACK=1
+				;;
+			esac
+		done
+		if ((BGBLACK))
+		then
+			for I in C1 C2 CN
+			do
+				if [[ "${!I}" = "$NORMAL" ]]
+				then
+					declare $I="${!I}15,1"
+				else
+					declare $I="${!I},1"
+				fi
+			done
+			#C1="${C1},1"; C2="${C2},1"; CN="${CN},1"
+		fi
 	fi
-	LNSHORT=$(echo -ne "${C1}CPU${CN}[${C2}${CPUMODEL} clocked at ${CPUCLOCK}${CN}]  ${C1}Kernel${CN}[${C2}${OSKERN}${CN}]  ${C1}Up${CN}[${C2}${FL2}${FL1}${UPT}${FL1}${CN}]  ${C1}Mem${CN}[${C2}${FL2}${FL1}${MEM}${FL1}${CN}]  ${C1}HDD${CN}[${C2}${FL2}${FL1}${HDD}($HDDUSG)${FL1}${CN}]  ${C1}Procs${CN}[${C2}${FL2}${FL1}${PROC}${FL1}${CN}]")
-	((SHOW_IRC)) && LNSHORT="${LNSHORT}$(echo -ne "  ${C1}Client${CN}[${C2}${IRC}${IRCV}${CN}]")"
-	((SCHEME)) && LNSHORT="${LNSHORT}$(echo -ne "$NORMAL")"
+	LNSHORT=$( echo -ne "${C1}CPU${CN}[${C2}${CPUMODEL} clocked at ${CPUCLOCK}${CN}]  ${C1}Kernel${CN}[${C2}${OSKERN}${CN}]  ${C1}Up${CN}[${C2}${FL2}${FL1}${UPT}${FL1}${CN}]  ${C1}Mem${CN}[${C2}${FL2}${FL1}${MEM}${FL1}${CN}]  ${C1}HDD${CN}[${C2}${FL2}${FL1}${HDD}($HDDUSG)${FL1}${CN}]  ${C1}Procs${CN}[${C2}${FL2}${FL1}${PROC}${FL1}${CN}]" )
+	
+	if ((SHOW_IRC))
+	then
+		LNSHORT="${LNSHORT}$( echo -ne "  ${C1}Client${CN}[${C2}${IRC}${IRCV}${CN}]" )"
+	fi
+	if ((SCHEME))
+	then
+		LNSHORT="${LNSHORT}$( echo -ne "$NORMAL" )"
+	fi
 	print_screen_output "$LNSHORT"
 fi # (IF VBL > 1)
 
