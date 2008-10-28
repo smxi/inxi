@@ -1,0 +1,889 @@
+#!/bin/bash
+# InfoBash, the universal, portable, system info script for irc.
+# Tested with Irssi, Xchat, Konversation, BitchX, KSirc, ircII,
+# Gaim/Pidgin, Weechat, KVIrc and Kopete.
+# Copyright (C) 2005-2007  locsmif <infobash@rebelhomicide.demon.nl>
+
+# Freenode:
+# Many thanks to etorix, Kano, kelmo, slh in alphabetical order 
+# and #kanotix for their suggestions and betatesting
+# Thanks to friends from #bash for their deep insight, as always.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+#   DEPENDENCIES
+# bash >=2.05b(bash), df;readlink;stty;tr;uname;wc(coreutils),  
+# gawk(gawk), grep(grep), hostname(hostname), lspci(pciutils),
+# ps;uptime(procps), runlevel(sysvinit), glxinfo;xdpyinfo;xrandr(xbase-clients)
+# Also the proc filesystem should be present and mounted
+
+ALLUP=0         # Infobash hasn't been 'booted' yet.
+DEBUG=0         # Set levels from 1-10
+DEBUG_FLOOD=0   # Debug flood override: toggle on to allow long debug output
+DBI=0           # Debug Buffer Index, index into a debug buffer storing debug messages until infobash is 'all up'
+((DEBUG)) || exec 2>/dev/null # Reroute all error messages to the bitbucket (if not debugging)
+#((DEBUG)) && exec 2>&1 # This is for debugging konversation
+
+# Clear nullglob, because it creates unpredictable situations with IFS=$'\n' ARR=($VAR) IFS="$OIFS"
+# type constructs. Stuff like [rev a1] is now seen as a glob expansion pattern, and fails, and
+# therefore results in nothing. Tricky as fuck.
+shopt -u nullglob
+
+#################################################################################
+#######################  UNCALCULATED VARIABLES  ################################
+#################################################################################
+
+SELF="Infobash"
+SELF_LC=$(echo "$SELF" | tr '[A-Z]' '[a-z]')
+MYVERSION="$SELF v3.01"
+LC_ALL="C"	# Make sure every program speaks English.
+export LC_ALL 
+OIFS="$IFS"	# Backup the current Internal Field Seperator
+unset EMPTY	# A more elegant way to have a scheme that doesn't print color codes (neither ANSI nor mIRC) at all. See below.
+# COLORS
+#         DGREY    BLACK    RED      DRED     GREEN    DGREEN   YELLOW   DYELLOW
+ANSICL="[1;30m [0;30m [1;31m [0;31m [1;32m [0;32m [1;33m [0;33m"
+IRCCL="   \x0314   \x0301   \x0304   \x0305   \x0309   \x0303   \x0308   \x0307"
+#                 BLUE     DBLUE    MAGENTA  DMAGENTA CYAN     DCYAN    WHITE    GREY     NORMAL
+ANSICL="$ANSICL [1;34m [0;34m [1;35m [0;35m [1;36m [0;36m [1;37m [0;37m [0;37m"
+IRCCL=" $IRCCL    \x0312   \x0302   \x0313   \x0306   \x0311   \x0310   \x0300   \x0315   \x03"
+#ANSICL=($ANSICL); IRCCL=($IRCCL)
+COLORS=(DGREY BLACK RED DRED GREEN DGREEN YELLOW DYELLOW BLUE DBLUE MAGENTA DMAGENTA CYAN DCYAN WHITE GREY NORMAL)
+# See above for notes on EMPTY
+SCHEMES=(EMPTY,EMPTY,EMPTY NORMAL,NORMAL,NORMAL BLUE,NORMAL,NORMAL GREEN,YELLOW,NORMAL DYELLOW,NORMAL,NORMAL CYAN,BLUE,NORMAL RED,NORMAL,NORMAL GREEN,NORMAL,NORMAL YELLOW,NORMAL,NORMAL GREEN,DGREEN,NORMAL BLUE,RED,NORMAL BLUE,NORMAL,RED YELLOW,WHITE,GREEN BLUE,NORMAL,GREEN DCYAN,NORMAL,DMAGENTA)
+DEFSCHEME=2	# Defaults to 2, make this 1 for normal, 0 for no colorcodes at all. Set to any other valid scheme you like. Same as runtime parameter.
+SHOWHOST=1	# Set this to 0 to avoid printing the hostname 
+SHOWIRC=2	# SHOWIRC=1 to avoid showing the irc client version number, or SHOWIRC=0 to disable client information completely.
+INDENT=14	# Default indentation level
+VBL=0		# Verbosity level defaults to 0, this can also be set with -v, -v2, -v3, etc as a parameter.
+IBSHELL=0	# Running in a shell? Defaults to false, and is determined later.
+NOCPUCOUNT=0	# Wether or not the string "dual" or similar is found in cpuinfo output. If so, avoid dups.
+# In cases of derived distros where the version file of the base distro can also be found under /etc, the derived distro's
+# version file should go first. (Such as with Sabayon / Gentoo)
+DIST_DERIV="sidux-version kanotix-version knoppix-version sabayon-release redhat-release turbolinux-release zenwalk-version"
+DIST_MAIN="gentoo-release mandrake-release slackware-version redhat-release SuSE-release"
+# debian_version excluded from DIST_MAIN so Debian can fall through to /etc/issue detection. Same goes for Ubuntu.
+DIST_BLIST="debian_version ubuntu_version"
+FL1='-'		# These two determine seperators in single line output, to force irc clients not to break off sections
+FL2=''
+# Precede a banword with $'\2' to prevent it from being subject to automated escaping by the mkbans routine
+# $'\1' gets weird results :
+# user@host $ ARR=($'\x01'"one two" three four); echo ${ARR[0]} | hd -v
+# 00000000  01 01 6f 6e 65 20 74 77  6f 0a                    |..one two.|
+NORMALBANS=(corporation communications technologies technology group $'\2'"\<ltd\>" ltd. $'\2'"\<inc\>" inc. $'\2'\<co\> co. "(tm)" "(r)" $'\2'"\(rev ..\)")
+CPUBANS=(cpu processor $'\2'"[0-9.]+ *[MmGg][Hh][Zz]")
+XPATH="/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin" # Extra path variable to make execute failures less likely, merged below
+PARAMLIMIT=30	# This is a variable that controls how many parameters infobash will parse in a /proc/<pid>/cmdline file before stopping.
+CRAP=0		# New parameter
+FLAG=0		# A throw-away 'flag' variable intended to be used throughout infobash
+KONVICFG="konversation/scripts/$SELF_LC.conf" # relative path to $(kde-config --path data)
+DCOPOBJ="default"
+
+[[ -s /etc/$SELF_LC.conf ]] && source /etc/$SELF_LC.conf	# Source global config overrides
+[[ -s $HOME/.$SELF_LC ]] && source $HOME/.$SELF_LC 		# Source user config overrides
+# WARNING: In the main part below (search for 'KONVI') 
+# there's a check for Konversation-specific config files.
+# Any one of these can override the above if infobash is run 
+# from Konversation!
+
+#################################################################################
+################################  FUNCTIONS  ####################################
+#################################################################################
+
+# Infobash speaks through here. When run by Konversation, use DCOP
+say () {
+	if ((DEBUG > 5)); then
+		((KONVI)) && dcop "$DCPORT" "$DCOPOBJ" say "$DCSERVER" "$DCTARGET" "konvi='$konvi'  saying : '$@'"\
+		|| echo "konvi='$konvi'  saying : '$@'"
+	fi
+	#((KONVI)) && dcop $DCPORT Konversation say $DCSERVER "$DCTARGET" "$1" || echo -ne "$1\n"
+	((KONVI)) && dcop "$DCPORT" "$DCOPOBJ" say "$DCSERVER" "$DCTARGET" "$1" || echo -ne "$1\n"
+}
+
+# Error handling
+error () {
+	case $1 in
+	2) say "$SELF: large flood danger, debug buffer full!" ;;
+	3) say "$SELF: error in colorscheme, or unknown parameter: $2" ;;
+	4) say "$SELF: unknown verbosity level $2" ;;
+	5) say "$SELF: dependency not met: $2 not found in path" ;;
+	6) say "$SELF: /proc not found! Quitting..." ;;
+	*) say "$SELF: error unknown: $@"; set -- 99 ;;
+	esac
+	exit $1
+}
+
+dbg () {
+	if ((ALLUP)); then
+		((DEBUG)) || return
+		if ((DBI)); then
+			for ((DBI=0;DBI<${#DBGBUF[@]};DBI++)); do
+				say "${DBGBUF[DBI]}"
+			done
+			DBI=0
+		fi
+		say "$@"
+	else
+		((!DEBUG_FLOOD && DBI>10)) && error 2
+		DBGBUF[DBI++]="$@"
+	fi
+}
+
+eat () {
+	gawk 'BEGIN { RS="" } { gsub(/\n$/,""); gsub(/\n/," "); gsub(/^ *| *$/, ""); gsub(/  +/, " "); printf $0 }' "$1"
+}
+
+# Determine if any of the absolutely necessary tools are absent 
+checkdepend () {
+	[[ -d /proc/ ]] || error 6
+
+	if ((X)); then
+		for I in xrandr xdpyinfo glxinfo; do
+			type -p $I >/dev/null || { dbg "Infobash: Resuming in non X mode: $I not found in path"; X=0; break; }
+		done
+	fi
+	
+	# bc removed from deps for now
+	for I in df free gawk grep hostname lspci ps readlink runlevel tr uname uptime wc; do
+		type -p $I >/dev/null || error 5 "$I"
+	done
+}
+
+# Filter boilerplate & buzzwords.
+mkbans () {
+	unset MKBANS
+	# Iterate over $@
+	for BANSTR; do
+		#echo "BANSTR=\"$BANSTR\"" >&2
+		if [[ ${BANSTR:0:1} = $'\2' ]]; then
+			MKBANS="${MKBANS}${MKBANS+|}${BANSTR:1:${#BANSTR}-1}"
+		else
+			# Automatically escapes [ ] ( ) . and + 
+			MKBANS="${MKBANS}${MKBANS+|}$(echo "$BANSTR" | gawk '{ gsub(/([\[\]+().])/,"\\\\&"); print }')"
+		fi
+	done
+	echo "$MKBANS"
+}
+
+# Set the colorscheme 
+# $1 = <scheme number>|<"none">
+cscheme () {
+	local I SCOLORS CLCODES
+	[[ $1 -ge ${#SCHEMES[@]} ]] && set -- 1 
+	SCHEME="$1" # Set a global variable to allow checking for chosen scheme later
+	((IBSHELL)) && CLCODES=($ANSICL) || CLCODES=($IRCCL)
+	for ((I=0;I<${#COLORS[@]};I++)); do
+		eval "${COLORS[I]}=\"${CLCODES[I]}\""
+	done
+	IFS="," ; SCOLORS=(${SCHEMES[$1]}) ; IFS="$OIFS"
+	C1="${!SCOLORS[0]}"
+	C2="${!SCOLORS[1]}"
+	CN="${!SCOLORS[2]}"
+	((CSCHEME++))
+}
+
+# Parse the null separated commandline under /proc/<pid passed in $1>/cmdline
+getcmdline () {
+	[[ -e /proc/$1/cmdline ]] || { echo 0; return; }
+	##say "Marker"
+	##say "\$1='$1' -=- $(< /proc/$1/cmdline)"
+	local I=0
+	unset CMDL
+	while read -d $'\0' L && [[ $I -lt 32 ]]; do 
+		CMDL[I++]="$L"
+	done </proc/$1/cmdline
+	##say "\$I='$I'"
+	if ! ((I)); then
+		CMDL[0]=$(< /proc/$1/cmdline)
+		[[ -n ${CMDL[0]} ]] && I=1
+	fi
+	CMDLMAX=$I
+}
+
+# Determine where infobash was run from
+roots () {
+	if tty >/dev/null; then
+		IRC="Shell"
+		unset IRCV
+		IBSHELL=1
+	elif [[ -n $PPID && -f /proc/$PPID/exe ]]; then
+		IRC=$(readlink /proc/$PPID/exe)
+		
+		case $(echo $IRC | tr '[:upper:]' '[:lower:]') in
+		*irssi-text*|*irssi*)
+			IRCV=" $($IRC -v | gawk 'NR == 1 { print $2 }')"
+			IRC="Irssi"
+		;;
+		*konversation*)
+			KONVI=1
+			IRCV="$($IRC -v | gawk '/Konversation:/ { for (i=2;i<=NF;i++) { if (i == NF) { print $i } else { printf $i" " } } exit }')"
+			T=($IRCV)
+			if [[ ${T[0]} == *+* ]]; then
+				# < Sho_> locsmif: The version numbers of SVN versions look like this: 
+				#         "<version number of last release>+ #<build number", i.e. "1.0+ #3177" ... 
+				#         for releases we remove the + and build number, i.e. "1.0" or soon "1.0.1"
+				IRCV=" CVS $IRCV"
+				T2="${T[0]/+/}"
+			else
+				IRCV=" ${T[0]}"
+				T2="${T[0]}"
+			fi
+			# Remove any dots except the first, and make sure there are no trailing zeroes, 
+			T2=$(echo "$T2" | gawk '{ sub(/\./, " "); gsub(/\./, ""); sub(/ /, "."); printf("%g\n", $0) }')
+			# Since Konversation 1.0, the DCOP interface has changed a bit: dcop "$DCPORT" Konversation ..etc
+			# becomes : dcop "$DCPORT" default ... or dcop "$DCPORT" irc ..etc. So we check for versions smaller
+			# than 1 and change the DCOP parameter/object accordingly.
+			[[ ${T2} < 1 ]] && DCOPOBJ="Konversation"
+			IRC="Konversation"
+		;; 
+		*xchat*)
+			IRCV=" $($IRC -v | gawk 'NR == 1 { print $2 }')"
+			IRC="X-Chat"
+		;;
+		*bitchx*)
+			IRCV=" $($IRC -v | gawk '
+			/Version/ { a=tolower($2); gsub(/[()]|bitchx-/,"",a); print a; exit }
+			$2 == "version" { a=tolower($3); sub(/bitchx-/,"",a); print a; exit }
+			')" 
+			IRC="BitchX"
+		;;
+		*ircii*)
+			IRCV=" $($IRC -v | gawk 'NR == 1 { print $3 }')"
+			IRC="ircII"
+		;;		
+		*gaim*)
+			IRCV=" $($IRC -v | gawk 'NR == 1 { print $2 }')"
+			IRC="Gaim"
+		;;				
+		*pidgin*)
+			IRCV=" $($IRC -v | gawk 'NR == 1 { print $2 }')"
+			IRC="Pidgin"
+		;;
+		*weechat-curses*)
+			IRCV=" $($IRC -v)"
+			IRC="Weechat"
+		;;
+		*kvirc*)
+			IRCV=" $($IRC -v 2>&1 | gawk '{ for (i=2;i<=NF;i++) { if (i==NF) print $i; else printf $i" " }; exit }')"
+			IRC="KVIrc"
+		;;
+		*kopete*)
+			IRCV=" $(kopete -v | gawk '/Kopete:/ { print $2; exit }')"
+			IRC="Kopete"
+		;;
+		*perl*)
+			unset IRCV	# KSirc is one of the possibilities now. KSirc is a wrapper around dsirc, a perl client
+			getcmdline $PPID
+			for ((I=0; I<=$CMDLMAX; I++)); do
+				case ${CMDL[I]} in
+				 *dsirc*) 
+					IRC="KSirc"
+					# Dynamic runpath detection is too complex with KSirc, because KSirc is started from
+					# kdeinit. /proc/<pid of the grandparent of this process>/exe is a link to /usr/bin/kdeinit
+					# with one parameter which contains parameters separated by spaces(??), first param being KSirc.
+					# Then, KSirc runs dsirc as the perl irc script and wraps around it. When /exec is executed,
+					# dsirc is the program that runs infobash, therefore that is the parent process that we see.
+					# You can imagine how hosed I am if I try to make infobash find out dynamically with which path
+					# KSirc was run by browsing up the process tree in /proc. That alone is straightjacket material.
+					# (KSirc sucks anyway ;)
+					IRCV=" $(ksirc -v | gawk '/KSirc:/ { print $2; exit }')"
+					break
+				;;
+				esac
+			done 
+			[[ -z $IRCV ]] && IRC="Unknown Perl client"
+		;;
+		*bash*|*sh*)
+			unset IRCV
+			IRC="Shell wrapper"
+		;;
+		*)
+			IRC="Unknown : ${IRC##*/}"
+			unset IRCV
+		esac
+		[[ $SHOWIRC -lt 2 ]] && unset IRCV    
+	else
+		IRC="PPID=\"$PPID\" - empty?"
+		unset IRCV
+	fi
+}
+
+# Get the parameters
+getparams () {
+	[[ -z $1 ]] && return 1
+	while [[ -n $1 ]]; do
+		case $1 in
+		--crap)
+			CRAP=1
+		;;
+		-d|--debug)
+			DEBUG=1
+			exec 2>&1
+		;;
+		-v|-v[1-9]|--verbose)
+			if [[ ${#1} -eq 3 ]]; then
+				VBL="${1:2}"
+			else
+				if [[ $2 = --* || $2 = -* || -z $2 ]]; then
+					VBL=1
+				else
+					shift
+					VBL="$1" 
+				fi
+			fi
+			echo "$VBL" | grep -q '^[1-3]$' || error 4 "$VBL"
+		;;
+		--version)
+			say "InfoBash, the universal, portable, system info script for irc."
+			say "Tested with Irssi, Xchat, Konversation, BitchX, KSirc, ircII,"
+			say "Gaim/Pidgin, Weechat, KVIrc and Kopete."
+			say "Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif <infobash@rebelhomicide.demon.nl>"
+			say " "
+			say "This program is free software; you can redistribute it and/or modify"
+			say "it under the terms of the GNU General Public License as published by"
+			say "the Free Software Foundation; either version 3 of the License, or"
+			say "(at your option) any later version."
+			exit 0
+		;;
+		*)
+			echo "$1" | grep -q '^[0-9][0-9]\?$' || error 3 "$1"
+			((CSCHEME)) || cscheme "$1"
+		esac
+		shift
+	done    
+}
+
+# Enforce boilerplate and buzzword filters
+sanitize () {
+	# Cannot use strong quotes to unquote a string with pipes in it! bash will interpret the |'s as usual and try to run a subshell!
+	# Using weak quotes instead, or use '"..."'
+	echo "$2" | gawk "BEGIN { IGNORECASE=1 } { gsub(/${!1}/,\"\"); gsub(/ [ ]+/,\" \"); gsub(/^ +| +$/,\"\"); print }"
+}
+
+#################################################################################
+##########################  CALCULATED VARIABLES  ###############################
+#################################################################################
+
+# Detect X and set variable "X" accordingly
+[[ $DISPLAY ]] && X=1 
+
+# Fallback paths put into $XPATH; This might, among others, help on gentoo.
+# Now, create a difference of $PATH and $XPATH and add that to $PATH:
+unset TPATH
+IFS=":"
+for I in $XPATH; do 
+	FLAG=0
+	for J in $PATH; do 
+		[[ $I = $J ]] && FLAG=1
+	done
+	((FLAG)) || TPATH="$TPATH:$I"
+done
+IFS="$OIFS"
+PATH="${PATH}${TPATH}"
+##echo "PATH='$PATH'" 
+##/bin/sh -c 'echo "PATH in subshell=\"$PATH\""' 
+
+# Check for dependencies before running any commands in this script! So yes, here!!
+checkdepend
+
+# Do this after sourcing of config overrides so user can customize banwords
+NORMALBANS=$(mkbans "${NORMALBANS[@]}") # Contrary to my previous belief, "${ARR[@]}" passes a quoted list, not one string
+CPUBANS=$(mkbans "${CPUBANS[@]}")
+##echo "NORMALBANS='$NORMALBANS'"
+
+LSPCI=$(lspci -v | awk '{ gsub(/\(prog-if[^)]*\)/,""); print }')
+###################################################################################
+#########################                              ############################
+#########################          M  A  I  N          ############################
+#########################                              ############################
+###################################################################################
+
+roots
+
+if ((KONVI)); then
+	DCPORT="$1"
+	DCSERVER="$2"
+	DCTARGET="$3"
+	shift 3
+	# The section below is on request of Argonel from the Konversation developer team:
+	# it sources config files like $HOME/.kde/share/apps/konversation/scripts/infobash.conf
+	IFS=":"; for I in $(kde-config --path data); do
+		if [[ -r ${I}${KONVICFG} ]]; then source "${I}${KONVICFG}"; break; fi
+	done
+	IFS="$OIFS"
+fi
+
+# "$@" passes every parameter seperately quoted, "$*" passes all parameters as one quoted parameter.
+getparams "$@"
+
+# If no colorscheme was set in the parameter handling routine, then set the default scheme
+((CSCHEME)) || cscheme "$DEFSCHEME"
+
+ALLUP=1
+dbg "ALLUP=1 : Infobash up and running.."
+
+HN=$(hostname)
+
+unset DISTRO
+shopt -s nullglob; cd /etc; DISTGLOB=(*[-_]{release,version}); cd "$OLDPWD"; shopt -u nullglob
+if ((${#DISTGLOB[@]} == 1)); then
+	DISTFILE="${DISTGLOB}"
+elif ((${#DISTGLOB[@]} > 1)); then
+	for I in $DIST_DERIV $DIST_MAIN; do
+		# Only echo works with ${var[@]}, not say() or dbg()
+		# This is a known bug, search for the word "strange" inside comments
+		# echo "I='$I' DISTGLOB[@]='${DISTGLOB[@]}'"
+		if [[ " ${DISTGLOB[@]} " == *" $I "* ]]; then
+			DISTFILE="${I}"
+			break
+		fi
+	done
+fi
+if [[ -s /etc/${DISTFILE} && " $DIST_BLIST " != *" $DISTFILE "* ]]; then
+	DISTRO=$(eat "/etc/${DISTFILE}")
+else
+	# Debian pure should fall through here
+	DISTFILE="issue"
+	DISTRO=$(gawk 'BEGIN { RS="" } { gsub(/\\[a-z]/,""); gsub(/ [ ]+/," "); gsub(/^ +| +$/,""); print }' "/etc/${DISTFILE}")
+fi
+((${#DISTRO} > 80 && ! CRAP)) && DISTRO="${RED}/etc/${DISTFILE} corrupted, use --crap to override${NORMAL}"
+: ${DISTRO:=Unknown distro o_O}
+
+OSKERN=$(uname -a | gawk '{print $1,$3,$(NF-1)}')
+
+IFS=$'\n'
+CPU=($(gawk -F': ' '
+# TAKE NOTE: \t+ will work for /proc/cpuinfo, but SOME ARBITRARY FILE used for TESTING might contain SPACES!
+# Therefore PATCH to use [ \t]+ when TESTING!
+/^processor\t+:/ { nr = $NF }
+
+/^model name/ { cpu[nr, "model"] = $NF }
+
+/^cpu MHz/    {
+	if (!min) { 
+		min = $NF
+	} 
+	else { 
+		if ($NF < min) { min = $NF } 
+	}
+	
+	if ($NF > max) { max = $NF }
+	cpu[nr, "speed"] = $NF
+}
+
+/^cache size/      { cpu[nr, "cache"] = $NF }
+
+/^flags/      { cpu[nr, "flags"] = $NF }
+
+/^bogomips/   { cpu[nr, "bogomips"] = $NF }
+
+END {
+	#if (!nr) { print ",,,"; exit } # <- should this be necessary or should bash handle that
+	for (i = 0; i <= nr; i++) {
+		print cpu[i, "model"] "," cpu[i, "speed"] "," cpu[i, "cache"] "," cpu[i, "flags"] "," cpu[i, "bogomips"]
+	}
+	if (!min) { 
+		print "not found"
+		exit 
+	}
+	if (min != max) { 
+		printf("Min:%s%s Max:%s%s\n", min, "Mhz", max, "Mhz") 
+	}
+	else { 
+		printf("%s %s\n", max, "Mhz") 
+	}
+}
+' /proc/cpuinfo))
+IFS="$OIFS"
+
+for ((I=0;I<${#CPU[@]}-1;I++)); do
+	IFS=","; CPUTMP=(${CPU[I]}); IFS="$OIFS"
+	unset CPU[I]
+	CPUTMP[0]=$(sanitize NORMALBANS "${CPUTMP[0]}")
+	CPUTMP[0]=$(sanitize CPUBANS "${CPUTMP[0]}")
+	# I use all these loops so I can easily extend the cpu array created in the awk script above with more fields per cpu.
+	for ((J=0;J<${#CPUTMP[@]};J++)); do
+		((J)) && CPU[I]="${CPU[I]},${CPUTMP[J]}" || CPU[I]="${CPUTMP[J]}"
+	done
+done
+
+if echo "${CPU[@]}" | grep -qi 'dual\|triple\|quad'; then
+	NOCPUCOUNT=1
+else
+	case $((${#CPU[@]}-1)) in 
+	2)
+		CPU2="Dual"
+	;;
+	3)
+		CPU2="Triple"
+	;;
+	4)
+		CPU2="Quad"
+	;;
+	[5-9]|[1-9][0-9]) 
+		CPU2="${#CPU[@]}x"
+	;;
+	*) 
+		unset CPU2
+	;;
+	esac
+fi
+
+IFS=","; CPUTMP=(${CPU[0]}); IFS="$OIFS"
+# For the short line
+CPUMODEL="${CPU2}${CPU2+ }${CPUTMP[0]}" # clocked at [${CPU[${#CPU[@]}-1]}]"	# old CPU2
+CPUCLOCK="${CPU[${#CPU[@]}-1]}"							# old CPU3
+CPUFLAGS="${CPUTMP[3]}"								# old CPU4
+# nx = AMD stack protection extensions
+# lm = Intel 64bit extensions
+# sse, sse2, pni = sse1,2,3 gfx extensions
+# svm = AMD pacifica virtualization extensions
+# vmx = Intel IVT (vanderpool) virtualization extensions
+CPUFLAGS=$(echo "$CPUFLAGS" | awk '
+BEGIN {
+        RS=" "
+        ssel["sse"] = 1
+        ssel["sse2"] = 2
+        ssel["pni"] = 3
+	sses[1] = "sse"
+	sses[2] = "sse2"
+	sses[3] = "sse3"
+}
+/^(nx|lm|svm|vmx)$/ {
+        if (s) { s = s " " $0 }
+        else { s = $0 }
+}
+/^(sse2?|pni)$/ {
+        if (ssel[$0] > sse) sse = ssel[$0]
+}
+END {
+        if (sse) {
+                if (s) s = sses[sse] " " s;
+                else s = sses[sse]
+        }
+        print s
+}
+')
+
+#grep -oE '\<(nx|lm|sse[0-9]?|pni|svm|vmx)\>' | tr '\n' ' '))
+[[ -z $CPUFLAGS ]] && CPUFLAGS="-"
+
+for I in /proc/ide/ide*/hd*; do 
+	if [[ -e $I/media && $(eat $I/media) = disk ]]; then
+		if [[ ! -e $I/capacity ]]; then  # BUGFIX: Ran into a debian sarge kernel that did not have the "capacity" file in the hd* directories
+			CAP=0
+			break
+		fi
+		((CAP+=$(eat $I/capacity)))
+		HDDMOD="${HDDMOD}${HDDMOD+,}$(eat $I/model)"
+	fi
+done
+
+if [[ -e /proc/scsi/scsi ]]; then
+	# Silly sata detection, will also pick up usb sticks, and it is all I will put into infobash. if you want more, infoperl is on
+	# the way :)
+	IFS=$'\n'; THDD=($(gawk '
+	BEGIN { IGNORECASE=1 }
+	/host/ {
+		getline a[$0]
+		getline b[$0]
+	}
+	END {
+		for (i in a) {
+			if (b[i] ~ / *type: *direct-access.*/) {
+				#c=gensub(/^ *vendor: (.+) +model: (.+) +rev: (.+)$/,"\\1 \\2 \\3","g",a[i])
+				c=gensub(/^ *vendor: (.+) +model: (.+) +rev:.*$/,"\\1 \\2","g",a[i])
+				gsub(/ [ ]+/, " ", c); gsub(/^ +| +$/, "", c)
+	      			#print a[i]
+				if (c ~ /\<flash\>|\<pendrive\>|memory stick|memory card/) continue
+				print c
+			}
+		}
+	}
+	' /proc/scsi/scsi)); IFS="$OIFS"
+
+	for ((I=0;I<${#THDD[@]};I++)); do
+		HDDMOD="${HDDMOD}${HDDMOD+,}${THDD[I]}"
+	done
+fi
+
+##say "$HDDMOD" ; exit
+((CAP)) && HDDCAP1="$((CAP/2))"
+# See http://lanana.org/docs/device-list/devices-2.6+.txt for major numbers used below
+HDDCAP2=$(gawk '$1 ~ /^(3|22|33|8)$/ && $2 % 16 == 0 {size+=$3} END {printf("%d\n",size)}' /proc/partitions)
+
+##say "HDDCAP1=\"$HDDCAP1\"  HDDCAP2=\"$HDDCAP2"" ; exit
+HDD=0 ; for I in ${!HDDCAP*}; do [[ ${!I} -gt $HDD ]] && HDD="${!I}" ; done 
+if ((HDD)); then
+	HDDUSG=$(df | gawk '
+	p { 
+		if (/^\/dev\/(mapper\/|[hs]d[a-z][0-9]+)/) { 
+			if (NF == 1) { 
+				getline 
+				if (NF == 5) { c += $2 } 
+				else next 
+			} 
+			else if (NF == 6) { c += $3 } 
+		} 
+	} 
+	/^Filesystem/ { p++ } 
+	END { print c }
+	')
+	HDDUSG="$((HDDUSG*100/HDD))%used"
+	HDD="$(($HDD*1024/1000**3))GB"
+else
+	unset HDDUSG
+	HDD="unknown.."
+fi
+
+MEM=$(gawk '
+/^MemTotal:/ { tot = $2 }
+/^(MemFree|Buffers|Cached):/ { notused+=$2 }
+END {
+	used = tot-notused
+	printf("%.1f/%.1fMB\n", used/1024, tot/1024)
+}' /proc/meminfo)
+
+PROC="$(($(ps aux | wc -l)-1))"
+UPT=$(uptime | gawk '{ a = gensub(/^.*up *([^,]*).*$/,"\\1","g",$0); gsub(/ /,"",a); print a }')
+
+IFS=$'\n'; GFX=($(echo "$LSPCI" | gawk -F': ' '/VGA compatible controller/ { print $NF }')); IFS="$OIFS"
+for ((I=0;I<${#GFX[@]};I++)); do
+	GFX[I]=$(sanitize NORMALBANS "${GFX[I]}")
+done
+
+# GFXMEM is UNUSED at the moment, because it shows AGP aperture size, which is not necessarily equal to GFX memory..
+# GFXMEM="size=[$(echo "$LSPCI" | gawk '/VGA/{while (!/^$/) {getline;if (/size=[0-9][0-9]*M/) {size2=gensub(/.*\[size=([0-9]+)M\].*/,"\\1","g",$0);if (size<size2){size=size2}}}}END{print size2}')M]"
+if ((X)); then
+	
+	# Added the two ?'s , because the resolution is now reported without spaces around the 'x', as in
+	# 1400x1050 instead of 1400 x 1050. Change as of X.org version 1.3.0
+	RES=$(xrandr | gawk '
+	/\*/ { res[++m] = gensub(/^.* ([0-9]+) ?x ?([0-9]+)[_ ].* ([0-9\.]+)\*.*$/,"\\1x\\2@\\3hz","g",$0) }
+	END {
+		for (n in res) {
+			if (res[n] ~ /^[[:digit:]]+x[[:digit:]]+/)
+				line = line ? line ", " res[n] : res[n]
+		}
+		if (line)
+			print(line)
+	}
+	')	
+	[[ -z $RES ]] && RES=$(xdpyinfo | gawk '/dimensions/ { print $2 }')
+	
+	# X vendor and version detection.
+	XVENDOR=$(xdpyinfo | gawk -F': +' '
+	BEGIN { IGNORECASE=1 } 
+	/vendor string/ { 
+		gsub(/the|,|inc|foundation|project|coorperation/, "", $2)
+		gsub(/^ +| +$/, "", $2); gsub(/  +/," ",$2)
+		print $2
+	} 
+	')
+	  
+	# new method added since radeon and X.org and the disappearance of <X server name> version : ...etc 
+	# Later on, the normal textual version string returned, e.g. like: X.Org version: 6.8.2
+	# A failover mechanism is in place. (if $XVERNUM is empty, the release number is parsed instead)
+	XVERNUM=$(xdpyinfo | awk '/version:/ { print $NF }')
+	[[ -z $XVERNUM ]] && XVERNUM=$(xdpyinfo | gawk -F': +' '
+	BEGIN { IGNORECASE=1 } 
+	/vendor release number/ { 
+		gsub(/0+$/,"",$2)
+		gsub(/0+/,".",$2)
+		print $2
+	}
+	')
+
+	#X -version 2>&1 | gawk '/^X Window System Version/ { print $5 }'
+	#This method could be used in the future to detect X when X is not running,
+	#however currently infobash ignores X checks when X is not found.
+	XVER="$XVENDOR $XVERNUM"
+
+	IFS=$'\n'
+	GLX=($(glxinfo | gawk -F ': ' '
+	function join(arr, sep) {
+		s=""
+		i=flag=0
+		for (i in arr) {
+			if (flag++) s = s sep
+			s = s i
+		} 
+		return s
+	} 
+
+	BEGIN { IGNORECASE=1 } 
+	
+	/opengl renderer/ { 
+		if ($2 ~ /mesa/) {
+			# Allow r300 et al, but not the rest
+			if ($2 ~ / r[3-9][0-9][0-9] /) { 
+				a[$2]
+				f++ 
+			} 
+			next 
+		}
+		$2 && a[$2] 
+	} 
+	/opengl version/ && (f || $2 !~ /mesa/) { $2 && b[$2] } 
+	/direct rendering/ { $2 && c[$2] } 
+	
+	END { 
+		printf("%s\n%s\n%s\n", join(a,", "), join(b,", "), join(c,", "))
+	}
+	'))
+	IFS="$OIFS"
+	GLXR="${GLX[0]}"; GLXV="${GLX[1]}"; GLXDR="${GLX[2]}"
+
+	# GLXR=$(glxinfo | gawk -F ': ' 'BEGIN {IGNORECASE=1} /opengl renderer/ && $2 !~ /mesa/ {seen[$2]++} END {for (i in seen) {printf("%s ",i)}}')
+	#    GLXV=$(glxinfo | gawk -F ': ' 'BEGIN {IGNORECASE=1} /opengl version/ && $2 !~ /mesa/ {seen[$2]++} END {for (i in seen) {printf("%s ",i)}}')
+	   
+	[[ -z $GLXR || -z $GLXV ]] && MESA=1
+	AGPMOD=$(gawk '/agp/ && !/agpgart/ && $3 > 0 { print(gensub(/(.*)_agp.*/,"\\1","g",$1)) }' /proc/modules)
+else
+	RES=$(stty -F $(readlink /proc/$PPID/fd/0) size | gawk '{ print $2"x"$1 }')
+	RUNLVL=$(runlevel | gawk '{ print $2 }')
+fi
+
+if ((VBL)); then  # (IF VBL > 1)
+	if ((SHOWHOST)); then
+		LNINTRO=$(printf "${C1}%-${INDENT}s${C2} \"%s\"${C1} %s " "Host/Kernel/OS" "$HN" "running") 
+	else
+		LNINTRO=$(printf "${C1}%-${INDENT}s${C2} " "OS/Kernel")
+	fi
+	LNINTRO="$LNINTRO$(echo -ne "${C2}$OSKERN ${CN}[ ${C1}$DISTRO ${CN}]")"
+	say "$LNINTRO"
+
+	##say "CPU[0]=\"${CPU[0]}\""
+	IFS=","; CPUTMP=(${CPU[0]}); IFS="$OIFS" 
+	# Strange (and also some expected) behavior encountered.
+	# If say() uses $1 as the parameter to output to the screen, then passing "<text1> ${ARR[@]} <text2>"
+	# will output only <text1> and the first element of ARR. That "@" splits in elements and "*" _doesn't_, is to be expected.
+	# However, that text2 is consecutively truncated is somewhat strange, so take note. This has been confirmed by #bash on freenode.
+	# The above mentioned only emerges when using the debugging markers below
+	##say "CPUTMP=\"***${CPUTMP[@]} $HN+++++++\"----------"
+
+	[[ -z ${CPUTMP[2]} ]] && CPUTMP[2]="unknown"
+
+	[[ ${#CPU[@]} -gt 2 ]] && CPUNUM="(1)" || unset CPUNUM  # Array CPU always has one element: max clockfreq found. Therefore -gt and not -ge
+	LNCPU=$(printf "${C1}%-${INDENT}s${C2} %s" "CPU Info" "${CPUNUM}${CPUNUM+ }${CPUTMP[0]}")
+	[[ $VBL -ge 3 ]] && LNCPU=$(printf "%s${C2} %s %s ${C1}%s${CN}%s${C2} %s ${CN}%s" "$LNCPU" "${CPUTMP[2]}" "cache" "flags" "(" "$CPUFLAGS" ")")
+	LNCPU=$(printf "%s ${C1}%s${C2} ${CN}%s${C2} %s ${CN}%s" "$LNCPU" "clocked at" "[" "${CPUTMP[1]} MHz" "]")
+	say "$LNCPU"
+	
+	for ((I=1;I<${#CPU[@]}-1;I++)); do
+		IFS=","; CPUTMP=(${CPU[I]}); IFS="$OIFS"
+		LNCPU=$(printf "${C1}%-${INDENT}s${C2} %s" " " "($((I+1))) ${CPUTMP[0]}")
+		[[ $VBL -ge 3 ]] && LNCPU=$(printf "%s${C2} %s %s ${C1}%s${CN}%s${C2} %s ${CN}%s" "$LNCPU" "${CPUTMP[2]}" "cache" "flags" "(" "$CPUFLAGS" ")")
+		LNCPU=$(printf "%s ${C1}%s${C2} ${CN}%s${C2} %s ${CN}%s" "$LNCPU" "clocked at" "[" "${CPUTMP[1]} MHz" "]")
+		say "$LNCPU"
+		[[ $I -gt 10 ]] && break
+	done
+
+
+	LNGFX=$(printf "${C1}%-${INDENT}s${C2} %s" "Videocard" "${GFX[0]}")
+	if ((X)); then
+		LNGFX="${LNGFX}$(echo -ne "${C1}  $XVER  ${CN}[${C2} ${RES} ${CN}]")"
+	else
+		LNGFX="${LNGFX}$(echo -ne "${C1}  tty resolution ${CN}(${C2} ${RES} ${CN})")"
+	fi
+
+	say "$LNGFX"
+	I=1 ; while [[ -n ${GFX[I]} && $I -le 3 ]]; do
+		LNGFX=$(printf "${C1}%-${INDENT}s${C2} %s" " " "${GFX[I]}")
+		say "$LNGFX"
+		((I++))
+	done
+
+	if [[ $VBL -ge 2 ]]; then
+		IFS=$'\n' LNNET=($(echo "$LSPCI" | gawk '
+		BEGIN { IGNORECASE=1 }
+		/^[0-9a-f:.]+ (ethernet|network) (controller|bridge)/ || /^[0-9a-f:.]+ [^:]+: .*(ethernet|network).*$/ {
+			nic=gensub(/^[0-9a-f:.]+ [^:]+: (.+)$/,"\\1","g",$0)
+			gsub(/realtek semiconductor/, "Realtek", nic)
+			gsub(/davicom semiconductor/, "Davicom", nic)
+			gsub(/,/," ", nic)
+			gsub(/'"$NORMALBANS"'/, "", nic); gsub(/ [ ]+/," ", nic); gsub(/^ +| +$/,"", nic) 
+			# The doublequotes above are necessary because of the pipes in the variable.
+			eth[nic]++
+			while (getline && !/^$/) {
+				if (/I\/O/) ports[nic]=ports[nic]$4" "
+			}
+		}
+		
+		END {
+			j=0
+			for (i in eth) {
+				if (eth[i]>1) {
+					a[j]=eth[i]"x "i
+					if (ports[i] != "") a[j]=a[j]", at ports: "ports[i]
+				}
+				else {
+					a[j]=i
+					if (ports[i] != "") a[j]=a[j]", at port: "ports[i];
+				}
+				j++
+			}
+			j=0
+			while (a[j]) {
+				print a[j]
+				j++
+			}
+		}
+		'))
+		IFS="$OIFS"
+
+		if [[ -n ${LNNET[@]} ]]; then
+			I=0
+			say "$(printf "${C1}%-${INDENT}s${C2} %s" "Network cards" "${LNNET[I]}")"
+			while [[ -n ${LNNET[++I]} ]]; do
+				say "$(printf "${C1}%-${INDENT}s${C2} %s" " " "${LNNET[I]}")"
+			done
+		fi
+
+	fi #if [[ $VBL -ge 2 ]]
+
+	# Some code could look superfluous but BitchX doesn't like lines not ending in a newline. F*&k that bitch!
+	LNLAST=$(echo -ne "${C1}Processes${C2} ${PROC}${CN} | ${C1}Uptime${C2} ${UPT}${CN} | ${C1}Memory${C2} ${MEM}${CN}")
+	if [[ $VBL -ge 2 ]]; then
+		LNLAST="${LNLAST}$(echo -ne " | ${C1}HDD${C2} ${HDDMOD} ${C1}Size${C2} ${HDD} (${HDDUSG})${CN}")"
+	else
+		LNLAST="${LNLAST}$(echo -ne " | ${C1}HDD Size${C2} ${HDD} (${HDDUSG})${CN}")" 
+	fi
+
+	if ((X)) && ! ((MESA)); then
+		LNLAST="${LNLAST}$(echo -ne " | ${C1}GLX Renderer${C2} ${GLXR}${CN} | ${C1}GLX Version${C2} ${GLXV}${CN}")"
+		((CRAP)) && LNLAST="${LNLAST}$(echo -ne " | ${C1}Direct rendering${C2} ${GLXDR}${CN}")"
+	fi
+
+	[[ $RUNLVL ]] && LNLAST="${LNLAST}$(echo -ne " | ${C1}Runlevel${C2} ${RUNLVL}${CN}")"
+
+	((SHOWIRC)) && LNLAST="${LNLAST}$(echo -ne " | ${C1}Client${C2} ${IRC}${IRCV}${CN}")"
+	LNLAST="${LNLAST}$(echo -ne " | ${C1}${MYVERSION}")"
+	((SCHEME)) && LNLAST="${LNLAST}$(echo -ne "${NORMAL}")"
+	say "$LNLAST"
+else # (IF VBL > 1 ... ELSE)
+	#cscheme 12
+	if ! ((IBSHELL)); then
+		for I in $C1 $C2 $CN ; do case "$I" in "$GREEN"|"$WHITE"|"$YELLOW"|"$CYAN") BGBLACK=1 ;; esac ; done
+		((BGBLACK)) && { for I in C1 C2 CN ; do [[ "${!I}" = "$NORMAL" ]] && declare $I="${!I}15,1" || declare $I="${!I},1" ; done ; }
+		#C1="${C1},1"; C2="${C2},1"; CN="${CN},1"
+	fi
+	LNSHORT=$(echo -ne "${C1}CPU${CN}[${C2}${CPUMODEL} clocked at ${CPUCLOCK}${CN}]  ${C1}Kernel${CN}[${C2}${OSKERN}${CN}]  ${C1}Up${CN}[${C2}${FL2}${FL1}${UPT}${FL1}${CN}]  ${C1}Mem${CN}[${C2}${FL2}${FL1}${MEM}${FL1}${CN}]  ${C1}HDD${CN}[${C2}${FL2}${FL1}${HDD}($HDDUSG)${FL1}${CN}]  ${C1}Procs${CN}[${C2}${FL2}${FL1}${PROC}${FL1}${CN}]")
+	((SHOWIRC)) && LNSHORT="${LNSHORT}$(echo -ne "  ${C1}Client${CN}[${C2}${IRC}${IRCV}${CN}]")"
+	((SCHEME)) && LNSHORT="${LNSHORT}$(echo -ne "$NORMAL")"
+	say "$LNSHORT"
+fi # (IF VBL > 1)
+((IBSHELL && SCHEME)) && echo -n "[0m"
+exit 0  # weechat's executor plugin forced me to do this, and rightfully so, because else the exit code from the last command is taken..
+
