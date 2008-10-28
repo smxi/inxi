@@ -1,7 +1,7 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.1.8
+####  version: 0.1.10
 ####  Date: October 27 2008
 ########################################################################
 ####  inxi is a fork of infobash, the original bash sys info script by locsmif
@@ -113,6 +113,10 @@ if [[ -s $HOME/.$SCRIPT_LOWER_CASE ]]
 then
 	source $HOME/.$SCRIPT_LOWER_CASE
 fi
+
+ALLUP=1
+HN=$(hostname)
+
 # WARNING: In the main part below (search for 'KONVI') 
 # there's a check for Konversation-specific config files.
 # Any one of these can override the above if infobash is run 
@@ -319,7 +323,8 @@ get_start_app()
 				KONVI=1
 				IRCV="$( $IRC -v | gawk '/Konversation:/ { for (i=2;i<=NF;i++) { if (i == NF) { print $i } else { printf $i" " } } exit }' )"
 				T=($IRCV)
-				if [[ ${T[0]} == *+* ]]; then
+				if [[ ${T[0]} == *+* ]]
+				then
 					# < Sho_> locsmif: The version numbers of SVN versions look like this: 
 					#         "<version number of last release>+ #<build number", i.e. "1.0+ #3177" ... 
 					#         for releases we remove the + and build number, i.e. "1.0" or soon "1.0.1"
@@ -494,92 +499,82 @@ sanitize()
 	echo "$2" | gawk "BEGIN { IGNORECASE=1 } { gsub(/${!1}/,\"\"); gsub(/ [ ]+/,\" \"); gsub(/^ +| +$/,\"\"); print }"
 }
 
-########################################################################
-#### CALCULATED VARIABLES
-########################################################################
 
-# Detect X and set variable "X" accordingly
-if [[ $DISPLAY ]]
-then
-	X=1 
-fi
-
-# Fallback paths put into $EXTRA_PATH; This might, among others, help on gentoo.
-# Now, create a difference of $PATH and $EXTRA_PATH and add that to $PATH:
-unset TPATH
-IFS=":"
-for I in $EXTRA_PATH
-do 
-	FLAG=0
-	for J in $PATH
-	do 
-		if [[ $I = $J ]]
-		then
-			FLAG=1
-		fi
-	done
-	if ! ((FLAG))
-	then
-		TPATH="$TPATH:$I"
-	fi
-done
-IFS="$OIFS"
-PATH="${PATH}${TPATH}"
-##echo "PATH='$PATH'" 
-##/bin/sh -c 'echo "PATH in subshell=\"$PATH\""' 
-
-# Check for dependencies before running any commands in this script! So yes, here!!
-check_script_depends
-
-# Do this after sourcing of config overrides so user can customize banwords
-NORMAL_BANS=$( make_bans "${NORMAL_BANS[@]}" ) # Contrary to my previous belief, "${ARR[@]}" passes a quoted list, not one string
-CPU_BANS=$( make_bans "${CPU_BANS[@]}" )
-##echo "NORMAL_BANS='$NORMAL_BANS'"
-
-LSPCI=$(lspci -v | awk '{ gsub(/\(prog-if[^)]*\)/,""); print }')
 ########################################################################
 #### MAIN FUNCTIONS
 ########################################################################
 
-get_start_app
-
-if ((KONVI))
-then
-	DCPORT="$1"
-	DCSERVER="$2"
-	DCTARGET="$3"
-	shift 3
-	# The section below is on request of Argonel from the Konversation developer team:
-	# it sources config files like $HOME/.kde/share/apps/konversation/scripts/infobash.conf
+set_calculated_variables()
+{
+	# Detect X and set variable "X" accordingly
+	if [[ $DISPLAY ]]
+	then
+		X=1 
+	fi
+	
+	# Fallback paths put into $EXTRA_PATH; This might, among others, help on gentoo.
+	# Now, create a difference of $PATH and $EXTRA_PATH and add that to $PATH:
+	unset TPATH
 	IFS=":"
-	for I in $( kde-config --path data )
-	do
-		if [[ -r ${I}${KONVICFG} ]]
-		then 
-			source "${I}${KONVICFG}"
-			break
+	for I in $EXTRA_PATH
+	do 
+		FLAG=0
+		for J in $PATH
+		do 
+			if [[ $I = $J ]]
+			then
+				FLAG=1
+			fi
+		done
+		if ! ((FLAG))
+		then
+			TPATH="$TPATH:$I"
 		fi
 	done
 	IFS="$OIFS"
-fi
+	PATH="${PATH}${TPATH}"
+	##echo "PATH='$PATH'" 
+	##/bin/sh -c 'echo "PATH in subshell=\"$PATH\""' 
+	
+	# Do this after sourcing of config overrides so user can customize banwords
+	NORMAL_BANS=$( make_bans "${NORMAL_BANS[@]}" ) # Contrary to my previous belief, "${ARR[@]}" passes a quoted list, not one string
+	CPU_BANS=$( make_bans "${CPU_BANS[@]}" )
+	##echo "NORMAL_BANS='$NORMAL_BANS'"
+	
+	LSPCI=$(lspci -v | awk '{ gsub(/\(prog-if[^)]*\)/,""); print }')
+}
 
-# "$@" passes every parameter seperately quoted, "$*" passes all parameters as one quoted parameter.
-get_parameters "$@"
+set_konvi()
+{
+	if ((KONVI))
+	then
+		DCPORT="$1"
+		DCSERVER="$2"
+		DCTARGET="$3"
+		shift 3
+		# The section below is on request of Argonel from the Konversation developer team:
+		# it sources config files like $HOME/.kde/share/apps/konversation/scripts/infobash.conf
+		IFS=":"
+		for I in $( kde-config --path data )
+		do
+			if [[ -r ${I}${KONVICFG} ]]
+			then 
+				source "${I}${KONVICFG}"
+				break
+			fi
+		done
+		IFS="$OIFS"
+	fi
+}
 
-# If no colorscheme was set in the parameter handling routine, then set the default scheme
-if ! ((CSCHEME))
-then
-	set_color_scheme "$DEFAULT_SCHEME"
-fi
-
-ALLUP=1
-script_debugger "ALLUP=1 : inxi up and running.."
-
-HN=$(hostname)
+# temp function to contain all script core engine pieces until they are broken into real functions
+main_temp_engine()
+{
 
 unset DISTRO
 shopt -s nullglob
-cd /etc; DISTGLOB=(*[-_]{release,version})
+cd /etc
+DISTGLOB=(*[-_]{release,version})
 cd "$OLDPWD"
 shopt -u nullglob
 
@@ -1152,9 +1147,42 @@ else # (IF VBL > 1 ... ELSE)
 	print_screen_output "$LNSHORT"
 fi # (IF VBL > 1)
 
+## end main_temp_engine
+}
+
+########################################################################
+#### SCRIPT EXECUTION
+########################################################################
+
+# Check for dependencies before running any commands in this script! So yes, here!!
+check_script_depends
+
+set_calculated_variables
+
+get_start_app
+
+# "$@" passes every parameter separately quoted, "$*" passes all parameters as one quoted parameter.
+get_parameters "$@"
+
+# If no colorscheme was set in the parameter handling routine, then set the default scheme
+if ! ((CSCHEME))
+then
+	set_color_scheme "$DEFAULT_SCHEME"
+fi
+
+set_konvi
+
+script_debugger "ALLUP=1 : inxi up and running.."
+
+# we'll pull these features out one by one and make them into real functions
+main_temp_engine
+
+## last steps
 if ((IBSHELL && SCHEME))
 then
 	echo -n "[0m"
 fi
+
+
 exit 0  # weechat's executor plugin forced me to do this, and rightfully so, because else the exit code from the last command is taken..
 
