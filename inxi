@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.1.23
-####  Date: October 27 2008
+####  version: 0.1.24
+####  Date: October 28 2008
 ########################################################################
 ####  inxi is a fork of infobash, the original bash sys info script by locsmif
 ####  As time permits functionality and recoding will occur.
@@ -34,10 +34,27 @@
 #### VARIABLES
 ########################################################################
 
+## Variable initializations: null values
+DISTRO=''
+DISTRO_FILE=''
+DISTRO_GLOB=''
+IRC_CLIENT=''
+IRC_CLIENT_VERSION=''
+
+readlink /proc/$PPID/exe
+# Variable initializations: constants
 ALLUP=0         # inxi hasn't been 'booted' yet.
+DBI=0           # Debug Buffer Index, index into a debug buffer storing debug messages until infobash is 'all up'
 DEBUG=0         # Set levels from 1-10
 DEBUG_FLOOD=0   # Debug flood override: toggle on to allow long debug output
-DBI=0           # Debug Buffer Index, index into a debug buffer storing debug messages until infobash is 'all up'
+DEFAULT_SCHEME=2	# Defaults to 2, make this 1 for normal, 0 for no colorcodes at all. Set to any other valid scheme you like. Same as runtime parameter.
+IBSHELL=0	# Running in a shell? Defaults to false, and is determined later.
+INDENT=14	# Default indentation level
+NO_CPU_COUNT=0	# Wether or not the string "dual" or similar is found in cpuinfo output. If so, avoid dups.
+SHOW_HOST=1	# Set this to 0 to avoid printing the hostname 
+SHOW_IRC=2	# SHOW_IRC=1 to avoid showing the irc client version number, or SHOW_IRC=0 to disable client information completely.
+VERBOSITY_LEVEL=0		# Verbosity level defaults to 0, this can also be set with -v, -v2, -v3, etc as a parameter.
+
 if ! ((DEBUG))
 then
 	# Reroute all error messages to the bitbucket (if not debugging)
@@ -49,43 +66,48 @@ fi
 # type constructs. Stuff like [rev a1] is now seen as a glob expansion pattern, and fails, and
 # therefore results in nothing. Tricky as fuck.
 shopt -u nullglob
+OIFS="$IFS"	# Backup the current Internal Field Seperator
+FL1='-'		# These two determine separators in single line output, to force irc clients not to break off sections
+FL2=''
 
+## Variable initializations: script parameter/option globals
+
+
+
+## Script names/paths
 SCRIPT_NAME="inxi"
-SCRIPT_LOWER_CASE=$( tr '[A-Z]' '[a-z]' <<< $SCRIPT_NAME )
 SCRIPT_PATH=$( dirname $0 )
 SCRIPT_VERSION_NUMBER=$( grep -im 1 'version:' $SCRIPT_PATH/$SCRIPT_NAME | awk '{print $3}' )
 SCRIPT_DATE=$( grep -im 1 'date:' $SCRIPT_PATH/$SCRIPT_NAME | awk '{print $3 " " $4 ", " $5}' )
 MY_VERSION="$SCRIPT_NAME v:$SCRIPT_VERSION_NUMBER"
+
+## Script Localization
 LC_ALL="C"	# Make sure every program speaks English.
 export LC_ALL 
-OIFS="$IFS"	# Backup the current Internal Field Seperator
+
+## Output Colors
 unset EMPTY	# A more elegant way to have a scheme that doesn't print color codes (neither ANSI nor mIRC) at all. See below.
-# COLORS
 #         DGREY    BLACK    RED      DRED     GREEN    DGREEN   YELLOW   DYELLOW
-ANSICL="[1;30m [0;30m [1;31m [0;31m [1;32m [0;32m [1;33m [0;33m"
-IRCCL="   \x0314   \x0301   \x0304   \x0305   \x0309   \x0303   \x0308   \x0307"
+ANSI_COLORS="[1;30m [0;30m [1;31m [0;31m [1;32m [0;32m [1;33m [0;33m"
+IRC_COLORS="   \x0314   \x0301   \x0304   \x0305   \x0309   \x0303   \x0308   \x0307"
 #                 BLUE     DBLUE    MAGENTA  DMAGENTA CYAN     DCYAN    WHITE    GREY     NORMAL
-ANSICL="$ANSICL [1;34m [0;34m [1;35m [0;35m [1;36m [0;36m [1;37m [0;37m [0;37m"
-IRCCL=" $IRCCL    \x0312   \x0302   \x0313   \x0306   \x0311   \x0310   \x0300   \x0315   \x03"
-#ANSICL=($ANSICL); IRCCL=($IRCCL)
-COLORS=(DGREY BLACK RED DRED GREEN DGREEN YELLOW DYELLOW BLUE DBLUE MAGENTA DMAGENTA CYAN DCYAN WHITE GREY NORMAL)
+ANSI_COLORS="$ANSI_COLORS [1;34m [0;34m [1;35m [0;35m [1;36m [0;36m [1;37m [0;37m [0;37m"
+IRC_COLORS=" $IRC_COLORS    \x0312   \x0302   \x0313   \x0306   \x0311   \x0310   \x0300   \x0315   \x03"
+#ANSI_COLORS=($ANSI_COLORS); IRC_COLORS=($IRC_COLORS)
+COLORS_AVAILABLE=(DGREY BLACK RED DRED GREEN DGREEN YELLOW DYELLOW BLUE DBLUE MAGENTA DMAGENTA CYAN DCYAN WHITE GREY NORMAL)
 # See above for notes on EMPTY
-SCHEMES=(EMPTY,EMPTY,EMPTY NORMAL,NORMAL,NORMAL BLUE,NORMAL,NORMAL GREEN,YELLOW,NORMAL DYELLOW,NORMAL,NORMAL CYAN,BLUE,NORMAL RED,NORMAL,NORMAL GREEN,NORMAL,NORMAL YELLOW,NORMAL,NORMAL GREEN,DGREEN,NORMAL BLUE,RED,NORMAL BLUE,NORMAL,RED YELLOW,WHITE,GREEN BLUE,NORMAL,GREEN DCYAN,NORMAL,DMAGENTA)
-DEFAULT_SCHEME=2	# Defaults to 2, make this 1 for normal, 0 for no colorcodes at all. Set to any other valid scheme you like. Same as runtime parameter.
-SHOW_HOST=1	# Set this to 0 to avoid printing the hostname 
-SHOW_IRC=2	# SHOW_IRC=1 to avoid showing the irc client version number, or SHOW_IRC=0 to disable client information completely.
-INDENT=14	# Default indentation level
-VERBOSITY_LEVEL=0		# Verbosity level defaults to 0, this can also be set with -v, -v2, -v3, etc as a parameter.
-IBSHELL=0	# Running in a shell? Defaults to false, and is determined later.
-NO_CPU_COUNT=0	# Wether or not the string "dual" or similar is found in cpuinfo output. If so, avoid dups.
-# In cases of derived distros where the version file of the base distro can also be found under /etc, the derived distro's
-# version file should go first. (Such as with Sabayon / Gentoo)
-DISTROS_SECONDARY="antiX kanotix-version knoppix-version redhat-release sabayon-release sidux-version turbolinux-release zenwalk-version"
+COLOR_SCHEMES=(EMPTY,EMPTY,EMPTY NORMAL,NORMAL,NORMAL BLUE,NORMAL,NORMAL GREEN,YELLOW,NORMAL DYELLOW,NORMAL,NORMAL CYAN,BLUE,NORMAL RED,NORMAL,NORMAL GREEN,NORMAL,NORMAL YELLOW,NORMAL,NORMAL GREEN,DGREEN,NORMAL BLUE,RED,NORMAL BLUE,NORMAL,RED YELLOW,WHITE,GREEN BLUE,NORMAL,GREEN DCYAN,NORMAL,DMAGENTA)
+
+
+## Distro Data
+# In cases of derived distros where the version file of the base distro can also be found under /etc, 
+# the derived distro's version file should go first. (Such as with Sabayon / Gentoo)
+DISTROS_DERIVED="antiX kanotix-version knoppix-version redhat-release sabayon-release sidux-version turbolinux-release zenwalk-version"
 DISTROS_PRIMARY="gentoo-release mandrake-release redhat-release slackware-version SuSE-release"
 # debian_version excluded from DISTROS_PRIMARY so Debian can fall through to /etc/issue detection. Same goes for Ubuntu.
 DISTROS_BLIST="debian_version ubuntu_version"
-FL1='-'		# These two determine seperators in single line output, to force irc clients not to break off sections
-FL2=''
+
+
 # Precede a banword with $'\2' to prevent it from being subject to automated escaping by the make_bans routine
 # $'\1' gets weird results :
 # user@host $ ARR=($'\x01'"one two" three four); echo ${ARR[0]} | hd -v
@@ -96,22 +118,19 @@ EXTRA_PATH="/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin" # Extr
 PARAMETER_LIMIT=30	# This is a variable that controls how many parameters infobash will parse in a /proc/<pid>/cmdline file before stopping.
 CRAP=0		# New parameter
 FLAG=0		# A throw-away 'flag' variable intended to be used throughout infobash
-KONVICFG="konversation/scripts/$SCRIPT_LOWER_CASE.conf" # relative path to $(kde-config --path data)
+KONVI_CFG="konversation/scripts/$SCRIPT_NAME.conf" # relative path to $(kde-config --path data)
 DCOPOBJ="default"
 
 # Source global config overrides
-if [[ -s /etc/$SCRIPT_LOWER_CASE.conf ]]
+if [[ -s /etc/$SCRIPT_NAME.conf ]]
 then
-	source /etc/$SCRIPT_LOWER_CASE.conf	
+	source /etc/$SCRIPT_NAME.conf	
 fi
 # Source user config overrides
-if [[ -s $HOME/.$SCRIPT_LOWER_CASE ]]
+if [[ -s $HOME/.$SCRIPT_NAME ]]
 then
-	source $HOME/.$SCRIPT_LOWER_CASE
+	source $HOME/.$SCRIPT_NAME
 fi
-
-ALLUP=1
-HN=$(hostname)
 
 # WARNING: In the main part below (search for 'KONVI') 
 # there's a check for Konversation-specific config files.
@@ -160,7 +179,7 @@ script_debugger()
 {
 	if (( ALLUP ))
 	then
-		if (( !DEBUG ))
+		if ! (( DEBUG ))
 		then
 			return
 		fi
@@ -191,7 +210,7 @@ print_screen_output()
 {
 	if (( DEBUG > 5 ))
 	then
-		if ((KONVI))
+		if (( KONVI ))
 		then
 			dcop "$DCPORT" "$DCOPOBJ" print_screen_output "$DCSERVER" "$DCTARGET" "konvi='$konvi'  saying : '$@'"
 		else
@@ -226,11 +245,15 @@ remove_erroneous_chars()
 # }
 
 # Enforce boilerplate and buzzword filters
-sanitize() 
+sanitize_characters() 
 {
-	# Cannot use strong quotes to unquote a string with pipes in it! bash will interpret the |'s as usual and try to run a subshell!
+	# Cannot use strong quotes to unquote a string with pipes in it! 
+	# bash will interpret the |'s as usual and try to run a subshell!
 	# Using weak quotes instead, or use '"..."'
-	echo "$2" | gawk "BEGIN { IGNORECASE=1 } { gsub(/${!1}/,\"\"); gsub(/ [ ]+/,\" \"); gsub(/^ +| +$/,\"\"); print }"
+	echo "$2" | gawk "BEGIN { IGNORECASE=1 } {gsub(/${!1}/,\"\");
+											gsub(/ [ ]+/,\" \");    ## ([ ]+) with (space)
+											gsub(/^ +| +$/,\"\");   ## (pipe char) with (nothing)
+											print }"           ## prints (returns) cleaned input
 }
 
 #### -------------------------------------------------------------------
@@ -283,175 +306,57 @@ make_bans()
 # $1 = <scheme number>|<"none">
 set_color_scheme() 
 {
-	local I SCOLORS CLCODES
+	local i='' scriptColors='' colorCodes=''
 	
-	if [[ $1 -ge ${#SCHEMES[@]} ]]
+	if [[ $1 -ge ${#COLOR_SCHEMES[@]} ]]
 	then
 		set -- 1 
 	fi
 	SCHEME="$1" # Set a global variable to allow checking for chosen scheme later
 	if ((IBSHELL))
 	then
-		CLCODES=($ANSICL)
+		colorCodes=($ANSI_COLORS)
 	else
-		CLCODES=($IRCCL)
+		colorCodes=($IRC_COLORS)
 	fi
-	for (( I=0; I < ${#COLORS[@]}; I++ ))
+	for (( i=0; i < ${#COLORS_AVAILABLE[@]}; i++ ))
 	do
-		eval "${COLORS[I]}=\"${CLCODES[I]}\""
+		eval "${COLORS_AVAILABLE[i]}=\"${colorCodes[i]}\""
 	done
-	IFS="," ; SCOLORS=(${SCHEMES[$1]}) ; IFS="$OIFS"
-	C1="${!SCOLORS[0]}"
-	C2="${!SCOLORS[1]}"
-	CN="${!SCOLORS[2]}"
+	IFS=","
+	scriptColors=(${COLOR_SCHEMES[$1]})
+	IFS="$OIFS"
+	C1="${!scriptColors[0]}"
+	C2="${!scriptColors[1]}"
+	CN="${!scriptColors[2]}"
 	((CSCHEME++))
 }
 
 # Parse the null separated commandline under /proc/<pid passed in $1>/cmdline
 get_cmdline() 
 {
+	local i=0
 	if [[ ! -e /proc/$1/cmdline ]]
 	then
 		{ echo 0; return; }
 	fi
 	##print_screen_output "Marker"
 	##print_screen_output "\$1='$1' -=- $(< /proc/$1/cmdline)"
-	local I=0
 	unset CMDL
-	while read -d $'\0' L && [[ $I -lt 32 ]]
+	while read -d $'\0' L && [[ $i -lt 32 ]]
 	do 
-		CMDL[I++]="$L"
+		CMDL[i++]="$L"
 	done </proc/$1/cmdline
 	##print_screen_output "\$I='$I'"
-	if ! ((I))
+	if ! ((i))
 	then
 		CMDL[0]=$(< /proc/$1/cmdline)
-		[[ -n ${CMDL[0]} ]] && I=1
-	fi
-	CMDLMAX=$I
-}
-
-# Determine where infobash was run from
-get_start_app() 
-{
-	if tty >/dev/null
-	then
-		IRC="Shell"
-		unset IRCV
-		IBSHELL=1
-	elif [[ -n $PPID && -f /proc/$PPID/exe ]]
-	then
-		IRC=$(readlink /proc/$PPID/exe)
-		
-		case $(echo $IRC | tr '[:upper:]' '[:lower:]') in
-			*irssi-text*|*irssi*)
-				IRCV=" $($IRC -v | gawk 'NR == 1 { print $2 }')"
-				IRC="Irssi"
-				;;
-			*konversation*)
-				KONVI=1
-				IRCV="$( $IRC -v | gawk '/Konversation:/ { for (i=2;i<=NF;i++) { if (i == NF) { print $i } else { printf $i" " } } exit }' )"
-				T=($IRCV)
-				if [[ ${T[0]} == *+* ]]
-				then
-					# < Sho_> locsmif: The version numbers of SVN versions look like this: 
-					#         "<version number of last release>+ #<build number", i.e. "1.0+ #3177" ... 
-					#         for releases we remove the + and build number, i.e. "1.0" or soon "1.0.1"
-					IRCV=" CVS $IRCV"
-					T2="${T[0]/+/}"
-				else
-					IRCV=" ${T[0]}"
-					T2="${T[0]}"
-				fi
-				# Remove any dots except the first, and make sure there are no trailing zeroes, 
-				T2=$( echo "$T2" | gawk '{ sub(/\./, " "); gsub(/\./, ""); sub(/ /, "."); printf("%g\n", $0) }' )
-				# Since Konversation 1.0, the DCOP interface has changed a bit: dcop "$DCPORT" Konversation ..etc
-				# becomes : dcop "$DCPORT" default ... or dcop "$DCPORT" irc ..etc. So we check for versions smaller
-				# than 1 and change the DCOP parameter/object accordingly.
-				if [[ ${T2} < 1 ]]
-				then
-					DCOPOBJ="Konversation"
-				fi
-				IRC="Konversation"
-				;; 
-			*xchat*)
-				IRCV=" $($IRC -v | gawk 'NR == 1 { print $2 }')"
-				IRC="X-Chat"
-				;;
-			*bitchx*)
-				IRCV=" $($IRC -v | gawk '
-				/Version/ { a=tolower($2); gsub(/[()]|bitchx-/,"",a); print a; exit }
-				$2 == "version" { a=tolower($3); sub(/bitchx-/,"",a); print a; exit }
-				')" 
-				IRC="BitchX"
-				;;
-			*ircii*)
-				IRCV=" $( $IRC -v | gawk 'NR == 1 { print $3 }' )"
-				IRC="ircII"
-				;;		
-			*gaim*)
-				IRCV=" $( $IRC -v | gawk 'NR == 1 { print $2 }' )"
-				IRC="Gaim"
-				;;				
-			*pidgin*)
-				IRCV=" $( $IRC -v | gawk 'NR == 1 { print $2 }' )"
-				IRC="Pidgin"
-				;;
-			*weechat-curses*)
-				IRCV=" $( $IRC -v) "
-				IRC="Weechat"
-				;;
-			*kvirc*)
-				IRCV=" $( $IRC -v 2>&1 | gawk '{ for (i=2;i<=NF;i++) { if (i==NF) print $i; else printf $i" " }; exit }' )"
-				IRC="KVIrc"
-				;;
-			*kopete*)
-				IRCV=" $( kopete -v | gawk '/Kopete:/ { print $2; exit }' )"
-				IRC="Kopete"
-				;;
-			*perl*)
-				unset IRCV	# KSirc is one of the possibilities now. KSirc is a wrapper around dsirc, a perl client
-				get_cmdline $PPID
-				for (( I=0; I<=$CMDLMAX; I++ ))
-				do
-					case ${CMDL[I]} in
-						*dsirc*) 
-							IRC="KSirc"
-							# Dynamic runpath detection is too complex with KSirc, because KSirc is started from
-							# kdeinit. /proc/<pid of the grandparent of this process>/exe is a link to /usr/bin/kdeinit
-							# with one parameter which contains parameters separated by spaces(??), first param being KSirc.
-							# Then, KSirc runs dsirc as the perl irc script and wraps around it. When /exec is executed,
-							# dsirc is the program that runs infobash, therefore that is the parent process that we see.
-							# You can imagine how hosed I am if I try to make infobash find out dynamically with which path
-							# KSirc was run by browsing up the process tree in /proc. That alone is straightjacket material.
-							# (KSirc sucks anyway ;)
-							IRCV=" $( ksirc -v | gawk '/KSirc:/ { print $2; exit }' )"
-							break
-							;;
-					esac
-				done 
-				if [[ -z $IRCV ]]
-				then
-					IRC="Unknown Perl client"
-				fi
-				;;
-			*bash*|*sh*)
-				unset IRCV
-				IRC="Shell wrapper"
-				;;
-			*)
-				IRC="Unknown : ${IRC##*/}"
-				unset IRCV
-				;;
-		esac
-		if [[ $SHOW_IRC -lt 2 ]]
+		if [[ -n ${CMDL[0]} ]]
 		then
-			unset IRCV    
+			i=1
 		fi
-	else
-		IRC="PPID=\"$PPID\" - empty?"
-		unset IRCV
 	fi
+	CMDLMAX=$i
 }
 
 # Get the parameters
@@ -517,15 +422,146 @@ get_parameters()
 			;;
 		esac
 		shift
-	done    
+	done
 }
 
 ########################################################################
 #### MAIN FUNCTIONS
 ########################################################################
 
+#### -------------------------------------------------------------------
+#### initial startup stuff
+#### ------------------------------------------------------------------- 
+
+# Determine where infobash was run from
+get_start_app() 
+{
+	local ircClientPath='' ircClientPathLower=''
+	
+	if tty >/dev/null
+	then
+		IRC_CLIENT="Shell"
+		unset IRC_CLIENT_VERSION
+		IBSHELL=1
+	elif [[ -n $PPID && -f /proc/$PPID/exe ]]
+	then
+		ircClientPath=$( readlink /proc/$PPID/exe )
+		ircClientPathLower=$( tr '[:upper:]' '[:lower:]' <<< $ircClientPath )
+		
+		case $ircClientPathLower in
+			*irssi-text*|*irssi*)
+				IRC_CLIENT_VERSION=" $($ircClientPath -v | gawk 'NR == 1 { print $2 }')"
+				IRC_CLIENT="Irssi"
+				;;
+			*konversation*)
+				KONVI=1
+				IRC_CLIENT_VERSION="$( $ircClientPath -v | gawk '/Konversation:/ { for (i=2;i<=NF;i++) { if (i == NF) { print $i } else { printf $i" " } } exit }' )"
+				T=($IRC_CLIENT_VERSION)
+				if [[ ${T[0]} == *+* ]]
+				then
+					# < Sho_> locsmif: The version numbers of SVN versions look like this: 
+					#         "<version number of last release>+ #<build number", i.e. "1.0+ #3177" ... 
+					#         for releases we remove the + and build number, i.e. "1.0" or soon "1.0.1"
+					IRC_CLIENT_VERSION=" CVS $IRC_CLIENT_VERSION"
+					T2="${T[0]/+/}"
+				else
+					IRC_CLIENT_VERSION=" ${T[0]}"
+					T2="${T[0]}"
+				fi
+				# Remove any dots except the first, and make sure there are no trailing zeroes, 
+				T2=$( echo "$T2" | gawk '{ sub(/\./, " "); gsub(/\./, ""); sub(/ /, "."); printf("%g\n", $0) }' )
+				# Since Konversation 1.0, the DCOP interface has changed a bit: dcop "$DCPORT" Konversation ..etc
+				# becomes : dcop "$DCPORT" default ... or dcop "$DCPORT" irc ..etc. So we check for versions smaller
+				# than 1 and change the DCOP parameter/object accordingly.
+				if [[ ${T2} < 1 ]]
+				then
+					DCOPOBJ="Konversation"
+				fi
+				IRC_CLIENT="Konversation"
+				;; 
+			*xchat*)
+				IRC_CLIENT_VERSION=" $( $ircClientPath -v | gawk 'NR == 1 { print $2 }' )"
+				IRC_CLIENT="X-Chat"
+				;;
+			*bitchx*)
+				IRC_CLIENT_VERSION=" $( $ircClientPath -v | gawk '
+				/Version/ { a=tolower($2); gsub(/[()]|bitchx-/,"",a); print a; exit }
+				$2 == "version" { a=tolower($3); sub(/bitchx-/,"",a); print a; exit }
+				' )" 
+				IRC_CLIENT="BitchX"
+				;;
+			*ircii*)
+				IRC_CLIENT_VERSION=" $( $ircClientPath -v | gawk 'NR == 1 { print $3 }' )"
+				IRC_CLIENT="ircII"
+				;;		
+			*gaim*)
+				IRC_CLIENT_VERSION=" $( $ircClientPath -v | gawk 'NR == 1 { print $2 }' )"
+				IRC_CLIENT="Gaim"
+				;;				
+			*pidgin*)
+				IRC_CLIENT_VERSION=" $( $ircClientPath -v | gawk 'NR == 1 { print $2 }' )"
+				IRC_CLIENT="Pidgin"
+				;;
+			*weechat-curses*)
+				IRC_CLIENT_VERSION=" $( $ircClientPath -v) "
+				IRC_CLIENT="Weechat"
+				;;
+			*kvirc*)
+				IRC_CLIENT_VERSION=" $( $ircClientPath -v 2>&1 | gawk '{ for (i=2;i<=NF;i++) { if (i==NF) print $i; else printf $i" " }; exit }' )"
+				IRC_CLIENT="KVIrc"
+				;;
+			*kopete*)
+				IRC_CLIENT_VERSION=" $( kopete -v | gawk '/Kopete:/ { print $2; exit }' )"
+				IRC_CLIENT="Kopete"
+				;;
+			*perl*)
+				unset IRC_CLIENT_VERSION	# KSirc is one of the possibilities now. KSirc is a wrapper around dsirc, a perl client
+				get_cmdline $PPID
+				for (( I=0; I<=$CMDLMAX; I++ ))
+				do
+					case ${CMDL[I]} in
+						*dsirc*) 
+							IRC_CLIENT="KSirc"
+							# Dynamic runpath detection is too complex with KSirc, because KSirc is started from
+							# kdeinit. /proc/<pid of the grandparent of this process>/exe is a link to /usr/bin/kdeinit
+							# with one parameter which contains parameters separated by spaces(??), first param being KSirc.
+							# Then, KSirc runs dsirc as the perl irc script and wraps around it. When /exec is executed,
+							# dsirc is the program that runs infobash, therefore that is the parent process that we see.
+							# You can imagine how hosed I am if I try to make infobash find out dynamically with which path
+							# KSirc was run by browsing up the process tree in /proc. That alone is straightjacket material.
+							# (KSirc sucks anyway ;)
+							IRC_CLIENT_VERSION=" $( ksirc -v | gawk '/KSirc:/ { print $2; exit }' )"
+							break
+							;;
+					esac
+				done 
+				if [[ -z $IRC_CLIENT_VERSION ]]
+				then
+					IRC_CLIENT="Unknown Perl client"
+				fi
+				;;
+			*bash*|*sh*)
+				unset IRC_CLIENT_VERSION
+				IRC_CLIENT="Shell wrapper"
+				;;
+			*)
+				IRC_CLIENT="Unknown : ${ircClientPath##*/}"
+				unset IRC_CLIENT_VERSION
+				;;
+		esac
+		if [[ $SHOW_IRC -lt 2 ]]
+		then
+			unset IRC_CLIENT_VERSION
+		fi
+	else
+		IRC_CLIENT="PPID=\"$PPID\" - empty?"
+		unset IRC_CLIENT_VERSION
+	fi
+}
+
 set_calculated_variables()
 {
+	local i='' j=''
 	# Detect X and set variable "X" accordingly
 	if [[ $DISPLAY ]]
 	then
@@ -536,19 +572,19 @@ set_calculated_variables()
 	# Now, create a difference of $PATH and $EXTRA_PATH and add that to $PATH:
 	unset TPATH
 	IFS=":"
-	for I in $EXTRA_PATH
+	for i in $EXTRA_PATH
 	do 
 		FLAG=0
-		for J in $PATH
+		for j in $PATH
 		do 
-			if [[ $I = $J ]]
+			if [[ $i = $j ]]
 			then
 				FLAG=1
 			fi
 		done
 		if ! ((FLAG))
 		then
-			TPATH="$TPATH:$I"
+			TPATH="$TPATH:$i"
 		fi
 	done
 	IFS="$OIFS"
@@ -561,11 +597,13 @@ set_calculated_variables()
 	CPU_BANS=$( make_bans "${CPU_BANS[@]}" )
 	##echo "NORMAL_BANS='$NORMAL_BANS'"
 	
-	LSPCI=$(lspci -v | awk '{ gsub(/\(prog-if[^)]*\)/,""); print }')
+	LSPCI=$( lspci -v | awk '{ gsub(/\(prog-if[^)]*\)/,""); print }' )
 }
 
 set_konvi()
 {
+	local i=''
+	
 	if ((KONVI))
 	then
 		DCPORT="$1"
@@ -573,13 +611,13 @@ set_konvi()
 		DCTARGET="$3"
 		shift 3
 		# The section below is on request of Argonel from the Konversation developer team:
-		# it sources config files like $HOME/.kde/share/apps/konversation/scripts/infobash.conf
+		# it sources config files like $HOME/.kde/share/apps/konversation/scripts/inxi.conf
 		IFS=":"
-		for I in $( kde-config --path data )
+		for i in $( kde-config --path data )
 		do
-			if [[ -r ${I}${KONVICFG} ]]
+			if [[ -r ${i}${KONVI_CFG} ]]
 			then 
-				source "${I}${KONVICFG}"
+				source "${i}${KONVI_CFG}"
 				break
 			fi
 		done
@@ -587,46 +625,53 @@ set_konvi()
 	fi
 }
 
+#### -------------------------------------------------------------------
+#### get data types
+#### -------------------------------------------------------------------
+
 get_distro_data()
 {
+	local i=''
+	
 	unset DISTRO
 	shopt -s nullglob
 	cd /etc
-	DISTGLOB=(*[-_]{release,version})
+	DISTRO_GLOB=(*[-_]{release,version})
 	cd "$OLDPWD"
 	shopt -u nullglob
 	
-	if (( ${#DISTGLOB[@]} == 1 ))
+	if (( ${#DISTRO_GLOB[@]} == 1 ))
 	then
-		DISTFILE="${DISTGLOB}"
-	elif (( ${#DISTGLOB[@]} > 1 ))
+		DISTRO_FILE="${DISTRO_GLOB}"
+	elif (( ${#DISTRO_GLOB[@]} > 1 ))
 	then
-		for I in $DISTROS_SECONDARY $DISTROS_PRIMARY
+		for i in $DISTROS_DERIVED $DISTROS_PRIMARY
 		do
 			# Only echo works with ${var[@]}, not print_screen_output() or script_debugger()
 			# This is a known bug, search for the word "strange" inside comments
-			# echo "I='$I' DISTGLOB[@]='${DISTGLOB[@]}'"
-			if [[ " ${DISTGLOB[@]} " == *" $I "* ]]
+			# echo "i='$i' DISTRO_GLOB[@]='${DISTRO_GLOB[@]}'"
+			if [[ " ${DISTRO_GLOB[@]} " == *" $i "* ]]
 			then
-				DISTFILE="${I}"
+				DISTRO_FILE="${i}"
 				break
 			fi
 		done
 	fi
-	if [ -n "$DISTFILE" -a -s /etc/$DISTFILE -a " $DISTROS_BLIST " != *" $DISTFILE "* ]
+	if [ -n "$DISTRO_FILE" -a -s /etc/$DISTRO_FILE -a " $DISTROS_BLIST " != *" $DISTRO_FILE "* ]
 	then
-		DISTRO=$( remove_erroneous_chars "/etc/$DISTFILE" )
+		DISTRO=$( remove_erroneous_chars "/etc/$DISTRO_FILE" )
 	else
 		# Debian pure should fall through here
-		DISTFILE="issue"
-		DISTRO=$( gawk 'BEGIN { RS="" } { gsub(/\\[a-z]/,""); gsub(/ [ ]+/," "); gsub(/^ +| +$/,""); print }' "/etc/${DISTFILE}" )
+		DISTRO_FILE="issue"
+		DISTRO=$( gawk 'BEGIN { RS="" } { gsub(/\\[a-z]/,""); gsub(/ [ ]+/," "); gsub(/^ +| +$/,""); print }' "/etc/${DISTRO_FILE}" )
 	fi
-	((${#DISTRO} > 80 && ! CRAP)) && DISTRO="${RED}/etc/${DISTFILE} corrupted, use --crap to override${NORMAL}"
+	((${#DISTRO} > 80 && ! CRAP)) && DISTRO="${RED}/etc/${DISTRO_FILE} corrupted, use --crap to override${NORMAL}"
 	: ${DISTRO:=Unknown distro o_O}
 }
 
 get_cpu_data()
 {
+	local i='' j=''
 	OSKERN=$( uname -a | gawk '{print $1,$3,$(NF-1)}' )
 
 	IFS=$'\n'
@@ -672,22 +717,25 @@ get_cpu_data()
 		}
 	}
 	' /proc/cpuinfo))
+	
 	IFS="$OIFS"
 	
-	for (( I=0; I < ${#CPU[@]} - 1; I++))
+	for (( i=0; i < ${#CPU[@]} - 1; i++))
 	do
-		IFS=","; CPUTMP=(${CPU[I]}); IFS="$OIFS"
-		unset CPU[I]
-		CPUTMP[0]=$( sanitize NORMAL_BANS "${CPUTMP[0]}" )
-		CPUTMP[0]=$( sanitize CPU_BANS "${CPUTMP[0]}" )
+		IFS=","
+		CPUTMP=(${CPU[i]})
+		IFS="$OIFS"
+		unset CPU[i]
+		CPUTMP[0]=$( sanitize_characters NORMAL_BANS "${CPUTMP[0]}" )
+		CPUTMP[0]=$( sanitize_characters CPU_BANS "${CPUTMP[0]}" )
 		# I use all these loops so I can easily extend the cpu array created in the awk script above with more fields per cpu.
-		for (( J=0; J < ${#CPUTMP[@]}; J++ ))
+		for (( j=0; j < ${#CPUTMP[@]}; j++ ))
 		do
-			if ((J))
+			if ((j))
 			then
-				CPU[I]="${CPU[I]},${CPUTMP[J]}"
+				CPU[i]="${CPU[i]},${CPUTMP[j]}"
 			else
-				CPU[I]="${CPUTMP[J]}"
+				CPU[i]="${CPUTMP[j]}"
 			fi
 		done
 	done
@@ -874,7 +922,7 @@ get_graphics_data()
 	IFS="$OIFS"
 	for (( I=0; I < ${#GFX[@]}; I++ ))
 	do
-		GFX[I]=$( sanitize NORMAL_BANS "${GFX[I]}" )
+		GFX[I]=$( sanitize_characters NORMAL_BANS "${GFX[I]}" )
 	done
 	
 	# GFXMEM is UNUSED at the moment, because it shows AGP aperture size, which is not necessarily equal to GFX memory..
@@ -982,6 +1030,10 @@ get_graphics_data()
 	fi
 }
 
+#### -------------------------------------------------------------------
+#### print and processing of output data
+#### -------------------------------------------------------------------
+
 print_networking_data()
 {
 	IFS=$'\n' LNNET=($( echo "$LSPCI" | gawk '
@@ -1034,12 +1086,14 @@ print_networking_data()
 
 print_it_out()
 {
+	local hostName=$( hostname )
+	
 	# (IF VERBOSITY_LEVEL > 1)
 	if ((VERBOSITY_LEVEL))
 	then
 		if ((SHOW_HOST))
 		then
-			LNINTRO=$( printf "${C1}%-${INDENT}s${C2} \"%s\"${C1} %s " "Host/Kernel/OS" "$HN" "running" ) 
+			LNINTRO=$( printf "${C1}%-${INDENT}s${C2} \"%s\"${C1} %s " "Host/Kernel/OS" "$hostName" "running" ) 
 		else
 			LNINTRO=$( printf "${C1}%-${INDENT}s${C2} " "OS/Kernel" )
 		fi
@@ -1058,7 +1112,7 @@ print_it_out()
 		# However, that text2 is consecutively truncated is somewhat strange, so take note. 
 		# This has been confirmed by #bash on freenode.
 		# The above mentioned only emerges when using the debugging markers below
-		##print_screen_output "CPUTMP=\"***${CPUTMP[@]} $HN+++++++\"----------"
+		##print_screen_output "CPUTMP=\"***${CPUTMP[@]} $hostName+++++++\"----------"
 	
 		if [[ -z ${CPUTMP[2]} ]]
 		then
@@ -1145,7 +1199,7 @@ print_it_out()
 	
 		if ((SHOW_IRC))
 		then
-			LNLAST="${LNLAST}$( echo -ne " | ${C1}Client${C2} ${IRC}${IRCV}${CN}" )"
+			LNLAST="${LNLAST}$( echo -ne " | ${C1}Client${C2} ${IRC_CLIENT}${IRC_CLIENT_VERSION}${CN}" )"
 		fi
 		LNLAST="${LNLAST}$( echo -ne " | ${C1}${MY_VERSION}" )"
 		if ((SCHEME))
@@ -1182,7 +1236,7 @@ print_it_out()
 		
 		if ((SHOW_IRC))
 		then
-			LNSHORT="${LNSHORT}$( echo -ne "  ${C1}Client${CN}[${C2}${IRC}${IRCV}${CN}]" )"
+			LNSHORT="${LNSHORT}$( echo -ne "  ${C1}Client${CN}[${C2}${IRC_CLIENT}${IRC_CLIENT_VERSION}${CN}]" )"
 		fi
 		if ((SCHEME))
 		then
@@ -1200,7 +1254,26 @@ set_calculated_variables
 check_script_depends
 
 get_start_app
-
+# if ((KONVI))
+# 	then
+# 		DCPORT="$1"
+# 		DCSERVER="$2"
+# 		DCTARGET="$3"
+# 		shift 3
+# 		# The section below is on request of Argonel from the Konversation developer team:
+# 		# it sources config files like $HOME/.kde/share/apps/konversation/scripts/inxi.conf
+# 		IFS=":"
+# 		for i in $( kde-config --path data )
+# 		do
+# 			if [[ -r ${i}${KONVI_CFG} ]]
+# 			then 
+# 				source "${i}${KONVI_CFG}"
+# 				break
+# 			fi
+# 		done
+# 		IFS="$OIFS"
+# 	fi
+set_konvi "$@"
 # "$@" passes every parameter separately quoted, "$*" passes all parameters as one quoted parameter.
 get_parameters "$@"
 
@@ -1210,8 +1283,7 @@ then
 	set_color_scheme "$DEFAULT_SCHEME"
 fi
 
-set_konvi
-
+ALLUP=1
 script_debugger "ALLUP=1 : inxi up and running.."
 
 # assemble data for output
