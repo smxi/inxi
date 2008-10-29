@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.1.33
-####  Date: October 28 2008
+####  version: 0.1.34
+####  Date: October 29 2008
 ########################################################################
 ####  inxi is a fork of infobash, the original bash sys info script by locsmif
 ####  As time permits functionality and recoding will occur.
@@ -38,13 +38,19 @@
 ## Variable initializations: null values
 DISTRO=''
 DISTRO_FILE=''
-DISTRO_GLOB=''
+A_DISTRO_GLOB=''
 IRC_CLIENT=''
 IRC_CLIENT_VERSION=''
+
+## primary data array holders
+A_CPU_DATA=''
+A_GFX_DATA=''
+A_NETWORK_DATA=''
 
 # Variable initializations: constants
 ALLUP=0         # inxi hasn't been 'booted' yet.
 CRAP=0		# New parameter
+CURRENT_KERNEL=$( uname -a | gawk '{print $1,$3,$(NF-1)}' )
 DBI=0           # Debug Buffer Index, index into a debug buffer storing debug messages until infobash is 'all up'
 DCOPOBJ="default"
 DEBUG=0         # Set levels from 1-10
@@ -54,15 +60,18 @@ FLAG=0		# A throw-away 'flag' variable intended to be used throughout infobash
 IBSHELL=0	# Running in a shell? Defaults to false, and is determined later.
 INDENT=14	# Default indentation level
 KONVI=0 # default to false, no konversation found
+LSPCI=$( lspci -v | awk '{ gsub(/\(prog-if[^)]*\)/,""); print }' )
 NO_CPU_COUNT=0	# Wether or not the string "dual" or similar is found in cpuinfo output. If so, avoid dups.
 PARAMETER_LIMIT=30	# This is a variable that controls how many parameters infobash will parse in a /proc/<pid>/cmdline file before stopping.
+RUNLVL=0 # just setting this to 0 to initialize and avoid test errors
 SHOW_HOST=1	# Set this to 0 to avoid printing the hostname 
 SHOW_IRC=2	# SHOW_IRC=1 to avoid showing the irc client version number, or SHOW_IRC=0 to disable client information completely.
 VERBOSITY_LEVEL=0		# Verbosity level defaults to 0, this can also be set with -v, -v2, -v3, etc as a parameter.
+VERBOSITY_LEVELS=4   # Supported number of verbosity levels
 
-if ! ((DEBUG))
+# Reroute all error messages to the bitbucket (if not debugging)
+if [ "$DEBUG" -eq 0 ]
 then
-	# Reroute all error messages to the bitbucket (if not debugging)
 	exec 2>/dev/null
 fi 
 #((DEBUG)) && exec 2>&1 # This is for debugging konversation
@@ -81,6 +90,7 @@ SCRIPT_PATH=$( dirname $0 )
 SCRIPT_VERSION_NUMBER=$( grep -im 1 'version:' $SCRIPT_PATH/$SCRIPT_NAME | awk '{print $3}' )
 SCRIPT_DATE=$( grep -im 1 'date:' $SCRIPT_PATH/$SCRIPT_NAME | awk '{print $3 " " $4 ", " $5}' )
 MY_VERSION="$SCRIPT_NAME v:$SCRIPT_VERSION_NUMBER"
+KONVI_CFG="konversation/scripts/$SCRIPT_NAME.conf" # relative path to $(kde-config --path data)
 
 ## Script Localization
 LC_ALL="C"	# Make sure every program speaks English.
@@ -95,10 +105,9 @@ IRC_COLORS="   \x0314   \x0301   \x0304   \x0305   \x0309   \x0303   \x0308   \x
 ANSI_COLORS="$ANSI_COLORS [1;34m [0;34m [1;35m [0;35m [1;36m [0;36m [1;37m [0;37m [0;37m"
 IRC_COLORS=" $IRC_COLORS    \x0312   \x0302   \x0313   \x0306   \x0311   \x0310   \x0300   \x0315   \x03"
 #ANSI_COLORS=($ANSI_COLORS); IRC_COLORS=($IRC_COLORS)
-COLORS_AVAILABLE=(DGREY BLACK RED DRED GREEN DGREEN YELLOW DYELLOW BLUE DBLUE MAGENTA DMAGENTA CYAN DCYAN WHITE GREY NORMAL)
+A_COLORS_AVAILABLE=( DGREY BLACK RED DRED GREEN DGREEN YELLOW DYELLOW BLUE DBLUE MAGENTA DMAGENTA CYAN DCYAN WHITE GREY NORMAL )
 # See above for notes on EMPTY
-COLOR_SCHEMES=(EMPTY,EMPTY,EMPTY NORMAL,NORMAL,NORMAL BLUE,NORMAL,NORMAL GREEN,YELLOW,NORMAL DYELLOW,NORMAL,NORMAL CYAN,BLUE,NORMAL RED,NORMAL,NORMAL GREEN,NORMAL,NORMAL YELLOW,NORMAL,NORMAL GREEN,DGREEN,NORMAL BLUE,RED,NORMAL BLUE,NORMAL,RED YELLOW,WHITE,GREEN BLUE,NORMAL,GREEN DCYAN,NORMAL,DMAGENTA)
-
+A_COLOR_SCHEMES=( EMPTY,EMPTY,EMPTY NORMAL,NORMAL,NORMAL BLUE,NORMAL,NORMAL GREEN,YELLOW,NORMAL DYELLOW,NORMAL,NORMAL CYAN,BLUE,NORMAL RED,NORMAL,NORMAL GREEN,NORMAL,NORMAL YELLOW,NORMAL,NORMAL GREEN,DGREEN,NORMAL BLUE,RED,NORMAL BLUE,NORMAL,RED YELLOW,WHITE,GREEN BLUE,NORMAL,GREEN DCYAN,NORMAL,DMAGENTA )
 
 ## Distro Data
 # In cases of derived distros where the version file of the base distro can also be found under /etc, 
@@ -108,25 +117,21 @@ DISTROS_PRIMARY="gentoo-release mandrake-release redhat-release slackware-versio
 # debian_version excluded from DISTROS_PRIMARY so Debian can fall through to /etc/issue detection. Same goes for Ubuntu.
 DISTROS_BLIST="debian_version ubuntu_version"
 
-
+## Bans Data
 # Precede a banword with $'\2' to prevent it from being subject to automated escaping by the make_bans routine
 # $'\1' gets weird results :
 # user@host $ ARR=($'\x01'"one two" three four); echo ${ARR[0]} | hd -v
 # 00000000  01 01 6f 6e 65 20 74 77  6f 0a                    |..one two.|
-NORMAL_BANS=( corporation communications technologies technology group $'\2'"\<ltd\>" ltd. $'\2'"\<inc\>" inc. $'\2'\<co\> co. "(tm)" "(r)" $'\2'"\(rev ..\)" )
-CPU_BANS=( cpu processor $'\2'"[0-9.]+ *[MmGg][Hh][Zz]" )
+A_NORMAL_BANS=( corporation communications technologies technology group $'\2'"\<ltd\>" ltd. $'\2'"\<inc\>" inc. $'\2'\<co\> co. "(tm)" "(r)" $'\2'"\(rev ..\)" )
+A_CPU_BANS=( cpu processor $'\2'"[0-9.]+ *[MmGg][Hh][Zz]" )
 
-
-
-KONVI_CFG="konversation/scripts/$SCRIPT_NAME.conf" # relative path to $(kde-config --path data)
-
-# Source global config overrides
-if [[ -s /etc/$SCRIPT_NAME.conf ]]
+## Source global config overrides
+if [ -s /etc/$SCRIPT_NAME.conf ]
 then
 	source /etc/$SCRIPT_NAME.conf	
 fi
 # Source user config overrides
-if [[ -s $HOME/.$SCRIPT_NAME ]]
+if [ -s $HOME/.$SCRIPT_NAME ]
 then
 	source $HOME/.$SCRIPT_NAME
 fi
@@ -155,7 +160,7 @@ error_handler()
 			print_screen_output "$SCRIPT_NAME: error in colorscheme - unsupported number: $2" 
 			;;
 		4) 
-			print_screen_output "$SCRIPT_NAME: unknown verbosity level $2" 
+			print_screen_output "$SCRIPT_NAME: unsupported verbosity level $2" 
 			;;
 		5) 
 			print_screen_output "$SCRIPT_NAME: dependency not met: $2 not found in path" 
@@ -233,9 +238,9 @@ print_screen_output()
 	# echo -ne "$1\n"
 }
 
+# this removes newline and pipes. 
 remove_erroneous_chars()
 {
-	## this removes newline and pipes
 	## RS is input record separator
 	## gsub is substitute;
 	gawk 'BEGIN { RS="" } { gsub(/\n$/,"");         ## (newline; end of string) with (nothing)
@@ -246,10 +251,6 @@ remove_erroneous_chars()
 									gsub(/^ +| +$/, "");    ## (pipe char) with (nothing)
 									printf $0 }' "$1"       ## prints (returns) cleaned input
 }
-# remove_erroneous_chars() 
-# {
-# 	gawk 'BEGIN { RS="" } { gsub(/\n$/,""); gsub(/\n/," "); gsub(/^ *| *$/, ""); gsub(/  +/, " "); printf $0 }' "$1"
-# }
 
 # Enforce boilerplate and buzzword filters
 sanitize_characters() 
@@ -258,9 +259,9 @@ sanitize_characters()
 	# bash will interpret the |'s as usual and try to run a subshell!
 	# Using weak quotes instead, or use '"..."'
 	echo "$2" | gawk "BEGIN { IGNORECASE=1 } {gsub(/${!1}/,\"\");
-											gsub(/ [ ]+/,\" \");    ## ([ ]+) with (space)
-											gsub(/^ +| +$/,\"\");   ## (pipe char) with (nothing)
-											print }"                ## prints (returns) cleaned input
+															gsub(/ [ ]+/,\" \");    ## ([ ]+) with (space)
+															gsub(/^ +| +$/,\"\");   ## (pipe char) with (nothing)
+															print }"                ## prints (returns) cleaned input
 }
 
 #### -------------------------------------------------------------------
@@ -277,13 +278,14 @@ check_script_depends()
 		error_handler 6
 	fi
 
-	if ((X))
+	if [ "$X" -gt 0 ]
 	then
 		for app_name in xrandr xdpyinfo glxinfo
 		do
 			type -p $app_name >/dev/null || { script_debugger "inxi: Resuming in non X mode: $app_name not found in path"; X=0; break; }
 		done
 	fi
+	
 	app_name=''
 	# bc removed from deps for now
 	for app_name in df free gawk grep hostname lspci ps readlink runlevel tr uname uptime wc
@@ -317,47 +319,48 @@ set_color_scheme()
 {
 	local i='' script_colors='' color_codes=''
 	
-	if [[ $1 -ge ${#COLOR_SCHEMES[@]} ]]
+	if [[ $1 -ge ${#A_COLOR_SCHEMES[@]} ]]
 	then
 		set -- 1 
 	fi
 	SCHEME="$1" # Set a global variable to allow checking for chosen scheme later
-	if ((IBSHELL))
+	if [ "$IBSHELL" -gt 0 ]
 	then
 		color_codes=($ANSI_COLORS)
 	else
 		color_codes=($IRC_COLORS)
 	fi
-	for (( i=0; i < ${#COLORS_AVAILABLE[@]}; i++ ))
+	for (( i=0; i < ${#A_COLORS_AVAILABLE[@]}; i++ ))
 	do
-		eval "${COLORS_AVAILABLE[i]}=\"${color_codes[i]}\""
+		eval "${A_COLORS_AVAILABLE[i]}=\"${color_codes[i]}\""
 	done
 	IFS=","
-	script_colors=(${COLOR_SCHEMES[$1]})
+	script_colors=(${A_COLOR_SCHEMES[$1]})
 	IFS="$OIFS"
 	C1="${!script_colors[0]}"
 	C2="${!script_colors[1]}"
 	CN="${!script_colors[2]}"
-	((CSCHEME++))
+	((CSCHEME++)) ## note: why is this? ##
 }
 
 # Parse the null separated commandline under /proc/<pid passed in $1>/cmdline
 get_cmdline() 
 {
 	local i=0
-	if [[ ! -e /proc/$1/cmdline ]]
+	
+	if [ ! -e /proc/$1/cmdline ]
 	then
 		{ echo 0; return; }
 	fi
 	##print_screen_output "Marker"
 	##print_screen_output "\$1='$1' -=- $(< /proc/$1/cmdline)"
 	unset CMDL
-	while read -d $'\0' L && [[ $i -lt 32 ]]
+	while read -d $'\0' L && [ "$i" -lt 32 ]
 	do 
-		CMDL[i++]="$L"
+		CMDL[i++]="$L" ## note: make sure this is valid ##
 	done </proc/$1/cmdline
-	##print_screen_output "\$I='$I'"
-	if ! ((i))
+	##print_screen_output "\$i='$i'"
+	if [ "$i" -eq 0 ]
 	then
 		CMDL[0]=$(< /proc/$1/cmdline)
 		if [[ -n ${CMDL[0]} ]]
@@ -371,11 +374,11 @@ get_cmdline()
 # Get the parameters
 get_parameters() 
 {
-	if [[ -z $1 ]]
+	if [ -z "$1" ]
 	then
 		return 1
 	fi
-	while [[ -n $1 ]]
+	while [ -n "$1" ]
 	do
 		case $1 in
 		--crap)
@@ -385,7 +388,7 @@ get_parameters()
 			DEBUG=1
 			exec 2>&1
 			;;
-		-v|-v[1-9]|--verbose)
+		-v|-v[0-9]|--verbose)
 			if [[ ${#1} -eq 3 ]]
 			then
 				VERBOSITY_LEVEL="${1:2}"
@@ -398,7 +401,7 @@ get_parameters()
 					VERBOSITY_LEVEL="$1" 
 				fi
 			fi
-			echo "$VERBOSITY_LEVEL" | grep -q '^[1-4]$' || error_handler 4 "$VERBOSITY_LEVEL"
+			grep -q "^[0-${VERBOSITY_LEVELS}]$" <<< $VERBOSITY_LEVEL || error_handler 4 "$VERBOSITY_LEVEL"
 			;;
 		-U)
 			print_screen_output "Updating $SCRIPT_NAME now..."
@@ -407,15 +410,7 @@ get_parameters()
 			exit 0
 			;;
 		--version)
-			print_screen_output "InfoBash, the universal, portable, system info script for irc."
-			print_screen_output "Tested with Irssi, Xchat, Konversation, BitchX, KSirc, ircII,"
-			print_screen_output "Gaim/Pidgin, Weechat, KVIrc and Kopete."
-			print_screen_output "Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif <infobash@rebelhomicide.demon.nl>"
-			print_screen_output " "
-			print_screen_output "This program is free software; you can redistribute it and/or modify"
-			print_screen_output "it under the terms of the GNU General Public License as published by"
-			print_screen_output "the Free Software Foundation; either version 3 of the License, or"
-			print_screen_output "(at your option) any later version."
+			print_version_info
 			exit 0
 			;;
 		[0-9]|[0-9][0-9])
@@ -443,14 +438,32 @@ show_options()
 {
 	print_screen_output "$SCRIPT_NAME supports the following options:"
 	print_screen_output "--crap       Overrides defective or corrupted distro ID file"
+	print_screen_output ""
 	print_screen_output "-d --debug   Triggers script debugger output."
-	print_screen_output "-v -v[1-9]   Script verbosity levels."
-	print_screen_output " --verbose    "
+	print_screen_output ""
+	print_screen_output "-v -v[0-${VERBOSITY_LEVELS}]   Script verbosity levels. Supported levels: 0 - ${VERBOSITY_LEVELS}"
+	print_screen_output " --verbose   Examples: $SCRIPT_NAME -v | $SCRIPT_NAME -v 4 | $SCRIPT_NAME --verbose 3"
+	print_screen_output ""
 	print_screen_output "-U           Autoupdate script. Note: if you installed as root, you"
 	print_screen_output "             must be root to update, otherwise user is fine."
+	print_screen_output ""
 	print_screen_output "--version    $SCRIPT_NAME information."
+	print_screen_output ""
 	print_screen_output "0-99         Sets color scheme to use. This will be changed soon."
 	print_screen_output ""
+}
+
+print_version_info()
+{
+	print_screen_output "InfoBash, the universal, portable, system info script for irc."
+	print_screen_output "Tested with Irssi, Xchat, Konversation, BitchX, KSirc, ircII,"
+	print_screen_output "Gaim/Pidgin, Weechat, KVIrc and Kopete."
+	print_screen_output "Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif <infobash@rebelhomicide.demon.nl>"
+	print_screen_output " "
+	print_screen_output "This program is free software; you can redistribute it and/or modify"
+	print_screen_output "it under the terms of the GNU General Public License as published by"
+	print_screen_output "the Free Software Foundation; either version 3 of the License, or"
+	print_screen_output "(at your option) any later version."
 }
 
 ########################################################################
@@ -464,7 +477,7 @@ show_options()
 # Determine where infobash was run from
 get_start_source() 
 {
-	local irc_client_path='' irc_client_path_lower='' non_native_konvi=''
+	local irc_client_path='' irc_client_path_lower='' non_native_konvi='' i=''
 	
 	if tty >/dev/null
 	then
@@ -558,9 +571,9 @@ get_start_source()
 			*perl*)
 				unset IRC_CLIENT_VERSION	# KSirc is one of the possibilities now. KSirc is a wrapper around dsirc, a perl client
 				get_cmdline $PPID
-				for (( I=0; I<=$CMDLMAX; I++ ))
+				for (( i=0; i <= $CMDLMAX; i++ ))
 				do
-					case ${CMDL[I]} in
+					case ${CMDL[i]} in
 						*dsirc*) 
 							IRC_CLIENT="KSirc"
 							# Dynamic runpath detection is too complex with KSirc, because KSirc is started from
@@ -576,7 +589,7 @@ get_start_source()
 							;;
 					esac
 				done 
-				if [[ -z $IRC_CLIENT_VERSION ]]
+				if [ -z "$IRC_CLIENT_VERSION" ]
 				then
 					IRC_CLIENT="Unknown Perl client"
 				fi
@@ -590,7 +603,7 @@ get_start_source()
 				unset IRC_CLIENT_VERSION
 				;;
 		esac
-		if [[ $SHOW_IRC -lt 2 ]]
+		if [ "$SHOW_IRC" -lt 2 ]
 		then
 			unset IRC_CLIENT_VERSION
 		fi
@@ -635,11 +648,9 @@ set_calculated_variables()
 	##/bin/sh -c 'echo "PATH in subshell=\"$PATH\""' 
 	
 	# Do this after sourcing of config overrides so user can customize banwords
-	NORMAL_BANS=$( make_bans "${NORMAL_BANS[@]}" ) # Contrary to my previous belief, "${ARR[@]}" passes a quoted list, not one string
-	CPU_BANS=$( make_bans "${CPU_BANS[@]}" )
-	##echo "NORMAL_BANS='$NORMAL_BANS'"
-	
-	LSPCI=$( lspci -v | awk '{ gsub(/\(prog-if[^)]*\)/,""); print }' )
+	A_NORMAL_BANS=$( make_bans "${A_NORMAL_BANS[@]}" ) # Contrary to my previous belief, "${ARR[@]}" passes a quoted list, not one string
+	A_CPU_BANS=$( make_bans "${A_CPU_BANS[@]}" )
+	##echo "A_NORMAL_BANS='$A_NORMAL_BANS'"
 }
 
 
@@ -654,21 +665,21 @@ get_distro_data()
 	unset DISTRO
 	shopt -s nullglob
 	cd /etc
-	DISTRO_GLOB=(*[-_]{release,version})
+	A_DISTRO_GLOB=(*[-_]{release,version})
 	cd "$OLDPWD"
 	shopt -u nullglob
 	
-	if (( ${#DISTRO_GLOB[@]} == 1 ))
+	if (( ${#A_DISTRO_GLOB[@]} == 1 ))
 	then
-		DISTRO_FILE="${DISTRO_GLOB}"
-	elif (( ${#DISTRO_GLOB[@]} > 1 ))
+		DISTRO_FILE="${A_DISTRO_GLOB}"
+	elif (( ${#A_DISTRO_GLOB[@]} > 1 ))
 	then
 		for i in $DISTROS_DERIVED $DISTROS_PRIMARY
 		do
 			# Only echo works with ${var[@]}, not print_screen_output() or script_debugger()
 			# This is a known bug, search for the word "strange" inside comments
-			# echo "i='$i' DISTRO_GLOB[@]='${DISTRO_GLOB[@]}'"
-			if [[ " ${DISTRO_GLOB[@]} " == *" $i "* ]]
+			# echo "i='$i' A_DISTRO_GLOB[@]='${A_DISTRO_GLOB[@]}'"
+			if [[ " ${A_DISTRO_GLOB[@]} " == *" $i "* ]]
 			then
 				DISTRO_FILE="${i}"
 				break
@@ -686,17 +697,20 @@ get_distro_data()
 														gsub(/^ +| +$/,""); 
 														print }' "/etc/${DISTRO_FILE}" )
 	fi
-	((${#DISTRO} > 80 && ! CRAP)) && DISTRO="${RED}/etc/${DISTRO_FILE} corrupted, use --crap to override${NORMAL}"
+	if (( ${#DISTRO} > 80 && ! CRAP ))
+	then
+		DISTRO="${RED}/etc/${DISTRO_FILE} corrupted, use --crap to override${NORMAL}"
+	fi
+	## note: figure out a more readable way to achieve whatever is intended here ##
 	: ${DISTRO:=Unknown distro o_O}
 }
 
 get_cpu_data()
 {
-	local i='' j='' cpu_array_nu=''
-	OSKERN=$( uname -a | gawk '{print $1,$3,$(NF-1)}' )
+	local i='' j='' cpu_array_nu='' a_cpu_working='' multi_cpu=''
 
 	IFS=$'\n'
-	CPU=($(gawk -F': ' '
+	A_CPU_DATA=($(gawk -F': ' '
 	# TAKE NOTE: \t+ will work for /proc/cpuinfo, but SOME ARBITRARY FILE used for TESTING might contain SPACES!
 	# Therefore PATCH to use [ \t]+ when TESTING!
 	/^processor\t+:/ { nr = $NF }
@@ -741,31 +755,32 @@ get_cpu_data()
 	
 	IFS="$OIFS"
 	
-	for (( i=0; i < ${#CPU[@]} - 1; i++))
+	for (( i=0; i < ${#A_CPU_DATA[@]} - 1; i++ ))
 	do
 		IFS=","
-		CPUTMP=(${CPU[i]})
+		a_cpu_working=(${A_CPU_DATA[i]})
 		IFS="$OIFS"
-		unset CPU[i]
-		CPUTMP[0]=$( sanitize_characters NORMAL_BANS "${CPUTMP[0]}" )
-		CPUTMP[0]=$( sanitize_characters CPU_BANS "${CPUTMP[0]}" )
+		unset A_CPU_DATA[i]
+		a_cpu_working[0]=$( sanitize_characters A_NORMAL_BANS "${a_cpu_working[0]}" )
+		a_cpu_working[0]=$( sanitize_characters A_CPU_BANS "${a_cpu_working[0]}" )
 		# I use all these loops so I can easily extend the cpu array created in the awk script above with more fields per cpu.
-		for (( j=0; j < ${#CPUTMP[@]}; j++ ))
+		for (( j=0; j < ${#a_cpu_working[@]}; j++ ))
 		do
-			if ((j))
+			if [ "$j" -gt 0 ]
 			then
-				CPU[i]="${CPU[i]},${CPUTMP[j]}"
+				A_CPU_DATA[i]="${A_CPU_DATA[i]},${a_cpu_working[j]}"
 			else
-				CPU[i]="${CPUTMP[j]}"
+				A_CPU_DATA[i]="${a_cpu_working[j]}"
 			fi
 		done
 	done
-	
-	if echo "${CPU[@]}" | grep -qi 'dual\|triple\|quad'
+	# test for multi core cpu present
+	multi_cpu=$( grep -i 'dual\|triple\|quad' <<< "${A_CPU_DATA[@]}" )
+	if [ -n "$multi_cpu" ]
 	then
 		NO_CPU_COUNT=1
 	else
-		case $(( ${#CPU[@]}-1 )) in 
+		case $(( ${#A_CPU_DATA[@]}-1 )) in 
 			2)
 				CPU2="Dual"
 				;;
@@ -776,7 +791,7 @@ get_cpu_data()
 				CPU2="Quad"
 				;;
 			[5-9]|[1-9][0-9]) 
-				CPU2="${#CPU[@]}x"
+				CPU2="${#A_CPU_DATA[@]}x"
 				;;
 			*) 
 				unset CPU2
@@ -785,19 +800,20 @@ get_cpu_data()
 	fi
 	
 	IFS=","
-	CPUTMP=(${CPU[0]})
+	a_cpu_working=(${A_CPU_DATA[0]})
 	IFS="$OIFS"
 	# For the short line
-	CPUMODEL="${CPU2}${CPU2+ }${CPUTMP[0]}" # clocked at [${CPU[${#CPU[@]}-1]}]"	# old CPU2
-	cpu_array_nu=$(( ${#CPU[@]} - 1 ))
-	CPUCLOCK="${CPU[$cpu_array_nu]}" # old CPU3
-	CPUFLAGS="${CPUTMP[3]}" # old CPU4
+	CPUMODEL="${CPU2}${CPU2+ }${a_cpu_working[0]}" # clocked at [${CPU[${#CPU[@]}-1]}]"	# old CPU2
+	# set count first, this avoids an syntax highlighting error with nested {{...}}
+	cpu_array_nu=$(( ${#A_CPU_DATA[@]} - 1 ))
+	CPUCLOCK="${A_CPU_DATA[$cpu_array_nu]}" # old CPU3
+	CPUFLAGS="${a_cpu_working[3]}" # old CPU4
 	# nx = AMD stack protection extensions
 	# lm = Intel 64bit extensions
 	# sse, sse2, pni = sse1,2,3 gfx extensions
 	# svm = AMD pacifica virtualization extensions
 	# vmx = Intel IVT (vanderpool) virtualization extensions
-	CPUFLAGS=$(echo "$CPUFLAGS" | awk '
+	CPUFLAGS=$( echo "$CPUFLAGS" | awk '
 	BEGIN {
 			RS=" "
 			ssel["sse"] = 1
@@ -824,7 +840,7 @@ get_cpu_data()
 	' )
 	
 	#grep -oE '\<(nx|lm|sse[0-9]?|pni|svm|vmx)\>' | tr '\n' ' '))
-	if [[ -z $CPUFLAGS ]]
+	if [ -z "$CPUFLAGS" ]
 	then
 		CPUFLAGS="-"
 	fi
@@ -832,18 +848,20 @@ get_cpu_data()
 
 get_hard_drive_data()
 {
-	for I in /proc/ide/ide*/hd*
+	local disk='' i=''
+	
+	for disk in /proc/ide/ide*/hd*
 	do 
-		if [[ -e $I/media && $( remove_erroneous_chars $I/media ) = disk ]]
+		if [[ -e $disk/media && $( remove_erroneous_chars $disk/media ) = disk ]]
 		then
 			# BUGFIX: Ran into a debian sarge kernel that did not have the "capacity" file in the hd* directories
-			if [[ ! -e $I/capacity ]]
+			if [[ ! -e $disk/capacity ]]
 			then  
 				CAP=0
 				break
 			fi
-			(( CAP+=$( remove_erroneous_chars $I/capacity ) ))
-			HDDMOD="${HDDMOD}${HDDMOD+,}$( remove_erroneous_chars $I/model )"
+			(( CAP+=$( remove_erroneous_chars $disk/capacity ) ))
+			HDDMOD="${HDDMOD}${HDDMOD+,}$( remove_erroneous_chars $disk/model )"
 		fi
 	done
 	
@@ -873,9 +891,9 @@ get_hard_drive_data()
 		' /proc/scsi/scsi))
 		IFS="$OIFS"
 	
-		for (( I=0; I < ${#THDD[@]}; I++ ))
+		for (( i=0; i < ${#THDD[@]}; i++ ))
 		do
-			HDDMOD="${HDDMOD}${HDDMOD+,}${THDD[I]}"
+			HDDMOD="${HDDMOD}${HDDMOD+,}${THDD[i]}"
 		done
 	fi
 	
@@ -889,14 +907,14 @@ get_hard_drive_data()
 	
 	##print_screen_output "HDDCAP1=\"$HDDCAP1\"  HDDCAP2=\"$HDDCAP2"" ; exit
 	HDD=0
-	for I in ${!HDDCAP*}
+	for i in ${!HDDCAP*}
 	do
-		if [[ ${!I} -gt $HDD ]]
+		if [[ ${!i} -gt $HDD ]]
 		then
-			HDD="${!I}"
+			HDD="${!i}"
 		fi
 	done 
-	if ((HDD))
+	if [ "$HDD" -gt 0 ]
 	then
 		HDDUSG=$( df | gawk '
 		p { 
@@ -939,17 +957,19 @@ get_processes_uptime()
 
 get_graphics_data()
 {
+	local i=''
+	
 	IFS=$'\n'
-	GFX=($( echo "$LSPCI" | gawk -F': ' '/VGA compatible controller/ { print $NF }' ))
+	A_GFX_DATA=($( echo "$LSPCI" | gawk -F': ' '/VGA compatible controller/ { print $NF }' ))
 	IFS="$OIFS"
-	for (( I=0; I < ${#GFX[@]}; I++ ))
+	for (( i=0; i < ${#GFX[@]}; i++ ))
 	do
-		GFX[I]=$( sanitize_characters NORMAL_BANS "${GFX[I]}" )
+		A_GFX_DATA[i]=$( sanitize_characters A_NORMAL_BANS "${A_GFX_DATA[i]}" )
 	done
 	
 	# GFXMEM is UNUSED at the moment, because it shows AGP aperture size, which is not necessarily equal to GFX memory..
 	# GFXMEM="size=[$(echo "$LSPCI" | gawk '/VGA/{while (!/^$/) {getline;if (/size=[0-9][0-9]*M/) {size2=gensub(/.*\[size=([0-9]+)M\].*/,"\\1","g",$0);if (size<size2){size=size2}}}}END{print size2}')M]"
-	if ((X))
+	if [ "$X" -gt 0 ]
 	then
 		# Added the two ?'s , because the resolution is now reported without spaces around the 'x', as in
 		# 1400x1050 instead of 1400 x 1050. Change as of X.org version 1.3.0
@@ -965,7 +985,7 @@ get_graphics_data()
 		}
 		' )	
 		
-		if [[ -z $RES ]]
+		if [ -z "$RES" ]
 		then
 			RES=$( xdpyinfo | gawk '/dimensions/ { print $2 }' )
 		fi
@@ -984,7 +1004,7 @@ get_graphics_data()
 		# Later on, the normal textual version string returned, e.g. like: X.Org version: 6.8.2
 		# A failover mechanism is in place. (if $XVERNUM is empty, the release number is parsed instead)
 		XVERNUM=$( xdpyinfo | awk '/version:/ { print $NF }' )
-		if [[ -z $XVERNUM ]]
+		if [ -z "$XVERNUM" ]
 		then
 			XVERNUM=$(xdpyinfo | gawk -F': +' '
 						BEGIN { IGNORECASE=1 } 
@@ -1002,7 +1022,7 @@ get_graphics_data()
 		XVER="$XVENDOR $XVERNUM"
 	
 		IFS=$'\n'
-		GLX=( $( glxinfo | gawk -F ': ' '
+		A_GFX_DATA=( $( glxinfo | gawk -F ': ' '
 		function join(arr, sep) {
 			s=""
 			i=flag=0
@@ -1034,14 +1054,14 @@ get_graphics_data()
 		}
 		' ) )
 		IFS="$OIFS"
-		GLXR="${GLX[0]}"
-		GLXV="${GLX[1]}"
-		GLXDR="${GLX[2]}"
+		GLXR="${A_GFX_DATA[0]}"
+		GLXV="${A_GFX_DATA[1]}"
+		GLXDR="${A_GFX_DATA[2]}"
 	
 		# GLXR=$(glxinfo | gawk -F ': ' 'BEGIN {IGNORECASE=1} /opengl renderer/ && $2 !~ /mesa/ {seen[$2]++} END {for (i in seen) {printf("%s ",i)}}')
 		#    GLXV=$(glxinfo | gawk -F ': ' 'BEGIN {IGNORECASE=1} /opengl version/ && $2 !~ /mesa/ {seen[$2]++} END {for (i in seen) {printf("%s ",i)}}')
 			
-		if [[ -z $GLXR || -z $GLXV ]]
+		if [ -z "$GLXR" -o -z "$GLXV" ]
 		then
 			MESA=1
 		fi
@@ -1052,22 +1072,17 @@ get_graphics_data()
 	fi
 }
 
-#### -------------------------------------------------------------------
-#### print and processing of output data
-#### -------------------------------------------------------------------
-
-print_networking_data()
+get_networking_data()
 {
-	local i='' long_network='' card_plural='s' card_one='(1) '
-	
-	IFS=$'\n' long_network=($( echo "$LSPCI" | gawk '
+	IFS=$'\n'
+	A_NETWORK_DATA=( $( echo "$LSPCI" | gawk '
 	BEGIN { IGNORECASE=1 }
 	/^[0-9a-f:.]+ (ethernet|network) (controller|bridge)/ || /^[0-9a-f:.]+ [^:]+: .*(ethernet|network).*$/ {
 		nic=gensub(/^[0-9a-f:.]+ [^:]+: (.+)$/,"\\1","g",$0)
 		gsub(/realtek semiconductor/, "Realtek", nic)
 		gsub(/davicom semiconductor/, "Davicom", nic)
 		gsub(/,/," ", nic)
-		gsub(/'"$NORMAL_BANS"'/, "", nic); gsub(/ [ ]+/," ", nic); gsub(/^ +| +$/,"", nic) 
+		gsub(/'"$A_NORMAL_BANS"'/, "", nic); gsub(/ [ ]+/," ", nic); gsub(/^ +| +$/,"", nic) 
 		# The doublequotes above are necessary because of the pipes in the variable.
 		eth[nic]++
 		while (getline && !/^$/) {
@@ -1094,198 +1109,247 @@ print_networking_data()
 			j++
 		}
 	}
-	'))
+	') )
 	IFS="$OIFS"
+}
 
-	if [[ -n ${long_network[@]} ]]
+#### -------------------------------------------------------------------
+#### print and processing of output data
+#### -------------------------------------------------------------------
+
+print_cpu_data()
+{
+	local cpu_data='' i='' a_cpu_working=''
+	
+	##print_screen_output "CPU[0]=\"${CPU[0]}\""
+	IFS=","
+	a_cpu_working=(${A_CPU_DATA[0]})
+	IFS="$OIFS" 
+	# Strange (and also some expected) behavior encountered.
+	# If print_screen_output() uses $1 as the parameter to output to the screen, 
+	# then passing "<text1> ${ARR[@]} <text2>"
+	# will output only <text1> and the first element of ARR. That "@" splits in elements and "*" _doesn't_, 
+	# is to be expected.
+	# However, that text2 is consecutively truncated is somewhat strange, so take note. 
+	# This has been confirmed by #bash on freenode.
+	# The above mentioned only emerges when using the debugging markers below
+	##print_screen_output "a_cpu_working=\"***${a_cpu_working[@]} $hostName+++++++\"----------"
+
+	if [[ -z ${a_cpu_working[2]} ]]
 	then
-		if [[ ${#long_network[@]} -le 1 ]]
+		a_cpu_working[2]="unknown"
+	fi
+
+	if [[ ${#A_CPU_DATA[@]} -gt 2 ]]
+	then
+		CPUNUM="${C1}(1)${C2} "
+	else
+		# Array CPU always has one element: max clockfreq found. Therefore -gt and not -ge
+		unset CPUNUM
+	fi
+	cpu_data=$( printf "${C1}%-${INDENT}s${C2} %s" "CPU Info" "${CPUNUM}${a_cpu_working[0]}" )
+	if [ "$VERBOSITY_LEVEL" -ge 3 ]
+	then
+		cpu_data=$( printf "%s${C2} %s %s ${C1}%s${CN}%s${C2} %s ${CN}%s" "$cpu_data" "${a_cpu_working[2]}" "cache" "flags" "(" "$CPUFLAGS" ")" )
+	fi
+	cpu_data=$( printf "%s ${C1}%s${C2} ${CN}%s${C2} %s ${CN}%s" "$cpu_data" "clocked at" "[" "${a_cpu_working[1]} MHz" "]" )
+	print_screen_output "$cpu_data"
+	
+	for (( i=1; i < ${#A_CPU_DATA[@]}-1; i++ ))
+	do
+		IFS=","
+		a_cpu_working=(${A_CPU_DATA[i]})
+		IFS="$OIFS"
+		cpu_data=$( printf "${C1}%-${INDENT}s${C2} %s" " " "${C1}($((i+1)))${C2} ${a_cpu_working[0]}" )
+		if [ "$VERBOSITY_LEVEL" -ge 3 ]
+		then
+			cpu_data=$( printf "%s${C2} %s %s ${C1}%s${CN}%s${C2} %s ${CN}%s" "$cpu_data" "${a_cpu_working[2]}" "cache" "flags" "(" "$CPUFLAGS" ")" )
+		fi
+		cpu_data=$( printf "%s ${C1}%s${C2} ${CN}%s${C2} %s ${CN}%s" "$cpu_data" "clocked at" "[" "${a_cpu_working[1]} MHz" "]" )
+		print_screen_output "$cpu_data"
+		if [ "$i" -gt 10 ]
+		then
+			break
+		fi
+	done
+}
+
+print_gfx_data()
+{
+	local gfx_data='' i=''
+	
+	if [[ ${#A_GFX_DATA[@]} -gt 1 ]]
+	then
+		i=1
+		while [[ -n ${GFX[i]} && $i -le 3 ]]
+		do
+			gfx_data=$( echo -ne " ${C1}Card $(($i+1))${C2} ${GFX[i]} " )
+			(( i++ ))
+		done
+	fi
+	gfx_data=$( printf "${C1}%-${INDENT}s${C2} %s" "Graphics Info" "${C1}Card 1${C2} ${A_GFX_DATA[0]}${gfx_data}" )
+	if [ "$X" -gt 0 ]
+	then
+		gfx_data="${gfx_data}$( echo -ne "${C1}  $XVER  ${CN}[${C2} ${RES} ${CN}]" )"
+	else
+		gfx_data="${gfx_data}$( echo -ne "${C1}  tty resolution ${CN}(${C2} ${RES} ${CN})" )"
+	fi
+	print_screen_output "$gfx_data"
+
+	if [ "$X" -gt 0 -a "$MESA" -eq 0 ]
+	then
+		#long_gfx="$( echo -ne "${INDENT}${C1}GLX Renderer${C2} ${GLXR}${CN} | ${C1}GLX Version${C2} ${GLXV}${CN}" )"
+		gfx_data=$( printf "${C1}%-${INDENT}s${C2} %s" " " "${C1}GLX Renderer${C2} ${GLXR}${CN} | ${C1}GLX Version${C2} ${GLXV}${CN}" )
+		if ((CRAP))
+		then
+			gfx_data="${gfx_data}$( echo -ne "${C1}Direct rendering${C2} ${GLXDR}${CN}" )"
+		fi
+		print_screen_output "$gfx_data"
+	fi
+}
+
+print_hard_disk_data()
+{
+	local hdd_data=''
+	local root_home_data="$( df -h -T | egrep '(/|/boot|/var|/home)$'  | C1=${C1} C2=${C2} awk '{print ENVIRON["C1"]"Partition:"ENVIRON["C2"], $7, ENVIRON["C1"]"- ", ENVIRON["C1"]"size:"ENVIRON["C2"], $3, ENVIRON["C1"]"used:"ENVIRON["C2"], $4, "(", $6, ")"}' )"
+	root_home_data=$( echo $root_home_data )
+
+	if [ "$VERBOSITY_LEVEL" -ge 2 ]
+	then
+		hdd_data="$( printf "${C1}%-${INDENT}s${C2} %s" "System Info" "${C1}HDD${C2} ${HDDMOD} ${C1}Size${C2} ${HDD} (${HDDUSG})${CN}" )"
+	else
+		hdd_data="$( printf "${C1}%-${INDENT}s${C2} %s" "System Info" "${C1}HDD Size${C2} ${HDD} (${HDDUSG})${CN}" )" 
+	fi
+	print_screen_output "$hdd_data"
+	
+	if [ "$VERBOSITY_LEVEL" -ge 4 ]
+	then
+		hdd_data=$( printf "${C1}%-${INDENT}s${C2} %s" " " "${root_home_data}" )
+		print_screen_output "$hdd_data"
+	fi
+}
+
+print_intro_data()
+{
+	local intro_data='' host_name=$( hostname )
+	
+	if [ "$SHOW_HOST" -gt 0 ]
+	then
+		intro_data=$( printf "${C1}%-${INDENT}s${C2} \"%s\"${C1} %s " "Host/Kernel/OS" "$host_name" "running" ) 
+	else
+		intro_data=$( printf "${C1}%-${INDENT}s${C2} " "OS/Kernel" )
+	fi
+	intro_data="$intro_data$( echo -ne "${C2}$CURRENT_KERNEL ${CN}[ ${C1}$DISTRO ${CN}]" )"
+	print_screen_output "$intro_data"
+}
+
+print_networking_data()
+{
+	local i='' card_plural='s' card_one='(1) '
+
+	if [[ -n ${A_NETWORK_DATA[@]} ]]
+	then
+		if [[ ${#A_NETWORK_DATA[@]} -le 1 ]]
 		then
 			card_plural=''
 			card_one=''
 		fi
 		i=0
-		print_screen_output "$( printf "${C1}%-${INDENT}s${C2} %s" "Network Card$card_plural" "${C1}$card_one${C2}${long_network[i]}" )"
-		while [[ -n ${long_network[++i]} ]]
+		print_screen_output "$( printf "${C1}%-${INDENT}s${C2} %s" "Network Card$card_plural" "${C1}$card_one${C2}${A_NETWORK_DATA[i]}" )"
+		while [[ -n ${A_NETWORK_DATA[++i]} ]]
 		do
-			print_screen_output "$( printf "${C1}%-${INDENT}s${C2} %s" " " "${C1}($(($i+1)))${C2} ${long_network[i]}" )"
+			print_screen_output "$( printf "${C1}%-${INDENT}s${C2} %s" " " "${C1}($(($i+1)))${C2} ${A_NETWORK_DATA[i]}" )"
 		done
 	fi
 }
 
+print_short_data()
+{
+	local short_data='' i=''
+	
+	#set_color_scheme 12
+	if [ "$IBSHELL" -eq 0 ]
+	then
+		for i in $C1 $C2 $CN
+		do
+			case "$i" in 
+				"$GREEN"|"$WHITE"|"$YELLOW"|"$CYAN") BGBLACK=1
+				;;
+			esac
+		done
+		if [ "$BGBLACK" -gt 0 ]
+		then
+			for i in C1 C2 CN
+			do
+				if [[ "${!i}" = "$NORMAL" ]]
+				then
+					declare $i="${!i}15,1"
+				else
+					declare $i="${!i},1"
+				fi
+			done
+			#C1="${C1},1"; C2="${C2},1"; CN="${CN},1"
+		fi
+	fi
+	short_data=$( echo -ne "${C1}CPU${CN}[${C2}${CPUMODEL} clocked at ${CPUCLOCK}${CN}]  ${C1}Kernel${CN}[${C2}${CURRENT_KERNEL}${CN}]  ${C1}Up${CN}[${C2}${FL2}${FL1}${UPT}${FL1}${CN}]  ${C1}Mem${CN}[${C2}${FL2}${FL1}${MEM}${FL1}${CN}]  ${C1}HDD${CN}[${C2}${FL2}${FL1}${HDD}($HDDUSG)${FL1}${CN}]  ${C1}Procs${CN}[${C2}${FL2}${FL1}${PROC}${FL1}${CN}]" )
+	
+	if [ "$SHOW_IRC" -gt 0 ]
+	then
+		short_data="${short_data}$( echo -ne "  ${C1}Client${CN}[${C2}${IRC_CLIENT}${IRC_CLIENT_VERSION}${CN}]" )"
+	fi
+	if [ "$SCHEME" -gt 0 ]
+	then
+		short_data="${short_data}$( echo -ne "$NORMAL" )"
+	fi
+	print_screen_output "$short_data"
+}
+
+print_system_data()
+{
+	local system_data='' 
+	
+	# Some code could look superfluous but BitchX doesn't like lines not ending in a newline. F*&k that bitch!
+	# long_last=$( echo -ne "${C1}Processes${C2} ${PROC}${CN} | ${C1}Uptime${C2} ${UPT}${CN} | ${C1}Memory${C2} ${MEM}${CN}" )
+	system_data=$( printf "${C1}%-${INDENT}s${C2} %s" " " "${C1}Processes${C2} ${PROC}${CN} | ${C1}Uptime${C2} ${UPT}${CN} | ${C1}Memory${C2} ${MEM}${CN}" )
+	
+	if [ "$RUNLVL" -gt 0 ]
+	then
+		system_data="${system_data}$( echo -ne " | ${C1}Runlevel${C2} ${RUNLVL}${CN}" )"
+	fi
+	
+	if [ "$SHOW_IRC" -gt 0 ]
+	then
+		system_data="${system_data}$( echo -ne " | ${C1}Client${C2} ${IRC_CLIENT}${IRC_CLIENT_VERSION}${CN}" )"
+	fi
+	system_data="${system_data}$( echo -ne " | ${C1}${MY_VERSION}" )"
+	
+	if [ "$SCHEME" -gt 0 ]
+	then
+		system_data="${system_data}$( echo -ne "${NORMAL}" )"
+	fi
+	print_screen_output "$system_data"
+}
+
 print_it_out()
 {
-	local hostName=$( hostname ) i=''
-	local long_gfx='' long_cpu='' long_last='' long_intro='' short_full=''
-	local root_home_data="$( df -h -T | egrep '(/|/boot|/var|/home)$'  | C1=${C1} C2=${C2} awk '{print ENVIRON["C1"]"Partition:"ENVIRON["C2"], $7, ENVIRON["C1"]"- ", ENVIRON["C1"]"size:"ENVIRON["C2"], $3, ENVIRON["C1"]"used:"ENVIRON["C2"], $4, "(", $6, ")"}' )"
-	root_home_data=$( echo $root_home_data )
+	case "$VERBOSITY_LEVEL" in
+		0)
+			print_short_data
+			;;
+		*)
+			print_intro_data
+			print_cpu_data
+			print_gfx_data
 	
-	if [ "$VERBOSITY_LEVEL" -gt 0 ]
-	then
-		if [ "$SHOW_HOST" -gt 0 ]
-		then
-			long_intro=$( printf "${C1}%-${INDENT}s${C2} \"%s\"${C1} %s " "Host/Kernel/OS" "$hostName" "running" ) 
-		else
-			long_intro=$( printf "${C1}%-${INDENT}s${C2} " "OS/Kernel" )
-		fi
-		long_intro="$long_intro$( echo -ne "${C2}$OSKERN ${CN}[ ${C1}$DISTRO ${CN}]" )"
-		print_screen_output "$long_intro"
-	
-		##print_screen_output "CPU[0]=\"${CPU[0]}\""
-		IFS=","
-		CPUTMP=(${CPU[0]})
-		IFS="$OIFS" 
-		# Strange (and also some expected) behavior encountered.
-		# If print_screen_output() uses $1 as the parameter to output to the screen, 
-		# then passing "<text1> ${ARR[@]} <text2>"
-		# will output only <text1> and the first element of ARR. That "@" splits in elements and "*" _doesn't_, 
-		# is to be expected.
-		# However, that text2 is consecutively truncated is somewhat strange, so take note. 
-		# This has been confirmed by #bash on freenode.
-		# The above mentioned only emerges when using the debugging markers below
-		##print_screen_output "CPUTMP=\"***${CPUTMP[@]} $hostName+++++++\"----------"
-	
-		if [[ -z ${CPUTMP[2]} ]]
-		then
-			CPUTMP[2]="unknown"
-		fi
-	
-		if [[ ${#CPU[@]} -gt 2 ]]
-		then
-			CPUNUM="${C1}(1)${C2} "
-		else
-			# Array CPU always has one element: max clockfreq found. Therefore -gt and not -ge
-			unset CPUNUM
-		fi
-		long_cpu=$( printf "${C1}%-${INDENT}s${C2} %s" "CPU Info" "${CPUNUM}${CPUTMP[0]}" )
-		if [ "$VERBOSITY_LEVEL" -ge 3 ]
-		then
-			long_cpu=$( printf "%s${C2} %s %s ${C1}%s${CN}%s${C2} %s ${CN}%s" "$long_cpu" "${CPUTMP[2]}" "cache" "flags" "(" "$CPUFLAGS" ")" )
-		fi
-		long_cpu=$( printf "%s ${C1}%s${C2} ${CN}%s${C2} %s ${CN}%s" "$long_cpu" "clocked at" "[" "${CPUTMP[1]} MHz" "]" )
-		print_screen_output "$long_cpu"
-		
-		for (( i=1; i < ${#CPU[@]}-1; i++ ))
-		do
-			IFS=","
-			CPUTMP=(${CPU[i]})
-			IFS="$OIFS"
-			long_cpu=$( printf "${C1}%-${INDENT}s${C2} %s" " " "${C1}($((i+1)))${C2} ${CPUTMP[0]}" )
-			if [[ $VERBOSITY_LEVEL -ge 3 ]]
+			if [ "$VERBOSITY_LEVEL" -ge 2 ]
 			then
-				long_cpu=$( printf "%s${C2} %s %s ${C1}%s${CN}%s${C2} %s ${CN}%s" "$long_cpu" "${CPUTMP[2]}" "cache" "flags" "(" "$CPUFLAGS" ")" )
+				print_networking_data
 			fi
-			long_cpu=$( printf "%s ${C1}%s${C2} ${CN}%s${C2} %s ${CN}%s" "$long_cpu" "clocked at" "[" "${CPUTMP[1]} MHz" "]" )
-			print_screen_output "$long_cpu"
-			if [ "$i" -gt 10 ]
-			then
-				break
-			fi
-		done
-		
-		if [[ ${#GFX[@]} -gt 1 ]]
-		then
-			i=1
-			while [[ -n ${GFX[i]} && $i -le 3 ]]
-			do
-				long_gfx=$( echo -ne " ${C1}Card $(($i+1))${C2} ${GFX[i]} " )
-				(( i++ ))
-			done
-		fi
-		long_gfx=$( printf "${C1}%-${INDENT}s${C2} %s" "Graphics Info" "${C1}Card 1${C2} ${GFX[0]}${long_gfx}" )
-		if ((X))
-		then
-			long_gfx="${long_gfx}$( echo -ne "${C1}  $XVER  ${CN}[${C2} ${RES} ${CN}]" )"
-		else
-			long_gfx="${long_gfx}$( echo -ne "${C1}  tty resolution ${CN}(${C2} ${RES} ${CN})" )"
-		fi
-		print_screen_output "$long_gfx"
-	
-		if ((X)) && ! ((MESA))
-		then
-			#long_gfx="$( echo -ne "${INDENT}${C1}GLX Renderer${C2} ${GLXR}${CN} | ${C1}GLX Version${C2} ${GLXV}${CN}" )"
-			long_gfx=$( printf "${C1}%-${INDENT}s${C2} %s" " " "${C1}GLX Renderer${C2} ${GLXR}${CN} | ${C1}GLX Version${C2} ${GLXV}${CN}" )
-			if ((CRAP))
-			then
-				long_gfx="${long_gfx}$( echo -ne "${C1}Direct rendering${C2} ${GLXDR}${CN}" )"
-			fi
-			print_screen_output "$long_gfx"
-		fi
-
-		if [ "$VERBOSITY_LEVEL" -ge 2 ]
-		then
-			print_networking_data
-		fi
-	
-		# Some code could look superfluous but BitchX doesn't like lines not ending in a newline. F*&k that bitch!
-		# long_last=$( echo -ne "${C1}Processes${C2} ${PROC}${CN} | ${C1}Uptime${C2} ${UPT}${CN} | ${C1}Memory${C2} ${MEM}${CN}" )
-		if [ "$VERBOSITY_LEVEL" -ge 2 ]
-		then
-			long_last="$( printf "${C1}%-${INDENT}s${C2} %s" "System Info" "${C1}HDD${C2} ${HDDMOD} ${C1}Size${C2} ${HDD} (${HDDUSG})${CN}" )"
-		else
-			long_last="$( printf "${C1}%-${INDENT}s${C2} %s" "System Info" "${C1}HDD Size${C2} ${HDD} (${HDDUSG})${CN}" )" 
-		fi
-		print_screen_output "$long_last"
-		if [ "$VERBOSITY_LEVEL" -gt 3 ]
-		then
-			long_last=$( printf "${C1}%-${INDENT}s${C2} %s" " " "${root_home_data}" )
-			print_screen_output "$long_last"
-			:
-		fi
-		
-		long_last=$( printf "${C1}%-${INDENT}s${C2} %s" " " "${C1}Processes${C2} ${PROC}${CN} | ${C1}Uptime${C2} ${UPT}${CN} | ${C1}Memory${C2} ${MEM}${CN}" )
-		if [[ $RUNLVL ]]
-		then
-			long_last="${long_last}$( echo -ne " | ${C1}Runlevel${C2} ${RUNLVL}${CN}" )"
-		fi
-		if ((SHOW_IRC))
-		then
-			long_last="${long_last}$( echo -ne " | ${C1}Client${C2} ${IRC_CLIENT}${IRC_CLIENT_VERSION}${CN}" )"
-		fi
-		long_last="${long_last}$( echo -ne " | ${C1}${MY_VERSION}" )"
-		
-		if ((SCHEME))
-		then
-			long_last="${long_last}$( echo -ne "${NORMAL}" )"
-		fi
-		print_screen_output "$long_last"
-	else
-		#set_color_scheme 12
-		if ! ((IBSHELL))
-		then
-			for i in $C1 $C2 $CN
-			do
-				case "$i" in 
-					"$GREEN"|"$WHITE"|"$YELLOW"|"$CYAN") BGBLACK=1
-					;;
-				esac
-			done
-			if ((BGBLACK))
-			then
-				for i in C1 C2 CN
-				do
-					if [[ "${!i}" = "$NORMAL" ]]
-					then
-						declare $i="${!i}15,1"
-					else
-						declare $i="${!i},1"
-					fi
-				done
-				#C1="${C1},1"; C2="${C2},1"; CN="${CN},1"
-			fi
-		fi
-		short_full=$( echo -ne "${C1}CPU${CN}[${C2}${CPUMODEL} clocked at ${CPUCLOCK}${CN}]  ${C1}Kernel${CN}[${C2}${OSKERN}${CN}]  ${C1}Up${CN}[${C2}${FL2}${FL1}${UPT}${FL1}${CN}]  ${C1}Mem${CN}[${C2}${FL2}${FL1}${MEM}${FL1}${CN}]  ${C1}HDD${CN}[${C2}${FL2}${FL1}${HDD}($HDDUSG)${FL1}${CN}]  ${C1}Procs${CN}[${C2}${FL2}${FL1}${PROC}${FL1}${CN}]" )
-		
-		if ((SHOW_IRC))
-		then
-			short_full="${short_full}$( echo -ne "  ${C1}Client${CN}[${C2}${IRC_CLIENT}${IRC_CLIENT_VERSION}${CN}]" )"
-		fi
-		if ((SCHEME))
-		then
-			short_full="${short_full}$( echo -ne "$NORMAL" )"
-		fi
-		print_screen_output "$short_full"
-	fi
+			
+			print_hard_disk_data
+			print_system_data
+			;;
+	esac
 }
 
 ########################################################################
@@ -1326,7 +1390,7 @@ fi
 get_parameters "$@"
 
 # If no colorscheme was set in the parameter handling routine, then set the default scheme
-if ! ((CSCHEME))
+if [ "$CSCHEME" -eq 0 ]
 then
 	set_color_scheme "$DEFAULT_SCHEME"
 fi
@@ -1339,6 +1403,7 @@ get_distro_data
 get_cpu_data
 get_hard_drive_data
 get_memory_data
+get_networking_data
 get_processes_uptime
 get_graphics_data
 
@@ -1346,11 +1411,9 @@ get_graphics_data
 print_it_out
 
 ## last steps
-if ((IBSHELL && SCHEME))
+if [ "$IBSHELL" -gt 0 -a "$SCHEME" -gt 0 ]
 then
 	echo -n "[0m"
 fi
 
-
 exit 0  # weechat's executor plugin forced me to do this, and rightfully so, because else the exit code from the last command is taken..
-
