@@ -1,7 +1,7 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.1.25
+####  version: 0.1.26
 ####  Date: October 28 2008
 ########################################################################
 ####  inxi is a fork of infobash, the original bash sys info script by locsmif
@@ -43,14 +43,18 @@ IRC_CLIENT_VERSION=''
 
 # Variable initializations: constants
 ALLUP=0         # inxi hasn't been 'booted' yet.
+CRAP=0		# New parameter
 DBI=0           # Debug Buffer Index, index into a debug buffer storing debug messages until infobash is 'all up'
+DCOPOBJ="default"
 DEBUG=0         # Set levels from 1-10
 DEBUG_FLOOD=0   # Debug flood override: toggle on to allow long debug output
 DEFAULT_SCHEME=2	# Defaults to 2, make this 1 for normal, 0 for no colorcodes at all. Set to any other valid scheme you like. Same as runtime parameter.
+FLAG=0		# A throw-away 'flag' variable intended to be used throughout infobash
 IBSHELL=0	# Running in a shell? Defaults to false, and is determined later.
 INDENT=14	# Default indentation level
 KONVI=0 # default to false, no konversation found
 NO_CPU_COUNT=0	# Wether or not the string "dual" or similar is found in cpuinfo output. If so, avoid dups.
+PARAMETER_LIMIT=30	# This is a variable that controls how many parameters infobash will parse in a /proc/<pid>/cmdline file before stopping.
 SHOW_HOST=1	# Set this to 0 to avoid printing the hostname 
 SHOW_IRC=2	# SHOW_IRC=1 to avoid showing the irc client version number, or SHOW_IRC=0 to disable client information completely.
 VERBOSITY_LEVEL=0		# Verbosity level defaults to 0, this can also be set with -v, -v2, -v3, etc as a parameter.
@@ -114,12 +118,10 @@ DISTROS_BLIST="debian_version ubuntu_version"
 # 00000000  01 01 6f 6e 65 20 74 77  6f 0a                    |..one two.|
 NORMAL_BANS=( corporation communications technologies technology group $'\2'"\<ltd\>" ltd. $'\2'"\<inc\>" inc. $'\2'\<co\> co. "(tm)" "(r)" $'\2'"\(rev ..\)" )
 CPU_BANS=( cpu processor $'\2'"[0-9.]+ *[MmGg][Hh][Zz]" )
+
+
 EXTRA_PATH="/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin" # Extra path variable to make execute failures less likely, merged below
-PARAMETER_LIMIT=30	# This is a variable that controls how many parameters infobash will parse in a /proc/<pid>/cmdline file before stopping.
-CRAP=0		# New parameter
-FLAG=0		# A throw-away 'flag' variable intended to be used throughout infobash
 KONVI_CFG="konversation/scripts/$SCRIPT_NAME.conf" # relative path to $(kde-config --path data)
-DCOPOBJ="default"
 
 # Source global config overrides
 if [[ -s /etc/$SCRIPT_NAME.conf ]]
@@ -211,27 +213,27 @@ script_debugger()
 # but that only works if infobash is being run as a konversation script to begin with
 print_screen_output() 
 {
-	if (( DEBUG > 5 ))
+	if [ "$DEBUG" -gt 5 ]
 	then
-# 		if (( KONVI ))
-# 		then
-# 			dcop "$DCPORT" "$DCOPOBJ" print_screen_output "$DCSERVER" "$DCTARGET" "konvi='$KONVI'  saying : '$@'"
-# 		else
-# 			echo "konvi='$KONVI'  saying : '$@'"
-# 		fi
-		echo "konvi='$KONVI'  saying : '$@'"
+		if [ "$KONVI" -eq 1 ]
+		then
+			dcop "$DCPORT" "$DCOPOBJ" print_screen_output "$DCSERVER" "$DCTARGET" "konvi='$KONVI'  saying : '$@'"
+		else
+			echo "konvi='$KONVI'  saying : '$@'"
+		fi
+		#echo "konvi='$KONVI'  saying : '$@'"
 		#((KONVI)) && dcop "$DCPORT" "$DCOPOBJ" print_screen_output "$DCSERVER" "$DCTARGET" "konvi='$KONVI'  saying : '$@'" || echo "konvi='$KONVI'  saying : '$@'"
 	fi
 	#((KONVI)) && dcop $DCPORT Konversation print_screen_output $DCSERVER "$DCTARGET" "$1" || echo -ne "$1\n"
 
-# 	if ((KONVI))
-# 	then
-# 		dcop "$DCPORT" "$DCOPOBJ" print_screen_output "$DCSERVER" "$DCTARGET" "$1"
-# 	else
-# 		echo -ne "$1\n"
-# 	fi
+	if [ "$KONVI" -eq 1 ]
+	then
+		dcop "$DCPORT" "$DCOPOBJ" print_screen_output "$DCSERVER" "$DCTARGET" "$1"
+	else
+		echo -ne "$1\n"
+	fi
 	#((KONVI)) && dcop "$DCPORT" "$DCOPOBJ" print_screen_output "$DCSERVER" "$DCTARGET" "$1" || echo -ne "$1\n"
-	echo -ne "$1\n"
+	# echo -ne "$1\n"
 }
 
 remove_erroneous_chars()
@@ -444,7 +446,7 @@ get_parameters()
 # Determine where infobash was run from
 get_start_source() 
 {
-	local ircClientPath='' ircClientPathLower='' pidOfKonvi=''
+	local irc_client_path='' irc_client_path_lower='' non_native_konvi=''
 	
 	if tty >/dev/null
 	then
@@ -453,23 +455,30 @@ get_start_source()
 		IBSHELL=1
 	elif [[ -n $PPID && -f /proc/$PPID/exe ]]
 	then
-		ircClientPath=$( readlink /proc/$PPID/exe )
+		irc_client_path=$( readlink /proc/$PPID/exe )
 		# this handles the problem with konversation reporting itself as perl, which was missed because
 		# when konversation starts infobash from inside itself, as a script, the parent is konversation, not perl
-		if [ -z "$( grep -i 'konversation' <<< $ircClientPath )" -a -n "$( grep -i 'perl' <<< $ircClientPath )" -a -n "$( pidof konversation )" ]
+		if [ -z "$( grep -i 'konversation' <<< $irc_client_path )" -a -n "$( grep -i 'perl' <<< $irc_client_path )" -a -n "$( pidof konversation )" ]
 		then
-			ircClientPath=$( which konversation )
+			irc_client_path=$( which konversation )
+			non_native_konvi='true'
 		fi
-		ircClientPathLower=$( tr '[:upper:]' '[:lower:]' <<< $ircClientPath )
+		irc_client_path_lower=$( tr '[:upper:]' '[:lower:]' <<< $irc_client_path )
 		
-		case $ircClientPathLower in
+		case $irc_client_path_lower in
 			*irssi-text*|*irssi*)
-				IRC_CLIENT_VERSION=" $( $ircClientPath -v | gawk 'NR == 1 { print $2 }' )"
+				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 { print $2 }' )"
 				IRC_CLIENT="Irssi"
 				;;
 			*konversation*)
-				KONVI=1
-				IRC_CLIENT_VERSION=" $( $ircClientPath -v | gawk '/Konversation:/ { for (i=2;i<=NF;i++) { if (i == NF) { print $i } else { printf $i" " } } exit }' )"
+				# this is necessary to avoid the dcop errors from starting inxi as a /cmd started script
+				if [ "$non_native_konvi" == 'true' ]
+				then
+					KONVI=2
+				else
+					KONVI=1
+				fi
+				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk '/Konversation:/ { for (i=2;i<=NF;i++) { if (i == NF) { print $i } else { printf $i" " } } exit }' )"
 				T=($IRC_CLIENT_VERSION)
 				if [[ ${T[0]} == *+* ]]
 				then
@@ -494,34 +503,34 @@ get_start_source()
 				IRC_CLIENT="Konversation"
 				;; 
 			*xchat*)
-				IRC_CLIENT_VERSION=" $( $ircClientPath -v | gawk 'NR == 1 { print $2 }' )"
+				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 { print $2 }' )"
 				IRC_CLIENT="X-Chat"
 				;;
 			*bitchx*)
-				IRC_CLIENT_VERSION=" $( $ircClientPath -v | gawk '
+				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk '
 				/Version/ { a=tolower($2); gsub(/[()]|bitchx-/,"",a); print a; exit }
 				$2 == "version" { a=tolower($3); sub(/bitchx-/,"",a); print a; exit }
 				' )" 
 				IRC_CLIENT="BitchX"
 				;;
 			*ircii*)
-				IRC_CLIENT_VERSION=" $( $ircClientPath -v | gawk 'NR == 1 { print $3 }' )"
+				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 { print $3 }' )"
 				IRC_CLIENT="ircII"
 				;;		
 			*gaim*)
-				IRC_CLIENT_VERSION=" $( $ircClientPath -v | gawk 'NR == 1 { print $2 }' )"
+				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 { print $2 }' )"
 				IRC_CLIENT="Gaim"
 				;;				
 			*pidgin*)
-				IRC_CLIENT_VERSION=" $( $ircClientPath -v | gawk 'NR == 1 { print $2 }' )"
+				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 { print $2 }' )"
 				IRC_CLIENT="Pidgin"
 				;;
 			*weechat-curses*)
-				IRC_CLIENT_VERSION=" $( $ircClientPath -v) "
+				IRC_CLIENT_VERSION=" $( $irc_client_path -v) "
 				IRC_CLIENT="Weechat"
 				;;
 			*kvirc*)
-				IRC_CLIENT_VERSION=" $( $ircClientPath -v 2>&1 | gawk '{ for (i=2;i<=NF;i++) { if (i==NF) print $i; else printf $i" " }; exit }' )"
+				IRC_CLIENT_VERSION=" $( $irc_client_path -v 2>&1 | gawk '{ for (i=2;i<=NF;i++) { if (i==NF) print $i; else printf $i" " }; exit }' )"
 				IRC_CLIENT="KVIrc"
 				;;
 			*kopete*)
@@ -559,7 +568,7 @@ get_start_source()
 				IRC_CLIENT="Shell wrapper"
 				;;
 			*)
-				IRC_CLIENT="Unknown : ${ircClientPath##*/}"
+				IRC_CLIENT="Unknown : ${irc_client_path##*/}"
 				unset IRC_CLIENT_VERSION
 				;;
 		esac
@@ -614,35 +623,6 @@ set_calculated_variables()
 	LSPCI=$( lspci -v | awk '{ gsub(/\(prog-if[^)]*\)/,""); print }' )
 }
 
-# note, this isn't working as intended, dcop isputting out errors, but who cares
-# for now skipping all dcop stuff
-set_konversation()
-{
-	local kde_config=''
-
-	if ((KONVI))
-	then
-# 		DCPORT="$1"
-# 		DCSERVER="$2"
-# 		DCTARGET="$3"
-# 		shift 3
-		# The section below is on request of Argonel from the Konversation developer team:
-		# it sources config files like $HOME/.kde/share/apps/konversation/scripts/inxi.conf
-		IFS=":"
-		for kde_config in $( kde-config --path data )
-		do
-			if [[ -r ${kde_config}${KONVI_CFG} ]]
-			then 
-				source "${kde_config}${KONVI_CFG}"
-				break
-			fi
-		done
-		IFS="$OIFS"
-	fi
-# 	print_screen_output "DCPORT: $DCPORT"
-# 	print_screen_output "DCSERVER: $DCSERVER"
-# 	print_screen_output "DCTARGET: $DCTARGET"
-}
 
 #### -------------------------------------------------------------------
 #### get data types
@@ -1274,9 +1254,30 @@ check_script_depends
 
 get_start_source
 
-# note: this didn't work, dcop kept throwing out errors, I think this only works
-# if it's run from inside konversation as a script builtin or something
-set_konversation
+# note: this only works if it's run from inside konversation as a script builtin or something
+# only do this if inxi has been started as a konversation script, otherwise bypass this
+if [ "$KONVI" -eq 1 ]
+then
+	DCPORT="$1"
+	DCSERVER="$2"
+	DCTARGET="$3"
+	shift 3
+	# The section below is on request of Argonel from the Konversation developer team:
+	# it sources config files like $HOME/.kde/share/apps/konversation/scripts/inxi.conf
+	IFS=":"
+	for kde_config in $( kde-config --path data )
+	do
+		if [[ -r ${kde_config}${KONVI_CFG} ]]
+		then 
+			source "${kde_config}${KONVI_CFG}"
+			break
+		fi
+	done
+	IFS="$OIFS"
+fi
+# 	print_screen_output "DCPORT: $DCPORT"
+# 	print_screen_output "DCSERVER: $DCSERVER"
+# 	print_screen_output "DCTARGET: $DCTARGET"
 
 # "$@" passes every parameter separately quoted, "$*" passes all parameters as one quoted parameter.
 get_parameters "$@"
