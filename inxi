@@ -38,6 +38,9 @@
 ## Variable initializations: null values
 COLOR_SCHEME_SET=''
 COLOR_SCHEME=''
+CPU_MODEL=''
+CPU_CLOCK=''
+CPU_FLAGS=''
 IRC_CLIENT=''
 IRC_CLIENT_VERSION=''
 
@@ -56,7 +59,6 @@ B_X_RUNNING='false'
 # Variable initializations: constants
 ALLUP=0         # inxi hasn't been 'booted' yet.
 CRAP=0		# New parameter
-CURRENT_KERNEL=$( uname -a | gawk '{print $1,$3,$(NF-1)}' )
 DBI=0           # Debug Buffer Index, index into a debug buffer storing debug messages until inxi is 'all up'
 DCOPOBJ="default"
 DEBUG=0         # Set levels from 1-10
@@ -67,7 +69,7 @@ FLAG=0		# A throw-away 'flag' variable intended to be used throughout inxi
 INDENT=10	# Default indentation level
 KONVI=0 # default to false, no konversation found
 LSPCI=$( lspci -v | awk '{ gsub(/\(prog-if[^)]*\)/,""); print }' )
-NO_CPU_COUNT=0	# Wether or not the string "dual" or similar is found in cpuinfo output. If so, avoid dups.
+# NO_CPU_COUNT=0	# Wether or not the string "dual" or similar is found in cpuinfo output. If so, avoid dups.
 PARAMETER_LIMIT=30	# This is a variable that controls how many parameters inxi will parse in a /proc/<pid>/cmdline file before stopping.
 SCHEME=0 # set default scheme
 SHOW_IRC=2	# SHOW_IRC=1 to avoid showing the irc client version number, or SHOW_IRC=0 to disable client information completely.
@@ -172,6 +174,9 @@ error_handler()
 			;;
 		7)
 			print_screen_output "$SCRIPT_NAME: unknown parameter: $2" 
+			;;
+		8)
+			print_screen_output "$SCRIPT_NAME: the self-updater failed, wget exited with error: $2. You probably need to be root." 
 			;;
 		*) 
 			print_screen_output "$SCRIPT_NAME: error unknown: $@" 
@@ -397,11 +402,13 @@ get_parameters()
 			;;
 		-U)
 			print_screen_output "Updating $SCRIPT_NAME now..."
-			wget -O $SCRIPT_PATH/$SCRIPT_NAME http://techpatterns.com/downloads/distro/$SCRIPT_NAME
-			print_screen_output "To run the new version, just start $SCRIPT_NAME again."
-			exit 0
+			wget -O $SCRIPT_PATH/$SCRIPT_NAME http://techpatterns.com/downloads/distro/$SCRIPT_NAME || error_handler 8 "$?"
+			if [ "$?" -eq 0 ];then
+				print_screen_output "To run the new version, just start $SCRIPT_NAME again."
+				exit 0
+			fi
 			;;
-		--version)
+		-V|--version)
 			print_version_info
 			exit 0
 			;;
@@ -426,6 +433,7 @@ get_parameters()
 	done
 }
 
+## print out help menu
 show_options()
 {
 	print_screen_output "$SCRIPT_NAME supports the following options:"
@@ -445,6 +453,7 @@ show_options()
 	print_screen_output ""
 }
 
+## print out version information for -V/--version
 print_version_info()
 {
 	print_screen_output "InfoBash, the universal, portable, system info script for irc."
@@ -466,7 +475,7 @@ print_version_info()
 #### initial startup stuff
 #### ------------------------------------------------------------------- 
 
-# Determine where inxi was run from
+# Determine where inxi was run from, set IRC_CLIENT and IRC_CLIENT_VERSION
 get_start_source() 
 {
 	local irc_client_path='' irc_client_path_lower='' non_native_konvi='' i=''
@@ -601,6 +610,8 @@ get_start_source()
 	fi
 }
 
+## this is a mishmash and will be mostly moved to other places over time, for now
+## it's just a holder for some misc stuff that has to happen
 set_calculated_variables()
 {
 	local path='' sys_path='' added_path=''
@@ -642,6 +653,7 @@ set_calculated_variables()
 #### get data types
 #### -------------------------------------------------------------------
 
+## return value cpu core count string, this helps resolve the multi redundant lines of old style output
 get_cpu_core_count()
 {
 	## Because of the upcoming release of cpus with core counts over 6, a count of cores is given after Deca (10)
@@ -672,6 +684,7 @@ get_cpu_core_count()
 	echo "$core_count"
 }
 
+## working, will be replaced by new trash80 stuff
 get_cpu_data()
 {
 	local i='' j='' cpu_array_nu='' a_cpu_working='' multi_cpu=''
@@ -740,45 +753,48 @@ get_cpu_data()
 			fi
 		done
 	done
+	## not using this now, replaced by new get_core_count, but if we need this in the future
+	## it will be in modules/legacy, for now leaving it here
 	# test for multi core cpu present
-	multi_cpu=$( grep -i 'dual\|triple\|quad' <<< "${A_CPU_DATA[@]}" )
-	if [ -n "$multi_cpu" ];then
-		NO_CPU_COUNT=1
-	else
-		case $(( ${#A_CPU_DATA[@]}-1 )) in 
-			2)
-				CPU2="Dual"
-				;;
-			3)
-				CPU2="Triple"
-				;;
-			4)
-				CPU2="Quad"
-				;;
-			[5-9]|[1-9][0-9]) 
-				CPU2="${#A_CPU_DATA[@]}x"
-				;;
-			*) 
-				unset CPU2
-				;;
-		esac
-	fi
+# 	multi_cpu=$( grep -i 'dual\|triple\|quad' <<< "${A_CPU_DATA[@]}" )
+# 	if [ -n "$multi_cpu" ];then
+# 		NO_CPU_COUNT=1
+# 	else
+# 		case $(( ${#A_CPU_DATA[@]}-1 )) in 
+# 			2)
+# 				CPU2="Dual"
+# 				;;
+# 			3)
+# 				CPU2="Triple"
+# 				;;
+# 			4)
+# 				CPU2="Quad"
+# 				;;
+# 			[5-9]|[1-9][0-9]) 
+# 				CPU2="${#A_CPU_DATA[@]}x"
+# 				;;
+# 			*) 
+# 				unset CPU2
+# 				;;
+# 		esac
+# 	fi
 	
 	IFS=","
 	a_cpu_working=(${A_CPU_DATA[0]})
 	IFS="$OIFS"
 	# For the short line
-	CPUMODEL="${CPU2}${CPU2+ }${a_cpu_working[0]}" # clocked at [${CPU[${#CPU[@]}-1]}]"	# old CPU2
+	# CPU_MODEL="${CPU2}${CPU2+ }${a_cpu_working[0]}" # clocked at [${CPU[${#CPU[@]}-1]}]"	# old CPU2
+	CPU_MODEL="${a_cpu_working[0]}"
 	# set count first, this avoids an syntax highlighting error with nested {{...}}
 	cpu_array_nu=$(( ${#A_CPU_DATA[@]} - 1 ))
-	CPUCLOCK="${A_CPU_DATA[$cpu_array_nu]}" # old CPU3
-	CPUFLAGS="${a_cpu_working[3]}" # old CPU4
+	CPU_CLOCK="${A_CPU_DATA[$cpu_array_nu]}" # old CPU3
+	CPU_FLAGS="${a_cpu_working[3]}" # old CPU4
 	# nx = AMD stack protection extensions
 	# lm = Intel 64bit extensions
 	# sse, sse2, pni = sse1,2,3 gfx extensions
 	# svm = AMD pacifica virtualization extensions
 	# vmx = Intel IVT (vanderpool) virtualization extensions
-	CPUFLAGS=$( echo "$CPUFLAGS" | awk '
+	CPU_FLAGS=$( echo "$CPU_FLAGS" | awk '
 	BEGIN {
 			RS=" "
 			ssel["sse"] = 1
@@ -805,11 +821,12 @@ get_cpu_data()
 	' )
 	
 	#grep -oE '\<(nx|lm|sse[0-9]?|pni|svm|vmx)\>' | tr '\n' ' '))
-	if [ -z "$CPUFLAGS" ];then
-		CPUFLAGS="-"
+	if [ -z "$CPU_FLAGS" ];then
+		CPU_FLAGS="-"
 	fi
 }
 
+## return distro name/id if found
 get_distro_data()
 {
 	local i='' distro='' distro_file='' a_distro_glob=''
@@ -853,6 +870,7 @@ get_distro_data()
 	echo "$distro"
 }
 
+## create array of gfx cards installed on system
 get_graphics_card_data()
 {
 	local i=''
@@ -869,6 +887,7 @@ get_graphics_card_data()
 	# GFXMEM="size=[$(echo "$LSPCI" | gawk '/VGA/{while (!/^$/) {getline;if (/size=[0-9][0-9]*M/) {size2=gensub(/.*\[size=([0-9]+)M\].*/,"\\1","g",$0);if (size<size2){size=size2}}}}END{print size2}')M]"
 }
 
+## create array of glx data
 get_graphics_glx_data()
 {
 	if [ "$B_X_RUNNING" == 'true' ];then
@@ -905,9 +924,13 @@ get_graphics_glx_data()
 		}
 		' ) )
 		IFS="$OIFS"
+
+		# GLXR=$(glxinfo | gawk -F ': ' 'BEGIN {IGNORECASE=1} /opengl renderer/ && $2 !~ /mesa/ {seen[$2]++} END {for (i in seen) {printf("%s ",i)}}')
+		#    GLXV=$(glxinfo | gawk -F ': ' 'BEGIN {IGNORECASE=1} /opengl version/ && $2 !~ /mesa/ {seen[$2]++} END {for (i in seen) {printf("%s ",i)}}')
 	fi
 }
 
+## return screen resolution / tty resolution
 get_graphics_res_data()
 {
 	local screen_resolution=''
@@ -944,7 +967,8 @@ get_graphics_agp_data()
 	## not used currently
 	agp_module=$( gawk '/agp/ && !/agpgart/ && $3 > 0 { print(gensub(/(.*)_agp.*/,"\\1","g",$1)) }' /proc/modules )
 }
-	
+
+## create array of x vendor/version data
 get_graphics_x_data()
 {
 	local x_vendor='' x_version=''
@@ -983,8 +1007,7 @@ get_graphics_x_data()
 	fi
 }
 
-
-
+## this will be replaced by trash80 stuff, working copy
 get_hard_drive_data()
 {
 	local disk='' i=''
@@ -1071,6 +1094,7 @@ get_hard_drive_data()
 	fi
 }
 
+## return memory used/installed
 get_memory_data()
 {
 	local memory=''
@@ -1086,6 +1110,7 @@ get_memory_data()
 	echo "$memory"
 }
 
+## create array of network cards
 get_networking_data()
 {
 	IFS=$'\n'
@@ -1127,6 +1152,7 @@ get_networking_data()
 	IFS="$OIFS"
 }
 
+## return uptime string
 get_uptime()
 {
 	local up_time=$( uptime | gawk '{ a = gensub(/^.*up *([^,]*).*$/,"\\1","g",$0); gsub(/ /,"",a); print a }' )
@@ -1140,7 +1166,7 @@ get_uptime()
 
 print_cpu_data()
 {
-	local cpu_data='' i='' a_cpu_working='' cpu_core_count=$( get_cpu_core_count )
+	local cpu_data='' i='' a_cpu_working='' 
 	
 	##print_screen_output "CPU[0]=\"${CPU[0]}\""
 	IFS=","
@@ -1159,7 +1185,7 @@ print_cpu_data()
 	if [[ -z ${a_cpu_working[2]} ]];then
 		a_cpu_working[2]="unknown"
 	fi
-
+	## leave this here in case they release cpus that can run at different speeds per core
 # 	if [[ ${#A_CPU_DATA[@]} -gt 2 ]];then
 # 		cpu_core_count="${C1}(1)${C2} "
 # 	else
@@ -1168,11 +1194,12 @@ print_cpu_data()
 # 	fi
 	cpu_data=$( create_print_line "CPU:" "${C1}${cpu_core_count}${C2} ${a_cpu_working[0]}" )
 	if [ "$VERBOSITY_LEVEL" -ge 3 ];then
-		cpu_data="$cpu_data${C2} ${a_cpu_working[2]} cache${C2} ${C1}flags${C2} ($CPUFLAGS)${CN}"
+		cpu_data="$cpu_data${C2} ${a_cpu_working[2]} cache${C2} ${C1}flags${C2} ($CPU_FLAGS)${CN}"
 	fi
 	cpu_data="$cpu_data ${C1}clocked at${C2} ${a_cpu_working[1]} MHz${CN}"
 	print_screen_output "$cpu_data"
 	
+	## leave this here in case they release cpus that can run at different speeds per core
 # 	for (( i=1; i < ${#A_CPU_DATA[@]}-1; i++ ))
 # 	do
 # 		IFS=","
@@ -1180,7 +1207,7 @@ print_cpu_data()
 # 		IFS="$OIFS"
 # 		cpu_data=$( create_print_line " " "${C1}($(( i + 1 )))${C2} ${a_cpu_working[0]}" )
 # 		if [ "$VERBOSITY_LEVEL" -ge 3 ];then
-# 			cpu_data="$cpu_data${C2} ${a_cpu_working[2]} cache${C2} ${C1}flags${C2} ($CPUFLAGS)${CN}"
+# 			cpu_data="$cpu_data${C2} ${a_cpu_working[2]} cache${C2} ${C1}flags${C2} ($CPU_FLAGS)${CN}"
 # 		fi
 # 		cpu_data="$cpu_data ${C1}clocked at${C2} ${a_cpu_working[1]} MHz${CN}"
 # 		print_screen_output "$cpu_data"
@@ -1193,7 +1220,7 @@ print_cpu_data()
 print_gfx_data()
 {
 	local gfx_data='' i='' card_one='Card ' 
-	local screen_resolution=$( get_graphics_res_data )
+	local screen_resolution="$( get_graphics_res_data )"
 	local b_is_mesa='false'
 	
 	# set A_GFX_CARD_DATA
@@ -1225,9 +1252,6 @@ print_gfx_data()
 		gfx_data="${gfx_data} ${C1} tty resolution ${CN}(${C2} ${screen_resolution} ${CN})"
 	fi
 	print_screen_output "$gfx_data"
-
-	# GLXR=$(glxinfo | gawk -F ': ' 'BEGIN {IGNORECASE=1} /opengl renderer/ && $2 !~ /mesa/ {seen[$2]++} END {for (i in seen) {printf("%s ",i)}}')
-	#    GLXV=$(glxinfo | gawk -F ': ' 'BEGIN {IGNORECASE=1} /opengl version/ && $2 !~ /mesa/ {seen[$2]++} END {for (i in seen) {printf("%s ",i)}}')
 	
 	if [ -z "$glx_renderer" -o -z "$glx_version" ];then
 		b_is_mesa='true'
@@ -1266,14 +1290,14 @@ print_intro_data()
 {
 	local intro_data='' host_name=$( hostname )
 	
-	local distro=$( get_distro_data )
+	local distro="$( get_distro_data )"
 	
 	if [ "$B_SHOW_HOST" == 'true' ];then
 		intro_data=$( create_print_line "System:" "${C1}Host${C2} $host_name ${C1}running${C2} ${CN}" )
 	else
 		intro_data=$( create_print_line "System:" "${C1}running${C2} ${CN}" )
 	fi
-	intro_data="$intro_data ${C2}$CURRENT_KERNEL ${C1}Distro${C2} $distro ${CN}"
+	intro_data="$intro_data ${C2}$current_kernel ${C1}Distro${C2} $distro ${CN}"
 	print_screen_output "$intro_data"
 }
 
@@ -1311,7 +1335,7 @@ print_short_data()
 		do
 			case "$i" in 
 				"$GREEN"|"$WHITE"|"$YELLOW"|"$CYAN") 
-					BGBLACK='true'
+					b_background_black='true'
 					;;
 			esac
 		done
@@ -1327,7 +1351,7 @@ print_short_data()
 			#C1="${C1},1"; C2="${C2},1"; CN="${CN},1"
 		fi
 	fi
-	short_data="${C1}CPU${CN}[${C2}${CPUMODEL} clocked at ${CPUCLOCK}${CN}] ${C1}Kernel${CN}[${C2}${CURRENT_KERNEL}${CN}] ${C1}Up${CN}[${C2}${FL2}${FL1}${up_time}${FL1}${CN}] ${C1}Mem${CN}[${C2}${FL2}${FL1}${memory}${FL1}${CN}] ${C1}HDD${CN}[${C2}${FL2}${FL1}${HDD}($HDDUSG)${FL1}${CN}] ${C1}Procs${CN}[${C2}${FL2}${FL1}${processes}${FL1}${CN}]"
+	short_data="${C1}CPU${CN}[${C2}${cpu_core_count} ${CPU_MODEL} clocked at ${CPU_CLOCK}${CN}] ${C1}Kernel${CN}[${C2}${current_kernel}${CN}] ${C1}Up${CN}[${C2}${FL2}${FL1}${up_time}${FL1}${CN}] ${C1}Mem${CN}[${C2}${FL2}${FL1}${memory}${FL1}${CN}] ${C1}HDD${CN}[${C2}${FL2}${FL1}${HDD}($HDDUSG)${FL1}${CN}] ${C1}Procs${CN}[${C2}${FL2}${FL1}${processes}${FL1}${CN}]"
 
 	if [ "$SHOW_IRC" -gt 0 ];then
 		short_data="${short_data} ${C1}Client${CN}[${C2}${IRC_CLIENT}${IRC_CLIENT_VERSION}${CN}]"
@@ -1341,9 +1365,9 @@ print_short_data()
 
 print_system_data()
 {
-	local system_data='' 
-	local runlvl=$( runlevel | gawk '{ print $2 }' )
-	local memory=$( get_memory_data )
+	local system_data=''
+	local runlvl="$( runlevel | gawk '{ print $2 }' )"
+	local memory="$( get_memory_data )"
 	
 	# Some code could look superfluous but BitchX doesn't like lines not ending in a newline. F*&k that bitch!
 	# long_last=$( echo -ne "${C1}Processes${C2} ${processes}${CN} | ${C1}Uptime${C2} ${up_time}${CN} | ${C1}Memory${C2} ${MEM}${CN}" )
@@ -1368,8 +1392,10 @@ print_system_data()
 print_it_out()
 {
 	## note: remember that in bash, child functions inherit local variables
+	local current_kernel=$( uname -a | gawk '{print $1,$3,$(NF-1)}' )
 	local processes="$(( $( ps aux | wc -l ) - 1 ))"
-	local up_time=$( get_uptime )
+	local cpu_core_count="$( get_cpu_core_count )"
+	local up_time="$( get_uptime )"
 	# assemble data for output
 	get_cpu_data
 	get_hard_drive_data
@@ -1421,6 +1447,7 @@ if [ "$KONVI" -eq 1 ];then
 	done
 	IFS="$OIFS"
 fi
+## leave this for debugging dcop stuff if we get that working
 # 	print_screen_output "DCPORT: $DCPORT"
 # 	print_screen_output "DCSERVER: $DCSERVER"
 # 	print_screen_output "DCTARGET: $DCTARGET"
@@ -1444,4 +1471,6 @@ if [ "$B_RUNNING_IN_SHELL" == 'true' -a "$SCHEME" -gt 0 ];then
 	echo -n "[0m"
 fi
 
-exit 0  # weechat's executor plugin forced me to do this, and rightfully so, because else the exit code from the last command is taken..
+# weechat's executor plugin forced me to do this, and rightfully so, because else the exit code
+# from the last command is taken..
+exit 0  
