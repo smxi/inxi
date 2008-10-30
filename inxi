@@ -1,7 +1,7 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.1.50
+####  version: 0.2.0
 ####  Date: October 30 2008
 ########################################################################
 ####  inxi is a fork of infobash, the original bash sys info script by locsmif
@@ -38,40 +38,38 @@
 ## Variable initializations: null values
 COLOR_SCHEME_SET=''
 COLOR_SCHEME=''
-DISTRO=''
-DISTRO_FILE=''
-A_DISTRO_GLOB=''
 IRC_CLIENT=''
 IRC_CLIENT_VERSION=''
-X_VENDOR=''
-X_VER_NUM=''
 
 ## primary data array holders
 A_CPU_DATA=''
-A_GFX_DATA=''
+A_GFX_CARD_DATA=''
 A_GLX_DATA=''
 A_NETWORK_DATA=''
+A_X_DATA=''
+
+## Boolean true/false globals
+B_RUNNING_IN_SHELL='false'	# Running in a shell? Defaults to false, and is determined later.
+B_SHOW_HOST='true'	# Set this to 'false' to avoid printing the hostname
+B_X_RUNNING='false'
 
 # Variable initializations: constants
 ALLUP=0         # inxi hasn't been 'booted' yet.
 CRAP=0		# New parameter
 CURRENT_KERNEL=$( uname -a | gawk '{print $1,$3,$(NF-1)}' )
-DBI=0           # Debug Buffer Index, index into a debug buffer storing debug messages until infobash is 'all up'
+DBI=0           # Debug Buffer Index, index into a debug buffer storing debug messages until inxi is 'all up'
 DCOPOBJ="default"
 DEBUG=0         # Set levels from 1-10
 DEBUG_FLOOD=0   # Debug flood override: toggle on to allow long debug output
 DEFAULT_SCHEME=2	# Defaults to 2, make this 1 for normal, 0 for no colorcodes at all. Set to any other valid scheme you like. Same as runtime parameter.
-FLAG=0		# A throw-away 'flag' variable intended to be used throughout infobash
-IBSHELL=0	# Running in a shell? Defaults to false, and is determined later.
+FLAG=0		# A throw-away 'flag' variable intended to be used throughout inxi
+
 INDENT=10	# Default indentation level
 KONVI=0 # default to false, no konversation found
 LSPCI=$( lspci -v | awk '{ gsub(/\(prog-if[^)]*\)/,""); print }' )
-MESA=0
 NO_CPU_COUNT=0	# Wether or not the string "dual" or similar is found in cpuinfo output. If so, avoid dups.
-PARAMETER_LIMIT=30	# This is a variable that controls how many parameters infobash will parse in a /proc/<pid>/cmdline file before stopping.
-RUNLVL=0 # just setting this to 0 to initialize and avoid test errors
+PARAMETER_LIMIT=30	# This is a variable that controls how many parameters inxi will parse in a /proc/<pid>/cmdline file before stopping.
 SCHEME=0 # set default scheme
-SHOW_HOST=1	# Set this to 0 to avoid printing the hostname 
 SHOW_IRC=2	# SHOW_IRC=1 to avoid showing the irc client version number, or SHOW_IRC=0 to disable client information completely.
 VERBOSITY_LEVEL=0		# Verbosity level defaults to 0, this can also be set with -v, -v2, -v3, etc as a parameter.
 VERBOSITY_LEVELS=4   # Supported number of verbosity levels
@@ -129,7 +127,7 @@ DISTROS_BLIST="debian_version ubuntu_version"
 # user@host $ ARR=($'\x01'"one two" three four); echo ${ARR[0]} | hd -v
 # 00000000  01 01 6f 6e 65 20 74 77  6f 0a                    |..one two.|
 A_NORMAL_BANS=( corporation communications gmbh technologies technology group $'\2'"\<ltd\>" ltd. $'\2'"\<inc\>" inc. $'\2'\<co\> co. "(tm)" "(r)" $'\2'"\(rev ..\)" )
-A_CPU_BANS=( cpu processor $'\2'"[0-9.]+ *[MmGg][Hh][Zz]" )
+A_CPU_BANS=( core cpu deca dual ennea hepta hexa multi octa penta processor quad single triple $'\2'"[0-9.]+ *[MmGg][Hh][Zz]" )
 
 ## Source global config overrides
 if [ -s /etc/$SCRIPT_NAME.conf ];then
@@ -142,7 +140,7 @@ fi
 
 # WARNING: In the main part below (search for 'KONVI') 
 # there's a check for Konversation-specific config files.
-# Any one of these can override the above if infobash is run 
+# Any one of these can override the above if inxi is run 
 # from Konversation!
 
 ########################################################################
@@ -212,7 +210,7 @@ script_debugger()
 # inxi speaks through here. When run by Konversation, uses DCOP
 # note, this is a huge bug trap, for now we're not using this at all except to
 # output basic stuff. At some point in the future we'll debug the dcop stuff,
-# but that only works if infobash is being run as a konversation script to begin with
+# but that only works if inxi is being run as a konversation script to begin with
 print_screen_output() 
 {
 	if [ "$DEBUG" -gt 5 ];then
@@ -235,7 +233,8 @@ print_screen_output()
 	# echo -ne "$1\n"
 }
 
-## args: $1 - null or line starter; $2 - line content
+## this handles all verbose line construction with indentation/line starter
+## args: $1 - null (, actually: " ") or line starter; $2 - line content
 create_print_line()
 {
 	printf "${C1}%-${INDENT}s${C2} %s" "$1" "$2"
@@ -280,7 +279,7 @@ check_script_depends()
 		error_handler 6
 	fi
 
-	if [ "$X" -gt 0 ];then
+	if [ "$B_X_RUNNING" == 'true' ];then
 		for app_name in xrandr xdpyinfo glxinfo
 		do
 			type -p $app_name >/dev/null || { script_debugger "inxi: Resuming in non X mode: $app_name not found in path"; X=0; break; }
@@ -323,7 +322,7 @@ set_color_scheme()
 		set -- 1 
 	fi
 	SCHEME="$1" # Set a global variable to allow checking for chosen scheme later
-	if [ "$IBSHELL" -gt 0 ];then
+	if [ "$B_RUNNING_IN_SHELL" == 'true' ];then
 		color_codes=($ANSI_COLORS)
 	else
 		color_codes=($IRC_COLORS)
@@ -451,7 +450,7 @@ print_version_info()
 	print_screen_output "InfoBash, the universal, portable, system info script for irc."
 	print_screen_output "Tested with Irssi, Xchat, Konversation, BitchX, KSirc, ircII,"
 	print_screen_output "Gaim/Pidgin, Weechat, KVIrc and Kopete."
-	print_screen_output "Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif <infobash@rebelhomicide.demon.nl>"
+	print_screen_output "Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif <inxi@rebelhomicide.demon.nl>"
 	print_screen_output " "
 	print_screen_output "This program is free software; you can redistribute it and/or modify"
 	print_screen_output "it under the terms of the GNU General Public License as published by"
@@ -467,7 +466,7 @@ print_version_info()
 #### initial startup stuff
 #### ------------------------------------------------------------------- 
 
-# Determine where infobash was run from
+# Determine where inxi was run from
 get_start_source() 
 {
 	local irc_client_path='' irc_client_path_lower='' non_native_konvi='' i=''
@@ -475,11 +474,11 @@ get_start_source()
 	if tty >/dev/null;then
 		IRC_CLIENT="Shell"
 		unset IRC_CLIENT_VERSION
-		IBSHELL=1
+		B_RUNNING_IN_SHELL='true'
 	elif [ -n "$PPID" -a -f "/proc/$PPID/exe" ];then
 		irc_client_path=$( readlink /proc/$PPID/exe )
 		# this handles the problem with konversation reporting itself as perl, which was missed because
-		# when konversation starts infobash from inside itself, as a script, the parent is konversation, not perl
+		# when konversation starts inxi from inside itself, as a script, the parent is konversation, not perl
 		if [ -z "$( grep -i 'konversation' <<< $irc_client_path )" -a -n "$( grep -i 'perl' <<< $irc_client_path )" -a -n "$( pidof konversation )" ];then
 			irc_client_path=$( which konversation )
 			non_native_konvi='true'
@@ -571,8 +570,8 @@ get_start_source()
 							# kdeinit. /proc/<pid of the grandparent of this process>/exe is a link to /usr/bin/kdeinit
 							# with one parameter which contains parameters separated by spaces(??), first param being KSirc.
 							# Then, KSirc runs dsirc as the perl irc script and wraps around it. When /exec is executed,
-							# dsirc is the program that runs infobash, therefore that is the parent process that we see.
-							# You can imagine how hosed I am if I try to make infobash find out dynamically with which path
+							# dsirc is the program that runs inxi, therefore that is the parent process that we see.
+							# You can imagine how hosed I am if I try to make inxi find out dynamically with which path
 							# KSirc was run by browsing up the process tree in /proc. That alone is straightjacket material.
 							# (KSirc sucks anyway ;)
 							IRC_CLIENT_VERSION=" $( ksirc -v | gawk '/KSirc:/ { print $2; exit }' )"
@@ -609,7 +608,7 @@ set_calculated_variables()
 	local extra_paths="/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin" 
 	# Detect X and set variable "X" accordingly
 	if [ -n "$DISPLAY" ];then
-		X=1 
+		B_X_RUNNING='true' 
 	fi
 	
 	# Fallback paths put into $extra_paths; This might, among others, help on gentoo.
@@ -642,6 +641,36 @@ set_calculated_variables()
 #### -------------------------------------------------------------------
 #### get data types
 #### -------------------------------------------------------------------
+
+get_cpu_core_count()
+{
+	## Because of the upcoming release of cpus with core counts over 6, a count of cores is given after Deca (10)
+	# count the number of processors given
+	local cpu_core_count=$(grep -c "cpu cores" /proc/cpuinfo| cut -d':' -f2) 
+	local cpu_alpha_count=''
+
+	if [[ $cpu_core_count -lt 2 ]]; then
+		cpu_core_count=1
+	fi
+	
+	# match the numberic value to an alpha value
+	case $cpu_core_count in 
+		1) cpu_alpha_count='Single';;
+		2) cpu_alpha_count='Dual';;
+		3) cpu_alpha_count='Triple';;
+		4) cpu_alpha_count='Quad';;
+		5) cpu_alpha_count='Penta';;
+		6) cpu_alpha_count='Hexa';;
+		7) cpu_alpha_count='Hepta';;
+		8) cpu_alpha_count='Octa';;
+		9) cpu_alpha_count='Ennea';;
+		10) cpu_alpha_count='Deca';;
+		*) cpu_alpha_count='Multi';;
+	esac
+
+	core_count="$cpu_alpha_count Core"
+	echo "$core_count"
+}
 
 get_cpu_data()
 {
@@ -783,108 +812,66 @@ get_cpu_data()
 
 get_distro_data()
 {
-	local i=''
+	local i='' distro='' distro_file='' a_distro_glob=''
 	
-	unset DISTRO
 	shopt -s nullglob
 	cd /etc
-	A_DISTRO_GLOB=(*[-_]{release,version})
+	a_distro_glob=(*[-_]{release,version})
 	cd "$OLDPWD"
 	shopt -u nullglob
 	
-	if (( ${#A_DISTRO_GLOB[@]} == 1 ));then
-		DISTRO_FILE="${A_DISTRO_GLOB}"
-	elif (( ${#A_DISTRO_GLOB[@]} > 1 ));then
+	if (( ${#a_distro_glob[@]} == 1 ));then
+		distro_file="${a_distro_glob}"
+	elif (( ${#a_distro_glob[@]} > 1 ));then
 		for i in $DISTROS_DERIVED $DISTROS_PRIMARY
 		do
 			# Only echo works with ${var[@]}, not print_screen_output() or script_debugger()
 			# This is a known bug, search for the word "strange" inside comments
-			# echo "i='$i' A_DISTRO_GLOB[@]='${A_DISTRO_GLOB[@]}'"
-			if [[ " ${A_DISTRO_GLOB[@]} " == *" $i "* ]];then
-				DISTRO_FILE="${i}"
+			# echo "i='$i' a_distro_glob[@]='${a_distro_glob[@]}'"
+			if [[ " ${a_distro_glob[@]} " == *" $i "* ]];then
+				distro_file="${i}"
 				break
 			fi
 		done
 	fi
-	if [ -n "$DISTRO_FILE" -a -s /etc/$DISTRO_FILE -a " $DISTROS_BLIST " != *" $DISTRO_FILE "* ];then
-		DISTRO=$( remove_erroneous_chars "/etc/$DISTRO_FILE" )
+	if [ -n "$distro_file" -a -s /etc/$distro_file -a " $DISTROS_BLIST " != *" $distro_file "* ];then
+		distro=$( remove_erroneous_chars "/etc/$distro_file" )
 	else
 		# Debian pure should fall through here
-		DISTRO_FILE="issue"
-		DISTRO=$( gawk 'BEGIN { RS="" } { 	gsub(/\\[a-z]/,""); 
+		distro_file="issue"
+		distro=$( gawk 'BEGIN { RS="" } { 	gsub(/\\[a-z]/,""); 
 														gsub(/ [ ]+/," "); 
 														gsub(/^ +| +$/,""); 
-														print }' "/etc/${DISTRO_FILE}" )
+														print }' "/etc/${distro_file}" )
 	fi
-	if (( ${#DISTRO} > 80 && ! CRAP ));then
-		DISTRO="${RED}/etc/${DISTRO_FILE} corrupted, use --crap to override${NORMAL}"
+	if (( ${#distro} > 80 && ! CRAP ));then
+		distro="${RED}/etc/${distro_file} corrupted, use --crap to override${NORMAL}"
 	fi
 	## note: figure out a more readable way to achieve whatever is intended here ##
-	: ${DISTRO:=Unknown distro o_O}
+	: ${distro:=Unknown distro o_O}
+	
+	echo "$distro"
 }
 
-get_graphics_data()
+get_graphics_card_data()
 {
 	local i=''
 	
 	IFS=$'\n'
-	A_GFX_DATA=( $( echo "$LSPCI" | gawk -F': ' '/VGA compatible controller/ { print $NF }' ) )
+	A_GFX_CARD_DATA=( $( echo "$LSPCI" | gawk -F': ' '/VGA compatible controller/ { print $NF }' ) )
 	IFS="$OIFS"
-	for (( i=0; i < ${#A_GFX_DATA[@]}; i++ ))
+	for (( i=0; i < ${#A_GFX_CARD_DATA[@]}; i++ ))
 	do
-		A_GFX_DATA[i]=$( sanitize_characters A_NORMAL_BANS "${A_GFX_DATA[i]}" )
+		A_GFX_CARD_DATA[i]=$( sanitize_characters A_NORMAL_BANS "${A_GFX_CARD_DATA[i]}" )
 	done
 	
 	# GFXMEM is UNUSED at the moment, because it shows AGP aperture size, which is not necessarily equal to GFX memory..
 	# GFXMEM="size=[$(echo "$LSPCI" | gawk '/VGA/{while (!/^$/) {getline;if (/size=[0-9][0-9]*M/) {size2=gensub(/.*\[size=([0-9]+)M\].*/,"\\1","g",$0);if (size<size2){size=size2}}}}END{print size2}')M]"
-	if [ "$X" -gt 0 ];then
-		# Added the two ?'s , because the resolution is now reported without spaces around the 'x', as in
-		# 1400x1050 instead of 1400 x 1050. Change as of X.org version 1.3.0
-		RES=$( xrandr | gawk '
-		/\*/ { res[++m] = gensub(/^.* ([0-9]+) ?x ?([0-9]+)[_ ].* ([0-9\.]+)\*.*$/,"\\1x\\2@\\3hz","g",$0) }
-		END {
-			for (n in res) {
-				if (res[n] ~ /^[[:digit:]]+x[[:digit:]]+/)
-					line = line ? line ", " res[n] : res[n]
-			}
-			if (line)
-				print(line)
-		}
-		' )	
-		
-		if [ -z "$RES" ];then
-			RES=$( xdpyinfo | gawk '/dimensions/ { print $2 }' )
-		fi
-		
-		# X vendor and version detection.
-		X_VENDOR=$( xdpyinfo | gawk -F': +' '
-		BEGIN { IGNORECASE=1 } 
-		/vendor string/ { 
-			gsub(/the|,|inc|foundation|project|coorperation/, "", $2)
-			gsub(/^ +| +$/, "", $2); gsub(/  +/," ",$2)
-			print $2
-		} 
-		' )
-		
-		# new method added since radeon and X.org and the disappearance of <X server name> version : ...etc 
-		# Later on, the normal textual version string returned, e.g. like: X.Org version: 6.8.2
-		# A failover mechanism is in place. (if $X_VER_NUM is empty, the release number is parsed instead)
-		X_VER_NUM=$( xdpyinfo | awk '/version:/ { print $NF }' )
-		if [ -z "$X_VER_NUM" ];then
-			X_VER_NUM=$(xdpyinfo | gawk -F': +' '
-						BEGIN { IGNORECASE=1 } 
-						/vendor release number/ { 
-							gsub(/0+$/,"",$2)
-							gsub(/0+/,".",$2)
-							print $2
-						}
-						')
-		fi
-	
-		#X -version 2>&1 | gawk '/^X Window System Version/ { print $5 }'
-		#This method could be used in the future to detect X when X is not running,
-		#however currently infobash ignores X checks when X is not found.
-	
+}
+
+get_graphics_glx_data()
+{
+	if [ "$B_X_RUNNING" == 'true' ];then
 		IFS=$'\n'
 		A_GLX_DATA=( $( glxinfo | gawk -F ': ' '
 		function join(arr, sep) {
@@ -918,22 +905,85 @@ get_graphics_data()
 		}
 		' ) )
 		IFS="$OIFS"
-		GLXR="${A_GLX_DATA[0]}"
-		GLXV="${A_GLX_DATA[1]}"
-		GLXDR="${A_GLX_DATA[2]}"
-	
-		# GLXR=$(glxinfo | gawk -F ': ' 'BEGIN {IGNORECASE=1} /opengl renderer/ && $2 !~ /mesa/ {seen[$2]++} END {for (i in seen) {printf("%s ",i)}}')
-		#    GLXV=$(glxinfo | gawk -F ': ' 'BEGIN {IGNORECASE=1} /opengl version/ && $2 !~ /mesa/ {seen[$2]++} END {for (i in seen) {printf("%s ",i)}}')
-		
-		if [ -z "$GLXR" -o -z "$GLXV" ];then
-			MESA=1
-		fi
-		AGPMOD=$(gawk '/agp/ && !/agpgart/ && $3 > 0 { print(gensub(/(.*)_agp.*/,"\\1","g",$1)) }' /proc/modules)
-	else
-		RES=$( stty -F $( readlink /proc/$PPID/fd/0 ) size | gawk '{ print $2"x"$1 }' )
-		RUNLVL=$( runlevel | gawk '{ print $2 }' )
 	fi
 }
+
+get_graphics_res_data()
+{
+	local screen_resolution=''
+	
+	if [ "$B_X_RUNNING" == 'true' ];then
+		# Added the two ?'s , because the resolution is now reported without spaces around the 'x', as in
+		# 1400x1050 instead of 1400 x 1050. Change as of X.org version 1.3.0
+		screen_resolution=$( xrandr | gawk '
+		/\*/ { res[++m] = gensub(/^.* ([0-9]+) ?x ?([0-9]+)[_ ].* ([0-9\.]+)\*.*$/,"\\1x\\2@\\3hz","g",$0) }
+		END {
+			for (n in res) {
+				if (res[n] ~ /^[[:digit:]]+x[[:digit:]]+/)
+					line = line ? line ", " res[n] : res[n]
+			}
+			if (line)
+				print(line)
+		}
+		' )	
+		
+		if [ -z "$screen_resolution" ];then
+			screen_resolution=$( xdpyinfo | gawk '/dimensions/ { print $2 }' )
+		fi
+	else
+		screen_resolution=$( stty -F $( readlink /proc/$PPID/fd/0 ) size | gawk '{ print $2"x"$1 }' )
+	fi
+	echo "$screen_resolution"
+}
+
+## for possible future data, not currently used
+get_graphics_agp_data()
+{
+	local agp_module=''
+	
+	## not used currently
+	agp_module=$( gawk '/agp/ && !/agpgart/ && $3 > 0 { print(gensub(/(.*)_agp.*/,"\\1","g",$1)) }' /proc/modules )
+}
+	
+get_graphics_x_data()
+{
+	local x_vendor='' x_version=''
+	
+	if [ "$B_X_RUNNING" == 'true' ];then
+		# X vendor and version detection.
+		x_vendor=$( xdpyinfo | gawk -F': +' '
+		BEGIN { IGNORECASE=1 } 
+		/vendor string/ { 
+			gsub(/the|,|inc|foundation|project|coorperation/, "", $2)
+			gsub(/^ +| +$/, "", $2); gsub(/  +/," ",$2)
+			print $2
+		} 
+		' )
+		
+		# new method added since radeon and X.org and the disappearance of <X server name> version : ...etc 
+		# Later on, the normal textual version string returned, e.g. like: X.Org version: 6.8.2
+		# A failover mechanism is in place. (if $x_version is empty, the release number is parsed instead)
+		x_version=$( xdpyinfo | awk '/version:/ { print $NF }' )
+		if [ -z "$x_version" ];then
+			x_version=$(xdpyinfo | gawk -F': +' '
+						BEGIN { IGNORECASE=1 } 
+						/vendor release number/ { 
+							gsub(/0+$/,"",$2)
+							gsub(/0+/,".",$2)
+							print $2
+						}
+						')
+		fi
+		A_X_DATA[0]="$x_vendor"
+		A_X_DATA[1]="$x_version"
+		
+		#X -version 2>&1 | gawk '/^X Window System Version/ { print $5 }'
+		#This method could be used in the future to detect X when X is not running,
+		#however currently inxi ignores X checks when X is not found.
+	fi
+}
+
+
 
 get_hard_drive_data()
 {
@@ -953,7 +1003,7 @@ get_hard_drive_data()
 	done
 	
 	if [[ -e /proc/scsi/scsi ]];then
-		# Silly sata detection, will also pick up usb sticks, and it is all I will put into infobash. if you want more, infoperl is on
+		# Silly sata detection, will also pick up usb sticks, and it is all I will put into inxi. if you want more, infoperl is on
 		# the way :)
 		IFS=$'\n'
 		THDD=($(gawk '
@@ -1023,13 +1073,17 @@ get_hard_drive_data()
 
 get_memory_data()
 {
-	MEM=$( gawk '
+	local memory=''
+	
+	memory=$( gawk '
 	/^MemTotal:/ { tot = $2 }
 	/^(MemFree|Buffers|Cached):/ { notused+=$2 }
 	END {
 		used = tot-notused
 		printf("%.1f/%.1fMB\n", used/1024, tot/1024)
 	}' /proc/meminfo )
+	
+	echo "$memory"
 }
 
 get_networking_data()
@@ -1073,10 +1127,11 @@ get_networking_data()
 	IFS="$OIFS"
 }
 
-get_processes_uptime()
+get_uptime()
 {
-	PROC="$(( $( ps aux | wc -l ) - 1 ))"
-	UPT=$( uptime | gawk '{ a = gensub(/^.*up *([^,]*).*$/,"\\1","g",$0); gsub(/ /,"",a); print a }' )
+	local up_time=$( uptime | gawk '{ a = gensub(/^.*up *([^,]*).*$/,"\\1","g",$0); gsub(/ /,"",a); print a }' )
+	
+	echo "$up_time"
 }
 
 #### -------------------------------------------------------------------
@@ -1085,7 +1140,7 @@ get_processes_uptime()
 
 print_cpu_data()
 {
-	local cpu_data='' i='' a_cpu_working='' cpu_number=''
+	local cpu_data='' i='' a_cpu_working='' cpu_core_count=$( get_cpu_core_count )
 	
 	##print_screen_output "CPU[0]=\"${CPU[0]}\""
 	IFS=","
@@ -1105,62 +1160,84 @@ print_cpu_data()
 		a_cpu_working[2]="unknown"
 	fi
 
-	if [[ ${#A_CPU_DATA[@]} -gt 2 ]];then
-		cpu_number="${C1}(1)${C2} "
-	else
-		# Array CPU always has one element: max clockfreq found. Therefore -gt and not -ge
-		unset cpu_number
-	fi
-	cpu_data=$( create_print_line "CPU:" "${cpu_number}${a_cpu_working[0]}" )
+# 	if [[ ${#A_CPU_DATA[@]} -gt 2 ]];then
+# 		cpu_core_count="${C1}(1)${C2} "
+# 	else
+# 		# Array CPU always has one element: max clockfreq found. Therefore -gt and not -ge
+# 		unset cpu_core_count
+# 	fi
+	cpu_data=$( create_print_line "CPU:" "${C1}${cpu_core_count}${C2} ${a_cpu_working[0]}" )
 	if [ "$VERBOSITY_LEVEL" -ge 3 ];then
 		cpu_data="$cpu_data${C2} ${a_cpu_working[2]} cache${C2} ${C1}flags${C2} ($CPUFLAGS)${CN}"
 	fi
 	cpu_data="$cpu_data ${C1}clocked at${C2} ${a_cpu_working[1]} MHz${CN}"
 	print_screen_output "$cpu_data"
 	
-	for (( i=1; i < ${#A_CPU_DATA[@]}-1; i++ ))
-	do
-		IFS=","
-		a_cpu_working=(${A_CPU_DATA[i]})
-		IFS="$OIFS"
-		cpu_data=$( create_print_line " " "${C1}($(( i + 1 )))${C2} ${a_cpu_working[0]}" )
-		if [ "$VERBOSITY_LEVEL" -ge 3 ];then
-			cpu_data="$cpu_data${C2} ${a_cpu_working[2]} cache${C2} ${C1}flags${C2} ($CPUFLAGS)${CN}"
-		fi
-		cpu_data="$cpu_data ${C1}clocked at${C2} ${a_cpu_working[1]} MHz${CN}"
-		print_screen_output "$cpu_data"
-		if [ "$i" -gt 10 ];then
-			break
-		fi
-	done
+# 	for (( i=1; i < ${#A_CPU_DATA[@]}-1; i++ ))
+# 	do
+# 		IFS=","
+# 		a_cpu_working=(${A_CPU_DATA[i]})
+# 		IFS="$OIFS"
+# 		cpu_data=$( create_print_line " " "${C1}($(( i + 1 )))${C2} ${a_cpu_working[0]}" )
+# 		if [ "$VERBOSITY_LEVEL" -ge 3 ];then
+# 			cpu_data="$cpu_data${C2} ${a_cpu_working[2]} cache${C2} ${C1}flags${C2} ($CPUFLAGS)${CN}"
+# 		fi
+# 		cpu_data="$cpu_data ${C1}clocked at${C2} ${a_cpu_working[1]} MHz${CN}"
+# 		print_screen_output "$cpu_data"
+# 		if [ "$i" -gt 10 ];then
+# 			break
+# 		fi
+# 	done
 }
 
 print_gfx_data()
 {
-	local gfx_data='' i='' card_one='Card '
+	local gfx_data='' i='' card_one='Card ' 
+	local screen_resolution=$( get_graphics_res_data )
+	local b_is_mesa='false'
 	
-	if [[ ${#A_GFX_DATA[@]} -gt 1 ]];then
+	# set A_GFX_CARD_DATA
+	get_graphics_card_data
+	# set A_X_DATA
+	get_graphics_x_data
+	local x_vendor=${A_X_DATA[0]}
+	local x_version=${A_X_DATA[1]}
+	# set A_GLX_DATA
+	get_graphics_glx_data
+	local glx_renderer="${A_GLX_DATA[0]}"
+	local glx_version="${A_GLX_DATA[1]}"
+	local glx_direct_render="${A_GLX_DATA[2]}"
+	
+	if [[ ${#A_GFX_CARD_DATA[@]} -gt 1 ]];then
 		i=1
-		while [[ -n ${A_GFX_DATA[i]} && $i -le 3 ]]
+		while [[ -n ${A_GFX_CARD_DATA[i]} && $i -le 3 ]]
 		do
-			gfx_data=" ${C1}Card-$(($i+1))${C2} ${A_GFX_DATA[i]}"
+			gfx_data=" ${C1}Card-$(($i+1))${C2} ${A_GFX_CARD_DATA[i]}"
 			((i++))
 		done
 		card_one='Card-1 '
 	fi
-	gfx_data=$( create_print_line "Graphics:" "${C1}$card_one${C2}${A_GFX_DATA[0]}${gfx_data}" )
-	
-	if [ "$X" -gt 0 ];then
-		gfx_data="${gfx_data} ${CN}| ${C1}$X_VENDOR${C2} $X_VER_NUM ${CN}| ${C1}Res${C2} ${RES}"
+	gfx_data=$( create_print_line "Graphics:" "${C1}$card_one${C2}${A_GFX_CARD_DATA[0]}${gfx_data}" )
+
+	if [ "$B_X_RUNNING" == 'true' ];then
+		gfx_data="${gfx_data} ${CN}| ${C1}$x_vendor${C2} $x_version ${CN}| ${C1}Res${C2} ${screen_resolution}"
 	else
-		gfx_data="${gfx_data} ${C1} tty resolution ${CN}(${C2} ${RES} ${CN})"
+		gfx_data="${gfx_data} ${C1} tty resolution ${CN}(${C2} ${screen_resolution} ${CN})"
 	fi
 	print_screen_output "$gfx_data"
 
-	if [ "$X" -gt 0 -a "$MESA" -eq 0 ];then
-		gfx_data=$( create_print_line " " "${C1}GLX Renderer${C2} ${GLXR} ${CN}| ${C1}GLX Version${C2} ${GLXV}${CN}" )
+	# GLXR=$(glxinfo | gawk -F ': ' 'BEGIN {IGNORECASE=1} /opengl renderer/ && $2 !~ /mesa/ {seen[$2]++} END {for (i in seen) {printf("%s ",i)}}')
+	#    GLXV=$(glxinfo | gawk -F ': ' 'BEGIN {IGNORECASE=1} /opengl version/ && $2 !~ /mesa/ {seen[$2]++} END {for (i in seen) {printf("%s ",i)}}')
+	
+	if [ -z "$glx_renderer" -o -z "$glx_version" ];then
+		b_is_mesa='true'
+	fi
+	
+	## note: if glx render or version have no content, then mesa is true
+	if [ "$B_X_RUNNING" == 'true' -a "$b_is_mesa" != 'true' ];then
+		gfx_data=$( create_print_line " " "${C1}GLX Renderer${C2} ${glx_renderer} ${CN}| ${C1}GLX Version${C2} ${glx_version}${CN}" )
 		if [ "$CRAP" -gt 0 ];then
-			gfx_data="${gfx_data} ${C1}Direct rendering${C2} ${GLXDR}${CN}"
+			gfx_data="${gfx_data} ${C1}Direct rendering${C2} ${glx_direct_render}${CN}"
 		fi
 		print_screen_output "$gfx_data"
 	fi
@@ -1170,7 +1247,7 @@ print_hard_disk_data()
 {
 	local hdd_data=''
 	local root_home_data="$( df -h -T | egrep '(/|/boot|/var|/home)$'  | C1=${C1} C2=${C2} awk '{print ENVIRON["C1"]"Partition:"ENVIRON["C2"], $7, ENVIRON["C1"]"- ", ENVIRON["C1"]"size:"ENVIRON["C2"], $3, ENVIRON["C1"]"used:"ENVIRON["C2"], $4, "(", $6, ")"}' )"
-	root_home_data=$( echo $root_home_data )
+	root_home_data=$( echo $root_home_data ) # get rid of linebreaks
 
 	if [ "$VERBOSITY_LEVEL" -ge 2 ];then
 		hdd_data=$( create_print_line "Disks:" "${C1}HDD${C2} ${HDDMOD} ${C1}Size${C2} ${HDD} (${HDDUSG})${CN}" )
@@ -1189,19 +1266,24 @@ print_intro_data()
 {
 	local intro_data='' host_name=$( hostname )
 	
-	if [ "$SHOW_HOST" -gt 0 ];then
+	local distro=$( get_distro_data )
+	
+	if [ "$B_SHOW_HOST" == 'true' ];then
 		intro_data=$( create_print_line "System:" "${C1}Host${C2} $host_name ${C1}running${C2} ${CN}" )
 	else
 		intro_data=$( create_print_line "System:" "${C1}running${C2} ${CN}" )
 	fi
-	intro_data="$intro_data ${C2}$CURRENT_KERNEL ${C1}Distro${C2} $DISTRO ${CN}"
+	intro_data="$intro_data ${C2}$CURRENT_KERNEL ${C1}Distro${C2} $distro ${CN}"
 	print_screen_output "$intro_data"
 }
 
 print_networking_data()
 {
 	local i='' card_plural='s' card_one='Card-1 ' network_data=''
-
+	
+	# set A_NETWORK_DATA
+	get_networking_data
+	
 	if [[ -n ${A_NETWORK_DATA[@]} ]];then
 		if [[ ${#A_NETWORK_DATA[@]} -le 1 ]];then
 			card_plural=''
@@ -1220,18 +1302,20 @@ print_networking_data()
 
 print_short_data()
 {
-	local short_data='' i=''
+	local short_data='' i='' b_background_black='false'
+	local memory=$( get_memory_data )
 	
 	#set_color_scheme 12
-	if [ "$IBSHELL" -eq 0 ];then
+	if [ "$B_RUNNING_IN_SHELL" == 'false' ];then
 		for i in $C1 $C2 $CN
 		do
 			case "$i" in 
-				"$GREEN"|"$WHITE"|"$YELLOW"|"$CYAN") BGBLACK=1
-				;;
+				"$GREEN"|"$WHITE"|"$YELLOW"|"$CYAN") 
+					BGBLACK='true'
+					;;
 			esac
 		done
-		if [ "$BGBLACK" -gt 0 ];then
+		if [ "$b_background_black" == 'true' ];then
 			for i in C1 C2 CN
 			do
 				if [[ "${!i}" = "$NORMAL" ]];then
@@ -1243,7 +1327,7 @@ print_short_data()
 			#C1="${C1},1"; C2="${C2},1"; CN="${CN},1"
 		fi
 	fi
-	short_data="${C1}CPU${CN}[${C2}${CPUMODEL} clocked at ${CPUCLOCK}${CN}] ${C1}Kernel${CN}[${C2}${CURRENT_KERNEL}${CN}] ${C1}Up${CN}[${C2}${FL2}${FL1}${UPT}${FL1}${CN}] ${C1}Mem${CN}[${C2}${FL2}${FL1}${MEM}${FL1}${CN}] ${C1}HDD${CN}[${C2}${FL2}${FL1}${HDD}($HDDUSG)${FL1}${CN}] ${C1}Procs${CN}[${C2}${FL2}${FL1}${PROC}${FL1}${CN}]"
+	short_data="${C1}CPU${CN}[${C2}${CPUMODEL} clocked at ${CPUCLOCK}${CN}] ${C1}Kernel${CN}[${C2}${CURRENT_KERNEL}${CN}] ${C1}Up${CN}[${C2}${FL2}${FL1}${up_time}${FL1}${CN}] ${C1}Mem${CN}[${C2}${FL2}${FL1}${memory}${FL1}${CN}] ${C1}HDD${CN}[${C2}${FL2}${FL1}${HDD}($HDDUSG)${FL1}${CN}] ${C1}Procs${CN}[${C2}${FL2}${FL1}${processes}${FL1}${CN}]"
 
 	if [ "$SHOW_IRC" -gt 0 ];then
 		short_data="${short_data} ${C1}Client${CN}[${C2}${IRC_CLIENT}${IRC_CLIENT_VERSION}${CN}]"
@@ -1258,13 +1342,16 @@ print_short_data()
 print_system_data()
 {
 	local system_data='' 
+	local runlvl=$( runlevel | gawk '{ print $2 }' )
+	local memory=$( get_memory_data )
 	
 	# Some code could look superfluous but BitchX doesn't like lines not ending in a newline. F*&k that bitch!
-	# long_last=$( echo -ne "${C1}Processes${C2} ${PROC}${CN} | ${C1}Uptime${C2} ${UPT}${CN} | ${C1}Memory${C2} ${MEM}${CN}" )
-	system_data=$( create_print_line "Info:" "${C1}Processes${C2} ${PROC} ${CN}| ${C1}Uptime${C2} ${UPT} ${CN}| ${C1}Memory${C2} ${MEM}${CN}" )
+	# long_last=$( echo -ne "${C1}Processes${C2} ${processes}${CN} | ${C1}Uptime${C2} ${up_time}${CN} | ${C1}Memory${C2} ${MEM}${CN}" )
+	system_data=$( create_print_line "Info:" "${C1}Processes${C2} ${processes} ${CN}| ${C1}Uptime${C2} ${up_time} ${CN}| ${C1}Memory${C2} ${memory}${CN}" )
 	
-	if [ "$RUNLVL" -gt 0 ];then
-		system_data="${system_data} ${CN}| ${C1}Runlevel${C2} ${RUNLVL}${CN}"
+	# this only triggers if no X data is present
+	if [ "$B_X_RUNNING" != 'true' ];then
+		system_data="${system_data} ${CN}| ${C1}Runlevel${C2} ${runlvl}${CN}"
 	fi
 	
 	if [ "$SHOW_IRC" -gt 0 ];then
@@ -1280,6 +1367,13 @@ print_system_data()
 
 print_it_out()
 {
+	## note: remember that in bash, child functions inherit local variables
+	local processes="$(( $( ps aux | wc -l ) - 1 ))"
+	local up_time=$( get_uptime )
+	# assemble data for output
+	get_cpu_data
+	get_hard_drive_data
+
 	case "$VERBOSITY_LEVEL" in
 		0)
 			print_short_data
@@ -1342,20 +1436,11 @@ fi
 ALLUP=1
 script_debugger "ALLUP=1 : inxi up and running.."
 
-# assemble data for output
-get_distro_data
-get_cpu_data
-get_hard_drive_data
-get_memory_data
-get_networking_data
-get_processes_uptime
-get_graphics_data
-
 # then create the output
 print_it_out
 
 ## last steps
-if [ "$IBSHELL" -gt 0 -a "$SCHEME" -gt 0 ];then
+if [ "$B_RUNNING_IN_SHELL" == 'true' -a "$SCHEME" -gt 0 ];then
 	echo -n "[0m"
 fi
 
