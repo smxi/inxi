@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.2.15
-####  Date: October 30 2008
+####  version: 0.2.16
+####  Date: October 31 2008
 ########################################################################
 ####  inxi is a fork of infobash, the original bash sys info script by locsmif
 ####  As time permits functionality and recoding will occur.
@@ -40,23 +40,22 @@
 ########################################################################
 
 ### Variable initializations: null values
+
+CMDL_MAX=''
 COLOR_SCHEME_SET=''
 COLOR_SCHEME=''
 CPU_MODEL=''
 CPU_CLOCK=''
 CPU_FLAGS=''
-HDD_CAPACITY=''
-#: note: if this is declared, whatever string you want inserted will be inserted first
-## in this case, it's desirable to print out (x) before each driver found.
-HDD_MODEL='' 
-HDD_USED=''
 IRC_CLIENT=''
 IRC_CLIENT_VERSION=''
 
 ### primary data array holders
+A_CMDL=''
 A_CPU_DATA=''
 A_GFX_CARD_DATA=''
 A_GLX_DATA=''
+A_HDD_DATA=''
 A_NETWORK_DATA=''
 A_X_DATA=''
 
@@ -64,20 +63,29 @@ A_X_DATA=''
 # Running in a shell? Defaults to false, and is determined later.
 B_RUNNING_IN_SHELL='false'	
 # Set this to 'false' to avoid printing the hostname
-B_SHOW_HOST='true'	
+B_SHOW_HOST='true'
+# Assume X not running until tests show it is
 B_X_RUNNING='false'
 
 ### Variable initializations: constants
 # inxi hasn't been 'booted' yet.
-ALLUP=0
+ALL_UP=0
 # New parameter
 CRAP=0
-# Debug Buffer Index, index into a debug buffer storing debug messages until inxi is 'all up'
-DBI=0
+
 DCOPOBJ="default"
 DEBUG=0 # Set debug levels from 1-10
+# Debug Buffer Index, index into a debug buffer storing debug messages until inxi is 'all up'
+DEBUG_BUFFER_INDEX=0
 # Debug flood override: toggle on to allow long debug output
 DEBUG_FLOOD=0
+### Reroute all error messages to the bitbucket (if not debugging)
+if [ "$DEBUG" -eq 0 ]
+then
+	exec 2>/dev/null
+fi 
+#((DEBUG)) && exec 2>&1 # This is for debugging konversation
+
 # Defaults to 2, make this 1 for normal, 0 for no colorcodes at all. Set to any other valid scheme you like. 
 # Same as runtime parameter.
 DEFAULT_SCHEME=2
@@ -87,7 +95,6 @@ FLAG=0
 INDENT=10	
 # default to false, no konversation found, 1 is /cmd inxi start, 2 is native konvi script mode
 KONVI=0 
-LSPCI=$( lspci -v | awk '{ gsub(/\(prog-if[^)]*\)/,""); print }' )
 # NO_CPU_COUNT=0	# Wether or not the string "dual" or similar is found in cpuinfo output. If so, avoid dups.
 # This is a variable that controls how many parameters inxi will parse in a /proc/<pid>/cmdline file before stopping.
 PARAMETER_LIMIT=30	
@@ -98,13 +105,6 @@ SHOW_IRC=2
 VERBOSITY_LEVEL=0		
 # Supported number of verbosity levels
 VERBOSITY_LEVELS=4   
-
-### Reroute all error messages to the bitbucket (if not debugging)
-if [ "$DEBUG" -eq 0 ]
-then
-	exec 2>/dev/null
-fi 
-#((DEBUG)) && exec 2>&1 # This is for debugging konversation
 
 # Clear nullglob, because it creates unpredictable situations with IFS=$'\n' ARR=($VAR) IFS="$OIFS"
 # type constructs. Stuff like [rev a1] is now seen as a glob expansion pattern, and fails, and
@@ -120,7 +120,6 @@ FL2=''
 SCRIPT_NAME="inxi"
 SCRIPT_PATH=$( dirname $0 )
 SCRIPT_VERSION_NUMBER=$( grep -im 1 'version:' $SCRIPT_PATH/$SCRIPT_NAME | awk '{print $3}' )
-SCRIPT_DATE=$( grep -im 1 'date:' $SCRIPT_PATH/$SCRIPT_NAME | awk '{print $3 " " $4 ", " $5}' )
 KONVI_CFG="konversation/scripts/$SCRIPT_NAME.conf" # relative path to $(kde-config --path data)
 
 ### Script Localization
@@ -141,6 +140,10 @@ IRC_COLORS=" $IRC_COLORS    \x0312   \x0302   \x0313   \x0306   \x0311   \x0310 
 A_COLORS_AVAILABLE=( DGREY BLACK RED DRED GREEN DGREEN YELLOW DYELLOW BLUE DBLUE MAGENTA DMAGENTA CYAN DCYAN WHITE GREY NORMAL )
 # See above for notes on EMPTY
 A_COLOR_SCHEMES=( EMPTY,EMPTY,EMPTY NORMAL,NORMAL,NORMAL BLUE,NORMAL,NORMAL GREEN,YELLOW,NORMAL DYELLOW,NORMAL,NORMAL CYAN,BLUE,NORMAL RED,NORMAL,NORMAL GREEN,NORMAL,NORMAL YELLOW,NORMAL,NORMAL GREEN,DGREEN,NORMAL BLUE,RED,NORMAL BLUE,NORMAL,RED YELLOW,WHITE,GREEN BLUE,NORMAL,GREEN DCYAN,NORMAL,DMAGENTA )
+## Actual color variables
+C1=''
+C2=''
+CN=''
 
 ### Distro Data
 # In cases of derived distros where the version file of the base distro can also be found under /etc, 
@@ -151,7 +154,7 @@ DISTROS_PRIMARY="gentoo-release mandrake-release redhat-release slackware-versio
 DISTROS_BLIST="debian_version ubuntu_version"
 
 ### Bans Data
-# Precede a banword with $'\2' to prevent it from being subject to automated escaping by the make_bans routine
+# Precede a banword with $'\2' to prevent it from being subject to automated escaping by the make_ban_lists routine
 # $'\1' gets weird results :
 # user@host $ ARR=($'\x01'"one two" three four); echo ${ARR[0]} | hd -v
 # 00000000  01 01 6f 6e 65 20 74 77  6f 0a                    |..one two.|
@@ -220,23 +223,25 @@ error_handler()
 
 script_debugger() 
 {
-	if [ "$ALLUP" -gt 0 ];then
+	local a_debug_buffer=''
+	
+	if [ "$ALL_UP" -gt 0 ];then
 		if [ "$DEBUG" -eq 0 ];then
 			return
 		fi
-		if ((DBI));then
-			for (( DBI=0; DBI < ${#DBGBUF[@]}; DBI++ ))
+		if ((DEBUG_BUFFER_INDEX));then
+			for (( DEBUG_BUFFER_INDEX=0; DEBUG_BUFFER_INDEX < ${#a_debug_buffer[@]}; DEBUG_BUFFER_INDEX++ ))
 			do
-				print_screen_output "${DBGBUF[DBI]}"
+				print_screen_output "${a_debug_buffer[DEBUG_BUFFER_INDEX]}"
 			done
-			DBI=0
+			DEBUG_BUFFER_INDEX=0
 		fi
 		print_screen_output "$@"
 	else
-		if ((!DEBUG_FLOOD && DBI > 10));then
+		if ((!DEBUG_FLOOD && DEBUG_BUFFER_INDEX > 10));then
 			error_handler 2
 		fi
-		DBGBUF[DBI++]="$@"
+		a_debug_buffer[DEBUG_BUFFER_INDEX++]="$@"
 	fi
 }
 
@@ -278,6 +283,7 @@ create_print_line()
 }
 
 # this removes newline and pipes. 
+# args: $1 - string to clean
 remove_erroneous_chars()
 {
 	## RS is input record separator
@@ -292,6 +298,7 @@ remove_erroneous_chars()
 }
 
 # Enforce boilerplate and buzzword filters
+# args: $1 - A_NORMAL_BANS/A_CPU_BANS; $2 - string to sanitize
 sanitize_characters() 
 {
 	# Cannot use strong quotes to unquote a string with pipes in it! 
@@ -332,25 +339,29 @@ check_script_depends()
 }
 
 # Filter boilerplate & buzzwords.
-make_bans() 
+# args: $1 - quoted: "$@" array of ban terms
+make_ban_lists() 
 {
-	unset MKBANS
-	# Iterate over $@
-	for BANSTR
+	local ban_list=''
+	# Iterate over $@ 
+	## note: this is a weird, non-intuitive method, needs some documentation or rewriting
+	## if you declare ban_string it stops working, have to read up on this
+	for ban_string
 	do
-		#echo "BANSTR=\"$BANSTR\"" >&2
-		if [[ ${BANSTR:0:1} = $'\2' ]];then
-			MKBANS="${MKBANS}${MKBANS+|}${BANSTR:1:${#BANSTR}-1}"
+		# echo "term=\"$ban_string\"" # >&2
+		if [[ ${ban_string:0:1} = $'\2' ]];then
+			ban_list="${ban_list}${ban_list+|}${ban_string:1:${#ban_string}-1}"
 		else
 			# Automatically escapes [ ] ( ) . and + 
-			MKBANS="${MKBANS}${MKBANS+|}$(echo "$BANSTR" | gawk '{ gsub(/([\[\]+().])/,"\\\\&"); print }')"
+			ban_list="${ban_list}${ban_list+|}$( echo "$ban_string" | gawk '{ gsub(/([\[\]+().])/,"\\\\&"); print }' )"
 		fi
 	done
-	echo "$MKBANS"
+	
+	echo "$ban_list"
 }
-
+# make_ban_lists "${A_CPU_BANS[@]}";exit
 # Set the colorscheme 
-# $1 = <scheme number>|<"none">
+# args: $1 = <scheme number>|<"none">
 set_color_scheme() 
 {
 	local i='' script_colors='' color_codes=''
@@ -378,31 +389,34 @@ set_color_scheme()
 }
 
 # Parse the null separated commandline under /proc/<pid passed in $1>/cmdline
+# args: $1 - $PPID
 get_cmdline() 
 {
-	local i=0
+	local i=0 ppid=$1
 	
-	if [ ! -e /proc/$1/cmdline ];then
+	if [ ! -e /proc/$ppid/cmdline ];then
 		{ echo 0; return; }
 	fi
 	##print_screen_output "Marker"
-	##print_screen_output "\$1='$1' -=- $(< /proc/$1/cmdline)"
-	unset CMDL
+	##print_screen_output "\$ppid='$ppid' -=- $(< /proc/$ppid/cmdline)"
+	unset A_CMDL
+	## note: need to figure this one out, and ideally clean it up and make it readable
 	while read -d $'\0' L && [ "$i" -lt 32 ]
 	do 
-		CMDL[i++]="$L" ## note: make sure this is valid ##
-	done </proc/$1/cmdline
+		A_CMDL[i++]="$L" ## note: make sure this is valid - What does L mean? ##
+	done </proc/$ppid/cmdline
 	##print_screen_output "\$i='$i'"
 	if [ "$i" -eq 0 ];then
-		CMDL[0]=$(< /proc/$1/cmdline)
-		if [[ -n ${CMDL[0]} ]];then
+		A_CMDL[0]=$(< /proc/$ppid/cmdline)
+		if [[ -n ${A_CMDL[0]} ]];then
 			i=1
 		fi
 	fi
-	CMDLMAX=$i
+	CMDL_MAX=$i
 }
 
 # Get the parameters
+# args: $1 - full script startup args: $@
 get_parameters() 
 {
 	if [ -z "$1" ]
@@ -613,9 +627,9 @@ get_start_source()
 			*perl*)
 				unset IRC_CLIENT_VERSION	# KSirc is one of the possibilities now. KSirc is a wrapper around dsirc, a perl client
 				get_cmdline $PPID
-				for (( i=0; i <= $CMDLMAX; i++ ))
+				for (( i=0; i <= $CMDL_MAX; i++ ))
 				do
-					case ${CMDL[i]} in
+					case ${A_CMDL[i]} in
 						*dsirc*) 
 							IRC_CLIENT="KSirc"
 							# Dynamic runpath detection is too complex with KSirc, because KSirc is started from
@@ -687,8 +701,8 @@ set_calculated_variables()
 	##/bin/sh -c 'echo "PATH in subshell=\"$PATH\""' 
 	
 	# Do this after sourcing of config overrides so user can customize banwords
-	A_NORMAL_BANS=$( make_bans "${A_NORMAL_BANS[@]}" ) # Contrary to my previous belief, "${ARR[@]}" passes a quoted list, not one string
-	A_CPU_BANS=$( make_bans "${A_CPU_BANS[@]}" )
+	A_NORMAL_BANS=$( make_ban_lists "${A_NORMAL_BANS[@]}" ) # Contrary to my previous belief, "${ARR[@]}" passes a quoted list, not one string
+	A_CPU_BANS=$( make_ban_lists "${A_CPU_BANS[@]}" )
 	##echo "A_NORMAL_BANS='$A_NORMAL_BANS'"
 }
 
@@ -928,7 +942,7 @@ get_graphics_card_data()
 	local i=''
 	
 	IFS=$'\n'
-	A_GFX_CARD_DATA=( $( echo "$LSPCI" | gawk -F': ' '/VGA compatible controller/ { print $NF }' ) )
+	A_GFX_CARD_DATA=( $( echo "$lspci_data" | gawk -F': ' '/VGA compatible controller/ { print $NF }' ) )
 	IFS="$OIFS"
 	for (( i=0; i < ${#A_GFX_CARD_DATA[@]}; i++ ))
 	do
@@ -940,7 +954,7 @@ get_graphics_card_data()
 	fi
 	
 	# GFXMEM is UNUSED at the moment, because it shows AGP aperture size, which is not necessarily equal to GFX memory..
-	# GFXMEM="size=[$(echo "$LSPCI" | gawk '/VGA/{while (!/^$/) {getline;if (/size=[0-9][0-9]*M/) {size2=gensub(/.*\[size=([0-9]+)M\].*/,"\\1","g",$0);if (size<size2){size=size2}}}}END{print size2}')M]"
+	# GFXMEM="size=[$(echo "$lspci_data" | gawk '/VGA/{while (!/^$/) {getline;if (/size=[0-9][0-9]*M/) {size2=gensub(/.*\[size=([0-9]+)M\].*/,"\\1","g",$0);if (size<size2){size=size2}}}}END{print size2}')M]"
 }
 
 ## create array of glx data
@@ -1067,25 +1081,27 @@ get_graphics_x_data()
 get_hard_drive_data()
 {
 	local disk='' i='' hdd_cap2='' hdd_cap1='' disk_capacity='' a_total_hdd=''
+	local hdd_model='' hdd_capacity='' hdd_used=''
 	
 	i=1
 	for disk in /proc/ide/ide*/hd*
 	do 
 		if [[ -e $disk/media && $( remove_erroneous_chars $disk/media ) = disk ]];then
 			# BUGFIX: Ran into a debian sarge kernel that did not have the "capacity" file in the hd* directories
+			# also, for PCI ata controller card, no capacity is listed
 			if [[ ! -e $disk/capacity ]];then
 				disk_capacity=0
 				break
 			fi
 			(( disk_capacity+=$( remove_erroneous_chars $disk/capacity ) ))
 			# this adds the (x) numbering in front of each disk found, and creates the full disk string
-			HDD_MODEL="${HDD_MODEL}${HDD_MODEL+ ${C1}($i)${C2}}$( remove_erroneous_chars $disk/model )"
+			hdd_model="${hdd_model}${hdd_model+ ${C1}($i)${C2}}$( remove_erroneous_chars $disk/model )"
 			((i++))
 		fi
 	done
 	
 	if [[ -e /proc/scsi/scsi ]];then
-		# Silly sata detection, will also pick up usb sticks. This will be redone soon.
+		# Silly sata detection, will also pick up usb sticks. This will be redone.
 		IFS=$'\n'
 		a_total_hdd=($(gawk '
 		BEGIN { IGNORECASE=1 }
@@ -1111,14 +1127,14 @@ get_hard_drive_data()
 		for (( i=0; i < ${#a_total_hdd[@]}; i++ ))
 		do
 			# this adds the (x) numbering in front of each disk found, and creates the full disk string
-			HDD_MODEL="${HDD_MODEL}${HDD_MODEL+ ${C1}($(($i+1)))${C2}}${a_total_hdd[i]}"
+			hdd_model="${hdd_model}${hdd_model+ ${C1}($(($i+1)))${C2}}${a_total_hdd[i]}"
 		done
-		if [ -z "$HDD_MODEL" ];then
-			HDD_MODEL=' Non Detected'
+		if [ -z "$hdd_model" ];then
+			hdd_model=' Non Detected'
 		fi
 	fi
 	
-	##print_screen_output "$HDD_MODEL" ; exit
+	##print_screen_output "$hdd_model" ; exit
 	if ((disk_capacity));then
 		hdd_cap1="$((disk_capacity/2))"
 	fi
@@ -1126,15 +1142,15 @@ get_hard_drive_data()
 	hdd_cap2=$( gawk '$1 ~ /^(3|22|33|8)$/ && $2 % 16 == 0 {size+=$3} END {printf("%d\n",size)}' /proc/partitions )
 	
 	##print_screen_output "hdd_cap1=\"$hdd_cap1\"  hdd_cap2=\"$hdd_cap2"" ; exit
-	HDD_CAPACITY=0
+	hdd_capacity=0
 	for i in ${!hdd_cap*}
 	do
-		if [[ ${!i} -gt $HDD_CAPACITY ]];then
-			HDD_CAPACITY="${!i}"
+		if [[ ${!i} -gt $hdd_capacity ]];then
+			hdd_capacity="${!i}"
 		fi
 	done 
-	if [ "$HDD_CAPACITY" -gt 0 ];then
-		HDD_USED=$( df | gawk '
+	if [ "$hdd_capacity" -gt 0 ];then
+		hdd_used=$( df | gawk '
 		p { 
 			if (/^\/dev\/(mapper\/|[hs]d[a-z][0-9]+)/) { 
 				if (NF == 1) { 
@@ -1148,12 +1164,20 @@ get_hard_drive_data()
 		/^Filesystem/ { p++ } 
 		END { print c }
 		' )
-		HDD_USED="$((HDD_USED*100/HDD_CAPACITY))% used"
-		HDD_CAPACITY="$(($HDD_CAPACITY*1024/1000**3))GB"
+		hdd_used="$((hdd_used*100/hdd_capacity))% used"
+		hdd_capacity="$(($hdd_capacity*1024/1000**3))GB"
 	else
-		HDD_USED='N/A'
-		HDD_CAPACITY='Unknown Capacity'
+		hdd_used='N/A'
+		hdd_capacity='Unknown Capacity'
 	fi
+	A_HDD_DATA[0]=$hdd_model
+	A_HDD_DATA[1]=$hdd_capacity
+	A_HDD_DATA[2]=$hdd_used
+}
+
+get_lspci_data()
+{
+	echo "$( lspci -v | awk '{ gsub(/\(prog-if[^)]*\)/,""); print }' )"
 }
 
 ## return memory used/installed
@@ -1176,7 +1200,7 @@ get_memory_data()
 get_networking_data()
 {
 	IFS=$'\n'
-	A_NETWORK_DATA=( $( echo "$LSPCI" | gawk '
+	A_NETWORK_DATA=( $( echo "$lspci_data" | gawk '
 	BEGIN { IGNORECASE=1 }
 	/^[0-9a-f:.]+ (ethernet|network) (controller|bridge)/ || /^[0-9a-f:.]+ [^:]+: .*(ethernet|network).*$/ {
 		nic=gensub(/^[0-9a-f:.]+ [^:]+: (.+)$/,"\\1","g",$0)
@@ -1218,9 +1242,7 @@ get_networking_data()
 get_uptime()
 {
 	## note: removing gsub(/ /,"",a); to get get space back in there, goes right before print a
-	local up_time=$( uptime | gawk '{ a = gensub(/^.*up *([^,]*).*$/,"\\1","g",$0); print a }' )
-	
-	echo "$up_time"
+	echo $( uptime | gawk '{ a = gensub(/^.*up *([^,]*).*$/,"\\1","g",$0); print a }' )
 }
 
 #### -------------------------------------------------------------------
@@ -1337,9 +1359,9 @@ print_hard_disk_data()
 	root_home_data=$( echo $root_home_data ) # get rid of linebreaks
 
 	if [ "$VERBOSITY_LEVEL" -ge 2 ];then
-		hdd_data=$( create_print_line "Disks:" "${C1}HDD${C2}${HDD_MODEL} ${C1}Size${C2} ${HDD_CAPACITY} (${HDD_USED})${CN}" )
+		hdd_data=$( create_print_line "Disks:" "${C1}HDD${C2}${hdd_model} ${C1}Size${C2} ${hdd_capacity} (${hdd_used})${CN}" )
 	else
-		hdd_data=$( create_print_line "Disks:" "${C1}HDD Size${C2} ${HDD_CAPACITY} (${HDD_USED})${CN}" )
+		hdd_data=$( create_print_line "Disks:" "${C1}HDD Size${C2} ${hdd_capacity} (${hdd_used})${CN}" )
 	fi
 	print_screen_output "$hdd_data"
 	
@@ -1413,7 +1435,7 @@ print_short_data()
 			#C1="${C1},1"; C2="${C2},1"; CN="${CN},1"
 		fi
 	fi
-	short_data="${C1}CPU${CN}[${C2}${cpu_core_count} ${CPU_MODEL} clocked at ${CPU_CLOCK}${CN}] ${C1}Kernel${CN}[${C2}${current_kernel}${CN}] ${C1}Up${CN}[${C2}${FL2}${FL1}${up_time}${FL1}${CN}] ${C1}Mem${CN}[${C2}${FL2}${FL1}${memory}${FL1}${CN}] ${C1}HDD${CN}[${C2}${FL2}${FL1}${HDD_CAPACITY}($HDD_USED)${FL1}${CN}] ${C1}Procs${CN}[${C2}${FL2}${FL1}${processes}${FL1}${CN}]"
+	short_data="${C1}CPU${CN}[${C2}${cpu_core_count} ${CPU_MODEL} clocked at ${CPU_CLOCK}${CN}] ${C1}Kernel${CN}[${C2}${current_kernel}${CN}] ${C1}Up${CN}[${C2}${FL2}${FL1}${up_time}${FL1}${CN}] ${C1}Mem${CN}[${C2}${FL2}${FL1}${memory}${FL1}${CN}] ${C1}HDD${CN}[${C2}${FL2}${FL1}${hdd_capacity}($hdd_used)${FL1}${CN}] ${C1}Procs${CN}[${C2}${FL2}${FL1}${processes}${FL1}${CN}]"
 
 	if [ "$SHOW_IRC" -gt 0 ];then
 		short_data="${short_data} ${C1}Client${CN}[${C2}${IRC_CLIENT}${IRC_CLIENT_VERSION}${CN}]"
@@ -1457,16 +1479,24 @@ print_it_out()
 	local current_kernel=$( uname -a | gawk '{print $1,$3,$(NF-1)}' )
 	local processes="$(( $( ps aux | wc -l ) - 1 ))"
 	local cpu_core_count="$( get_cpu_core_count )"
+	local lspci_data='' ## only for verbose needed
 	local up_time="$( get_uptime )"
-	# assemble data for output
-	get_cpu_data
+	## assemble data for output
+	# load A_HDD_DATA
 	get_hard_drive_data
+	#: note: if hdd_model is declared prior to use, whatever string you want inserted will 
+	## be inserted first. In this case, it's desirable to print out (x) before each driver found.
+	local hdd_model=${A_HDD_DATA[0]}
+	local hdd_capacity=${A_HDD_DATA[1]}
+	local hdd_used=${A_HDD_DATA[2]}
+	get_cpu_data
 
 	case "$VERBOSITY_LEVEL" in
 		0)
 			print_short_data
 			;;
 		*)
+			lspci_data="$( get_lspci_data )"
 			print_intro_data
 			print_cpu_data
 			print_gfx_data
@@ -1522,8 +1552,8 @@ if [ "$COLOR_SCHEME_SET" != 'true' ];then
 	set_color_scheme "$DEFAULT_SCHEME"
 fi
 
-ALLUP=1
-script_debugger "ALLUP=1 : inxi up and running.."
+ALL_UP=1
+script_debugger "ALL_UP=1 : inxi up and running.."
 
 # then create the output
 print_it_out
