@@ -1,7 +1,7 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.2.8
+####  version: 0.2.9
 ####  Date: October 30 2008
 ########################################################################
 ####  inxi is a fork of infobash, the original bash sys info script by locsmif
@@ -45,6 +45,9 @@ COLOR_SCHEME=''
 CPU_MODEL=''
 CPU_CLOCK=''
 CPU_FLAGS=''
+HDD_CAPACITY=''
+HDD_MODEL=''
+HDD_USED=''
 IRC_CLIENT=''
 IRC_CLIENT_VERSION=''
 
@@ -1047,18 +1050,18 @@ get_graphics_x_data()
 ## this will be replaced by trash80 stuff, working copy
 get_hard_drive_data()
 {
-	local disk='' i=''
+	local disk='' i='' hdd_cap2='' hdd_cap1='' disk_capacity='' a_total_hdd=''
 	
 	for disk in /proc/ide/ide*/hd*
 	do 
 		if [[ -e $disk/media && $( remove_erroneous_chars $disk/media ) = disk ]];then
 			# BUGFIX: Ran into a debian sarge kernel that did not have the "capacity" file in the hd* directories
 			if [[ ! -e $disk/capacity ]];then
-				CAP=0
+				disk_capacity=0
 				break
 			fi
-			(( CAP+=$( remove_erroneous_chars $disk/capacity ) ))
-			HDDMOD="${HDDMOD}${HDDMOD+,}$( remove_erroneous_chars $disk/model )"
+			(( disk_capacity+=$( remove_erroneous_chars $disk/capacity ) ))
+			HDD_MODEL="${HDD_MODEL}${HDD_MODEL+,}$( remove_erroneous_chars $disk/model )"
 		fi
 	done
 	
@@ -1066,7 +1069,7 @@ get_hard_drive_data()
 		# Silly sata detection, will also pick up usb sticks, and it is all I will put into inxi. if you want more, infoperl is on
 		# the way :)
 		IFS=$'\n'
-		THDD=($(gawk '
+		a_total_hdd=($(gawk '
 		BEGIN { IGNORECASE=1 }
 		/host/ {
 			getline a[$0]
@@ -1087,29 +1090,32 @@ get_hard_drive_data()
 		' /proc/scsi/scsi))
 		IFS="$OIFS"
 	
-		for (( i=0; i < ${#THDD[@]}; i++ ))
+		for (( i=0; i < ${#a_total_hdd[@]}; i++ ))
 		do
-			HDDMOD="${HDDMOD}${HDDMOD+,}${THDD[i]}"
+			HDD_MODEL="${HDD_MODEL}${HDD_MODEL+,}${a_total_hdd[i]}"
 		done
+		if [ -z "$HDD_MODEL" ];then
+			HDD_MODEL='Non Detected'
+		fi
 	fi
 	
-	##print_screen_output "$HDDMOD" ; exit
-	if ((CAP));then
-		HDDCAP1="$((CAP/2))"
+	##print_screen_output "$HDD_MODEL" ; exit
+	if ((disk_capacity));then
+		hdd_cap1="$((disk_capacity/2))"
 	fi
 	# See http://lanana.org/docs/device-list/devices-2.6+.txt for major numbers used below
-	HDDCAP2=$( gawk '$1 ~ /^(3|22|33|8)$/ && $2 % 16 == 0 {size+=$3} END {printf("%d\n",size)}' /proc/partitions )
+	hdd_cap2=$( gawk '$1 ~ /^(3|22|33|8)$/ && $2 % 16 == 0 {size+=$3} END {printf("%d\n",size)}' /proc/partitions )
 	
-	##print_screen_output "HDDCAP1=\"$HDDCAP1\"  HDDCAP2=\"$HDDCAP2"" ; exit
-	HDD=0
-	for i in ${!HDDCAP*}
+	##print_screen_output "hdd_cap1=\"$hdd_cap1\"  hdd_cap2=\"$hdd_cap2"" ; exit
+	HDD_CAPACITY=0
+	for i in ${!hdd_cap*}
 	do
-		if [[ ${!i} -gt $HDD ]];then
-			HDD="${!i}"
+		if [[ ${!i} -gt $HDD_CAPACITY ]];then
+			HDD_CAPACITY="${!i}"
 		fi
 	done 
-	if [ "$HDD" -gt 0 ];then
-		HDDUSG=$( df | gawk '
+	if [ "$HDD_CAPACITY" -gt 0 ];then
+		HDD_USED=$( df | gawk '
 		p { 
 			if (/^\/dev\/(mapper\/|[hs]d[a-z][0-9]+)/) { 
 				if (NF == 1) { 
@@ -1123,11 +1129,11 @@ get_hard_drive_data()
 		/^Filesystem/ { p++ } 
 		END { print c }
 		' )
-		HDDUSG="$((HDDUSG*100/HDD))% used"
-		HDD="$(($HDD*1024/1000**3))GB"
+		HDD_USED="$((HDD_USED*100/HDD_CAPACITY))% used"
+		HDD_CAPACITY="$(($HDD_CAPACITY*1024/1000**3))GB"
 	else
-		unset HDDUSG
-		HDD="unknown.."
+		HDD_USED='N/A'
+		HDD_CAPACITY='Unknown Capacity'
 	fi
 }
 
@@ -1312,9 +1318,9 @@ print_hard_disk_data()
 	root_home_data=$( echo $root_home_data ) # get rid of linebreaks
 
 	if [ "$VERBOSITY_LEVEL" -ge 2 ];then
-		hdd_data=$( create_print_line "Disks:" "${C1}HDD${C2} ${HDDMOD} ${C1}Size${C2} ${HDD} (${HDDUSG})${CN}" )
+		hdd_data=$( create_print_line "Disks:" "${C1}HDD${C2} ${HDD_MODEL} ${C1}Size${C2} ${HDD_CAPACITY} (${HDD_USED})${CN}" )
 	else
-		hdd_data=$( create_print_line "Disks:" "${C1}HDD Size${C2} ${HDD} (${HDDUSG})${CN}" )
+		hdd_data=$( create_print_line "Disks:" "${C1}HDD Size${C2} ${HDD_CAPACITY} (${HDD_USED})${CN}" )
 	fi
 	print_screen_output "$hdd_data"
 	
@@ -1389,7 +1395,7 @@ print_short_data()
 			#C1="${C1},1"; C2="${C2},1"; CN="${CN},1"
 		fi
 	fi
-	short_data="${C1}CPU${CN}[${C2}${cpu_core_count} ${CPU_MODEL} clocked at ${CPU_CLOCK}${CN}] ${C1}Kernel${CN}[${C2}${current_kernel}${CN}] ${C1}Up${CN}[${C2}${FL2}${FL1}${up_time}${FL1}${CN}] ${C1}Mem${CN}[${C2}${FL2}${FL1}${memory}${FL1}${CN}] ${C1}HDD${CN}[${C2}${FL2}${FL1}${HDD}($HDDUSG)${FL1}${CN}] ${C1}Procs${CN}[${C2}${FL2}${FL1}${processes}${FL1}${CN}]"
+	short_data="${C1}CPU${CN}[${C2}${cpu_core_count} ${CPU_MODEL} clocked at ${CPU_CLOCK}${CN}] ${C1}Kernel${CN}[${C2}${current_kernel}${CN}] ${C1}Up${CN}[${C2}${FL2}${FL1}${up_time}${FL1}${CN}] ${C1}Mem${CN}[${C2}${FL2}${FL1}${memory}${FL1}${CN}] ${C1}HDD${CN}[${C2}${FL2}${FL1}${HDD_CAPACITY}($HDD_USED)${FL1}${CN}] ${C1}Procs${CN}[${C2}${FL2}${FL1}${processes}${FL1}${CN}]"
 
 	if [ "$SHOW_IRC" -gt 0 ];then
 		short_data="${short_data} ${C1}Client${CN}[${C2}${IRC_CLIENT}${IRC_CLIENT_VERSION}${CN}]"
