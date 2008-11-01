@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.2.17
-####  Date: October 31 2008
+####  version: 0.3.0
+####  Date: November 1 2008
 ########################################################################
 ####  inxi is a fork of infobash, the original bash sys info script by locsmif
 ####  As time permits functionality and recoding will occur.
@@ -42,8 +42,8 @@
 ### Variable initializations: null values
 
 CMDL_MAX=''
-COLOR_SCHEME_SET=''
 COLOR_SCHEME=''
+COLOR_SCHEME_SET=''
 CPU_MODEL=''
 CPU_CLOCK=''
 CPU_FLAGS=''
@@ -60,19 +60,21 @@ A_NETWORK_DATA=''
 A_X_DATA=''
 
 ### Boolean true/false globals
+# check to make sure initial steps run without error for debugging
+B_ALL_UP='false'
+# override certain errors due to currupted data
+B_HANDLE_CORRUPT_DATA='false'
 # Running in a shell? Defaults to false, and is determined later.
 B_RUNNING_IN_SHELL='false'	
 # Set this to 'false' to avoid printing the hostname
 B_SHOW_HOST='true'
+# triggers various debugging and new option testing
+B_TESTING_FLAG='false'
 # Assume X not running until tests show it is
 B_X_RUNNING='false'
 
 ### Variable initializations: constants
 # inxi hasn't been 'booted' yet.
-ALL_UP=0
-# New parameter
-CRAP=0
-
 DCOPOBJ="default"
 DEBUG=0 # Set debug levels from 1-10
 # Debug Buffer Index, index into a debug buffer storing debug messages until inxi is 'all up'
@@ -89,8 +91,6 @@ fi
 # Defaults to 2, make this 1 for normal, 0 for no colorcodes at all. Set to any other valid scheme you like. 
 # Same as runtime parameter.
 DEFAULT_SCHEME=2
-# A throw-away 'flag' variable intended to be used throughout inxi
-FLAG=0
 # Default indentation level
 INDENT=10	
 # default to false, no konversation found, 1 is /cmd inxi start, 2 is native konvi script mode
@@ -184,6 +184,7 @@ fi
 #### -------------------------------------------------------------------
 
 # Error handling
+# args: $1 - error number; $2 - optional, extra information
 error_handler() 
 {
 	local error_message=''
@@ -194,10 +195,10 @@ error_handler()
 			error_message="$SCRIPT_NAME: large flood danger, debug buffer full!"
 			;;
 		3) 
-			error_message="$SCRIPT_NAME: error in colorscheme - unsupported number: $2" 
+			error_message="$SCRIPT_NAME: unsupported color scheme number: $2" 
 			;;
 		4) 
-			error_message="$SCRIPT_NAME: unsupported verbosity level $2" 
+			error_message="$SCRIPT_NAME: unsupported verbosity level: $2" 
 			;;
 		5) 
 			error_message="$SCRIPT_NAME: dependency not met: $2 not found in path" 
@@ -225,7 +226,7 @@ script_debugger()
 {
 	local a_debug_buffer=''
 	
-	if [ "$ALL_UP" -gt 0 ];then
+	if [ "$B_ALL_UP" == 'true' ];then
 		if [ "$DEBUG" -eq 0 ];then
 			return
 		fi
@@ -415,89 +416,87 @@ get_cmdline()
 	CMDL_MAX=$i
 }
 
-# Get the parameters
+# Get the parameters. Note: standard options should be lower case, advanced or testing, upper
 # args: $1 - full script startup args: $@
 get_parameters() 
 {
-	if [ -z "$1" ]
-	then
+	local opt=''
+	
+	if [ -z "$1" ];then
 		return 1
 	fi
-	while [ -n "$1" ]
+	
+	while getopts :cCdDhTUv:V opt
 	do
-		case $1 in
-		--crap)
-			CRAP=1
+		case $opt in
+		c)
+			if [ -z "$( egrep '^[0-9][0-9]?$' <<< $OPTARG )" ];then
+				COLOR_SCHEME_SET='true'
+				## note: not sure about this, you'd think user values should be overridden, but
+				## we'll leave this for now
+				if [ -z "$COLOR_SCHEME" ];then
+					set_color_scheme "$1"
+				fi
+			else
+				error_handler 3 "$opt"
+			fi
 			;;
-		-d|--debug)
+		C)
+			B_HANDLE_CORRUPT_DATA='true'
+			;;
+		d)
+			VERBOSITY_LEVEL=1
+			;;
+		D)
 			DEBUG=1
 			exec 2>&1
 			;;
-		-v|-v[0-9]|--verbose)
-			if [[ ${#1} -eq 3 ]];then
-				VERBOSITY_LEVEL="${1:2}"
+		T)
+			B_TESTING_FLAG='true'
+			;;
+		v)
+			if [[ -z $( egrep "^[0-$VERBOSITY_LEVELS]$" <<< $OPTARG ) ]];then
+				VERBOSITY_LEVEL="$opt"
 			else
-				if [[ $2 = --* || $2 = -* || -z $2 ]];then
-					VERBOSITY_LEVEL=1
-				else
-					shift
-					VERBOSITY_LEVEL="$1" 
-				fi
-			fi
-			grep -q "^[0-${VERBOSITY_LEVELS}]$" <<< $VERBOSITY_LEVEL || error_handler 4 "$VERBOSITY_LEVEL"
-			;;
-		-U)
-			print_screen_output "Updating $SCRIPT_NAME. Current version number: $SCRIPT_VERSION_NUMBER"
-			wget -O $SCRIPT_PATH/$SCRIPT_NAME http://techpatterns.com/downloads/distro/$SCRIPT_NAME || error_handler 8 "$?"
-			if [ "$?" -eq 0 ];then
-				SCRIPT_VERSION_NUMBER=$( grep -im 1 'version:' $SCRIPT_PATH/$SCRIPT_NAME | awk '{print $3}' )
-				print_screen_output "Successfully updated to version: $SCRIPT_VERSION_NUMBER\nTo run the new version, just start $SCRIPT_NAME again."
-				exit 0
+				error_handler 4 "$opt"
 			fi
 			;;
-		-V|--version)
+		U)
+			script_self_updater
+			;;
+		V)
 			print_version_info
 			exit 0
 			;;
-		[0-9]|[0-9][0-9])
-			# these will need to be converted to standard type options
-			echo "$1" | grep -q '^[0-9][0-9]\?$' || error_handler 3 "$1"
-			COLOR_SCHEME_SET='true'
-			if [ -z "$COLOR_SCHEME" ];then
-				set_color_scheme "$1"
-			fi
-			;;
-		-h|--help)
+		h)
 			show_options
 			exit 0
 			;;
 		*)
 			show_options
-			error_handler 7 "$1"
+			error_handler 7 "$opt"
 			;;
 		esac
-		shift
 	done
 }
 
-## print out help menu
+## print out help menu, not including Testing or Debugger stuff because it's not needed
 show_options()
 {
-	print_screen_output "$SCRIPT_NAME supports the following options:"
+	local color_scheme_count=${#A_COLOR_SCHEMES[@]}
+	
+	print_screen_output "$SCRIPT_NAME supports the following options. You can combine"
+	print_screen_output "them, or list them one by one: Examples: $SCRIPT_NAME -v4 -c6 OR $SCRIPT_NAME -dc 6"
 	print_screen_output "- - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
-	print_screen_output "--crap       Overrides defective or corrupted distro ID file"
-	print_screen_output ""
-	print_screen_output "-d --debug   Triggers script debugger output."
-	print_screen_output ""
-	print_screen_output "-v -v[0-${VERBOSITY_LEVELS}]   Script verbosity levels. Supported levels: 0 - ${VERBOSITY_LEVELS}"
-	print_screen_output " --verbose   Examples: $SCRIPT_NAME -v | $SCRIPT_NAME -v 4 | $SCRIPT_NAME --verbose 3"
-	print_screen_output ""
-	print_screen_output "-U           Autoupdate script. Note: if you installed as root, you"
-	print_screen_output "             must be root to update, otherwise user is fine."
-	print_screen_output ""
-	print_screen_output "-V --version $SCRIPT_NAME information."
-	print_screen_output ""
-	print_screen_output "0-99         Sets color scheme to use. This will be changed soon."
+	print_screen_output "-C  Overrides defective or corrupted data."
+	print_screen_output "-c  Available color schemes. Scheme number is required."
+	print_screen_output "    Supported schemes: 0-$color_scheme_count Example: $SCRIPT_NAME -c 11"
+	print_screen_output "-d  Default output verbosity level, same as: $SCRIPT_NAME -v 1"
+	print_screen_output "-U  Autoupdate script. Note: if you installed as root, you"
+	print_screen_output "    must be root to update, otherwise user is fine."
+	print_screen_output "-v  Script verbosity levels. Verbosit level number is required. "
+	print_screen_output "    Supported levels: 0-${VERBOSITY_LEVELS} Example: $SCRIPT_NAME -v 4"
+	print_screen_output "-V  $SCRIPT_NAME version information. Prints information then exits."
 	print_screen_output ""
 }
 
@@ -522,6 +521,17 @@ print_version_info()
 	print_screen_output "it under the terms of the GNU General Public License as published by"
 	print_screen_output "the Free Software Foundation; either version 3 of the License, or"
 	print_screen_output "(at your option) any later version."
+}
+
+script_self_updater()
+{
+	print_screen_output "Updating $SCRIPT_NAME. Current version number: $SCRIPT_VERSION_NUMBER"
+	wget -O $SCRIPT_PATH/$SCRIPT_NAME http://techpatterns.com/downloads/distro/$SCRIPT_NAME || error_handler 8 "$?"
+	if [ "$?" -eq 0 ];then
+		SCRIPT_VERSION_NUMBER=$( grep -im 1 'version:' $SCRIPT_PATH/$SCRIPT_NAME | awk '{print $3}' )
+		print_screen_output "Successfully updated to version: $SCRIPT_VERSION_NUMBER\nTo run the new version, just start $SCRIPT_NAME again."
+		exit 0
+	fi
 }
 
 ########################################################################
@@ -671,9 +681,10 @@ get_start_source()
 ## it's just a holder for some misc stuff that has to happen
 set_calculated_variables()
 {
-	local path='' sys_path='' added_path=''
+	local path='' sys_path='' added_path='' b_path_found=''
 	# Extra path variable to make execute failures less likely, merged below
 	local extra_paths="/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin" 
+	
 	# Detect X and set variable "X" accordingly
 	if [ -n "$DISPLAY" ];then
 		B_X_RUNNING='true' 
@@ -684,14 +695,14 @@ set_calculated_variables()
 	IFS=":"
 	for path in $extra_paths
 	do 
-		FLAG=0
+		b_path_found='false'
 		for sys_path in $PATH
 		do 
 			if [ "$path" == "$sys_path" ];then
-				FLAG=1
+				b_path_found='true'
 			fi
 		done
-		if [ "$FLAG" -eq 0 ];then
+		if [ "$b_path_found" == 'false' ];then
 			added_path="$added_path:$path"
 		fi
 	done
@@ -922,8 +933,8 @@ get_distro_data()
 														gsub(/^ +| +$/,""); 
 														print }' "/etc/${distro_file}" )
 	fi
-	if (( ${#distro} > 80 && ! CRAP ));then
-		distro="${RED}/etc/${distro_file} corrupted, use --crap to override${NORMAL}"
+	if [ "${#distro}" -gt 80 -a "$B_HANDLE_CORRUPT_DATA" != 'true' ];then
+		distro="${RED}/etc/${distro_file} corrupted, use -C to override${NORMAL}"
 	fi
 	## note: figure out a more readable way to achieve whatever is intended here ##
 	: ${distro:=Unknown distro o_O}
@@ -1371,7 +1382,7 @@ print_gfx_data()
 	## note: if glx render or version have no content, then mesa is true
 	if [ "$B_X_RUNNING" == 'true' -a "$b_is_mesa" != 'true' ];then
 		gfx_data=$( create_print_line " " "${C1}GLX Renderer${C2} ${glx_renderer} ${CN}| ${C1}GLX Version${C2} ${glx_version}${CN}" )
-		if [ "$CRAP" -gt 0 ];then
+		if [ "$B_HANDLE_CORRUPT_DATA" == 'true' ];then
 			gfx_data="${gfx_data} ${C1}Direct rendering${C2} ${glx_direct_render}${CN}"
 		fi
 		print_screen_output "$gfx_data"
@@ -1581,8 +1592,8 @@ if [ "$COLOR_SCHEME_SET" != 'true' ];then
 	set_color_scheme "$DEFAULT_SCHEME"
 fi
 
-ALL_UP=1
-script_debugger "ALL_UP=1 : inxi up and running.."
+B_ALL_UP='true'
+script_debugger "B_ALL_UP=true : inxi up and running.."
 
 # then create the output
 print_it_out
