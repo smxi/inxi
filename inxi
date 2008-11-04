@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.3.17
-####  Date: November 3 2008
+####  version: 0.3.18
+####  Date: November 4 2008
 ########################################################################
 ####  inxi is a fork of infobash, the original bash sys info script by locsmif
 ####  As time permits functionality and recoding will occur.
@@ -54,6 +54,7 @@ IRC_CLIENT=''
 IRC_CLIENT_VERSION=''
 
 ### primary data array holders
+A_AUDIO_DATA=''
 A_CMDL=''
 A_CPU_DATA=''
 A_GFX_CARD_DATA=''
@@ -67,6 +68,8 @@ A_X_DATA=''
 # check to make sure initial steps run without error for debugging
 # inxi hasn't been 'booted' yet.
 B_ALL_UP='false'
+# Debug flood override: make 'true' to allow long debug output
+B_DEBUG_FLOOD='false'
 # show extra output data
 B_EXTRA_DATA='false'
 # override certain errors due to currupted data
@@ -85,8 +88,6 @@ DCOPOBJ="default"
 DEBUG=0 # Set debug levels from 1-10
 # Debug Buffer Index, index into a debug buffer storing debug messages until inxi is 'all up'
 DEBUG_BUFFER_INDEX=0
-# Debug flood override: toggle on to allow long debug output
-DEBUG_FLOOD=0
 ### Reroute all error messages to the bitbucket (if not debugging)
 if [ "$DEBUG" -eq 0 ]
 then
@@ -110,7 +111,7 @@ SHOW_IRC=2
 # Verbosity level defaults to 0, this can also be set with -v0, -v2, -v3, etc as a parameter.
 VERBOSITY_LEVEL=0		
 # Supported number of verbosity levels, including 0
-VERBOSITY_LEVELS=5   
+VERBOSITY_LEVELS=6   
 
 # Clear nullglob, because it creates unpredictable situations with IFS=$'\n' ARR=($VAR) IFS="$ORIGINAL_IFS"
 # type constructs. Stuff like [rev a1] is now seen as a glob expansion pattern, and fails, and
@@ -246,7 +247,7 @@ script_debugger()
 		fi
 		print_screen_output "$@"
 	else
-		if ((!DEBUG_FLOOD && DEBUG_BUFFER_INDEX > 10));then
+		if [ "$B_DEBUG_FLOOD" == 'true' -a "$DEBUG_BUFFER_INDEX" -gt 10 ];then
 			error_handler 2
 		fi
 		a_debug_buffer[DEBUG_BUFFER_INDEX++]="$@"
@@ -296,13 +297,13 @@ remove_erroneous_chars()
 {
 	## RS is input record separator
 	## gsub is substitute;
-	gawk 'BEGIN { RS="" } { gsub(/\n$/,"");         ## (newline; end of string) with (nothing)
-									gsub(/\n/," ");         ## (newline) with (space)
-									gsub(/^ *| *$/, "");    ## (pipe char) with (nothing)
-									gsub(/  +/, " ");       ## ( +) with (space)
-									gsub(/ [ ]+/, " ");     ## ([ ]+) with (space)
-									gsub(/^ +| +$/, "");    ## (pipe char) with (nothing)
-									printf $0 }' "$1"       ## prints (returns) cleaned input
+	gawk 'BEGIN { RS="" } { gsub(/\n$/,"")         ## (newline; end of string) with (nothing)
+									gsub(/\n/," ");        ## (newline) with (space)
+									gsub(/^ *| *$/, "")    ## (pipe char) with (nothing)
+									gsub(/  +/, " ")       ## ( +) with (space)
+									gsub(/ [ ]+/, " ")     ## ([ ]+) with (space)
+									gsub(/^ +| +$/, "")    ## (pipe char) with (nothing)
+									printf $0 }' "$1"      ## prints (returns) cleaned input
 }
 
 # Enforce boilerplate and buzzword filters
@@ -312,10 +313,10 @@ sanitize_characters()
 	# Cannot use strong quotes to unquote a string with pipes in it! 
 	# bash will interpret the |'s as usual and try to run a subshell!
 	# Using weak quotes instead, or use '"..."'
-	echo "$2" | gawk "BEGIN { IGNORECASE=1 } {gsub(/${!1}/,\"\");
-															gsub(/ [ ]+/,\" \");    ## ([ ]+) with (space)
-															gsub(/^ +| +$/,\"\");   ## (pipe char) with (nothing)
-															print }"                ## prints (returns) cleaned input
+	echo "$2" | gawk "BEGIN { IGNORECASE=1 } {gsub(/${!1}/,\"\")
+															gsub(/ [ ]+/,\" \")    ## ([ ]+) with (space)
+															gsub(/^ +| +$/,\"\")   ## (pipe char) with (nothing)
+															print }"               ## prints (returns) cleaned input
 }
 
 #### -------------------------------------------------------------------
@@ -325,7 +326,7 @@ sanitize_characters()
 # Determine if any of the absolutely necessary tools are absent 
 check_script_depends() 
 {
-	local app_name=''
+	local app_name='' app_data=''
 	
 	if [ ! -d /proc/ ];then
 		error_handler 6
@@ -334,7 +335,12 @@ check_script_depends()
 	if [ "$B_X_RUNNING" == 'true' ];then
 		for app_name in xrandr xdpyinfo glxinfo
 		do
-			type -p $app_name >/dev/null || { script_debugger "inxi: Resuming in non X mode: $app_name not found in path"; X=0; break; }
+			app_data=$( type -p $app_name )
+			if [ -z "$app_data" ];then
+				script_debugger "inxi: Resuming in non X mode: $app_name not found in path"
+				B_X_RUNNING='false'
+				break
+			fi
 		done
 	fi
 	
@@ -342,7 +348,10 @@ check_script_depends()
 	# bc removed from deps for now
 	for app_name in df free gawk grep hostname lspci ps readlink runlevel tr uname uptime wc
 	do
-		type -p $app_name >/dev/null || error_handler 5 "$app_name"
+		app_data=$( type -p $app_name )
+		if [ -z "$app_data" ];then
+			error_handler 5 "$app_name"
+		fi
 	done
 }
 
@@ -379,16 +388,16 @@ set_color_scheme()
 	fi
 	SCHEME="$1" # Set a global variable to allow checking for chosen scheme later
 	if [ "$B_RUNNING_IN_SHELL" == 'true' ];then
-		color_codes=($ANSI_COLORS)
+		color_codes=( $ANSI_COLORS )
 	else
-		color_codes=($IRC_COLORS)
+		color_codes=( $IRC_COLORS )
 	fi
 	for (( i=0; i < ${#A_COLORS_AVAILABLE[@]}; i++ ))
 	do
 		eval "${A_COLORS_AVAILABLE[i]}=\"${color_codes[i]}\""
 	done
 	IFS=","
-	script_colors=(${A_COLOR_SCHEMES[$1]})
+	script_colors=( ${A_COLOR_SCHEMES[$1]} )
 	IFS="$ORIGINAL_IFS"
 	C1="${!script_colors[0]}"
 	C2="${!script_colors[1]}"
@@ -456,7 +465,7 @@ get_parameters()
 			;;
 		T)	B_TESTING_FLAG='true'
 			;;
-		v)	if [[ -n $( egrep "^[0-$VERBOSITY_LEVELS]$" <<< $OPTARG ) ]];then
+		v)	if [[ -n $( egrep "^[0-9][0-9]?$" <<< $OPTARG ) && $OPTARG -le $VERBOSITY_LEVELS ]];then
 				VERBOSITY_LEVEL="$OPTARG"
 			else
 				error_handler 4 "$OPTARG"
@@ -501,6 +510,7 @@ show_options()
 	print_screen_output "    3 - Also show hard disk names as detected."
 	print_screen_output "    4 - Also show partition size/filled data for (if present):/, /home, /var/, /boot"
 	print_screen_output "    5 - For multicore systems, also show per core clock speeds."
+	print_screen_output "    6 - Also show audio card data."
 	print_screen_output "-V  $SCRIPT_NAME version information. Prints information then exits."
 	print_screen_output "-x  Show extra data, for example bogomips on cpu output."
 	rint_screen_output ""
@@ -727,6 +737,25 @@ set_calculated_variables()
 #### -------------------------------------------------------------------
 #### get data types
 #### -------------------------------------------------------------------
+## create array of sound cards installed on system
+get_audio_data()
+{
+	local i=''
+	
+	IFS=$'\n'
+	A_AUDIO_DATA=( $( echo "$lspci_data" | gawk -F': ' '
+																{ IGNORECASE=1 } 
+																/multimedia audio controller/ { print $NF }' ) )
+	IFS="$ORIGINAL_IFS"
+	for (( i=0; i < ${#A_AUDIO_DATA[@]}; i++ ))
+	do
+		A_AUDIO_DATA[i]=$( sanitize_characters A_NORMAL_BANS "${A_AUDIO_DATA[i]}" )
+	done
+	# handle cases where card detection fails, like in PS3, where lspci gives no output, or headless boxes..
+	if [ "${#A_AUDIO_DATA[@]}" -eq 0 ];then
+		A_AUDIO_DATA[0]='Failed to Detect Sound Card!'
+	fi
+}
 
 ## return value cpu core count string, this helps resolve the multi redundant lines of old style output
 get_cpu_core_count()
@@ -1312,6 +1341,45 @@ calculate_multicore_data()
 #### print and processing of output data
 #### -------------------------------------------------------------------
 
+print_audio_data()
+{
+	local i='' card_one='Card-1 ' audio_data='' a_audio_data='' port_data=''
+	local a_audio_working=''
+	# set A_AUDIO_DATA
+	get_audio_data
+
+	IFS=","
+	a_audio_working=(${A_AUDIO_DATA[0]})
+	IFS="$ORIGINAL_IFS" 
+	
+	if [[ -n ${A_AUDIO_DATA[@]} ]];then
+		if [[ ${#A_AUDIO_DATA[@]} -le 1 ]];then
+			card_one='Card '
+		fi
+		
+		if [ -n "${a_audio_working[1]}" ];then
+			port_data=" ${C1}at port${C2} ${a_audio_working[1]}"
+		fi
+		audio_data="${C1}$card_one${C2}${a_audio_working[0]}$port_data"
+		audio_data=$( create_print_line "Sound:" "$audio_data" )
+		print_screen_output "$audio_data"
+		i=0 ## loop starts with 1 by auto-increment so it only shows cards > 1
+		while [[ -n ${A_AUDIO_DATA[++i]} ]]
+		do
+			IFS=","
+			a_audio_working=( ${A_AUDIO_DATA[i]} )
+			IFS="$ORIGINAL_IFS" 
+			port_data=''
+			if [ -n "${a_audio_working[1]}" ];then
+				port_data=" ${C1}at port${C2} ${a_audio_working[1]}"
+			fi
+			audio_data="${C1}Card-$(( $i + 1 )) ${C2}${a_audio_working[0]}$port_data"
+			audio_data=$( create_print_line " " "$audio_data" )
+			print_screen_output "$audio_data"
+		done
+	fi
+}
+
 print_cpu_data()
 {
 	local cpu_data='' i='' a_cpu_working='' cpu_clock_speed='' cpu_multi_clock_data=''
@@ -1343,7 +1411,7 @@ print_cpu_data()
 # 	fi
 	cpu_data=$( create_print_line "CPU:" "${C1}${cpu_core_count_string}${C2} ${a_cpu_working[0]}" )
 	if [ "$VERBOSITY_LEVEL" -ge 3 ];then
-		## this needs to be updated for multicore I believe, bogomips x core count, or something
+		# update for multicore, bogomips x core count.
 		if [ "$B_EXTRA_DATA" == 'true' ];then
 			bmip_data=$( calculate_multicore_data "${a_cpu_working[4]}" "$cpu_core_count"  )
 			bmip_data=" ${C1}bmips${C2} $bmip_data"
@@ -1476,8 +1544,7 @@ print_intro_data()
 
 print_networking_data()
 {
-	local i='' card_one='Card-1 ' network_data='' a_network_data='' port_data=''
-	
+	local i='' card_one='Card-1 ' network_data='' a_network_working='' port_data=''
 	# set A_NETWORK_DATA
 	get_networking_data
 
@@ -1609,7 +1676,9 @@ print_it_out()
 			print_intro_data
 			print_cpu_data
 			print_gfx_data
-	
+			if [ "$VERBOSITY_LEVEL" -ge 6 ];then
+				print_audio_data
+			fi
 			if [ "$VERBOSITY_LEVEL" -ge 2 ];then
 				print_networking_data
 			fi
