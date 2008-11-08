@@ -1,7 +1,7 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.3.33
+####  version: 0.4.0
 ####  Date: November 7 2008
 ########################################################################
 ####  inxi is a fork of infobash, the original bash sys info script by locsmif
@@ -1133,128 +1133,146 @@ get_graphics_x_data()
 	fi
 }
 
-## this will be replaced by trash80 stuff, working copy
-get_hard_drive_data()
+# this gets just the raw data, total space/percent used and disk/name/per disk capacity
+get_hdd_data_basic()
 {
-	local disk='' i='' hdd_cap2='' hdd_cap1='' disk_capacity='' a_total_hdd=''
-	local hdd_model='' hdd_capacity='' hdd_used=''
+	local hdd_used=''
 
-	i=1
-	for disk in /proc/ide/ide*/hd*
-	do
-		if [[ -e $disk/media && $( remove_erroneous_chars $disk/media ) = disk ]];then
-			# BUGFIX: Ran into a debian sarge kernel that did not have the "capacity" file in the hd* directories
-			# also, for PCI ata controller card, no capacity is listed
-			if [[ ! -e $disk/capacity ]];then
-				disk_capacity=0
-				break
-			fi
-			(( disk_capacity+=$( remove_erroneous_chars $disk/capacity ) ))
-			# this adds the (x) numbering in front of each disk found, and creates the full disk string
-			hdd_model="${hdd_model}${hdd_model+ ${C1}($i)${C2}}$( remove_erroneous_chars $disk/model )"
-			((i++))
-		fi
-	done
-
-	if [[ -e /proc/scsi/scsi ]];then
-		# Silly sata detection, will also pick up usb sticks. This will be redone.
-		IFS=$'\n'
-		a_total_hdd=($(gawk '
-		BEGIN { IGNORECASE=1 }
-		/host/ {
-			getline a[$0]
-			getline b[$0]
-		}
-		END {
-			for (i in a) {
-				if (b[i] ~ / *type: *direct-access.*/) {
-					#c=gensub(/^ *vendor: (.+) +model: (.+) +rev: (.+)$/,"\\1 \\2 \\3","g",a[i])
-					c=gensub(/^ *vendor: (.+) +model: (.+) +rev:.*$/,"\\1 \\2","g",a[i])
-					gsub(/,/, " ", c)
-					gsub(/^ +| +$/, "", c)
-					gsub(/ [ \t]+/, " ", c)
-					#print a[i]
-					if (c ~ /\<flash\>|\<pendrive\>|memory stick|memory card/) {
-						continue
-					}
-					print c
+	hdd_used=$( df | gawk '
+	p {
+		if (/^\/dev\/(mapper\/|[hs]d[a-z][0-9]+)/) {
+			if (NF == 1) {
+				getline
+				if (NF == 5) {
+					c += $2
+				}
+				else {
+					next
 				}
 			}
-		}' /proc/scsi/scsi))
-		IFS="$ORIGINAL_IFS"
+			else if (NF == 6) {
+				c += $3
+			}
+		}
+	}
+	/^Filesystem/ { p++ }
+	END {
+		print c
+	}' )
 
-		## note: the output part of this should be in the print hdd data function, not here
-		for (( i=0; i < ${#a_total_hdd[@]}; i++ ))
-		do
-			# this adds the (x) numbering in front of each disk found, and creates the full disk string
-			hdd_model="${hdd_model}${hdd_model+ ${C1}($(($i+1)))${C2}}${a_total_hdd[i]}"
-		done
-		if [[ -z $hdd_model ]];then
-			hdd_model=' Non Detected'
-		fi
-	fi
-
-	##print_screen_output "$hdd_model" ; exit
-	if ((disk_capacity));then
-		hdd_cap1="$((disk_capacity/2))"
-	fi
+	# create the initial array strings:
+	# disk-dev, capacity, name
+	# final item is the total of the disk
+	IFS=$'\n'
+	A_HDD_DATA=( $( gawk -v hddused="$hdd_used" '
+	/[hs]d[a-x]$/ {
+		driveSize = $(NF - 1)*1024/1000**3
+		gsub(/,/, " ", driveSize)
+		gsub(/^ +| +$/, "", driveSize)
+		printf( $NF",%dGB,\n", driveSize )
+	}
 	# See http://lanana.org/docs/device-list/devices-2.6+.txt for major numbers used below
-	hdd_cap2=$( gawk '
 	$1 ~ /^(3|22|33|8)$/ && $2 % 16 == 0 {size+=$3}
 	END {
-		printf("%d\n",size)
-	}' /proc/partitions )
-
-	##print_screen_output "hdd_cap1=\"$hdd_cap1\"  hdd_cap2=\"$hdd_cap2"" ; exit
-	hdd_capacity=0
-	for i in ${!hdd_cap*}
-	do
-		if [[ ${!i} -gt $hdd_capacity ]];then
-			hdd_capacity="${!i}"
-		fi
-	done
-
-# 	echo "hdd_cap1=$hdd_cap1  hdd_cap2=$hdd_cap2"
-# 	echo hdd_capacity $hdd_capacity
-	if [[ $hdd_capacity -gt 0 ]];then
-		hdd_used=$( df | gawk '
-		p {
-			if (/^\/dev\/(mapper\/|[hs]d[a-z][0-9]+)/) {
-				if (NF == 1) {
-					getline
-					if (NF == 5) {
-						c += $2
-					}
-					else {
-						next
-					}
-				}
-				else if (NF == 6) {
-					c += $3
-				}
-			}
+		size = size*1024/1000**3                   # calculate size in GB size
+		workingUsed = hddused*1024/1000**3         # calculate workingUsed in GB used
+		if ( size > 0 && workingUsed > 0 ){
+			diskUsed = int( workingUsed*100/size )  # calculate used percentage
+			size = int( size )
+			print size"GB,"diskUsed"% used"
 		}
-		/^Filesystem/ { p++ }
-		END {
-			print c
-		}' )
-
-# 		echo hdd_used $hdd_used
-		hdd_used="$(( hdd_used*100/hdd_capacity ))% used"
-		hdd_capacity="$(( $hdd_capacity*1024/1000**3 ))GB"
-	else
-		hdd_used='N/A'
-		hdd_capacity='Unknown Capacity'
-	fi
-	A_HDD_DATA[0]=$hdd_model
-	A_HDD_DATA[1]=$hdd_capacity
-	A_HDD_DATA[2]=$hdd_used
+		else {
+			print "NA,-" # print an empty array, this will be further handled in the print out function
+		}
+	}'  /proc/partitions ) )
+	IFS="$ORIGINAL_IFS"
 }
-# get_hard_drive_data;exit
 
+## fills out the A_HDD_DATA array with disk names
+get_hard_drive_data_advanced()
+{
+	local disk='' i='' j='' hdd_cap2='' hdd_cap1='' disk_capacity='' a_total_hdd=''
+	local hdd_model='' hdd_capacity='' hdd_used=''
 
+	local a_temp_working='' a_temp_scsi='' temp_holder=''
 
+	## next check for all ide type drives, non libata, only do it if hdx is in array
+	if [[ -n $( egrep 'hd[a-z]' <<< ${A_HDD_DATA[@]} ) ]];then
+		# remember, we're using the last array item to store the total size of disks
+		for (( i=0; i < ${#A_HDD_DATA[@]} - 1; i++ ))
+		do
+			IFS=","
+			a_temp_working=( ${A_HDD_DATA[i]} )
+			IFS="$ORIGINAL_IFS"
+			if [[ -n $( egrep '^hd[a-z]' <<< ${a_temp_working[0]} ) ]];then
+				if [[ -e /proc/ide/${a_temp_working[0]}/model ]];then
+					a_temp_working[2]="$( remove_erroneous_chars /proc/ide/${a_temp_working[0]}/model )"
+				else
+					a_temp_working[2]="Error"
+				fi
+				# these loops are to easily extend the cpu array created in the awk script above with more fields per cpu.
+				for (( j=0; j < ${#a_temp_working[@]}; j++ ))
+				do
+					if [[ $j -gt 0 ]];then
+						A_HDD_DATA[i]="${A_HDD_DATA[i]},${a_temp_working[$j]}"
+					else
+						A_HDD_DATA[i]="${a_temp_working[$j]}"
+					fi
+				done
+			fi
+		done
+	fi
 
+	## then handle libata names
+	# first get the ata device names, put them into an array
+	if [[ -e /proc/scsi/sg/device_strs ]]; then
+		IFS=$'\n'
+		## prints out hdd device if field one is ATA type (sata compatibility mode) or prints out scsi device
+		a_temp_scsi=( $( gawk -F'\t' '
+		BEGIN { IGNORECASE=1 }
+		/^ata|scsi/    {
+			gsub(/,/, " ", $2)
+			gsub(/^ +| +$/, "", $2)
+			print $2
+		}
+		' /proc/scsi/sg/device_strs ) )
+		IFS="$ORIGINAL_IFS"
+	fi
+
+	## then we'll loop through that array looking for matches. Note, with identical drives this will fail, sigh..
+	## for future use, that should be tightened up, but for now it's fine.
+	if [[ -n $( egrep 'sd[a-z]' <<< ${A_HDD_DATA[@]} ) ]];then
+		for (( i=0; i < ${#A_HDD_DATA[@]} - 1; i++ ))
+		do
+			if [[ -n $( egrep '^sd[a-z]' <<< ${A_HDD_DATA[$i]} ) ]];then
+				IFS=","
+				a_temp_working=( ${A_HDD_DATA[$i]} )
+				IFS="$ORIGINAL_IFS"
+
+				for (( j=0; j < ${#a_temp_scsi[@]}; j++ ))
+				do
+					## ok, ok, it's incomprehensible, search /dev/disk/by-id for a line that contains the
+					# discovered disk name AND ends with the correct identifier, sdx
+					if [[ -n $( ls -l /dev/disk/by-id | egrep -m1 ".*${a_temp_scsi[$j]}.*${a_temp_working[0]}$" ) ]];then
+						a_temp_working[2]=${a_temp_scsi[$j]}
+						break
+					else
+						a_temp_working[2]="Error"
+					fi
+				done
+				# these loops are to easily extend the cpu array created in the awk script above with more fields per cpu.
+				for (( j=0; j < ${#a_temp_working[@]}; j++ ))
+				do
+					if [[ $j -gt 0 ]];then
+						A_HDD_DATA[i]="${A_HDD_DATA[i]},${a_temp_working[$j]}"
+					else
+						A_HDD_DATA[i]="${a_temp_working[$j]}"
+					fi
+				done
+			fi
+		done
+	fi
+}
 
 get_lspci_data()
 {
@@ -1503,7 +1521,6 @@ print_cpu_data()
 	if [[ $VERBOSITY_LEVEL -ge 3 ]];then
 		# update for multicore, bogomips x core count.
 		if [[ $B_EXTRA_DATA == 'true' ]];then
-
 # 			if [[ $cpu_vendor != 'intel' ]];then
 				bmip_data=$( calculate_multicore_data "${a_cpu_working[4]}" "$cpu_core_count"  )
 # 			else
@@ -1638,9 +1655,27 @@ print_gfx_data()
 
 print_hard_disk_data()
 {
-	local hdd_data='' partition_data='' a_partition_working=''
+	local hdd_data='' partition_data='' a_partition_working='' hdd_model='' a_hdd_working=''
+	local dev_data='' size_data=''
 
 	if [[ $VERBOSITY_LEVEL -ge 3 ]];then
+	## note: the output part of this should be in the print hdd data function, not here
+		get_hard_drive_data_advanced
+		for (( i=0; i < ${#A_HDD_DATA[@]} - 1; i++ ))
+		do
+			# this adds the (x) numbering in front of each disk found, and creates the full disk string
+			IFS=","
+			a_hdd_working=( ${A_HDD_DATA[i]} )
+			IFS="$ORIGINAL_IFS"
+			if [[ $B_EXTRA_DATA == 'true' ]];then
+				dev_data="/dev/${a_hdd_working[0]} - "
+				size_data=" - ${a_hdd_working[1]}"
+			fi
+			hdd_model="${hdd_model}${hdd_model+ ${C1}($(($i+1)))${C2}}$dev_data${a_hdd_working[2]}$size_data"
+		done
+		if [[ -z $hdd_model ]];then
+			hdd_model=' Non Detected'
+		fi
 		hdd_data=$( create_print_line "Disks:" "${C1}HDD${C2}${hdd_model} ${C1}Size${C2} ${hdd_capacity} (${hdd_used})${CN}" )
 	else
 		hdd_data=$( create_print_line "Disks:" "${C1}HDD Size${C2} ${hdd_capacity} (${hdd_used})${CN}" )
@@ -1802,12 +1837,15 @@ print_it_out()
 	local up_time="$( get_uptime )"
 	## assemble data for output
 	# load A_HDD_DATA
-	get_hard_drive_data
+	get_hdd_data_basic
 	## note: if hdd_model is declared prior to use, whatever string you want inserted will
 	## be inserted first. In this case, it's desirable to print out (x) before each disk found.
-	local hdd_model=${A_HDD_DATA[0]}
-	local hdd_capacity=${A_HDD_DATA[1]}
-	local hdd_used=${A_HDD_DATA[2]}
+	local a_hdd_data_count=$(( ${#A_HDD_DATA[@]} - 1 ))
+	IFS=","
+	local a_hdd_basic_working=( ${A_HDD_DATA[$a_hdd_data_count]} )
+	IFS="$ORIGINAL_IFS"
+	local hdd_capacity=${a_hdd_basic_working[0]}
+	local hdd_used=${a_hdd_basic_working[1]}
 	# load A_CPU_DATA
 	get_cpu_data
 
