@@ -1,7 +1,7 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.4.28
+####  version: 0.5.0
 ####  Date: November 10 2008
 ########################################################################
 ####  inxi is a fork of infobash, the original bash sys info script by locsmif
@@ -72,18 +72,26 @@ B_CPU_FLAGS_FULL='false'
 B_DEBUG_FLOOD='false'
 # show extra output data
 B_EXTRA_DATA='false'
+B_SHOW_DISK='false'
 # override certain errors due to currupted data
 B_HANDLE_CORRUPT_DATA='false'
 # Running in a shell? Defaults to false, and is determined later.
 B_RUNNING_IN_SHELL='false'
+B_SHOW_CPU='false'
 # Show full hard disk output
 B_SHOW_FULL_HDD='false'
+B_SHOW_GRAPHICS='false'
 # Set this to 'false' to avoid printing the hostname
 B_SHOW_HOST='true'
+B_SHOW_INFO='false'
+B_SHOW_NETWORK='false'
 # either -v > 3 or -p will show partitions
 B_SHOW_PARTITIONS='false'
 # Show sound card data
 B_SHOW_SOUND='false'
+# triggers only short inxi output
+B_SHOW_SHORT_OUTPUT='false'
+B_SHOW_SYSTEM='false'
 # triggers various debugging and new option testing
 B_TESTING_FLAG='false'
 # Test for X running
@@ -224,6 +232,8 @@ error_handler()
 		7)	error_message="One of the options you entered in your script parameters: $2\nIs not supported. For supported options, check the help menu: $SCRIPT_NAME -h"
 			;;
 		8)	error_message="the self-updater failed, wget exited with error: $2.\nYou probably need to be root.\nHint, to make for easy updates without being root, do: chown <user name> $SCRIPT_PATH/$SCRIPT_NAME"
+			;;
+		9)	error_message="unsupported debugging level: $2"
 			;;
 		*)	error_message="error unknown: $@"
 			set -- 99
@@ -456,11 +466,12 @@ get_parameters()
 {
 	local opt=''
 
+	# the short form only runs if no args are used, otherwise a line or verbose output is given.
 	if [[ -z $1 ]];then
-		return 1
+		B_SHOW_SHORT_OUTPUT='true'
 	fi
 
-	while getopts c:CdDfFhHpsTUv:Vx opt
+	while getopts c:CdDfFGhHINPsSUv:Vx%@:! opt
 	do
 		case $opt in
 		c)	if [[ -n $( egrep '^[0-9][0-9]?$' <<< $OPTARG ) ]];then
@@ -474,29 +485,35 @@ get_parameters()
 				error_handler 3 "$OPTARG"
 			fi
 			;;
-		C)	B_HANDLE_CORRUPT_DATA='true'
+		C)	B_SHOW_CPU='true'
 			;;
 		d)	VERBOSITY_LEVEL=1
 			;;
-		D)	DEBUG=1
-			exec 2>&1
+		D)	B_SHOW_DISK='true'
 			;;
-		f)	B_CPU_FLAGS_FULL='true'
+		f)	B_SHOW_CPU='true'
+			B_CPU_FLAGS_FULL='true'
 			;;
 		F)	VERBOSITY_LEVEL=$VERBOSITY_LEVELS
 			B_CPU_FLAGS_FULL='true'
 			B_EXTRA_DATA='true'
-			B_SHOW_FULL_HDD='true'
+			B_SHOW_DISK='true'
 			B_SHOW_PARTITIONS='true'
 			B_SHOW_SOUND='true'
 			;;
-		H)	B_SHOW_FULL_HDD='true'
+		G)	B_SHOW_GRAPHICS='true'
 			;;
-		p)	B_SHOW_PARTITIONS='true'
+		H)	B_SHOW_HDD_FULL='true'
+			;;
+		I)	B_SHOW_INFO='true'
+			;;
+		N)	B_SHOW_NETWORK='true'
+			;;
+		P)	B_SHOW_PARTITIONS='true'
 			;;
 		s)	B_SHOW_SOUND='true'
 			;;
-		T)	B_TESTING_FLAG='true'
+		S)	B_SHOW_SYSTEM='true'
 			;;
 		v)	if [[ -n $( egrep "^[0-9][0-9]?$" <<< $OPTARG ) && $OPTARG -le $VERBOSITY_LEVELS ]];then
 				VERBOSITY_LEVEL="$OPTARG"
@@ -511,8 +528,21 @@ get_parameters()
 			;;
 		x)	B_EXTRA_DATA='true'
 			;;
-		h)	show_options
+		h|H)	show_options
 			exit 0
+			;;
+		## debuggers and testing tools
+		%)	B_HANDLE_CORRUPT_DATA='true'
+			echo it is $opt
+			;;
+		@)	if [[ -n $( egrep "^([1-9]|10)$" <<< $OPTARG ) ]];then
+				DEBUG=$OPTARG
+				exec 2>&1
+			else
+				error_handler 9 "$OPTARG"
+			fi
+			;;
+		!)	B_TESTING_FLAG='true'
 			;;
 		*)	error_handler 7 "$1"
 			;;
@@ -529,28 +559,38 @@ show_options()
 	print_screen_output "them, or list them one by one: Examples: $SCRIPT_NAME -v4 -c6 OR $SCRIPT_NAME -dc 6"
 	print_screen_output "Note: extra output options (eg -f,-H,-p,-s,-x) require a verbosity level of 1 or higher."
 	print_screen_output "In other words, they only work if you use either -d or -v1 (or higher)"
+	print_screen_output ""
+	print_screen_output "If you start $SCRIPT_NAME with no arguments, it will show the short form."
+	print_screen_output "The following options if used without -d or -v will show just that complete line:"
+	print_screen_output "C,f,D,G,I,N,P,s,S - you can use these together to show just the lines you want to see."
+	print_screen_output "If you use them with a -v level, it will show the full output for that line."
 	print_screen_output "- - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
 	print_screen_output "-c  Available color schemes. Scheme number is required."
 	print_screen_output "    Supported schemes: 0-$color_scheme_count Example: $SCRIPT_NAME -c 11"
-	print_screen_output "-C  Overrides defective or corrupted data."
+	print_screen_output "-C  Show full CPU output, including per CPU clockspeed."
 	print_screen_output "-d  Default output verbosity level, same as: $SCRIPT_NAME -v 1"
 	print_screen_output "-f  Show all cpu flags used, not just the short list."
 	print_screen_output "-F  Show Full, all possible, output for $SCRIPT_NAME."
-	print_screen_output "-H  Show full hard disk info, not only model, ie: /dev/sda - ST380817AS - 80.0GB."
-	print_screen_output "-p  Show partition information (shows what -v4 would show, but without extra data)."
+	print_screen_output "-D  Show full hard disk info, not only model, ie: /dev/sda - ST380817AS - 80.0GB."
+	print_screen_output "-G  Show graphic card information (+ glx driver and version for non free video drivers)."
+	print_screen_output "-I  Show information: processes, uptime, memory, irc client, inxi version."
+	print_screen_output "-N  Show network card information."
+	print_screen_output "-P  Show partition information (shows what -v4 would show, but without extra data)."
 	print_screen_output "-s  Show sound card information."
-	print_screen_output "-U  Autoupdate script. Note: if you installed as root, you"
+	print_screen_output "-S  Show system information: host name, kernel, distro"
+	print_screen_output "-U  Auto-update script. Note: if you installed as root, you"
 	print_screen_output "    must be root to update, otherwise user is fine."
 	print_screen_output "-v  Script verbosity levels. Verbosity level number is required."
-	print_screen_output "    Supported levels: 0-${VERBOSITY_LEVELS} Example: $SCRIPT_NAME -v 4"
-	print_screen_output "    0 - short output, same as using nothing: $SCRIPT_NAME"
+	print_screen_output "    Supported levels: 1-${VERBOSITY_LEVELS} Example: $SCRIPT_NAME -v 4"
 	print_screen_output "    1 - basic verbose, same as: $SCRIPT_NAME -d"
 	print_screen_output "    2 - Also show networking card data"
 	print_screen_output "    3 - Also show hard disk names as detected."
 	print_screen_output "    4 - Also show partition size/filled data for (if present):/, /home, /var/, /boot"
 	print_screen_output "    5 - For multicore systems, also show per core clock speeds."
 	print_screen_output "-V  $SCRIPT_NAME version information. Prints information then exits."
-	print_screen_output "-x  Show extra data: bogomips on cpu; full hard disk info (using -v3 or greater)."
+	print_screen_output "-x  Show extra data: bogomips on cpu."
+	print_screen_output "-%  Overrides defective or corrupted data."
+	print_screen_output "-@  Triggers debugger output. Requires debugging level 1-10."
 	rint_screen_output ""
 }
 
@@ -1529,16 +1569,55 @@ process_cpu_flags()
 ## and in some cases, their children, with lspci_data
 print_it_out()
 {
-	## note: remember that in bash, child functions inherit local variables
+	local lspci_data='' # only for verbose
+
+	if [[ $B_SHOW_SHORT_OUTPUT == 'true' ]];then
+		print_short_data
+	else
+		lspci_data="$( get_lspci_data )"
+		if [[ $VERBOSITY_LEVEL -ge 1 || $B_SHOW_SYSTEM == 'true' ]];then
+			print_system_data
+		fi
+		if [[ $VERBOSITY_LEVEL -ge 1 || $B_SHOW_CPU == 'true' ]];then
+			print_cpu_data
+		fi
+		if [[ $VERBOSITY_LEVEL -ge 1 || $B_SHOW_GRAPHICS == 'true' ]];then
+			print_gfx_data
+		fi
+		if [[ $B_SHOW_SOUND == 'true' ]];then
+			print_audio_data
+		fi
+		if [[ $VERBOSITY_LEVEL -ge 2 || $B_SHOW_NETWORK == 'true' ]];then
+			print_networking_data
+		fi
+		if [[ $VERBOSITY_LEVEL -ge 1 || $B_SHOW_DISK == 'true' ]];then
+			print_hard_disk_data
+		fi
+		if [[ $VERBOSITY_LEVEL -ge 4 || $B_SHOW_PARTITIONS == 'true' ]];then
+			print_hdd_partition_data
+		fi
+		if [[ $VERBOSITY_LEVEL -ge 1 || $B_SHOW_INFO == 'true' ]];then
+			print_info_data
+		fi
+	fi
+}
+
+#### SHORT OUTPUT PRINT FUNCTION, ie, verbosity 0
+# all the get data stuff is loaded here to keep execution time down for single line print commands
+# these will also be loaded in each relevant print function for long output
+print_short_data()
+{
 	local current_kernel=$( uname -a | gawk '{print $1,$3,$(NF-1)}' )
 	local processes="$(( $( ps aux | wc -l ) - 1 ))"
+	local short_data='' i='' b_background_black='false'
+	local memory=$( get_memory_data )
+	local up_time="$( get_uptime )"
+
 	# set A_CPU_CORE_DATA
 	get_cpu_core_count
 	local cpu_core_count_string="${A_CPU_CORE_DATA[1]}"
 	local cpu_core_count=${A_CPU_CORE_DATA[0]}
-	local lspci_data='' ## only for verbose needed
-	local up_time="$( get_uptime )"
-	## assemble data for output
+
 	# load A_HDD_DATA
 	get_hdd_data_basic
 	## note: if hdd_model is declared prior to use, whatever string you want inserted will
@@ -1549,6 +1628,7 @@ print_it_out()
 	IFS="$ORIGINAL_IFS"
 	local hdd_capacity=${a_hdd_basic_working[0]}
 	local hdd_used=${a_hdd_basic_working[1]}
+
 	# load A_CPU_DATA
 	get_cpu_data
 
@@ -1556,28 +1636,45 @@ print_it_out()
 	local a_cpu_working=(${A_CPU_DATA[0]})
 	IFS="$ORIGINAL_IFS"
 	local cpu_model="${a_cpu_working[0]}"
+	## assemble data for output
+	local cpu_clock="${a_cpu_working[1]}" # old CPU3
+	# this gets that weird min/max final array item
+	local min_max_clock_nu=$(( ${#A_CPU_DATA[@]} - 1 ))
+	local min_max_clock=${A_CPU_DATA[$min_max_clock_nu]}
 
-	case "$VERBOSITY_LEVEL" in
-		0)	print_short_data
-			;;
-		*)	lspci_data="$( get_lspci_data )"
-			print_intro_data
-			print_cpu_data
-			print_gfx_data
-			if [[ $B_SHOW_SOUND == 'true' ]];then
-				print_audio_data
-			fi
-			if [[ $VERBOSITY_LEVEL -ge 2 ]];then
-				print_networking_data
-			fi
+	#set_color_scheme 12
+	if [[ $B_RUNNING_IN_SHELL == 'false' ]];then
+		for i in $C1 $C2 $CN
+		do
+			case "$i" in
+				"$GREEN"|"$WHITE"|"$YELLOW"|"$CYAN")
+					b_background_black='true'
+					;;
+			esac
+		done
+		if [[ $b_background_black == 'true' ]];then
+			for i in C1 C2 CN
+			do
+				## these need to be in quotes, don't know why
+				if [[ "${!i}" == "$NORMAL" ]];then
+					declare $i="${!i}15,1"
+				else
+					declare $i="${!i},1"
+				fi
+			done
+			#C1="${C1},1"; C2="${C2},1"; CN="${CN},1"
+		fi
+	fi
+	short_data="${C1}CPU${CN}[${C2}${cpu_core_count_string} ${cpu_model} ${C1}clocked at${C2} ${min_max_clock}${CN}] ${C1}Kernel${CN}[${C2}${current_kernel}${CN}] ${C1}Up${CN}[${C2}${FL2}${FL1}${up_time}${FL1}${CN}] ${C1}Mem${CN}[${C2}${FL2}${FL1}${memory}${FL1}${CN}] ${C1}HDD${CN}[${C2}${FL2}${FL1}${hdd_capacity}($hdd_used)${FL1}${CN}] ${C1}Procs${CN}[${C2}${FL2}${FL1}${processes}${FL1}${CN}]"
 
-			print_hard_disk_data
-			if [[ $VERBOSITY_LEVEL -ge 4 || $B_SHOW_PARTITIONS == 'true' ]];then
-				print_hdd_partition_data
-			fi
-			print_system_data
-			;;
-	esac
+	if [[ $SHOW_IRC -gt 0 ]];then
+		short_data="${short_data} ${C1}Client${CN}[${C2}${IRC_CLIENT}${IRC_CLIENT_VERSION}${CN}]"
+	fi
+	short_data="${short_data} ${CN}:: ${C1}$SCRIPT_NAME ${C2}v:$SCRIPT_VERSION_NUMBER${CN}"
+	if [[ $SCHEME -gt 0 ]];then
+		short_data="${short_data} $NORMAL"
+	fi
+	print_screen_output "$short_data"
 }
 
 #### LINE ITEM PRINT FUNCTIONS
@@ -1631,8 +1728,22 @@ print_cpu_data()
 	# Array A_CPU_DATA always has one element: max clockfreq found.
 	# that's why its count is one more than you'd think from cores/cpus alone
 	# weird hack, probably should be changed
+	# load A_CPU_DATA
+	get_cpu_data
+
+	IFS=","
+	local a_cpu_working=(${A_CPU_DATA[0]})
+	IFS="$ORIGINAL_IFS"
+	local cpu_model="${a_cpu_working[0]}"
+	## assemble data for output
+	local cpu_clock="${a_cpu_working[1]}"
 
 	cpu_vendor=${a_cpu_working[5]}
+
+	# set A_CPU_CORE_DATA
+	get_cpu_core_count
+	local cpu_core_count_string="${A_CPU_CORE_DATA[1]}"
+	local cpu_core_count=${A_CPU_CORE_DATA[0]}
 	# Strange (and also some expected) behavior encountered. If print_screen_output() uses $1
 	# as the parameter to output to the screen, then passing "<text1> ${ARR[@]} <text2>"
 	# will output only <text1> and first element of ARR. That "@" splits in elements and "*" _doesn't_,
@@ -1646,7 +1757,7 @@ print_cpu_data()
 	fi
 
 	cpu_data=$( create_print_line "CPU:" "${C1}${cpu_core_count_string}${C2} ${a_cpu_working[0]}" )
-	if [[ $VERBOSITY_LEVEL -ge 3 ]];then
+	if [[ $VERBOSITY_LEVEL -ge 3 || $B_SHOW_CPU == 'true' ]];then
 		# update for multicore, bogomips x core count.
 		if [[ $B_EXTRA_DATA == 'true' ]];then
 # 			if [[ $cpu_vendor != 'intel' ]];then
@@ -1670,7 +1781,7 @@ print_cpu_data()
 		cpu_data="$cpu_data${C2} ${C1}cache${C2} $cpu_cache$cpu_flags$bmip_data${CN}"
 	fi
 
-	if [[ $VERBOSITY_LEVEL -ge 5 && ${#A_CPU_DATA[@]} -gt 2 ]];then
+	if [[ $B_SHOW_CPU == 'true' ]] || [[ $VERBOSITY_LEVEL -ge 5 && ${#A_CPU_DATA[@]} -gt 2 ]];then
 		cpu_clock_speed='' # null < verbosity level 5
 	else
 		cpu_data="$cpu_data ${C1}clocked at${C2} ${a_cpu_working[1]} MHz${CN}"
@@ -1679,7 +1790,7 @@ print_cpu_data()
 	cpu_data="$cpu_data $cpu_clock_speed"
 	print_screen_output "$cpu_data"
 
-	if [[ $VERBOSITY_LEVEL -ge 5 && ${#A_CPU_DATA[@]} -gt 2 ]];then
+	if [[ $B_SHOW_CPU == 'true' ]] || [[ $VERBOSITY_LEVEL -ge 5 && ${#A_CPU_DATA[@]} -gt 2 ]];then
 		for (( i=0; i < ${#A_CPU_DATA[@]}-1; i++ ))
 		do
 			IFS=","
@@ -1699,6 +1810,7 @@ print_cpu_data()
 		print_cpu_flags_full "${a_cpu_working[3]}"
 	fi
 }
+
 # takes list of all flags, split them and prints x per line
 # args: $1 - cpu flag string
 print_cpu_flags_full()
@@ -1786,7 +1898,18 @@ print_hard_disk_data()
 	local hdd_data='' hdd_data_2='' a_hdd_working=''
 	local dev_data='' size_data='' hdd_model='' hdd_model_2='' hdd_model_3='' usb_data=''
 
-	if [[ $VERBOSITY_LEVEL -ge 3 || $B_SHOW_FULL_HDD == 'true' ]];then
+	# load A_HDD_DATA
+	get_hdd_data_basic
+	## note: if hdd_model is declared prior to use, whatever string you want inserted will
+	## be inserted first. In this case, it's desirable to print out (x) before each disk found.
+	local a_hdd_data_count=$(( ${#A_HDD_DATA[@]} - 1 ))
+	IFS=","
+	local a_hdd_basic_working=( ${A_HDD_DATA[$a_hdd_data_count]} )
+	IFS="$ORIGINAL_IFS"
+	local hdd_capacity=${a_hdd_basic_working[0]}
+	local hdd_used=${a_hdd_basic_working[1]}
+
+	if [[ $VERBOSITY_LEVEL -ge 3 || $B_SHOW_DISK == 'true' ]];then
 	## note: the output part of this should be in the print hdd data function, not here
 		get_hard_drive_data_advanced
 		for (( i=0; i < ${#A_HDD_DATA[@]} - 1; i++ ))
@@ -1795,7 +1918,7 @@ print_hard_disk_data()
 			IFS=","
 			a_hdd_working=( ${A_HDD_DATA[i]} )
 			IFS="$ORIGINAL_IFS"
-			if [[ $B_SHOW_FULL_HDD == 'true' ]];then
+			if [[ $B_SHOW_DISK == 'true' ]];then
 				if [[ -n ${a_hdd_working[3]} ]];then
 					usb_data="${a_hdd_working[3]} "
 				else
@@ -1806,7 +1929,7 @@ print_hard_disk_data()
 			fi
 			# wrap to avoid long lines
 
-			if [[ $i -gt 1 && $B_SHOW_FULL_HDD == 'true' ]] || [[ $i -gt 3 ]];then
+			if [[ $i -gt 1 && $B_SHOW_DISK == 'true' ]] || [[ $i -gt 3 ]];then
 				hdd_model_2="${hdd_model_2}${hdd_model_2+${C1}($(($i+1)))${C2}}$usb_data$dev_data${a_hdd_working[2]}$size_data "
 			else
 				hdd_model="${hdd_model}${hdd_model+ ${C1}($(($i+1)))${C2}}$usb_data$dev_data${a_hdd_working[2]}$size_data"
@@ -1858,7 +1981,7 @@ print_hdd_partition_data()
 			partition_data_2="$partition_data_2${C1}ID:${C2}$swap ${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used "
 		fi
 	done
-	partition_data=$( create_print_line " " "${C1}Partition${C2}${partition_data}" )
+	partition_data=$( create_print_line "Partitions" "${C1}${C2}${partition_data}" )
 	print_screen_output "$partition_data"
 	if [[ -n $partition_data_2 ]];then
 		partition_data_2=$( create_print_line " " "${partition_data_2}" )
@@ -1866,19 +1989,32 @@ print_hdd_partition_data()
 	fi
 }
 
-print_intro_data()
+print_info_data()
 {
-	local intro_data='' host_name=$( hostname )
+	local info_data=''
+	local runlvl="$( runlevel | gawk '{ print $2 }' )"
+	local memory="$( get_memory_data )"
+	local processes="$(( $( ps aux | wc -l ) - 1 ))"
+	local up_time="$( get_uptime )"
 
-	local distro="$( get_distro_data )"
+	# Some code could look superfluous but BitchX doesn't like lines not ending in a newline. F*&k that bitch!
+	# long_last=$( echo -ne "${C1}Processes${C2} ${processes}${CN} | ${C1}Uptime${C2} ${up_time}${CN} | ${C1}Memory${C2} ${MEM}${CN}" )
+	info_data=$( create_print_line "Info:" "${C1}Processes${C2} ${processes} ${CN}| ${C1}Uptime${C2} ${up_time} ${CN}| ${C1}Memory${C2} ${memory}${CN}" )
 
-	if [[ $B_SHOW_HOST == 'true' ]];then
-		intro_data=$( create_print_line "System:" "${C1}Host${C2} $host_name ${C1}running${C2} ${CN}" )
-	else
-		intro_data=$( create_print_line "System:" "${C1}running${C2} ${CN}" )
+	# this only triggers if no X data is present
+	if [[ $B_X_RUNNING != 'true' ]];then
+		info_data="${info_data} ${CN}| ${C1}Runlevel${C2} ${runlvl}${CN}"
 	fi
-	intro_data="$intro_data ${C2}$current_kernel ${C1}Distro${C2} $distro ${CN}"
-	print_screen_output "$intro_data"
+
+	if [[ $SHOW_IRC -gt 0 ]];then
+		info_data="${info_data} ${CN}| ${C1}Client${C2} ${IRC_CLIENT}${IRC_CLIENT_VERSION}${CN}"
+	fi
+	info_data="${info_data} ${CN}| ${C1}$SCRIPT_NAME ${C2}v:$SCRIPT_VERSION_NUMBER${CN}"
+
+	if [[ $SCHEME -gt 0 ]];then
+		info_data="${info_data} ${NORMAL}"
+	fi
+	print_screen_output "$info_data"
 }
 
 print_networking_data()
@@ -1919,73 +2055,19 @@ print_networking_data()
 	fi
 }
 
-print_short_data()
-{
-	local short_data='' i='' b_background_black='false'
-	local memory=$( get_memory_data )
-	local cpu_clock="${a_cpu_working[1]}" # old CPU3
-	# this gets that weird min/max final array item
-	local min_max_clock_nu=$(( ${#A_CPU_DATA[@]} - 1 ))
-	local min_max_clock=${A_CPU_DATA[$min_max_clock_nu]}
-
-	#set_color_scheme 12
-	if [[ $B_RUNNING_IN_SHELL == 'false' ]];then
-		for i in $C1 $C2 $CN
-		do
-			case "$i" in
-				"$GREEN"|"$WHITE"|"$YELLOW"|"$CYAN")
-					b_background_black='true'
-					;;
-			esac
-		done
-		if [[ $b_background_black == 'true' ]];then
-			for i in C1 C2 CN
-			do
-				## these need to be in quotes, don't know why
-				if [[ "${!i}" == "$NORMAL" ]];then
-					declare $i="${!i}15,1"
-				else
-					declare $i="${!i},1"
-				fi
-			done
-			#C1="${C1},1"; C2="${C2},1"; CN="${CN},1"
-		fi
-	fi
-	short_data="${C1}CPU${CN}[${C2}${cpu_core_count_string} ${cpu_model} ${C1}clocked at${C2} ${min_max_clock}${CN}] ${C1}Kernel${CN}[${C2}${current_kernel}${CN}] ${C1}Up${CN}[${C2}${FL2}${FL1}${up_time}${FL1}${CN}] ${C1}Mem${CN}[${C2}${FL2}${FL1}${memory}${FL1}${CN}] ${C1}HDD${CN}[${C2}${FL2}${FL1}${hdd_capacity}($hdd_used)${FL1}${CN}] ${C1}Procs${CN}[${C2}${FL2}${FL1}${processes}${FL1}${CN}]"
-
-	if [[ $SHOW_IRC -gt 0 ]];then
-		short_data="${short_data} ${C1}Client${CN}[${C2}${IRC_CLIENT}${IRC_CLIENT_VERSION}${CN}]"
-	fi
-	short_data="${short_data} ${CN}:: ${C1}$SCRIPT_NAME ${C2}v:$SCRIPT_VERSION_NUMBER${CN}"
-	if [[ $SCHEME -gt 0 ]];then
-		short_data="${short_data} $NORMAL"
-	fi
-	print_screen_output "$short_data"
-}
-
 print_system_data()
 {
 	local system_data=''
-	local runlvl="$( runlevel | gawk '{ print $2 }' )"
-	local memory="$( get_memory_data )"
+	local host_name=$( hostname )
+	local current_kernel=$( uname -a | gawk '{print $1,$3,$(NF-1)}' )
+	local distro="$( get_distro_data )"
 
-	# Some code could look superfluous but BitchX doesn't like lines not ending in a newline. F*&k that bitch!
-	# long_last=$( echo -ne "${C1}Processes${C2} ${processes}${CN} | ${C1}Uptime${C2} ${up_time}${CN} | ${C1}Memory${C2} ${MEM}${CN}" )
-	system_data=$( create_print_line "Info:" "${C1}Processes${C2} ${processes} ${CN}| ${C1}Uptime${C2} ${up_time} ${CN}| ${C1}Memory${C2} ${memory}${CN}" )
-
-	# this only triggers if no X data is present
-	if [[ $B_X_RUNNING != 'true' ]];then
-		system_data="${system_data} ${CN}| ${C1}Runlevel${C2} ${runlvl}${CN}"
+	if [[ $B_SHOW_HOST == 'true' ]];then
+		system_data=$( create_print_line "System:" "${C1}Host${C2} $host_name ${C1}running${C2} ${CN}" )
+	else
+		system_data=$( create_print_line "System:" "${C1}running${C2} ${CN}" )
 	fi
-
-	if [[ $SHOW_IRC -gt 0 ]];then
-		system_data="${system_data} ${CN}| ${C1}Client${C2} ${IRC_CLIENT}${IRC_CLIENT_VERSION}${CN}"
-	fi
-	system_data="${system_data} ${CN}| ${C1}$SCRIPT_NAME ${C2}v:$SCRIPT_VERSION_NUMBER${CN}"
-
-	if [[ $SCHEME -gt 0 ]];then
-		system_data="${system_data} ${NORMAL}"
-	fi
+	system_data="$system_data ${C2}$current_kernel ${C1}Distro${C2} $distro ${CN}"
 	print_screen_output "$system_data"
 }
 
@@ -1993,9 +2075,10 @@ print_system_data()
 #### SCRIPT EXECUTION
 ########################################################################
 set_calculated_variables
-# Check for dependencies before running any commands in this script! So yes, here!!
+# Check for dependencies before running anything else except above function
 check_script_depends
 
+## this needs to run before the KONVI stuff is set below
 get_start_client
 
 # note: this only works if it's run from inside konversation as a script builtin or something
