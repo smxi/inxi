@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.4.26
-####  Date: November 8 2008
+####  version: 0.4.27
+####  Date: November 10 2008
 ########################################################################
 ####  inxi is a fork of infobash, the original bash sys info script by locsmif
 ####  As time permits functionality improvements and recoding will occur.
@@ -221,7 +221,7 @@ error_handler()
 			;;
 		6)	error_message="/proc not found! Quitting..."
 			;;
-		7)	error_message="unsupported script parameter: $2\nFor supported options, check the help menu: $SCRIPT_NAME -h"
+		7)	error_message="One of the options you entered in your script parameters: $2\nIs not supported. For supported options, check the help menu: $SCRIPT_NAME -h"
 			;;
 		8)	error_message="the self-updater failed, wget exited with error: $2.\nYou probably need to be root.\nHint, to make for easy updates without being root, do: chown <user name> $SCRIPT_PATH/$SCRIPT_NAME"
 			;;
@@ -514,7 +514,7 @@ get_parameters()
 		h)	show_options
 			exit 0
 			;;
-		*)	error_handler 7 "$opt"
+		*)	error_handler 7 "$1"
 			;;
 		esac
 	done
@@ -1522,6 +1522,66 @@ process_cpu_flags()
 #### print and processing of output data
 #### -------------------------------------------------------------------
 
+#### MASTER PRINT FUNCTION - triggers all line item print functions
+## main function to print out, master for all sub print functions.
+## note that it passes local variable values on to its children,
+## and in some cases, their children, with lspci_data
+print_it_out()
+{
+	## note: remember that in bash, child functions inherit local variables
+	local current_kernel=$( uname -a | gawk '{print $1,$3,$(NF-1)}' )
+	local processes="$(( $( ps aux | wc -l ) - 1 ))"
+	# set A_CPU_CORE_DATA
+	get_cpu_core_count
+	local cpu_core_count_string="${A_CPU_CORE_DATA[1]}"
+	local cpu_core_count=${A_CPU_CORE_DATA[0]}
+	local lspci_data='' ## only for verbose needed
+	local up_time="$( get_uptime )"
+	## assemble data for output
+	# load A_HDD_DATA
+	get_hdd_data_basic
+	## note: if hdd_model is declared prior to use, whatever string you want inserted will
+	## be inserted first. In this case, it's desirable to print out (x) before each disk found.
+	local a_hdd_data_count=$(( ${#A_HDD_DATA[@]} - 1 ))
+	IFS=","
+	local a_hdd_basic_working=( ${A_HDD_DATA[$a_hdd_data_count]} )
+	IFS="$ORIGINAL_IFS"
+	local hdd_capacity=${a_hdd_basic_working[0]}
+	local hdd_used=${a_hdd_basic_working[1]}
+	# load A_CPU_DATA
+	get_cpu_data
+
+	IFS=","
+	local a_cpu_working=(${A_CPU_DATA[0]})
+	IFS="$ORIGINAL_IFS"
+	local cpu_model="${a_cpu_working[0]}"
+
+	case "$VERBOSITY_LEVEL" in
+		0)	print_short_data
+			;;
+		*)	lspci_data="$( get_lspci_data )"
+			print_intro_data
+			print_cpu_data
+			print_gfx_data
+			if [[ $B_SHOW_SOUND == 'true' ]];then
+				print_audio_data
+			fi
+			if [[ $VERBOSITY_LEVEL -ge 2 ]];then
+				print_networking_data
+			fi
+
+			print_hard_disk_data
+			if [[ $VERBOSITY_LEVEL -ge 4 || $B_SHOW_PARTITIONS == 'true' ]];then
+				print_hdd_partition_data
+			fi
+			print_system_data
+			;;
+	esac
+}
+
+#### LINE ITEM PRINT FUNCTIONS
+
+# print sound card data
 print_audio_data()
 {
 	local i='' card_one='Card-1 ' audio_data='' a_audio_data='' port_data=''
@@ -1722,9 +1782,8 @@ print_gfx_data()
 
 print_hard_disk_data()
 {
-	local hdd_data='' partition_data='' a_partition_working='' hdd_model='' a_hdd_working=''
-	local dev_data='' size_data='' hdd_model_2='' hdd_data_2='' usb_data='' partition_data_2=''
-	local partition_used='' swap='' hdd_model_3=''
+	local hdd_data='' hdd_data_2='' a_hdd_working=''
+	local dev_data='' size_data='' hdd_model='' hdd_model_2='' hdd_model_3='' usb_data=''
 
 	if [[ $VERBOSITY_LEVEL -ge 3 || $B_SHOW_FULL_HDD == 'true' ]];then
 	## note: the output part of this should be in the print hdd data function, not here
@@ -1768,38 +1827,41 @@ print_hard_disk_data()
 	if [[ -n $hdd_model_2 ]];then
 		print_screen_output "$hdd_data_2"
 	fi
+}
 
-	if [[ $VERBOSITY_LEVEL -ge 4 || $B_SHOW_PARTITIONS == 'true' ]];then
-		# set A_PARTITION_DATA
-		get_partition_data
+print_hdd_partition_data()
+{
+	local a_partition_working='' partition_used='' swap='' partition_data='' partition_data_2=''
 
-		for (( i=0; i < ${#A_PARTITION_DATA[@]}; i++ ))
-		do
-			IFS=","
-			a_partition_working=(${A_PARTITION_DATA[i]})
-			IFS="$ORIGINAL_IFS"
-			if [[ -n ${a_partition_working[2]} ]];then
-				partition_used=" ${C1}used:${C2} ${a_partition_working[2]} (${a_partition_working[3]})"
-			else
-				partition_used='' # reset partition used to null
-			fi
-			if [[ ${a_partition_working[4]} == 'swap' ]];then
-				swap=" ${C1}swap:${C2}"
-			else
-				swap=''
-			fi
-			if [[ $i < 3 ]];then
-				partition_data="$partition_data ${C1}ID:${C2}$swap ${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used"
-			else
-				partition_data_2="$partition_data_2${C1}ID:${C2}$swap ${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used "
-			fi
-		done
-		hdd_data=$( create_print_line " " "${C1}Partition${C2}${partition_data}" )
-		print_screen_output "$hdd_data"
-		if [[ -n $partition_data_2 ]];then
-			hdd_data=$( create_print_line " " "${partition_data_2}" )
-			print_screen_output "$hdd_data"
+	# set A_PARTITION_DATA
+	get_partition_data
+
+	for (( i=0; i < ${#A_PARTITION_DATA[@]}; i++ ))
+	do
+		IFS=","
+		a_partition_working=(${A_PARTITION_DATA[i]})
+		IFS="$ORIGINAL_IFS"
+		if [[ -n ${a_partition_working[2]} ]];then
+			partition_used=" ${C1}used:${C2} ${a_partition_working[2]} (${a_partition_working[3]})"
+		else
+			partition_used='' # reset partition used to null
 		fi
+		if [[ ${a_partition_working[4]} == 'swap' ]];then
+			swap=" ${C1}swap:${C2}"
+		else
+			swap=''
+		fi
+		if [[ $i < 3 ]];then
+			partition_data="$partition_data ${C1}ID:${C2}$swap ${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used"
+		else
+			partition_data_2="$partition_data_2${C1}ID:${C2}$swap ${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used "
+		fi
+	done
+	partition_data=$( create_print_line " " "${C1}Partition${C2}${partition_data}" )
+	print_screen_output "$partition_data"
+	if [[ -n $partition_data_2 ]];then
+		partition_data_2=$( create_print_line " " "${partition_data_2}" )
+		print_screen_output "$partition_data_2"
 	fi
 }
 
@@ -1924,59 +1986,6 @@ print_system_data()
 		system_data="${system_data} ${NORMAL}"
 	fi
 	print_screen_output "$system_data"
-}
-
-## main function to print out, master for all sub print functions.
-## note that it passes local variable values on to its children,
-## and in some cases, their children, with lspci_data
-print_it_out()
-{
-	## note: remember that in bash, child functions inherit local variables
-	local current_kernel=$( uname -a | gawk '{print $1,$3,$(NF-1)}' )
-	local processes="$(( $( ps aux | wc -l ) - 1 ))"
-	# set A_CPU_CORE_DATA
-	get_cpu_core_count
-	local cpu_core_count_string="${A_CPU_CORE_DATA[1]}"
-	local cpu_core_count=${A_CPU_CORE_DATA[0]}
-	local lspci_data='' ## only for verbose needed
-	local up_time="$( get_uptime )"
-	## assemble data for output
-	# load A_HDD_DATA
-	get_hdd_data_basic
-	## note: if hdd_model is declared prior to use, whatever string you want inserted will
-	## be inserted first. In this case, it's desirable to print out (x) before each disk found.
-	local a_hdd_data_count=$(( ${#A_HDD_DATA[@]} - 1 ))
-	IFS=","
-	local a_hdd_basic_working=( ${A_HDD_DATA[$a_hdd_data_count]} )
-	IFS="$ORIGINAL_IFS"
-	local hdd_capacity=${a_hdd_basic_working[0]}
-	local hdd_used=${a_hdd_basic_working[1]}
-	# load A_CPU_DATA
-	get_cpu_data
-
-	IFS=","
-	local a_cpu_working=(${A_CPU_DATA[0]})
-	IFS="$ORIGINAL_IFS"
-	local cpu_model="${a_cpu_working[0]}"
-
-	case "$VERBOSITY_LEVEL" in
-		0)	print_short_data
-			;;
-		*)	lspci_data="$( get_lspci_data )"
-			print_intro_data
-			print_cpu_data
-			print_gfx_data
-			if [[ $B_SHOW_SOUND == 'true' ]];then
-				print_audio_data
-			fi
-			if [[ $VERBOSITY_LEVEL -ge 2 ]];then
-				print_networking_data
-			fi
-
-			print_hard_disk_data
-			print_system_data
-			;;
-	esac
 }
 
 ########################################################################
