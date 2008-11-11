@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.5.9
-####  Date: November 10 2008
+####  version: 0.5.10
+####  Date: November 11 2008
 ########################################################################
 ####  inxi is a fork of infobash, the original bash sys info script by locsmif
 ####  As time permits functionality improvements and recoding will occur.
@@ -11,7 +11,7 @@
 ####  Tested with Irssi, Xchat, Konversation, BitchX, KSirc, ircII,
 ####  Gaim/Pidgin, Weechat, KVIrc and Kopete.
 ####  Original infobash author and copyright holder:
-####  Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif <infobash@rebelhomicide.demon.nl>
+####  Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif
 ####  inxi version: Copyright (C) 2008 Warren Scott Rogers & Harald Hope
 ####  Further fixes (listed as known): Horst Tritremmel <hjt at sidux.com>
 ####
@@ -30,12 +30,34 @@
 ####
 ####  You should have received a copy of the GNU General Public License
 ####  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
+########################################################################
 ####  DEPENDENCIES
 ####  bash >=2.05b(bash), df;readlink;stty;tr;uname;wc(coreutils),
 ####  gawk(gawk), grep(grep), hostname(hostname), lspci(pciutils),
 ####  ps;uptime(procps), runlevel(sysvinit), glxinfo;xdpyinfo;xrandr(xbase-clients)
 ####  Also the proc filesystem should be present and mounted
+########################################################################
+####  CONVENTIONS:
+####  Indentation: TABS
+####  Do not use one liner flow controls. The ONLY time you should use ; is in
+####  This single case: if [[ condition ]];then (ie, never: [[ condition ]] && statement)
+####  For all boolean tests, use 'true' / 'false'. Do NOT use 0 or 1 unless
+####  it's a function return. Avoid complicated tests in the if condition itself.
+####  VARIABLE/FUNCTION NAMING:
+####  All variables should explain what they are, except counters like i, j
+####  All variables MUST be initialized / declared explicitly
+####, globals UPPER CASE, at top of script, SOME_VARIABLE='' (words separated by _ ).
+####  Locals always with: local some_variable= (lower case, words separated by _ )
+####
+####  Booleans should start with b_ or B_ and state clearly what is being tested
+####	Arrays should start with a_ or A_
+####  All functions should follow standard naming, ie, verb subject noun, get_cpu_data
+########################################################################
+####  TESTING FLAGS
+####  inxi supports advanced testing triggers to do various things, using -! <arg>
+####  -! 1 - triggers default B_TESTING_FLAG='true' to trigger some test or other
+####  -! 2 - triggers an update from the primary dev download server instead of svn
+####  -! <http://......> - Triggers an update from whatever server you list.
 ########################################################################
 #### VARIABLES
 ########################################################################
@@ -145,6 +167,8 @@ FL2=''
 SCRIPT_NAME="inxi"
 SCRIPT_PATH=$( dirname $0 )
 SCRIPT_VERSION_NUMBER=$( grep -im 1 'version:' $SCRIPT_PATH/$SCRIPT_NAME | gawk '{print $3}' )
+SCRIPT_DOWNLOAD='http://inxi.googlecode.com/svn/trunk/'
+SCRIPT_DOWNLOAD_DEV='http://techpatterns.com/downloads/distro/'
 KONVI_CFG="konversation/scripts/$SCRIPT_NAME.conf" # relative path to $(kde-config --path data)
 
 ### Script Localization
@@ -234,6 +258,8 @@ error_handler()
 		8)	error_message="the self-updater failed, wget exited with error: $2.\nYou probably need to be root.\nHint, to make for easy updates without being root, do: chown <user name> $SCRIPT_PATH/$SCRIPT_NAME"
 			;;
 		9)	error_message="unsupported debugging level: $2"
+			;;
+		10)error_message="the alt download url you provided: $2\nappears to be wrong, download aborted. Please note, the url\nneeds to end in /, without $SCRIPT_NAME, like: http://yoursite.com/downloads/"
 			;;
 		*)	error_message="error unknown: $@"
 			set -- 99
@@ -464,14 +490,14 @@ get_cmdline()
 # args: $1 - full script startup args: $@
 get_parameters()
 {
-	local opt=''
+	local opt='' wget_test=''
 
 	# the short form only runs if no args are used, otherwise a line or verbose output is given.
 	if [[ -z $1 ]];then
 		B_SHOW_SHORT_OUTPUT='true'
 	fi
 
-	while getopts Ac:CdDfFGhHINPSUv:Vx%@:! opt
+	while getopts Ac:CdDfFGhHINPSUv:Vx%@:!: opt
 	do
 		case $opt in
 		A)	B_SHOW_AUDIO='true'
@@ -521,7 +547,7 @@ get_parameters()
 				error_handler 4 "$OPTARG"
 			fi
 			;;
-		U)	script_self_updater
+		U)	script_self_updater "$SCRIPT_DOWNLOAD$SCRIPT_NAME" 'svn server'
 			;;
 		V)	print_version_info
 			exit 0
@@ -542,7 +568,22 @@ get_parameters()
 				error_handler 9 "$OPTARG"
 			fi
 			;;
-		!)	B_TESTING_FLAG='true'
+		!)	# test for various supported methods
+			case $OPTARG in
+				1)	B_TESTING_FLAG='true'
+					;;
+				2) script_self_updater "$SCRIPT_DOWNLOAD_DEV$SCRIPT_NAME" 'dev server'
+					;;
+				http*)
+					# first test provided url to avoid overwriting file with null
+					wget --spider "$OPTARG$SCRIPT_NAME"
+					if [[ $? -eq 0 ]];then
+						script_self_updater "$OPTARG$SCRIPT_NAME" 'alt server'
+					else
+						error_handler 10 "$OPTARG"
+					fi
+					;;
+			esac
 			;;
 		*)	error_handler 7 "$1"
 			;;
@@ -620,15 +661,17 @@ print_version_info()
 	print_screen_output "(at your option) any later version."
 }
 
+# args: $1 - download url, not including file name; $2 - string to print out
+# note that $1 must end in / to properly construct the url path
 script_self_updater()
 {
 	print_screen_output "Starting $SCRIPT_NAME self updater."
 	print_screen_output "Currently running $SCRIPT_NAME version number: $SCRIPT_VERSION_NUMBER"
-	print_screen_output "Updating $SCRIPT_NAME in $SCRIPT_PATH now..."
-	wget -O $SCRIPT_PATH/$SCRIPT_NAME http://techpatterns.com/downloads/distro/$SCRIPT_NAME || error_handler 8 "$?"
+	print_screen_output "Updating $SCRIPT_NAME in $SCRIPT_PATH using $2 as download source..."
+	wget -O $SCRIPT_PATH/$SCRIPT_NAME $1$SCRIPT_NAME || error_handler 8 "$?"
 	if [[ $? -eq 0 ]];then
 		SCRIPT_VERSION_NUMBER=$( grep -im 1 'version:' $SCRIPT_PATH/$SCRIPT_NAME | gawk '{print $3}' )
-		print_screen_output "Successfully updated to version: $SCRIPT_VERSION_NUMBER\nTo run the new version, just start $SCRIPT_NAME again."
+		print_screen_output "Successfully updated to $2 version: $SCRIPT_VERSION_NUMBER\nTo run the new version, just start $SCRIPT_NAME again."
 		exit 0
 	fi
 }
