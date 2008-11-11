@@ -1,7 +1,7 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.5.2
+####  version: 0.5.3
 ####  Date: November 10 2008
 ########################################################################
 ####  inxi is a fork of infobash, the original bash sys info script by locsmif
@@ -1004,51 +1004,93 @@ get_distro_data()
 {
 	local i='' distro='' distro_file='' a_distro_glob=''
 
-	shopt -s nullglob
-	cd /etc
-	a_distro_glob=(*[-_]{release,version})
-	cd "$OLDPWD"
-	shopt -u nullglob
 
-	if [[ ${#a_distro_glob[@]} -eq 1 ]];then
-		distro_file="${a_distro_glob}"
-	elif [[ ${#a_distro_glob[@]} -gt 1 ]];then
-		for i in $DISTROS_DERIVED $DISTROS_PRIMARY
-		do
-			# Only echo works with ${var[@]}, not print_screen_output() or script_debugger()
-			# This is a known bug, search for the word "strange" inside comments
-			# echo "i='$i' a_distro_glob[@]='${a_distro_glob[@]}'"
-			## note: this method only works with [[ brackets, not [. It's very hard to actually
-			## use this, it should probably be made more explicit.
-			if [[ " ${a_distro_glob[@]} " == *" $i "* ]];then
-				distro_file="${i}"
-				break
-			fi
-		done
-	fi
-	if [[ -n $distro_file && -s /etc/$distro_file && " $DISTROS_EXCLUDE_LIST " != *" $distro_file "* ]];then
-		distro=$( remove_erroneous_chars "/etc/$distro_file" )
-	# this is necessary because antiX doesn't use version/release in its distro id file name
-	# so the glob tests fail. I expect those tests will need to be redone at some point to avoid this
-	elif [[ -e /etc/antiX ]];then
-		distro="$( egrep -oi 'antix.*\.iso' <<< $( remove_erroneous_chars '/etc/antiX' ) | sed 's/\.iso//' )"
-	else
-		# Debian pure should fall through here
-		distro_file="issue"
-		distro=$( gawk '
-		BEGIN { RS="" } {
-			gsub(/\\[a-z]/, "")
-			gsub(/,/, " ")
-			gsub(/^ +| +$/, "")
-			gsub(/ [ \t]+/, " ")
-			print
-		}' "/etc/${distro_file}" )
-	fi
+		# please reference this python thread: http://bugs.python.org/issue1322
+		shopt -s nullglob
+		cd /etc
+		a_distro_glob=(*[-_]{release,version})
+		cd "$OLDPWD"
+		shopt -u nullglob
+
+		if [[ ${#a_distro_glob[@]} -eq 1 ]];then
+			distro_file="${a_distro_glob}"
+		elif [[ ${#a_distro_glob[@]} -gt 1 ]];then
+			for i in $DISTROS_DERIVED $DISTROS_PRIMARY
+			do
+				# Only echo works with ${var[@]}, not print_screen_output() or script_debugger()
+				# This is a known bug, search for the word "strange" inside comments
+				# echo "i='$i' a_distro_glob[@]='${a_distro_glob[@]}'"
+				## note: this method only works with [[ brackets, not [. It's very hard to actually
+				## use this, it should probably be made more explicit.
+				if [[ " ${a_distro_glob[@]} " == *" $i "* ]];then
+					distro_file="${i}"
+					break
+				fi
+			done
+		fi
+		if [[ -n $distro_file && -s /etc/$distro_file && " $DISTROS_EXCLUDE_LIST " != *" $distro_file "* ]];then
+			distro=$( remove_erroneous_chars "/etc/$distro_file" )
+		# this is necessary because antiX doesn't use version/release in its distro id file name
+		# so the glob tests fail. I expect those tests will need to be redone at some point to avoid this
+		elif [[ -e /etc/antiX ]];then
+			distro="$( egrep -oi 'antix.*\.iso' <<< $( remove_erroneous_chars '/etc/antiX' ) | sed 's/\.iso//' )"
+		else
+			# Debian pure should fall through here
+			distro_file="issue"
+			distro=$( gawk '
+			BEGIN { RS="" } {
+				gsub(/\\[a-z]/, "")
+				gsub(/,/, " ")
+				gsub(/^ +| +$/, "")
+				gsub(/ [ \t]+/, " ")
+				print
+			}' "/etc/${distro_file}" )
+		fi
+
 	if [[ ${#distro} -gt 80 && $B_HANDLE_CORRUPT_DATA != 'true' ]];then
-		distro="${RED}/etc/${distro_file} corrupted, use -C to override${NORMAL}"
+		distro="${RED}/etc/${distro_file} corrupted, use -% to override${NORMAL}"
 	fi
 	## note: would like to actually understand the method even if it's not used
 	# : ${distro:=Unknown distro o_O}
+	## test for /etc/lsb-release as a backup in case of failure
+	if [[ -f /etc/lsb-release && -z $distro ]];then
+		distro=$( gawk -F '=' '
+		{ IGNORECASE=1 }
+		/^DISTRIB_ID/ {
+			gsub(/^ +| +$/, "", $NF)
+			distroId = $NF
+		}
+		/^DISTRIB_RELEASE/ {
+			gsub(/^ +| +$/, "", $NF)
+			distroRelease = $NF
+		}
+		/^DISTRIB_CODENAME/ {
+			gsub(/^ +| +$/, "", $NF)
+			distroCodename = $NF
+		}
+		END {
+			print distroId " " distroRelease " (" distroCodename ")"
+		}' /etc/lsb-release )
+	# this is HORRIBLY slow, but I don't know why, it runs fast in shell
+# 	elif [[  -n $( which lsb_release ) ]];then
+# 		distro=$( echo "$( lsb_release -irc )" | gawk '
+# 		{ IGNORECASE=1 }
+# 		/^Distributor ID/ {
+# 			gsub(/^ +| +$/, "", $NF)
+# 			distroId = $NF
+# 		}
+# 		/^Release/ {
+# 			gsub(/^ +| +$/, "", $NF)
+# 			distroRelease = $NF
+# 		}
+# 		/^Codename/ {
+# 			gsub(/^ +| +$/, "", $NF)
+# 			distroCodename = $NF
+# 		}
+# 		END {
+# 			print distroId " " distroRelease " (" distroCodename ")"
+# 		}' )
+	fi
 	if [[ -z $distro ]];then
 		distro='Unknown distro o_O'
 	fi
@@ -1057,6 +1099,7 @@ get_distro_data()
 	if [[ -n $( grep -i 'arch linux' <<< $distro ) ]];then
 		distro='Arch Linux'
 	fi
+
 	echo "$distro"
 }
 
