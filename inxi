@@ -1,7 +1,7 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.5.29-b-1-t-1
+####  version: 0.5.30-b-1-t-1
 ####  Date: November 13 2008
 ########################################################################
 ####  inxi is a fork of infobash 3.02, the original bash sys info script by locsmif
@@ -990,17 +990,34 @@ set_calculated_variables()
 ## create array of sound cards installed on system, and if found, use asound data as well
 get_audio_data()
 {
-	local i='' alsa_index=0
+	local i='' alsa_data='' alsa_driver='' device_count=''
 
 	IFS=$'\n'
-	A_AUDIO_DATA=( $( echo "$lspci_datas" | gawk -F': ' '
+	# this is awkward, but it should work, ie, if there's only one sound card found
+	device_count=$( egrep -ic '(multimedia audio controller|audio device)' <<< "$lspci_data" )
+	if [[ $device_count -eq 1 && -f /proc/asound/cards ]];then
+		alsa_driver=$( gawk -F ']: ' '{
+			driver=gensub( /^(.+)( - )(.+)$/, "\\1", 1, $2 )
+			gsub(/^ +| +$/,"",driver)
+			if ( driver != "" ){
+				print driver
+			}
+		}'  /proc/asound/cards )
+	fi
+	# this isn't perfect, but if one card was found in lscpci, we're passing
+	# this array constructor that card driver name. This should work for most people
+	# but if you can think of anything better, please post the code patch
+	A_AUDIO_DATA=( $( echo "$lspci_data" | gawk -v alsaDriver="$alsa_driver" -F': ' '
 	{ IGNORECASE=1 }
 	/multimedia audio controller|audio device/ {
 		gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF )
 		gsub(/,/," ",$NF)
 		gsub(/^ +| +$/,"",$NF)
 		gsub(/ [ \t]+/," ",$NF)
-		print $NF
+		if ( alsaDriver != "" ){
+			alsaDriver=","alsaDriver
+		}
+		print $NF alsaDriver
 	}' ) )
 
 	# c=gensub( /^ *vendor: (.+) +model: (.+) +rev:.*$/, "\\2", "g", a[i] )
@@ -1015,15 +1032,20 @@ get_audio_data()
 		}'  /proc/asound/cards ) )
 	fi
 	IFS="$ORIGINAL_IFS"
-
+	echo ${A_AUDIO_DATA[@]}
 	# handle cases where card detection fails, like in PS3, where lspci gives no output, or headless boxes..
 	if [[ ${#A_AUDIO_DATA[@]} -eq 0 ]];then
 		A_AUDIO_DATA[0]='Failed to Detect Sound Card!'
 	fi
-	# now we'll add in the alsa data if the file exists
-	alsa_index=${#A_AUDIO_DATA[@]}
+}
+
+get_audio_alsa_data()
+{
+	local alsa_data=''
+
+	# now we'll get the alsa data if the file exists
 	if [[ -e /proc/asound/version ]];then
-		A_AUDIO_DATA[$alsa_index]=$( gawk '{
+		alsa_data=$( gawk '{
 			{ IGNORECASE=1 }
 			# some alsa strings have the build date in (...)
 			# also remove trailing .
@@ -1032,10 +1054,11 @@ get_audio_data()
 			gsub(/^ +| +$/, "", $0)
 			gsub(/ [ \t]+/, " ", $0)
 			if ( $0 != "" ){
-				print $0 ",alsa"
+				print $0
 			}
 		}' /proc/asound/version )
 	fi
+	echo "$alsa_data"
 }
 
 ## create A_CPU_CORE_DATA, currently with two values: integer core count; core string text
@@ -1918,10 +1941,11 @@ print_short_data()
 print_audio_data()
 {
 	local i='' card_one='Card-1 ' audio_data='' a_audio_data='' port_data=''
-	local a_audio_working='' alsa_driver=''
+	local a_audio_working='' alsa_driver='' alsa_data=''
 	# set A_AUDIO_DATA
+	# and get als
 	get_audio_data
-
+	alsa_data=$( get_audio_alsa_data )
 	IFS=","
 	a_audio_working=(${A_AUDIO_DATA[0]})
 	IFS="$ORIGINAL_IFS"
@@ -1959,14 +1983,18 @@ print_audio_data()
 			fi
 			if [[ -n ${a_audio_working[1]} && ${a_audio_working[1]} != 'alsa' ]];then
 				audio_data="${C1}Card-$(( $i + 1 )) ${C2}${a_audio_working[0]}$alsa_driver$port_data"
-			elif [[ -n ${a_audio_working[1]} && ${a_audio_working[1]} == 'alsa' ]];then
-				audio_data="${C1}Sound: ${C2}${a_audio_working[0]}"
 			fi
 			if [[ -n $audio_data ]];then
 				audio_data=$( create_print_line " " "$audio_data" )
 				print_screen_output "$audio_data"
 			fi
 		done
+		# alsa driver data only prints out if sound card data is found
+		if [[ -n $alsa_data ]];then
+			audio_data="${C1}Sound: ${C2}$alsa_data"
+			audio_data=$( create_print_line " " "$audio_data" )
+			print_screen_output "$audio_data"
+		fi
 	fi
 }
 
