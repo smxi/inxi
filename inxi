@@ -990,10 +990,10 @@ set_calculated_variables()
 ## create array of sound cards installed on system, and if found, use asound data as well
 get_audio_data()
 {
-	local i='' alsa_index=0 alsa_driver=''
+	local i='' alsa_index=0
 
 	IFS=$'\n'
-	A_AUDIO_DATA=( $( echo "$lspci_data" | gawk -F': ' '
+	A_AUDIO_DATA=( $( echo "$lspci_datas" | gawk -F': ' '
 	{ IGNORECASE=1 }
 	/multimedia audio controller|audio device/ {
 		gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF )
@@ -1008,7 +1008,10 @@ get_audio_data()
 	if [[ ${#A_AUDIO_DATA[@]} -eq 0 && -f /proc/asound/cards ]];then
 		A_AUDIO_DATA=( $( gawk -F ']: ' '{
 			card=gensub( /^(.+)( - )(.+)$/, "\\3", 1, $2 )
-			print card
+			driver=gensub( /^(.+)( - )(.+)$/, "\\1", 1, $2 )
+			if ( card != "" ){
+				print card","driver
+			}
 		}'  /proc/asound/cards ) )
 	fi
 	IFS="$ORIGINAL_IFS"
@@ -1017,17 +1020,10 @@ get_audio_data()
 	if [[ ${#A_AUDIO_DATA[@]} -eq 0 ]];then
 		A_AUDIO_DATA[0]='Failed to Detect Sound Card!'
 	fi
-		# now we'll add in the alsa data if the file exists
+	# now we'll add in the alsa data if the file exists
 	alsa_index=${#A_AUDIO_DATA[@]}
 	if [[ -e /proc/asound/version ]];then
-		if [[ -f /proc/asound/cards ]];then
-			alsa_driver=$( gawk -F 'with ' '{
-				gsub(" at.*", "", $2)
-				print $2
-			}' /proc/asound/cards )
-		fi
-		echo alsa_driver $alsa_driver
-		A_AUDIO_DATA[$alsa_index]=$( gawk -v alsaDriver="$alsa_driver" '{
+		A_AUDIO_DATA[$alsa_index]=$( gawk '{
 			{ IGNORECASE=1 }
 			# some alsa strings have the build date in (...)
 			# also remove trailing .
@@ -1035,14 +1031,12 @@ get_audio_data()
 			gsub(/,/, " ", $0)
 			gsub(/^ +| +$/, "", $0)
 			gsub(/ [ \t]+/, " ", $0)
-			if ( alsaDriver != "" ){
-				alsaDriver=","alsaDriver
-			}
 			if ( $0 != "" ){
-				print $0 ",alsa"alsaDriver
+				print $0 ",alsa"
 			}
 		}' /proc/asound/version )
 	fi
+	echo ${A_AUDIO_DATA[@]}
 }
 
 ## create A_CPU_CORE_DATA, currently with two values: integer core count; core string text
@@ -1925,7 +1919,7 @@ print_short_data()
 print_audio_data()
 {
 	local i='' card_one='Card-1 ' audio_data='' a_audio_data='' port_data=''
-	local a_audio_working=''
+	local a_audio_working='' alsa_driver=''
 	# set A_AUDIO_DATA
 	get_audio_data
 
@@ -1939,10 +1933,15 @@ print_audio_data()
 			card_one='Card '
 		fi
 
-		if [[ -n ${a_audio_working[1]} ]];then
-			port_data=" ${C1}at port${C2} ${a_audio_working[1]}"
+		if [[ -n ${a_audio_working[2]} ]];then
+			port_data=" ${C1}at port${C2} ${a_audio_working[2]}"
 		fi
-		audio_data="${C1}$card_one${C2}${a_audio_working[0]}$port_data"
+		if [[ ${a_audio_working[1]} != 'alsa' ]];then
+			if [[ -n ${a_audio_working[1]} ]];then
+				alsa_driver=" ${C1}driver:${C2}${a_audio_working[1]}"
+			fi
+		fi
+		audio_data="${C1}$card_one${C2}${a_audio_working[0]}$alsa_driver$port_data"
 		audio_data=$( create_print_line "Audio:" "$audio_data" )
 		print_screen_output "$audio_data"
 		i=0 ## loop starts with 1 by auto-increment so it only shows cards > 1
@@ -1952,14 +1951,18 @@ print_audio_data()
 			a_audio_working=( ${A_AUDIO_DATA[i]} )
 			IFS="$ORIGINAL_IFS"
 			port_data=''
+			alsa_driver=''
 			if [[ ${a_audio_working[1]} == 'port' ]];then
 				port_data=" ${C1}at port${C2} ${a_audio_working[2]}"
 			fi
 			# we're testing for the presence of the 2nd array item here
 			if [[ ${a_audio_working[1]} != 'alsa' ]];then
-				audio_data="${C1}Card-$(( $i + 1 )) ${C2}${a_audio_working[0]}$port_data"
+				if [[ -n ${a_audio_working[1]} ]];then
+					alsa_driver="${C2}driver:${a_audio_working[1]}"
+				fi
+				audio_data="${C1}Card-$(( $i + 1 )) ${C2}${a_audio_working[0]}$alsa_driver$port_data"
 			else
-				audio_data="${C1}Sound System: ${C2}${a_audio_working[0]}"
+				audio_data="${C1}Sound: ${C2}${a_audio_working[0]}"
 			fi
 			audio_data=$( create_print_line " " "$audio_data" )
 			print_screen_output "$audio_data"
