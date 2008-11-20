@@ -1005,6 +1005,183 @@ get_audio_data()
 	local i='' alsa_data='' alsa_driver='' device_count=''
 
 	IFS=$'\n'
+
+	# this isn't perfect, but if one card was found in lscpci, we're passing
+	# this array constructor that card driver name. This should work for most people
+	# but if you can think of anything better, please post the code patch
+	A_AUDIO_DATA=( $( echo "$lspci_data" | gawk -F ': ' '
+	BEGIN { IGNORECASE=1 }
+	#/^[0-9a-f:.]+ (ethernet|network) (controller|bridge)/ || /^[0-9a-f:.]+ [^:]+: .*(ethernet|network).*$/ {
+	/multimedia audio controller|audio device/ {
+		nic=gensub(/^[0-9a-f:.]+ [^:]+: (.+)$/,"\\1","g",$0)
+		gsub(/realtek semiconductor/, "Realtek", nic)
+		gsub(/davicom semiconductor/, "Davicom", nic)
+		# The doublequotes are necessary because of the pipes in the variable.
+		gsub(/'"$BAN_LIST_NORMAL"'/, "", nic)
+		gsub(/,/, " ", nic)
+		gsub(/^ +| +$/, "", nic)
+		gsub(/ [ \t]+/, " ", nic)
+
+		eth[nic]++
+		while (getline && !/^$/) {
+			if (/driver in use/) {
+				drivers[nic] = drivers[nic] gensub(/(.*): (.*)/,"\\2","g",$0) " "
+			}
+		}
+	}
+
+	END {
+		j=0
+		for (i in eth) {
+			usePorts=""
+			useDrivers=""
+			if (eth[i]>1) {
+				a[j]=eth[i]"x "i
+				if (drivers[i] != "") {
+					useDrivers=drivers[i]
+				}
+			}
+			else {
+				a[j]=i
+				if (drivers[i] != "") {
+					useDrivers=drivers[i]
+				}
+			}
+			# create array primary item for master array
+			print a[j] "," useDrivers "," usePorts
+			j++
+		}
+	}') )
+
+	echo ${A_AUDIO_DATA[@]}
+	# c=gensub( /^ *vendor: (.+) +model: (.+) +rev:.*$/, "\\2", "g", a[i] )
+	# in case of failure of first check do this instead
+	if [[ ${#A_AUDIO_DATA[@]} -eq 0 && -f /proc/asound/cards ]];then
+		A_AUDIO_DATA=( $( gawk -F ']: ' '
+		{ IGNORECASE=1 }
+		$1 !~ /modem/ && $2 !~ /modem/ {
+			card=gensub( /^(.+)( - )(.+)$/, "\\3", 1, $2 )
+			driver=gensub( /^(.+)( - )(.+)$/, "\\1", 1, $2 )
+			if ( card != "" ){
+				print card","driver
+			}
+		}'  /proc/asound/cards ) )
+	fi
+	IFS="$ORIGINAL_IFS"
+
+	# handle cases where card detection fails, like in PS3, where lspci gives no output, or headless boxes..
+	if [[ ${#A_AUDIO_DATA[@]} -eq 0 ]];then
+		A_AUDIO_DATA[0]='Failed to Detect Sound Card!'
+	fi
+}
+
+get_audio_data-test1()
+{
+	local i='' alsa_data='' alsa_driver='' device_count=''
+
+	IFS=$'\n'
+
+	# this isn't perfect, but if one card was found in lscpci, we're passing
+	# this array constructor that card driver name. This should work for most people
+	# but if you can think of anything better, please post the code patch
+	A_AUDIO_DATA=( $( echo "$lspci_data" | gawk -F ': ' '
+	BEGIN {
+		IGNORECASE = 1
+# 		RS = ""
+		FS = "\n"
+	}
+	/ethernet|network/,/^$/ {
+		# first clean up all the strings
+		gsub(/'"$BAN_LIST_NORMAL"'/, "", $0 )
+		gsub(/,/," ",$0)
+		gsub(/^ +| +$/,"",$0)
+		gsub(/ [ \t]+/," ",$0)
+		# then we process and get each value
+# # 		RS = ""
+
+		if ( $0 ~ /ethernet|network/ ) {
+# 			a_card_data["card"] = "card:" gensub( /(.*): (.*)/,"\\2","g",$0)
+# 			card = "card:" $0
+			card = gensub( /(.*): (.*)/,"\\2","g",$0)
+
+		}
+		if ( $0 ~ /driver|kernel driver/ ) {
+
+			# driver = "driver:"$(/driver|kernel driver/)
+# 			a_card_data["driver"] = "driver:" gensub( /(.*): (.*)/,"\\2","g",$0 )
+			driver = gensub( /(.*): (.*)/,"\\2","g",$0 )
+		}
+		if ( $0 ~ /modules|kernel modules/ ) {
+
+			# driver = "driver:"$(/driver|kernel driver/)
+# 			a_card_data["driver"] = "driver:" gensub( /(.*): (.*)/,"\\2","g",$0 )
+			module = gensub( /(.*): (.*)/,"\\2","g",$0 )
+		}
+# 		i = 0
+# 		while (getline && /multimedia audio controller|audio device/ && !/^$/) {
+# 			print $0
+# 			if (/multimedia audio controller|audio device/) {
+# 				card=gensub( /(.*): (.*)/,"\\2","g",$0)
+# 			}
+# 			if (/driver|kernel driver/) {
+# 				driver = "," gensub( /(.*): (.*)/,"\\2","g",$0 )
+# 			}
+# 			i++
+# 		}
+
+		if ( module != "" ){
+			cardDriver = card","driver","module
+			card = ""
+			driver =""
+			module = ""
+		}
+# 		if ( card != "" ) {
+# 			print card driver
+# 			card = ""
+# 		}
+# 		print "testing"
+# 		print $0
+		print cardDriver
+		cardDriver = ""
+
+		}
+		END {
+# 			print card driver
+			card = ""
+			driver = ""
+		}
+	' ) )
+	echo ${A_AUDIO_DATA[@]}
+	# c=gensub( /^ *vendor: (.+) +model: (.+) +rev:.*$/, "\\2", "g", a[i] )
+	# in case of failure of first check do this instead
+	if [[ ${#A_AUDIO_DATA[@]} -eq 0 && -f /proc/asound/cards ]];then
+		A_AUDIO_DATA=( $( gawk -F ']: ' '
+		{ IGNORECASE=1 }
+		$1 !~ /modem/ && $2 !~ /modem/ {
+			card=gensub( /^(.+)( - )(.+)$/, "\\3", 1, $2 )
+			driver=gensub( /^(.+)( - )(.+)$/, "\\1", 1, $2 )
+			if ( card != "" ){
+				print card","driver
+			}
+		}'  /proc/asound/cards ) )
+	fi
+	IFS="$ORIGINAL_IFS"
+
+	# handle cases where card detection fails, like in PS3, where lspci gives no output, or headless boxes..
+	if [[ ${#A_AUDIO_DATA[@]} -eq 0 ]];then
+		A_AUDIO_DATA[0]='Failed to Detect Sound Card!'
+	fi
+}
+
+
+
+
+
+get_audio_data-bu()
+{
+	local i='' alsa_data='' alsa_driver='' device_count=''
+
+	IFS=$'\n'
 	# this is awkward, but it should work, ie, if there's only one sound card found
 	# have to filter out modems because they also appear on asound/cards
 	device_count=$( egrep -ic '(multimedia audio controller|audio device)' <<< "$lspci_data" )
@@ -1697,7 +1874,10 @@ get_networking_data()
 		eth[nic]++
 		while (getline && !/^$/) {
 			if (/I\/O/) {
-				ports[nic]=ports[nic]$4" "
+				ports[nic] = ports[nic] $4 " "
+			}
+			if (/driver in use/) {
+				drivers[nic] = drivers[nic] gensub(/(.*): (.*)/,"\\2","g",$0) " "
 			}
 		}
 	}
@@ -1706,11 +1886,15 @@ get_networking_data()
 		j=0
 		for (i in eth) {
 			usePorts=""
+			useDrivers=""
 			if (eth[i]>1) {
 				a[j]=eth[i]"x "i
 				## note: this loses the plural ports case, is it needed anyway?
 				if (ports[i] != "") {
 					usePorts=ports[i]
+				}
+				if (drivers[i] != "") {
+					useDrivers=drivers[i]
 				}
 			}
 			else {
@@ -1718,13 +1902,17 @@ get_networking_data()
 				if (ports[i] != "") {
 					usePorts=ports[i]
 				}
+				if (drivers[i] != "") {
+					useDrivers=drivers[i]
+				}
 			}
 			# create array primary item for master array
-			print a[j] "," usePorts
+			print a[j] "," useDrivers","usePorts
 			j++
 		}
 	}') )
 	IFS="$ORIGINAL_IFS"
+	echo ${A_NETWORK_DATA[@]}
 }
 
 get_partition_data()
@@ -1982,6 +2170,9 @@ print_audio_data()
 		if [[ -n ${a_audio_working[1]} ]];then
 			alsa_driver=" ${C1}driver${C2} ${a_audio_working[1]}"
 		fi
+		if [[ -n ${a_audio_working[2]} && $B_EXTRA_DATA == 'true' ]];then
+			port_data="${C1}at port${C2} ${a_audio_working[2]}"
+		fi
 		audio_data="${C1}$card_one${C2}${a_audio_working[0]}$alsa_driver$port_data"
 		audio_data=$( create_print_line "Audio:" "$audio_data" )
 		print_screen_output "$audio_data"
@@ -1999,6 +2190,9 @@ print_audio_data()
 			# we're testing for the presence of the 2nd array item here, which is the driver name
 			if [[ -n ${a_audio_working[1]} ]];then
 				alsa_driver="${C1}driver${C2} ${a_audio_working[1]}"
+			fi
+			if [[ -n ${a_audio_working[2]} && $B_EXTRA_DATA == 'true' ]];then
+				port_data="${C1}at port${C2} ${a_audio_working[2]}"
 			fi
 			if [[ -n ${a_audio_working[0]} ]];then
 				audio_data="${C1}Card-$(( $i + 1 )) ${C2}${a_audio_working[0]}$alsa_driver$port_data"
@@ -2077,7 +2271,7 @@ print_cpu_data()
 		fi
 		cpu_data="$cpu_data${C2} ${C1}cache${C2} $cpu_cache$cpu_flags$bmip_data${CN}"
 	fi
-
+	# we don't this printing out extra line unless > 1 cpu core
 	if [[ ${#A_CPU_DATA[@]} -gt 2 ]] && [[ $B_SHOW_CPU == 'true' || $VERBOSITY_LEVEL -ge 5 ]];then
 		cpu_clock_speed='' # null < verbosity level 5
 	else
@@ -2317,7 +2511,7 @@ print_info_data()
 
 print_networking_data()
 {
-	local i='' card_one='Card-1 ' network_data='' a_network_working='' port_data=''
+	local i='' card_one='Card-1 ' network_data='' a_network_working='' port_data='' driver_data=''
 	# set A_NETWORK_DATA
 	get_networking_data
 
@@ -2331,9 +2525,12 @@ print_networking_data()
 		fi
 
 		if [[ -n ${a_network_working[1]} ]];then
-			port_data=" ${C1}at port${C2} ${a_network_working[1]}"
+			driver_data=" ${C1}driver${C2} ${a_network_working[1]}"
 		fi
-		network_data="${C1}$card_one${C2}${a_network_working[0]}$port_data"
+		if [[ -n ${a_network_working[2]} && $B_EXTRA_DATA == 'true' ]];then
+			port_data="${C1}at port${C2} ${a_network_working[2]}"
+		fi
+		network_data="${C1}$card_one${C2}${a_network_working[0]}$driver_data$port_data"
 		network_data=$( create_print_line "Network:" "$network_data" )
 		print_screen_output "$network_data"
 		i=0 ## loop starts with 1 by auto-increment so it only shows cards > 1
@@ -2343,10 +2540,14 @@ print_networking_data()
 			a_network_working=( ${A_NETWORK_DATA[i]} )
 			IFS="$ORIGINAL_IFS"
 			port_data=''
+			driver_data=''
 			if [[ -n ${a_network_working[1]} ]];then
-				port_data=" ${C1}at port${C2} ${a_network_working[1]}"
+				driver_data=" ${C1}driver${C2} ${a_network_working[1]}"
 			fi
-			network_data="${C1}Card-$(( $i + 1 )) ${C2}${a_network_working[0]}$port_data"
+			if [[ -n ${a_network_working[2]} && $B_EXTRA_DATA == 'true' ]];then
+				port_data="${C1}at port${C2} ${a_network_working[2]}"
+			fi
+			network_data="${C1}Card-$(( $i + 1 )) ${C2}${a_network_working[0]}$driver_data$port_data"
 			network_data=$( create_print_line " " "$network_data" )
 			print_screen_output "$network_data"
 		done
