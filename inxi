@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.5.32-b-1-t-2
-####  Date: November 14 2008
+####  version: 0.6.0-b1-t1
+####  Date: November 19 2008
 ########################################################################
 ####  inxi is a fork of infobash 3.02, the original bash sys info script by locsmif
 ####  As time permits functionality improvements and recoding will occur.
@@ -39,11 +39,14 @@
 ########################################################################
 ####  CONVENTIONS:
 ####  Indentation: TABS
+####  Do not use `....`, those are totally non-reabable, use $(....)
 ####  Do not use one liner flow controls. The ONLY time you should use ; is in
 ####  this single case: if [[ condition ]];then (ie, never: [[ condition ]] && statement)
+####
 ####  All new code/methods must be in a function.
 ####  For all boolean tests, use 'true' / 'false'. Do NOT use 0 or 1 unless
 ####  it's a function return. Avoid complicated tests in the if condition itself.
+####
 ####  VARIABLE/FUNCTION NAMING:
 ####  All variables should explain what they are, except counters like i, j
 ####  All variables MUST be initialized / declared explicitly
@@ -103,7 +106,6 @@ B_CPU_FLAGS_FULL='false'
 B_DEBUG_FLOOD='false'
 # show extra output data
 B_EXTRA_DATA='false'
-B_SHOW_EXTRAS='false'
 B_SHOW_DISK='false'
 # override certain errors due to currupted data
 B_HANDLE_CORRUPT_DATA='false'
@@ -516,7 +518,7 @@ get_parameters()
 	# the short form only runs if no args output args are used
 	# no need to run through these if there are no args
 	if [[ -n $1 ]];then
-		while getopts Ac:CdDEfFGhHINPSv:Vx%@:${update_flags} opt
+		while getopts Ac:CdDfFGhHINPSv:Vx%@:${update_flags} opt
 		do
 			case $opt in
 			A)	B_SHOW_AUDIO='true'
@@ -542,9 +544,6 @@ get_parameters()
 			D)	B_SHOW_DISK='true'
 				use_short='false'
 				;;
-			E)	B_SHOW_EXTRAS='true'
-				use_short='false'
-				;;
 			f)	B_SHOW_CPU='true'
 				B_CPU_FLAGS_FULL='true'
 				use_short='false'
@@ -558,9 +557,6 @@ get_parameters()
 				use_short='false'
 				;;
 			G)	B_SHOW_GRAPHICS='true'
-				use_short='false'
-				;;
-			H)	B_SHOW_HDD_FULL='true'
 				use_short='false'
 				;;
 			I)	B_SHOW_INFO='true'
@@ -591,7 +587,10 @@ get_parameters()
 				;;
 			x)	B_EXTRA_DATA='true'
 				;;
-			h|H)	show_options
+			h)	show_options
+				exit 0
+				;;
+			H)	show_options 'full'
 				exit 0
 				;;
 			## debuggers and testing tools
@@ -681,8 +680,9 @@ show_options()
 	print_screen_output "    4 - Also show partition size/filled data for (if present):/, /home, /var/, /boot"
 	print_screen_output "    5 - For multicore systems, also show per core clock speeds; shows audio card."
 	print_screen_output "-x  Show extra data: bogomips on cpu. Only works with verbose or line output."
+	print_screen_output ""
 	print_screen_output "Additional Options:"
-	print_screen_output "-h or -H - this help menu."
+	print_screen_output "-h - this help menu."
 	if [[ $B_ALLOW_UPDATE == 'true' ]];then
 		print_screen_output "-U  Auto-update script. Note: if you installed as root, you"
 	fi
@@ -690,6 +690,18 @@ show_options()
 	print_screen_output "-V  $SCRIPT_NAME version information. Prints information then exits."
 	print_screen_output "-%  Overrides defective or corrupted data."
 	print_screen_output "-@  Triggers debugger output. Requires debugging level 1-10."
+	if [[ $1 == 'full' ]];then
+		print_screen_output ""
+		print_screen_output "Developer and Testing Options (Advanced):"
+		print_screen_output "-! 1 - Sets testing flag B_TESTING_1='true' to trigger testing condition 1."
+		print_screen_output "-! 2 - Sets testing flag B_TESTING_2='true' to trigger testing condition 2."
+		print_screen_output "-! 3 - Sets flags B_TESTING_1='true' and B_TESTING_2='true'."
+		print_screen_output "-! 10 - Triggers an update from the primary dev download server instead of svn."
+		print_screen_output "-! 11 - Triggers an update from svn branch one - if present, of course."
+		print_screen_output "-! 12 - Triggers an update from svn branch two - if present, of course."
+		print_screen_output "-! <http://......> - Triggers an update from whatever server you list."
+		print_screen_output ""
+	fi
 	print_screen_output ""
 }
 
@@ -1056,7 +1068,7 @@ get_audio_alsa_data()
 		alsa_data=$( gawk '
 			{ IGNORECASE=1 }
 			# some alsa strings have the build date in (...)
-			# also remove trailing .
+			# remove trailing . and remove possible second line if compiled by user
 			$0 !~ /compile/ {
 				gsub( "Driver | [(].*[)]|\.$","",$0 )
 				gsub(/,/, " ", $0)
@@ -1354,7 +1366,9 @@ get_graphics_glx_data()
 			s=""
 			i=flag=0
 			for (i in arr) {
-				if (flag++) s = s sep
+				if (flag++) {
+					s = s sep
+				}
 				s = s i
 			}
 			return s
@@ -1860,9 +1874,6 @@ print_it_out()
 		if [[ $VERBOSITY_LEVEL -ge 4 || $B_SHOW_PARTITIONS == 'true' ]];then
 			print_hdd_partition_data
 		fi
-		if [[ $B_SHOW_EXTRAS == 'true' ]];then
-			print_extras_data
-		fi
 		if [[ $VERBOSITY_LEVEL -ge 1 || $B_SHOW_INFO == 'true' ]];then
 			print_info_data
 		fi
@@ -1951,7 +1962,6 @@ print_audio_data()
 {
 	local i='' card_one='Card-1 ' audio_data='' a_audio_data='' port_data=''
 	local a_audio_working='' alsa_driver='' alsa_data=''
-
 	# set A_AUDIO_DATA and get alsa data
 	get_audio_data
 	alsa_data=$( get_audio_alsa_data )
@@ -2128,24 +2138,6 @@ print_cpu_flags_full()
 		flag_data=$( create_print_line " " "$cpu_flags_3" )
 		print_screen_output "$flag_data"
 	fi
-}
-
-print_extras_data()
-{
-	local extras_data='' ip=''
-
-	if [[ -n $( which lynx ) ]];then
-		ip=$( lynx -dump techpatterns.com/ip | awk -F 'is: ' '{
-			#gsub("\n","",$2")
-			print $2
-		}'  )
-	fi
-	if [[ -z $ip ]];then
-		ip='N/A'
-	fi
-
-	extras_data=$( create_print_line "Extras:" "${C1}Wan IP:${C2} $ip" )
-	print_screen_output "$extras_data"
 }
 
 print_gfx_data()
