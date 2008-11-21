@@ -1,7 +1,7 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.6.0-b1-t1
+####  version: 0.6.0-b1-t2
 ####  Date: November 19 2008
 ########################################################################
 ####  inxi is a fork of infobash 3.02, the original bash sys info script by locsmif
@@ -1006,45 +1006,75 @@ get_audio_data()
 
 	IFS=$'\n'
 
+	device_count=$( egrep -ic '(multimedia audio controller|audio device)' <<< "$lspci_data" )
+	if [[ $device_count -eq 1 && -f /proc/asound/cards ]];then
+		alsa_driver=$( gawk -F ']: ' '
+		{ IGNORECASE=1 }
+		$1 !~ /modem/ && $2 !~ /modem/ {
+			driver=gensub( /^(.+)( - )(.+)$/, "\\1", 1, $2 )
+			gsub(/^ +| +$/,"",driver)
+			if ( driver != "" ){
+				print driver
+			}
+		}'  /proc/asound/cards )
+	fi
+	# this is to safeguard against line breaks from results > 1, which if inserted into following
+	# array will create a false array entry. This is a hack, not a permanent solution.
+	alsa_driver=$( echo $alsa_driver )
 	# this isn't perfect, but if one card was found in lscpci, we're passing
 	# this array constructor that card driver name. This should work for most people
 	# but if you can think of anything better, please post the code patch
-	A_AUDIO_DATA=( $( echo "$lspci_data" | gawk -F ': ' '
+	A_AUDIO_DATA=( $( echo "$lspci_data" | gawk -F ': ' -v alsaDriver="$alsa_driver" '
 	BEGIN { IGNORECASE=1 }
 	#/^[0-9a-f:.]+ (ethernet|network) (controller|bridge)/ || /^[0-9a-f:.]+ [^:]+: .*(ethernet|network).*$/ {
 	/multimedia audio controller|audio device/ {
-		nic=gensub(/^[0-9a-f:.]+ [^:]+: (.+)$/,"\\1","g",$0)
-		gsub(/realtek semiconductor/, "Realtek", nic)
-		gsub(/davicom semiconductor/, "Davicom", nic)
+		audioCard=gensub(/^[0-9a-f:.]+ [^:]+: (.+)$/,"\\1","g",$0)
+		gsub(/realtek semiconductor/, "Realtek", audioCard)
+		gsub(/davicom semiconductor/, "Davicom", audioCard)
 		# The doublequotes are necessary because of the pipes in the variable.
-		gsub(/'"$BAN_LIST_NORMAL"'/, "", nic)
-		gsub(/,/, " ", nic)
-		gsub(/^ +| +$/, "", nic)
-		gsub(/ [ \t]+/, " ", nic)
+		gsub(/'"$BAN_LIST_NORMAL"'/, "", audioCard)
+		gsub(/,/, " ", audioCard)
+		gsub(/^ +| +$/, "", audioCard)
+		gsub(/ [ \t]+/, " ", audioCard)
 
-		eth[nic]++
+		cards[audioCard]++
 		while (getline && !/^$/) {
 			if (/driver in use/) {
-				drivers[nic] = drivers[nic] gensub(/(.*): (.*)/,"\\2","g",$0) " "
+				drivers[audioCard] = drivers[audioCard] gensub(/(.*): (.*)/,"\\2","g",$0) " "
+			}
+			if (/I\/O/) {
+				portsTemp = gensub(/\tI\/O ports at (.*) \[.*\]/,"\\1","g",$0)
+				ports[audioCard] = ports[audioCard] portsTemp " "
 			}
 		}
 	}
 
 	END {
 		j=0
-		for (i in eth) {
+		for (i in cards) {
 			usePorts=""
 			useDrivers=""
-			if (eth[i]>1) {
-				a[j]=eth[i]"x "i
+			if (cards[i]>1) {
+				a[j]=cards[i]"x "i
 				if (drivers[i] != "") {
 					useDrivers=drivers[i]
+				}
+				if (ports[i] != "") {
+					usePorts = ports[i]
 				}
 			}
 			else {
 				a[j]=i
+				# little trick here to try to catch the driver if there is
+				# only one card
 				if (drivers[i] != "") {
 					useDrivers=drivers[i]
+				}
+				else if ( alsaDriver != "" ) {
+					useDrivers=alsaDriver
+				}
+				if (ports[i] != "") {
+					usePorts=ports[i]
 				}
 			}
 			# create array primary item for master array
@@ -1053,7 +1083,7 @@ get_audio_data()
 		}
 	}') )
 
-# 	echo ${A_AUDIO_DATA[@]}
+	echo ${A_AUDIO_DATA[@]}
 	# c=gensub( /^ *vendor: (.+) +model: (.+) +rev:.*$/, "\\2", "g", a[i] )
 	# in case of failure of first check do this instead
 	if [[ ${#A_AUDIO_DATA[@]} -eq 0 && -f /proc/asound/cards ]];then
@@ -1195,7 +1225,7 @@ get_audio_data-bu()
 				print driver
 			}
 		}'  /proc/asound/cards )
-	fi\
+	fi
 	# this is to safeguard against line breaks from results > 1, which if inserted into following
 	# array will create a false array entry. This is a hack, not a permanent solution.
 	alsa_driver=$( echo $alsa_driver )
