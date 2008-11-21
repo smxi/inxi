@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.5.34
-####  Date: November 19 2008
+####  version: 0.6.0
+####  Date: November 21 2008
 ########################################################################
 ####  inxi is a fork of infobash 3.02, the original bash sys info script by locsmif
 ####  As time permits functionality improvements and recoding will occur.
@@ -36,6 +36,9 @@
 ####  gawk(gawk), grep(grep), hostname(hostname), lspci(pciutils),
 ####  ps;uptime(procps), runlevel(sysvinit), glxinfo;xdpyinfo;xrandr(xbase-clients)
 ####  Also the proc filesystem should be present and mounted
+####
+####  RECOMMENDS (Needed to run certain features)
+####  For local interfaces/IP test: ifconfig (in net-tools for Debian systems)
 ########################################################################
 ####  CONVENTIONS:
 ####  Indentation: TABS
@@ -89,6 +92,7 @@ A_CPU_DATA=''
 A_GFX_CARD_DATA=''
 A_GLX_DATA=''
 A_HDD_DATA=''
+A_INTERFACES_DATA=''
 A_NETWORK_DATA=''
 A_PARTITION_DATA=''
 A_X_DATA=''
@@ -120,6 +124,7 @@ B_SHOW_GRAPHICS='false'
 # Set this to 'false' to avoid printing the hostname
 B_SHOW_HOST='true'
 B_SHOW_INFO='false'
+B_SHOW_IP='false'
 B_SHOW_NETWORK='false'
 # either -v > 3 or -p will show partitions
 B_SHOW_PARTITIONS='false'
@@ -518,7 +523,7 @@ get_parameters()
 	# the short form only runs if no args output args are used
 	# no need to run through these if there are no args
 	if [[ -n $1 ]];then
-		while getopts Ac:CdDfFGhHINPSv:Vx%@:${update_flags} opt
+		while getopts Ac:CdDfFGhHiINPSv:Vx%@:${update_flags} opt
 		do
 			case $opt in
 			A)	B_SHOW_AUDIO='true'
@@ -549,7 +554,6 @@ get_parameters()
 				use_short='false'
 				;;
 			F)	VERBOSITY_LEVEL=$VERBOSITY_LEVELS
-				B_CPU_FLAGS_FULL='true'
 				B_EXTRA_DATA='true'
 				B_SHOW_DISK='true'
 				B_SHOW_PARTITIONS='true'
@@ -557,6 +561,10 @@ get_parameters()
 				use_short='false'
 				;;
 			G)	B_SHOW_GRAPHICS='true'
+				use_short='false'
+				;;
+			i)	B_SHOW_IP='true'
+				B_SHOW_NETWORK='true'
 				use_short='false'
 				;;
 			I)	B_SHOW_INFO='true'
@@ -653,7 +661,7 @@ show_options()
 	print_screen_output ""
 	print_screen_output "If you start $SCRIPT_NAME with no arguments, it will show the short form."
 	print_screen_output "The following options if used without -d or -v will show just that complete line:"
-	print_screen_output "A,C,f,D,G,I,N,P,S - you can use these together to show just the lines you want to see."
+	print_screen_output "A,C,D,G,I,N,P,S - you can use these together to show just the lines you want to see."
 	print_screen_output "If you use them with a -v level (or -d), it will show the full output for that line "
 	print_screen_output "along with the output for the chosen verbosity level."
 	print_screen_output "- - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
@@ -664,9 +672,11 @@ show_options()
 	print_screen_output "-C  Show full CPU output, including per CPU clockspeed."
 	print_screen_output "-d  Default output verbosity level, same as: $SCRIPT_NAME -v 1"
 	print_screen_output "-D  Show full hard disk info, not only model, ie: /dev/sda ST380817AS 80.0GB."
-	print_screen_output "-f  Show all cpu flags used, not just the short list."
+	print_screen_output "-f  Show all cpu flags used, not just the short list. Not shown with -F to avoid spamming."
 	print_screen_output "-F  Show Full, all possible, output for $SCRIPT_NAME."
 	print_screen_output "-G  Show graphic card information (+ glx driver and version for non free video drivers)."
+	print_screen_output "-i  Show Wan IP address, and shows local interfaces (requires ifconfig network tool)."
+	print_screen_output "    Not shown with -F for user security reasons, you shouldn't paste your local/wan IP."
 	print_screen_output "-I  Show information: processes, uptime, memory, irc client, inxi version."
 	print_screen_output "-N  Show network card information."
 	print_screen_output "-P  Show partition information (shows what -v4 would show, but without extra data)."
@@ -1005,40 +1015,84 @@ get_audio_data()
 	local i='' alsa_data='' alsa_driver='' device_count=''
 
 	IFS=$'\n'
-	# this is awkward, but it should work, ie, if there's only one sound card found
-	# have to filter out modems because they also appear on asound/cards
+	# this first step handles the drivers for cases where the second step fails to find one
 	device_count=$( egrep -ic '(multimedia audio controller|audio device)' <<< "$lspci_data" )
 	if [[ $device_count -eq 1 && -f /proc/asound/cards ]];then
 		alsa_driver=$( gawk -F ']: ' '
 		{ IGNORECASE=1 }
-		$1 !~ /modem/ && $2 !~ /modem/ {
+		# filtering out modems and usb devices like webcams, this might get a
+		# usb audio card as well, this will take some trial and error
+		$0 !~ /modem/ || $0 !~ /usb/ {
 			driver=gensub( /^(.+)( - )(.+)$/, "\\1", 1, $2 )
 			gsub(/^ +| +$/,"",driver)
 			if ( driver != "" ){
 				print driver
 			}
 		}'  /proc/asound/cards )
-	fi\
+	fi
 	# this is to safeguard against line breaks from results > 1, which if inserted into following
 	# array will create a false array entry. This is a hack, not a permanent solution.
 	alsa_driver=$( echo $alsa_driver )
-	# this isn't perfect, but if one card was found in lscpci, we're passing
-	# this array constructor that card driver name. This should work for most people
-	# but if you can think of anything better, please post the code patch
-	A_AUDIO_DATA=( $( echo "$lspci_data" | gawk -v alsaDriver="$alsa_driver" -F': ' '
-	{ IGNORECASE=1 }
+	# now we'll build the main audio data, card name, driver, and port. If no driver is found,
+	# and if the first method above is not null, and one card is found, it will use that instead.
+	A_AUDIO_DATA=( $( echo "$lspci_data" | gawk -F ': ' -v alsaDriver="$alsa_driver" '
+	BEGIN { IGNORECASE=1 }
 	/multimedia audio controller|audio device/ {
-		gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF )
-		gsub(/,/," ",$NF)
-		gsub(/^ +| +$/,"",$NF)
-		gsub(/ [ \t]+/," ",$NF)
-		if ( alsaDriver != "" ){
-			alsaDriver=","alsaDriver
-		}
-		print $NF alsaDriver
-	}' ) )
+		audioCard=gensub(/^[0-9a-f:.]+ [^:]+: (.+)$/,"\\1","g",$0)
+		# The doublequotes are necessary because of the pipes in the variable.
+		gsub(/'"$BAN_LIST_NORMAL"'/, "", audioCard)
+		gsub(/,/, " ", audioCard)
+		gsub(/^ +| +$/, "", audioCard)
+		gsub(/ [ \t]+/, " ", audioCard)
 
-	# c=gensub( /^ *vendor: (.+) +model: (.+) +rev:.*$/, "\\2", "g", a[i] )
+		cards[audioCard]++
+
+		# loop until you get to the end of the data block
+		while (getline && !/^$/) {
+			if (/driver in use/) {
+				drivers[audioCard] = drivers[audioCard] gensub(/(.*): (.*)/,"\\2","g",$0) ""
+			}
+			else if (/I\/O/) {
+				portsTemp = gensub(/\t*I\/O ports at (.*) \[.*\]/,"\\1","g",$0)
+				ports[audioCard] = ports[audioCard] portsTemp " "
+			}
+		}
+	}
+
+	END {
+		j=0
+		for (i in cards) {
+			usePorts=""
+			useDrivers=""
+			if (cards[i]>1) {
+				a[j]=cards[i]"x "i
+				if (drivers[i] != "") {
+					useDrivers=drivers[i]
+				}
+				if (ports[i] != "") {
+					usePorts = ports[i]
+				}
+			}
+			else {
+				a[j]=i
+				# little trick here to try to catch the driver if there is
+				# only one card and it was null, from the first test of asound/cards
+				if (drivers[i] != "") {
+					useDrivers=drivers[i]
+				}
+				else if ( alsaDriver != "" ) {
+					useDrivers=alsaDriver
+				}
+				if (ports[i] != "") {
+					usePorts=ports[i]
+				}
+			}
+			# create array primary item for master array
+			print a[j] "," useDrivers "," usePorts
+			j++
+		}
+	}') )
+
 	# in case of failure of first check do this instead
 	if [[ ${#A_AUDIO_DATA[@]} -eq 0 && -f /proc/asound/cards ]];then
 		A_AUDIO_DATA=( $( gawk -F ']: ' '
@@ -1697,7 +1751,10 @@ get_networking_data()
 		eth[nic]++
 		while (getline && !/^$/) {
 			if (/I\/O/) {
-				ports[nic]=ports[nic]$4" "
+				ports[nic] = ports[nic] $4 " "
+			}
+			if (/driver in use/) {
+				drivers[nic] = drivers[nic] gensub(/(.*): (.*)/,"\\2","g",$0) ""
 			}
 		}
 	}
@@ -1706,11 +1763,15 @@ get_networking_data()
 		j=0
 		for (i in eth) {
 			usePorts=""
+			useDrivers=""
 			if (eth[i]>1) {
 				a[j]=eth[i]"x "i
 				## note: this loses the plural ports case, is it needed anyway?
 				if (ports[i] != "") {
 					usePorts=ports[i]
+				}
+				if (drivers[i] != "") {
+					useDrivers=drivers[i]
 				}
 			}
 			else {
@@ -1718,13 +1779,77 @@ get_networking_data()
 				if (ports[i] != "") {
 					usePorts=ports[i]
 				}
+				if (drivers[i] != "") {
+					useDrivers=drivers[i]
+				}
 			}
 			# create array primary item for master array
-			print a[j] "," usePorts
+			print a[j] "," useDrivers "," usePorts
 			j++
 		}
 	}') )
 	IFS="$ORIGINAL_IFS"
+}
+
+get_networking_wan_ip_data()
+{
+	local ip=''
+
+	# get ip using wget redirect to stdout
+	ip=$( wget -q -O - http://techpatterns.com/resources/ip.php | awk -F 'is: ' '{
+		#gsub("\n","",$2")
+		print $2
+	}' )
+
+	if [[ -z $ip ]];then
+		ip='None Detected!'
+	fi
+	echo "$ip"
+}
+
+get_networking_local_ip_data()
+{
+	if [[ -n $( which ifconfig ) ]];then
+		IFS=$'\n'
+		A_INTERFACES_DATA=( $( ifconfig | gawk '
+		BEGIN { IGNORECASE=1 }
+		$0 !~ /^lo/ {
+			# not clear on why inet is coming through, but this gets rid of it
+			# as first line item.
+			interface = $1
+			gsub(/,/, " ", interface)
+			gsub(/^ +| +$/, "", interface)
+			gsub(/ [ \t]+/, " ", interface)
+
+			aInterfaces[interface]++
+			while (getline && !/^$/) {
+				if (/inet addr:/) {
+					ipAddresses[interface] = gensub( /addr:([0-9\.]+)/, "\\1", "g", $2 )
+				}
+			}
+		}
+
+		END {
+			j=0
+			for (i in aInterfaces) {
+				useInterfaceIp = ""
+				a[j] = i
+				if (ipAddresses[i] != "") {
+					useInterfaceIp = ipAddresses[i]
+				}
+				# create array primary item for master array
+				# tested needed to avoid bad data from above, if null it is garbage
+				# this is the easiest way to handle junk I found, improve if you want
+				if ( useInterfaceIp != "" ) {
+					print a[j] "," useInterfaceIp
+				}
+				j++
+			}
+		}') )
+		IFS="$ORIGINAL_IFS"
+	else
+		A_INTERFACES_DATA=( "Interfaces tool requires missing app: ifconfig" )
+	fi
 }
 
 get_partition_data()
@@ -1735,7 +1860,7 @@ get_partition_data()
 	## note: by subtracting from the last field number NF, we avoid a subtle issue with LVM df output, where if
 	## the first field is too long, it will occupy its own line, this way we are getting only the needed data
 	A_PARTITION_DATA=( $( df -h -T | gawk '
-	/\/$|\/boot$|\/var$|\/home$/ {
+	/\/$|\/boot$|\/var$|\/home$/ && ! /aufs/ {
 		print $NF "," $(NF - 4) "," $(NF - 3) "," $(NF - 1)
 	}' )
 	# now add the swap partition data, doesn't show percent used, someone can figure that in the future
@@ -1961,7 +2086,7 @@ print_short_data()
 print_audio_data()
 {
 	local i='' card_one='Card-1 ' audio_data='' a_audio_data='' port_data=''
-	local a_audio_working='' alsa_driver='' alsa_data=''
+	local a_audio_working='' alsa_driver='' alsa_data='' port_plural=''
 	# set A_AUDIO_DATA and get alsa data
 	get_audio_data
 	alsa_data=$( get_audio_alsa_data )
@@ -1982,6 +2107,12 @@ print_audio_data()
 		if [[ -n ${a_audio_working[1]} ]];then
 			alsa_driver=" ${C1}driver${C2} ${a_audio_working[1]}"
 		fi
+		if [[ -n ${a_audio_working[2]} && $B_EXTRA_DATA == 'true' ]];then
+			if [[ $( wc -w <<< ${a_audio_working[2]} ) -gt 1 ]];then
+				port_plural='s'
+			fi
+			port_data=" ${C1}at port$port_plural${C2} ${a_audio_working[2]}"
+		fi
 		audio_data="${C1}$card_one${C2}${a_audio_working[0]}$alsa_driver$port_data"
 		audio_data=$( create_print_line "Audio:" "$audio_data" )
 		print_screen_output "$audio_data"
@@ -1991,14 +2122,19 @@ print_audio_data()
 			IFS=","
 			a_audio_working=( ${A_AUDIO_DATA[i]} )
 			IFS="$ORIGINAL_IFS"
-# 			port_data=''
+			port_data=''
 			alsa_driver=''
-# 			if [[ ${a_audio_working[2]} == 'port' ]];then
-# 				port_data=" ${C1}at port${C2} ${a_audio_working[2]}"
-# 			fi
+			port_plural=''
+
 			# we're testing for the presence of the 2nd array item here, which is the driver name
 			if [[ -n ${a_audio_working[1]} ]];then
 				alsa_driver="${C1}driver${C2} ${a_audio_working[1]}"
+			fi
+			if [[ -n ${a_audio_working[2]} && $B_EXTRA_DATA == 'true' ]];then
+				if [[ $( wc -w <<< ${a_audio_working[2]} ) -gt 1 ]];then
+					port_plural='s'
+				fi
+				port_data=" ${C1}at port$port_plural${C2} ${a_audio_working[2]}"
 			fi
 			if [[ -n ${a_audio_working[0]} ]];then
 				audio_data="${C1}Card-$(( $i + 1 )) ${C2}${a_audio_working[0]}$alsa_driver$port_data"
@@ -2077,8 +2213,8 @@ print_cpu_data()
 		fi
 		cpu_data="$cpu_data${C2} ${C1}cache${C2} $cpu_cache$cpu_flags$bmip_data${CN}"
 	fi
-
-	if [[ $B_SHOW_CPU == 'true' ]] || [[ $VERBOSITY_LEVEL -ge 5 && ${#A_CPU_DATA[@]} -gt 2 ]];then
+	# we don't this printing out extra line unless > 1 cpu core
+	if [[ ${#A_CPU_DATA[@]} -gt 2 ]] && [[ $B_SHOW_CPU == 'true' || $VERBOSITY_LEVEL -ge 5 ]];then
 		cpu_clock_speed='' # null < verbosity level 5
 	else
 		cpu_data="$cpu_data ${C1}clocked at${C2} ${a_cpu_working[1]} MHz${CN}"
@@ -2087,7 +2223,8 @@ print_cpu_data()
 	cpu_data="$cpu_data $cpu_clock_speed"
 	print_screen_output "$cpu_data"
 
-	if [[ $B_SHOW_CPU == 'true' ]] || [[ $VERBOSITY_LEVEL -ge 5 && ${#A_CPU_DATA[@]} -gt 2 ]];then
+	# we don't this printing out extra line unless > 1 cpu core
+	if [[ ${#A_CPU_DATA[@]} -gt 2 ]] && [[ $B_SHOW_CPU == 'true' || $VERBOSITY_LEVEL -ge 5 ]];then
 		for (( i=0; i < ${#A_CPU_DATA[@]}-1; i++ ))
 		do
 			IFS=","
@@ -2170,7 +2307,7 @@ print_gfx_data()
 	gfx_data=$( create_print_line "Graphics:" "${C1}$card_one${C2}${A_GFX_CARD_DATA[0]}${gfx_data}" )
 
 	if [[ $B_X_RUNNING == 'true' ]];then
-		gfx_data="${gfx_data} ${CN}| ${C1}$x_vendor${C2} $x_version ${CN}| ${C1}Res${C2} ${screen_resolution}"
+		gfx_data="${gfx_data} ${C1}$x_vendor${C2} $x_version ${C1}Res${C2} ${screen_resolution}"
 	else
 		gfx_data="${gfx_data} ${C1} tty resolution ${CN}(${C2} ${screen_resolution} ${CN})"
 	fi
@@ -2296,17 +2433,17 @@ print_info_data()
 
 	# Some code could look superfluous but BitchX doesn't like lines not ending in a newline. F*&k that bitch!
 	# long_last=$( echo -ne "${C1}Processes${C2} ${processes}${CN} | ${C1}Uptime${C2} ${up_time}${CN} | ${C1}Memory${C2} ${MEM}${CN}" )
-	info_data=$( create_print_line "Info:" "${C1}Processes${C2} ${processes} ${CN}| ${C1}Uptime${C2} ${up_time} ${CN}| ${C1}Memory${C2} ${memory}${CN}" )
+	info_data=$( create_print_line "Info:" "${C1}Processes${C2} ${processes} ${C1}Uptime${C2} ${up_time} ${C1}Memory${C2} ${memory}${CN}" )
 
 	# this only triggers if no X data is present
 	if [[ $B_X_RUNNING != 'true' ]];then
-		info_data="${info_data} ${CN}| ${C1}Runlevel${C2} ${runlvl}${CN}"
+		info_data="${info_data} ${C1}Runlevel${C2} ${runlvl}${CN}"
 	fi
 
 	if [[ $SHOW_IRC -gt 0 ]];then
-		info_data="${info_data} ${CN}| ${C1}Client${C2} ${IRC_CLIENT}${IRC_CLIENT_VERSION}${CN}"
+		info_data="${info_data} ${C1}Client${C2} ${IRC_CLIENT}${IRC_CLIENT_VERSION}${CN}"
 	fi
-	info_data="${info_data} ${CN}| ${C1}$SCRIPT_NAME ${C2}v:$SCRIPT_VERSION_NUMBER${CN}"
+	info_data="${info_data} ${C1}$SCRIPT_NAME ${C2}v:$SCRIPT_VERSION_NUMBER${CN}"
 
 	if [[ $SCHEME -gt 0 ]];then
 		info_data="${info_data} ${NORMAL}"
@@ -2316,7 +2453,8 @@ print_info_data()
 
 print_networking_data()
 {
-	local i='' card_one='Card-1 ' network_data='' a_network_working='' port_data=''
+	local i='' card_one='Card-1' network_data='' a_network_working='' port_data='' driver_data=''
+	local card_string='' port_plural=''
 	# set A_NETWORK_DATA
 	get_networking_data
 
@@ -2324,15 +2462,24 @@ print_networking_data()
 	a_network_working=(${A_NETWORK_DATA[0]})
 	IFS="$ORIGINAL_IFS"
 
+	# will never be null because null is handled in get_network_data, but in case we change
+	# that leaving this test in place.
 	if [[ -n ${A_NETWORK_DATA[@]} ]];then
 		if [[ ${#A_NETWORK_DATA[@]} -le 1 ]];then
-			card_one='Card '
+			card_one='Card'
 		fi
 
 		if [[ -n ${a_network_working[1]} ]];then
-			port_data=" ${C1}at port${C2} ${a_network_working[1]}"
+			driver_data=" ${C1}driver${C2} ${a_network_working[1]}"
 		fi
-		network_data="${C1}$card_one${C2}${a_network_working[0]}$port_data"
+		if [[ -n ${a_network_working[2]} && $B_EXTRA_DATA == 'true' ]];then
+			if [[ $( wc -w <<< ${a_network_working[2]} ) -gt 1 ]];then
+				port_plural='s'
+			fi
+			port_data=" ${C1}at port$port_plural${C2} ${a_network_working[2]}"
+		fi
+		card_string=''
+		network_data="${C1}$card_one${C2} ${a_network_working[0]}$driver_data$port_data"
 		network_data=$( create_print_line "Network:" "$network_data" )
 		print_screen_output "$network_data"
 		i=0 ## loop starts with 1 by auto-increment so it only shows cards > 1
@@ -2342,13 +2489,62 @@ print_networking_data()
 			a_network_working=( ${A_NETWORK_DATA[i]} )
 			IFS="$ORIGINAL_IFS"
 			port_data=''
+			driver_data=''
+			port_plural=''
 			if [[ -n ${a_network_working[1]} ]];then
-				port_data=" ${C1}at port${C2} ${a_network_working[1]}"
+				driver_data=" ${C1}driver${C2} ${a_network_working[1]}"
 			fi
-			network_data="${C1}Card-$(( $i + 1 )) ${C2}${a_network_working[0]}$port_data"
+			if [[ -n ${a_network_working[2]} && $B_EXTRA_DATA == 'true' ]];then
+				if [[ $( wc -w <<< ${a_network_working[2]} ) -gt 1 ]];then
+					port_plural='s'
+				fi
+				port_data=" ${C1}at port$port_plural${C2} ${a_network_working[2]}"
+			fi
+			network_data="${C1}Card-$(( $i + 1 )) ${C2}${a_network_working[0]}$driver_data$port_data"
 			network_data=$( create_print_line " " "$network_data" )
 			print_screen_output "$network_data"
 		done
+	fi
+	if [[ $B_SHOW_IP == 'true' ]];then
+		print_networking_ip_data
+	fi
+}
+
+print_networking_ip_data()
+{
+	local ip=$( get_networking_wan_ip_data )
+	local ip_data='' a_interfaces_working='' interfaces='' interfaces_2='' i=''
+
+	# set A_INTERFACES_DATA
+	get_networking_local_ip_data
+	# first print output for wan ip line. Null is handled in the get function
+	ip_data=$( create_print_line " " "${C1}Wan IP:${C2} $ip" )
+
+	# then create the list of local interface/ip
+	interfaces=" ${C1}Interface:${C2}"
+	i=0 ## loop starts with 1 by auto-increment so it only shows cards > 1
+	while [[ -n ${A_INTERFACES_DATA[i]} ]]
+	do
+		IFS=","
+		a_interfaces_working=(${A_INTERFACES_DATA[i]})
+		IFS="$ORIGINAL_IFS"
+		if [[ $i -lt 3 ]];then
+			if [[ -n ${a_interfaces_working[0]} ]];then
+				interfaces="$interfaces ${C1}${a_interfaces_working[0]}${C2} ${a_interfaces_working[1]}"
+			fi
+		else
+			if [[ -n ${a_interfaces_working[0]} ]];then
+				# space on end here for lining up with line starter
+				interfaces_2="$interfaces_2${C1}${a_interfaces_working[0]}${C2} ${a_interfaces_working[1]} "
+			fi
+		fi
+		((i++))
+	done
+	print_screen_output "$ip_data$interfaces"
+	# then wrap it if needed
+	if [[ -n $interfaces_2 ]];then
+		interfaces_2=$( create_print_line " " "$interfaces_2" )
+		print_screen_output "$interfaces_2"
 	fi
 }
 
