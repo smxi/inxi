@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.6.0-b1-t2
-####  Date: November 19 2008
+####  version: 0.6.0-b1-t4
+####  Date: November 20 2008
 ########################################################################
 ####  inxi is a fork of infobash 3.02, the original bash sys info script by locsmif
 ####  As time permits functionality improvements and recoding will occur.
@@ -1010,7 +1010,9 @@ get_audio_data()
 	if [[ $device_count -eq 1 && -f /proc/asound/cards ]];then
 		alsa_driver=$( gawk -F ']: ' '
 		{ IGNORECASE=1 }
-		$1 !~ /modem/ && $2 !~ /modem/ {
+		# filtering out modems and usb devices like webcams, this might get a
+		# usb audio card as well, this will take some trial and error
+		$0 !~ /modem/ || $0 !~ /usb/ {
 			driver=gensub( /^(.+)( - )(.+)$/, "\\1", 1, $2 )
 			gsub(/^ +| +$/,"",driver)
 			if ( driver != "" ){
@@ -1025,7 +1027,6 @@ get_audio_data()
 	# and if the first method above is not null, and one card is found, it will use that instead.
 	A_AUDIO_DATA=( $( echo "$lspci_data" | gawk -F ': ' -v alsaDriver="$alsa_driver" '
 	BEGIN { IGNORECASE=1 }
-	#/^[0-9a-f:.]+ (ethernet|network) (controller|bridge)/ || /^[0-9a-f:.]+ [^:]+: .*(ethernet|network).*$/ {
 	/multimedia audio controller|audio device/ {
 		audioCard=gensub(/^[0-9a-f:.]+ [^:]+: (.+)$/,"\\1","g",$0)
 		# The doublequotes are necessary because of the pipes in the variable.
@@ -1035,12 +1036,14 @@ get_audio_data()
 		gsub(/ [ \t]+/, " ", audioCard)
 
 		cards[audioCard]++
+
+		# loop until you get to the end of the data block
 		while (getline && !/^$/) {
 			if (/driver in use/) {
 				drivers[audioCard] = drivers[audioCard] gensub(/(.*): (.*)/,"\\2","g",$0) ""
 			}
-			if (/I\/O/) {
-				portsTemp = gensub(/\tI\/O ports at (.*) \[.*\]/,"\\1","g",$0)
+			else if (/I\/O/) {
+				portsTemp = gensub(/\t*I\/O ports at (.*) \[.*\]/,"\\1","g",$0)
 				ports[audioCard] = ports[audioCard] portsTemp " "
 			}
 		}
@@ -1063,7 +1066,7 @@ get_audio_data()
 			else {
 				a[j]=i
 				# little trick here to try to catch the driver if there is
-				# only one card and it was null, from the first function
+				# only one card and it was null, from the first test of asound/cards
 				if (drivers[i] != "") {
 					useDrivers=drivers[i]
 				}
@@ -1080,169 +1083,6 @@ get_audio_data()
 		}
 	}') )
 
-# 	echo ${A_AUDIO_DATA[@]}
-	# c=gensub( /^ *vendor: (.+) +model: (.+) +rev:.*$/, "\\2", "g", a[i] )
-	# in case of failure of first check do this instead
-	if [[ ${#A_AUDIO_DATA[@]} -eq 0 && -f /proc/asound/cards ]];then
-		A_AUDIO_DATA=( $( gawk -F ']: ' '
-		{ IGNORECASE=1 }
-		$1 !~ /modem/ && $2 !~ /modem/ {
-			card=gensub( /^(.+)( - )(.+)$/, "\\3", 1, $2 )
-			driver=gensub( /^(.+)( - )(.+)$/, "\\1", 1, $2 )
-			if ( card != "" ){
-				print card","driver
-			}
-		}'  /proc/asound/cards ) )
-	fi
-	IFS="$ORIGINAL_IFS"
-
-	# handle cases where card detection fails, like in PS3, where lspci gives no output, or headless boxes..
-	if [[ ${#A_AUDIO_DATA[@]} -eq 0 ]];then
-		A_AUDIO_DATA[0]='Failed to Detect Sound Card!'
-	fi
-}
-
-get_audio_data-test1()
-{
-	local i='' alsa_data='' alsa_driver='' device_count=''
-
-	IFS=$'\n'
-
-	# this isn't perfect, but if one card was found in lscpci, we're passing
-	# this array constructor that card driver name. This should work for most people
-	# but if you can think of anything better, please post the code patch
-	A_AUDIO_DATA=( $( echo "$lspci_data" | gawk -F ': ' '
-	BEGIN {
-		IGNORECASE = 1
-# 		RS = ""
-		FS = "\n"
-	}
-	/ethernet|network/,/^$/ {
-		# first clean up all the strings
-		gsub(/'"$BAN_LIST_NORMAL"'/, "", $0 )
-		gsub(/,/," ",$0)
-		gsub(/^ +| +$/,"",$0)
-		gsub(/ [ \t]+/," ",$0)
-		# then we process and get each value
-# # 		RS = ""
-
-		if ( $0 ~ /ethernet|network/ ) {
-# 			a_card_data["card"] = "card:" gensub( /(.*): (.*)/,"\\2","g",$0)
-# 			card = "card:" $0
-			card = gensub( /(.*): (.*)/,"\\2","g",$0)
-
-		}
-		if ( $0 ~ /driver|kernel driver/ ) {
-
-			# driver = "driver:"$(/driver|kernel driver/)
-# 			a_card_data["driver"] = "driver:" gensub( /(.*): (.*)/,"\\2","g",$0 )
-			driver = gensub( /(.*): (.*)/,"\\2","g",$0 )
-		}
-		if ( $0 ~ /modules|kernel modules/ ) {
-
-			# driver = "driver:"$(/driver|kernel driver/)
-# 			a_card_data["driver"] = "driver:" gensub( /(.*): (.*)/,"\\2","g",$0 )
-			module = gensub( /(.*): (.*)/,"\\2","g",$0 )
-		}
-# 		i = 0
-# 		while (getline && /multimedia audio controller|audio device/ && !/^$/) {
-# 			print $0
-# 			if (/multimedia audio controller|audio device/) {
-# 				card=gensub( /(.*): (.*)/,"\\2","g",$0)
-# 			}
-# 			if (/driver|kernel driver/) {
-# 				driver = "," gensub( /(.*): (.*)/,"\\2","g",$0 )
-# 			}
-# 			i++
-# 		}
-
-		if ( module != "" ){
-			cardDriver = card","driver","module
-			card = ""
-			driver =""
-			module = ""
-		}
-# 		if ( card != "" ) {
-# 			print card driver
-# 			card = ""
-# 		}
-# 		print "testing"
-# 		print $0
-		print cardDriver
-		cardDriver = ""
-
-		}
-		END {
-# 			print card driver
-			card = ""
-			driver = ""
-		}
-	' ) )
-# 	echo ${A_AUDIO_DATA[@]}
-	# c=gensub( /^ *vendor: (.+) +model: (.+) +rev:.*$/, "\\2", "g", a[i] )
-	# in case of failure of first check do this instead
-	if [[ ${#A_AUDIO_DATA[@]} -eq 0 && -f /proc/asound/cards ]];then
-		A_AUDIO_DATA=( $( gawk -F ']: ' '
-		{ IGNORECASE=1 }
-		$1 !~ /modem/ && $2 !~ /modem/ {
-			card=gensub( /^(.+)( - )(.+)$/, "\\3", 1, $2 )
-			driver=gensub( /^(.+)( - )(.+)$/, "\\1", 1, $2 )
-			if ( card != "" ){
-				print card","driver
-			}
-		}'  /proc/asound/cards ) )
-	fi
-	IFS="$ORIGINAL_IFS"
-
-	# handle cases where card detection fails, like in PS3, where lspci gives no output, or headless boxes..
-	if [[ ${#A_AUDIO_DATA[@]} -eq 0 ]];then
-		A_AUDIO_DATA[0]='Failed to Detect Sound Card!'
-	fi
-}
-
-
-
-
-
-get_audio_data-bu()
-{
-	local i='' alsa_data='' alsa_driver='' device_count=''
-
-	IFS=$'\n'
-	# this is awkward, but it should work, ie, if there's only one sound card found
-	# have to filter out modems because they also appear on asound/cards
-	device_count=$( egrep -ic '(multimedia audio controller|audio device)' <<< "$lspci_data" )
-	if [[ $device_count -eq 1 && -f /proc/asound/cards ]];then
-		alsa_driver=$( gawk -F ']: ' '
-		{ IGNORECASE=1 }
-		$1 !~ /modem/ && $2 !~ /modem/ {
-			driver=gensub( /^(.+)( - )(.+)$/, "\\1", 1, $2 )
-			gsub(/^ +| +$/,"",driver)
-			if ( driver != "" ){
-				print driver
-			}
-		}'  /proc/asound/cards )
-	fi
-	# this is to safeguard against line breaks from results > 1, which if inserted into following
-	# array will create a false array entry. This is a hack, not a permanent solution.
-	alsa_driver=$( echo $alsa_driver )
-	# this isn't perfect, but if one card was found in lscpci, we're passing
-	# this array constructor that card driver name. This should work for most people
-	# but if you can think of anything better, please post the code patch
-	A_AUDIO_DATA=( $( echo "$lspci_data" | gawk -v alsaDriver="$alsa_driver" -F': ' '
-	{ IGNORECASE=1 }
-	/multimedia audio controller|audio device/ {
-		gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF )
-		gsub(/,/," ",$NF)
-		gsub(/^ +| +$/,"",$NF)
-		gsub(/ [ \t]+/," ",$NF)
-		if ( alsaDriver != "" ){
-			alsaDriver=","alsaDriver
-		}
-		print $NF alsaDriver
-	}' ) )
-
-	# c=gensub( /^ *vendor: (.+) +model: (.+) +rev:.*$/, "\\2", "g", a[i] )
 	# in case of failure of first check do this instead
 	if [[ ${#A_AUDIO_DATA[@]} -eq 0 && -f /proc/asound/cards ]];then
 		A_AUDIO_DATA=( $( gawk -F ']: ' '
@@ -1934,12 +1774,11 @@ get_networking_data()
 				}
 			}
 			# create array primary item for master array
-			print a[j] "," useDrivers","usePorts
+			print a[j] "," useDrivers "," usePorts
 			j++
 		}
 	}') )
 	IFS="$ORIGINAL_IFS"
-# 	echo ${A_NETWORK_DATA[@]}
 }
 
 get_partition_data()
