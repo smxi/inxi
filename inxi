@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.6.0-b1-t16
-####  Date: November 20 2008
+####  version: 0.6.1-b1-t1
+####  Date: November 22 2008
 ########################################################################
 ####  inxi is a fork of infobash 3.02, the original bash sys info script by locsmif
 ####  As time permits functionality improvements and recoding will occur.
@@ -1052,6 +1052,9 @@ get_audio_data()
 			if (/driver in use/) {
 				drivers[audioCard] = drivers[audioCard] gensub(/(.*): (.*)/,"\\2","g",$0) ""
 			}
+			else if (/kernel modules:/) {
+				modules[audioCard] = modules[audioCard] gensub(/(.*): (.*)/,"\\2","g",$0) ""
+			}
 			else if (/I\/O/) {
 				portsTemp = gensub(/\t*I\/O ports at (.*) \[.*\]/,"\\1","g",$0)
 				ports[audioCard] = ports[audioCard] portsTemp " "
@@ -1062,8 +1065,9 @@ get_audio_data()
 	END {
 		j=0
 		for (i in cards) {
-			usePorts=""
 			useDrivers=""
+			useModules=""
+			usePorts=""
 			if (cards[i]>1) {
 				a[j]=cards[i]"x "i
 				if (drivers[i] != "") {
@@ -1071,6 +1075,9 @@ get_audio_data()
 				}
 				if (ports[i] != "") {
 					usePorts = ports[i]
+				}
+				if (modules[i] != "" ) {
+					useModules = modules[i]
 				}
 			}
 			else {
@@ -1086,9 +1093,12 @@ get_audio_data()
 				if (ports[i] != "") {
 					usePorts=ports[i]
 				}
+				if (modules[i] != "" ) {
+					useModules = modules[i]
+				}
 			}
 			# create array primary item for master array
-			print a[j] "," useDrivers "," usePorts
+			print a[j] "," useDrivers "," usePorts "," useModules
 			j++
 		}
 	}') )
@@ -1732,6 +1742,21 @@ get_memory_data()
 	echo "$memory"
 }
 
+# process and return module version data
+get_module_version_number()
+{
+	local module_version=''
+
+	if [[ -n $( which modinfo ) ]];then
+		module_version=$( modinfo $1 | gawk '
+		BEGIN { IGNORECASE=1 }
+		/^version/ {print $2}
+		' )
+	fi
+
+	echo "$module_version"
+}
+
 ## create array of network cards
 get_networking_data()
 {
@@ -1756,14 +1781,18 @@ get_networking_data()
 			if (/driver in use/) {
 				drivers[nic] = drivers[nic] gensub(/(.*): (.*)/,"\\2","g",$0) ""
 			}
+			else if (/kernel modules/) {
+				modules[nic] = modules[nic] gensub(/(.*): (.*)/,"\\2","g",$0) ""
+			}
 		}
 	}
 
 	END {
 		j=0
 		for (i in eth) {
-			usePorts=""
 			useDrivers=""
+			usePorts=""
+			useModules=""
 			if (eth[i]>1) {
 				a[j]=eth[i]"x "i
 				## note: this loses the plural ports case, is it needed anyway?
@@ -1772,6 +1801,9 @@ get_networking_data()
 				}
 				if (drivers[i] != "") {
 					useDrivers=drivers[i]
+				}
+				if (modules[i] != "" ) {
+					useModules = modules[i]
 				}
 			}
 			else {
@@ -1782,9 +1814,12 @@ get_networking_data()
 				if (drivers[i] != "") {
 					useDrivers=drivers[i]
 				}
+				if (modules[i] != "" ) {
+					useModules = modules[i]
+				}
 			}
 			# create array primary item for master array
-			print a[j] "," useDrivers "," usePorts
+			print a[j] "," useDrivers "," usePorts "," useModules
 			j++
 		}
 	}') )
@@ -1793,14 +1828,13 @@ get_networking_data()
 
 get_networking_wan_ip_data()
 {
-	local extras_data='' ip='' use_browser='' browser=''
+	local ip=''
 
-	# get ip or show console browser missing error
-
+	# get ip using wget redirect to stdout
 	ip=$( wget -q -O - http://techpatterns.com/resources/ip.php | awk -F 'is: ' '{
 		#gsub("\n","",$2")
 		print $2
-	}'  )
+	}' )
 
 	if [[ -z $ip ]];then
 		ip='None Detected!'
@@ -2087,7 +2121,7 @@ print_short_data()
 print_audio_data()
 {
 	local i='' card_one='Card-1 ' audio_data='' a_audio_data='' port_data=''
-	local a_audio_working='' alsa_driver='' alsa_data='' port_plural=''
+	local a_audio_working='' alsa_driver='' alsa_data='' port_plural='' module_version=''
 	# set A_AUDIO_DATA and get alsa data
 	get_audio_data
 	alsa_data=$( get_audio_alsa_data )
@@ -2105,8 +2139,11 @@ print_audio_data()
 # 			port_data=" ${C1}at port${C2} ${a_audio_working[2]}"
 # 		fi
 		# this should only trigger if the /proc/asound/cards data is used, not lspci -nn
+		if [[ -n ${a_audio_working[3]} && $B_EXTRA_DATA == 'true' ]];then
+			module_version=$( print_module_version "${a_audio_working[3]}" )
+		fi
 		if [[ -n ${a_audio_working[1]} ]];then
-			alsa_driver=" ${C1}driver${C2} ${a_audio_working[1]}"
+			alsa_driver=" ${C1}driver${C2} ${a_audio_working[1]}$module_version"
 		fi
 		if [[ -n ${a_audio_working[2]} && $B_EXTRA_DATA == 'true' ]];then
 			if [[ $( wc -w <<< ${a_audio_working[2]} ) -gt 1 ]];then
@@ -2126,7 +2163,10 @@ print_audio_data()
 			port_data=''
 			alsa_driver=''
 			port_plural=''
-
+			module_version=''
+			if [[ -n ${a_audio_working[3]} && $B_EXTRA_DATA == 'true' ]];then
+				module_version=$( print_module_version "${a_audio_working[3]}" )
+			fi
 			# we're testing for the presence of the 2nd array item here, which is the driver name
 			if [[ -n ${a_audio_working[1]} ]];then
 				alsa_driver="${C1}driver${C2} ${a_audio_working[1]}"
@@ -2365,9 +2405,9 @@ print_hard_disk_data()
 			# wrap to avoid long lines
 
 			if [[ $i -gt 1 && $B_SHOW_DISK == 'true' ]] || [[ $i -gt 3 ]];then
-				hdd_model_2="${hdd_model_2}${hdd_model_2+${C1}($(($i+1)))${C2}}$usb_data$dev_data${a_hdd_working[2]}$size_data "
+				hdd_model_2="${hdd_model_2}${hdd_model_2+${C1}$(($i+1)):${C2}} $usb_data$dev_data${a_hdd_working[2]}$size_data "
 			else
-				hdd_model="${hdd_model}${hdd_model+ ${C1}($(($i+1)))${C2}}$usb_data$dev_data${a_hdd_working[2]}$size_data"
+				hdd_model="${hdd_model}${hdd_model+ ${C1}$(($i+1)):${C2}} $usb_data$dev_data${a_hdd_working[2]}$size_data"
 			fi
 		done
 		if [[ -z $hdd_model ]];then
@@ -2452,10 +2492,28 @@ print_info_data()
 	print_screen_output "$info_data"
 }
 
+# args: $1 - module name (could be > 1, so loop it )
+print_module_version()
+{
+	local module_versions='' module='' version=''
+
+	for module in $1
+	do
+		version=$( get_module_version_number $module )
+		if [[ -n $version ]];then
+			module_versions="$module_versions $version"
+		fi
+	done
+
+	if [[ -n $module_versions ]];then
+		echo " ${C1}v:${C2} $module_versions"
+	fi
+}
+
 print_networking_data()
 {
 	local i='' card_one='Card-1' network_data='' a_network_working='' port_data='' driver_data=''
-	local card_string='' port_plural=''
+	local card_string='' port_plural='' module_version=''
 	# set A_NETWORK_DATA
 	get_networking_data
 
@@ -2469,9 +2527,11 @@ print_networking_data()
 		if [[ ${#A_NETWORK_DATA[@]} -le 1 ]];then
 			card_one='Card'
 		fi
-
+		if [[ -n ${a_network_working[3]} && $B_EXTRA_DATA == 'true' ]];then
+			module_version=$( print_module_version "${a_network_working[3]}" )
+		fi
 		if [[ -n ${a_network_working[1]} ]];then
-			driver_data=" ${C1}driver${C2} ${a_network_working[1]}"
+			driver_data=" ${C1}driver${C2} ${a_network_working[1]}$module_version"
 		fi
 		if [[ -n ${a_network_working[2]} && $B_EXTRA_DATA == 'true' ]];then
 			if [[ $( wc -w <<< ${a_network_working[2]} ) -gt 1 ]];then
@@ -2492,8 +2552,12 @@ print_networking_data()
 			port_data=''
 			driver_data=''
 			port_plural=''
+			module_version=''
+			if [[ -n ${a_network_working[3]} && $B_EXTRA_DATA == 'true' ]];then
+				module_version=$( print_module_version "${a_network_working[3]}" )
+			fi
 			if [[ -n ${a_network_working[1]} ]];then
-				driver_data=" ${C1}driver${C2} ${a_network_working[1]}"
+				driver_data=" ${C1}driver${C2} ${a_network_working[1]}$module_version"
 			fi
 			if [[ -n ${a_network_working[2]} && $B_EXTRA_DATA == 'true' ]];then
 				if [[ $( wc -w <<< ${a_network_working[2]} ) -gt 1 ]];then
