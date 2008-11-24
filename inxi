@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.6.2
-####  Date: November 22 2008
+####  version: 0.7.0
+####  Date: November 23 2008
 ########################################################################
 ####  inxi is a fork of infobash 3.02, the original bash sys info script by locsmif
 ####  As time permits functionality improvements and recoding will occur.
@@ -30,6 +30,9 @@
 ####
 ####  You should have received a copy of the GNU General Public License
 ####  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+####
+####  If you don't understand what Free Software is, please read (or reread)
+####  this page: http://www.gnu.org/philosophy/free-sw.html
 ########################################################################
 ####  DEPENDENCIES
 ####  bash >=2.05b(bash), df;readlink;stty;tr;uname;wc(coreutils),
@@ -65,6 +68,10 @@
 ####  The color variable ${C2} must always be followed by a space unless you know what
 ####  character is going to be next for certain. Otherwise irc color codes can be accidentally
 ####  activated or altered.
+####
+####  For native script konversation support (check distro for correct konvi scripts path):
+####  ln -s <path to inxi> /usr/share/apps/konversation/scripts/inxi
+####  DCOP doesn't like \n, so avoid using it for most output unless required, as in error messages.
 ########################################################################
 ####  TESTING FLAGS
 ####  inxi supports advanced testing triggers to do various things, using -! <arg>
@@ -326,30 +333,32 @@ script_debugger()
 #### print / output cleaners
 #### -------------------------------------------------------------------
 
-# inxi speaks through here. When run by Konversation, uses DCOP
-# note, this is a huge bug trap, for now we're not using this at all except to
-# output basic stuff. At some point in the future we'll debug the dcop stuff,
-# but that only works if inxi is being run as a konversation script to begin with
+# inxi speaks through here. When run by Konversation script alias mode, uses DCOP
+# for dcop to work, must use 'say' operator, AND colors must be evaluated by echo -e
+# note: dcop does not seem able to handle \n so that's being stripped out and replaced with space.
 print_screen_output()
 {
+	# the double quotes are needed to avoid losing whitespace in data when certain output types are used
+	local print_data="$( echo -e "$1" )"
+
 	if [[ $DEBUG -gt 5 ]];then
 		if [[ $KONVI -eq 1 ]];then
-			dcop "$DCPORT" "$DCOPOBJ" print_screen_output "$DCSERVER" "$DCTARGET" "konvi='$KONVI'  saying : '$@'"
+			# konvi doesn't seem to like \n characters, it just prints them literally
+			print_data="$( tr '\n' ' ' <<< "$print_data" )"
+			dcop "$DCPORT" "$DCOPOBJ" say "$DCSERVER" "$DCTARGET" "konvi='$KONVI' saying : '$print_data'"
+		elif [[ $KONVI -eq 2 ]];then
+			echo "konvi='$KONVI' saying : '$print_data'"
 		else
-			echo "konvi='$KONVI'  saying : '$@'"
+			echo "printing out: '$print_data'"
 		fi
-		#echo "konvi='$KONVI'  saying : '$@'"
-		#((KONVI)) && dcop "$DCPORT" "$DCOPOBJ" print_screen_output "$DCSERVER" "$DCTARGET" "konvi='$KONVI'  saying : '$@'" || echo "konvi='$KONVI'  saying : '$@'"
 	fi
-	#((KONVI)) && dcop $DCPORT Konversation print_screen_output $DCSERVER "$DCTARGET" "$1" || echo -ne "$1\n"
 
 	if [[ $KONVI -eq 1 ]];then
-		dcop "$DCPORT" "$DCOPOBJ" print_screen_output "$DCSERVER" "$DCTARGET" "$1"
+		print_data="$( tr '\n' ' ' <<< "$print_data" )"
+		dcop "$DCPORT" "$DCOPOBJ" say "$DCSERVER" "$DCTARGET" "$print_data"
 	else
-		echo -ne "$1\n"
+		echo -e "$print_data\n"
 	fi
-	#((KONVI)) && dcop "$DCPORT" "$DCOPOBJ" print_screen_output "$DCSERVER" "$DCTARGET" "$1" || echo -ne "$1\n"
-	# echo -ne "$1\n"
 }
 
 ## this handles all verbose line construction with indentation/line starter
@@ -404,6 +413,8 @@ sanitize_characters()
 check_script_depends()
 {
 	local app_name='' app_data=''
+	# bc removed from deps for now
+	local depends="df free gawk grep hostname lspci ps readlink runlevel tr uname uptime wc"
 
 	if [[ ! -d /proc/ ]];then
 		error_handler 6
@@ -414,7 +425,7 @@ check_script_depends()
 		do
 			app_data=$( type -p $app_name )
 			if [[ -z $app_data ]];then
-				script_debugger "inxi: Resuming in non X mode: $app_name not found in path"
+				script_debugger "Resuming in non X mode: $app_name not found in path"
 				B_X_RUNNING='false'
 				break
 			fi
@@ -422,8 +433,8 @@ check_script_depends()
 	fi
 
 	app_name=''
-	# bc removed from deps for now
-	for app_name in df free gawk grep hostname lspci ps readlink runlevel tr uname uptime wc
+
+	for app_name in $depends
 	do
 		app_data=$( type -p $app_name )
 		if [[ -z $app_data ]];then
@@ -467,7 +478,8 @@ set_color_scheme()
 	if [[ $1 -ge ${#A_COLOR_SCHEMES[@]} ]];then
 		set -- 1
 	fi
-	SCHEME="$1" # Set a global variable to allow checking for chosen scheme later
+	# Set a global variable to allow checking for chosen scheme later
+	SCHEME="$1"
 	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
 		color_codes=( $ANSI_COLORS )
 	else
@@ -480,6 +492,7 @@ set_color_scheme()
 	IFS=","
 	script_colors=( ${A_COLOR_SCHEMES[$1]} )
 	IFS="$ORIGINAL_IFS"
+	# then assign the colors globally
 	C1="${!script_colors[0]}"
 	C2="${!script_colors[1]}"
 	CN="${!script_colors[2]}"
@@ -760,7 +773,8 @@ script_self_updater()
 		wget -q -O $SCRIPT_PATH/$SCRIPT_NAME $1$SCRIPT_NAME || wget_error=$?
 		if [[ $wget_error -eq 0 ]];then
 			SCRIPT_VERSION_NUMBER=$( grep -im 1 'version:' $SCRIPT_PATH/$SCRIPT_NAME | gawk '{print $3}' )
-			print_screen_output "Successfully updated to $2 version: $SCRIPT_VERSION_NUMBER\nTo run the new version, just start $SCRIPT_NAME again."
+			print_screen_output "Successfully updated to $2 version: $SCRIPT_VERSION_NUMBER"
+			print_screen_output "To run the new version, just start $SCRIPT_NAME again."
 			exit 0
 		fi
 	fi
@@ -1841,8 +1855,8 @@ get_networking_wan_ip_data()
 {
 	local ip=''
 
-	# get ip using wget redirect to stdout
-	ip=$( wget -q -O - http://techpatterns.com/resources/ip.php | awk -F 'is: ' '{
+	# get ip using wget redirect to stdout. This is a clean, text only IP output url.
+	ip=$( wget -q -O - http://smxi.org/opt/ip.php | awk -F 'is: ' '{
 		#gsub("\n","",$2")
 		print $2
 	}' )
