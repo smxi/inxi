@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.7.1
-####  Date: November 23 2008
+####  version: 0.8.0
+####  Date: December 3 2008
 ########################################################################
 ####  inxi is a fork of infobash 3.02, the original bash sys info script by locsmif
 ####  As time permits functionality improvements and recoding will occur.
@@ -138,8 +138,9 @@ B_SHOW_HOST='true'
 B_SHOW_INFO='false'
 B_SHOW_IP='false'
 B_SHOW_NETWORK='false'
-# either -v > 3 or -p will show partitions
+# either -v > 3 or -P will show partitions
 B_SHOW_PARTITIONS='false'
+B_SHOW_PARTITIONS_FULL='false'
 # triggers only short inxi output
 B_SHOW_SHORT_OUTPUT='false'
 B_SHOW_SYSTEM='false'
@@ -542,7 +543,7 @@ get_parameters()
 	# the short form only runs if no args output args are used
 	# no need to run through these if there are no args
 	if [[ -n $1 ]];then
-		while getopts Ac:CdDfFGhHiINPSv:Vx%@:${update_flags} opt
+		while getopts Ac:CdDfFGhHiINpPSv:Vx%@:${update_flags} opt
 		do
 			case $opt in
 			A)	B_SHOW_AUDIO='true'
@@ -590,6 +591,10 @@ get_parameters()
 				use_short='false'
 				;;
 			N)	B_SHOW_NETWORK='true'
+				use_short='false'
+				;;
+			p)	B_SHOW_PARTITIONS_FULL='true'
+				B_SHOW_PARTITIONS='true'
 				use_short='false'
 				;;
 			P)	B_SHOW_PARTITIONS='true'
@@ -698,7 +703,10 @@ show_options()
 	print_screen_output "    Not shown with -F for user security reasons, you shouldn't paste your local/wan IP."
 	print_screen_output "-I  Show information: processes, uptime, memory, irc client, inxi version."
 	print_screen_output "-N  Show network card information."
+	print_screen_output "-p  Show full partition information (-P plus all other detected partitions)."
+	print_screen_output "    If any of your partitions have spaces in their names, they will not show with -p"
 	print_screen_output "-P  Show partition information (shows what -v4 would show, but without extra data)."
+	print_screen_output "    Shows, if detected: / /boot /home /tmp /usr /var. Use -p for All partitions."
 	print_screen_output "-S  Show system information: host name, kernel, distro"
 	print_screen_output "-v  Script verbosity levels. Verbosity level number is required."
 	print_screen_output "    Supported levels: 0-${VERBOSITY_LEVELS} Example: $SCRIPT_NAME -v 4"
@@ -877,7 +885,7 @@ get_start_client()
 				# Since Konversation 1.0, the DCOP interface has changed a bit: dcop "$DCPORT" Konversation ..etc
 				# becomes : dcop "$DCPORT" default ... or dcop "$DCPORT" irc ..etc. So we check for versions smaller
 				# than 1 and change the DCOP parameter/object accordingly.
-				if [[ ${T2} < 1 ]];then
+				if [[ ${T2} -lt 1 ]];then
 					DCOPOBJ="Konversation"
 				fi
 				IRC_CLIENT="Konversation"
@@ -1701,7 +1709,7 @@ get_hard_drive_data_advanced()
 				IFS=","
 				a_temp_working=( ${A_HDD_DATA[$i]} )
 				IFS="$ORIGINAL_IFS"
-				if [[ ${#a_temp_scsi[@]} > 0 ]];then
+				if [[ ${#a_temp_scsi[@]} -gt 0 ]];then
 					for (( j=0; j < ${#a_temp_scsi[@]}; j++ ))
 					do
 						## ok, ok, it's incomprehensible, search /dev/disk/by-id for a line that contains the
@@ -1920,10 +1928,23 @@ get_partition_data()
 	# $NF = partition name; $(NF - 4) = partition size; $(NF - 3) = used, in gB; $(NF - 1) = percent used
 	## note: by subtracting from the last field number NF, we avoid a subtle issue with LVM df output, where if
 	## the first field is too long, it will occupy its own line, this way we are getting only the needed data
-	A_PARTITION_DATA=( $( df -h -T | gawk '
-	/\/$|\/boot$|\/var$|\/home$/ && ! /aufs/ {
-		print $NF "," $(NF - 4) "," $(NF - 3) "," $(NF - 1)
-	}' )
+	A_PARTITION_DATA=( $( df -h -T --exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660 | gawk '
+	BEGIN { IGNORECASE=1 }
+	/\/$|\/boot$|\/var$|\/home$|\/tmp$|\/usr$/ && ! /aufs/ {
+		print $NF "," $(NF - 4) "," $(NF - 3) "," $(NF - 1) ",main"
+	}
+	# skip all these, including the first, header line. Use the --exclude-type
+	# to handle new filesystems types we do not want listed here
+	! /\/$|\/boot$|\/var$|\/home$|\/tmp$|\/usr$|^filesystem/ {
+		# this is to avoid file systems with spaces in their names, that will make
+		# the test show the wrong data in each of the fields, if no x%, then do not use
+		if ( $(NF - 1) ~ /[0-9]+\%/ ) {
+			# cleaning up user name here to avoid showing too much info on irc
+			partitionName=gensub( /^\/home\/(.*)\/(.*)/, "/home/<username>/\\2", 1, $NF )
+			print partitionName "," $(NF - 4) "," $(NF - 3) "," $(NF - 1) ",secondary"
+		}
+	}
+	' )
 	# now add the swap partition data, doesn't show percent used, someone can figure that in the future
 	# don't want to show swap files, just partitions
 	$( swapon -s | gawk '
@@ -2058,7 +2079,7 @@ print_it_out()
 			print_hard_disk_data
 		fi
 		if [[ $VERBOSITY_LEVEL -ge 4 || $B_SHOW_PARTITIONS == 'true' ]];then
-			print_hdd_partition_data
+			print_partition_data
 		fi
 		if [[ $VERBOSITY_LEVEL -ge 1 || $B_SHOW_INFO == 'true' ]];then
 			print_info_data
@@ -2454,42 +2475,6 @@ print_hard_disk_data()
 	fi
 }
 
-print_hdd_partition_data()
-{
-	local a_partition_working='' partition_used='' swap='' partition_data='' partition_data_2=''
-
-	# set A_PARTITION_DATA
-	get_partition_data
-
-	for (( i=0; i < ${#A_PARTITION_DATA[@]}; i++ ))
-	do
-		IFS=","
-		a_partition_working=(${A_PARTITION_DATA[i]})
-		IFS="$ORIGINAL_IFS"
-		if [[ -n ${a_partition_working[2]} ]];then
-			partition_used=" ${C1}used:${C2} ${a_partition_working[2]} (${a_partition_working[3]})"
-		else
-			partition_used='' # reset partition used to null
-		fi
-		if [[ ${a_partition_working[4]} == 'swap' ]];then
-			swap=" ${C1}swap:${C2}"
-		else
-			swap=''
-		fi
-		if [[ $i < 3 ]];then
-			partition_data="$partition_data${C1}ID:${C2}$swap${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used "
-		else
-			partition_data_2="$partition_data_2${C1}ID:${C2}$swap${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used "
-		fi
-	done
-	partition_data=$( create_print_line "Partition:" "${partition_data}" )
-	print_screen_output "$partition_data"
-	if [[ -n $partition_data_2 ]];then
-		partition_data_2=$( create_print_line " " "${partition_data_2}" )
-		print_screen_output "$partition_data_2"
-	fi
-}
-
 print_info_data()
 {
 	local info_data=''
@@ -2636,6 +2621,122 @@ print_networking_ip_data()
 	if [[ -n $interfaces_2 ]];then
 		interfaces_2=$( create_print_line " " "$interfaces_2" )
 		print_screen_output "$interfaces_2"
+	fi
+}
+
+print_partition_data()
+{
+	local a_partition_working='' partition_used='' swap='' partition_data='' partition_data_2=''
+	local partition_data_3='' partition_data_4='' partition_data_5='' partition_data_6=''
+	local partition_data_7='' partition_data_8='' counter=1 line_max=160
+
+	# this handles the different, shorter, irc colors strings embedded in variable data
+	if [[ $B_RUNNING_IN_SHELL != 'true' ]];then
+		line_max=130
+	fi
+
+	# set A_PARTITION_DATA
+	get_partition_data
+
+	for (( i=0; i < ${#A_PARTITION_DATA[@]}; i++ ))
+	do
+		IFS=","
+		a_partition_working=(${A_PARTITION_DATA[i]})
+		IFS="$ORIGINAL_IFS"
+
+		if [[ $B_SHOW_PARTITIONS_FULL == 'true' ]] || [[ ${a_partition_working[4]} == 'swap' || ${a_partition_working[4]} == 'main' ]];then
+			if [[ -n ${a_partition_working[2]} ]];then
+				partition_used=" ${C1}used:${C2} ${a_partition_working[2]} (${a_partition_working[3]})"
+			else
+				partition_used='' # reset partition used to null
+			fi
+			if [[ ${a_partition_working[4]} == 'swap' ]];then
+				swap=" ${C1}swap:${C2}"
+			else
+				swap=''
+			fi
+			# because these lines can vary widely, using dynamic length handling here
+			case $counter in
+				1)
+					partition_data="$partition_data${C1}ID:${C2}$swap${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used "
+					if [[ $( wc -c <<< $partition_data ) -gt $line_max ]];then
+						counter=2
+					fi
+					;;
+				2)
+					partition_data_2="$partition_data_2${C1}ID:${C2}$swap${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used "
+					if [[ $( wc -c <<< $partition_data_2 ) -gt $line_max ]];then
+						counter=3
+					fi
+					;;
+				3)
+					partition_data_3="$partition_data_3${C1}ID:${C2}$swap${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used "
+					if [[ $( wc -c <<< $partition_data_3 ) -gt $line_max ]];then
+						counter=4
+					fi
+					;;
+				4)
+					partition_data_4="$partition_data_4${C1}ID:${C2}$swap${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used "
+					if [[ $( wc -c <<< $partition_data_4 ) -gt $line_max ]];then
+						counter=5
+					fi
+					;;
+				5)
+					partition_data_5="$partition_data_5${C1}ID:${C2}$swap${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used "
+					if [[ $( wc -c <<< $partition_data_5 ) -gt $line_max ]];then
+						counter=6
+					fi
+					;;
+				6)
+					partition_data_6="$partition_data_6${C1}ID:${C2}$swap${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used "
+					if [[ $( wc -c <<< $partition_data_6 ) -gt $line_max ]];then
+						counter=7
+					fi
+					;;
+				7)
+					partition_data_7="$partition_data_7${C1}ID:${C2}$swap${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used "
+					if [[ $( wc -c <<< $partition_data_7 ) -gt $line_max ]];then
+						counter=8
+					fi
+					;;
+				*)
+					partition_data_8="$partition_data_8${C1}ID:${C2}$swap${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used "
+					;;
+			esac
+		fi
+	done
+	# create the first line
+	partition_data=$( create_print_line "Partition:" "$partition_data" )
+	print_screen_output "$partition_data"
+
+	# then the rest, if required
+	if [[ -n $partition_data_2 ]];then
+		partition_data_2=$( create_print_line " " "$partition_data_2" )
+		print_screen_output "$partition_data_2"
+	fi
+	if [[ -n $partition_data_3 ]];then
+		partition_data_3=$( create_print_line " " "$partition_data_3" )
+		print_screen_output "$partition_data_3"
+	fi
+	if [[ -n $partition_data_4 ]];then
+		partition_data_4=$( create_print_line " " "$partition_data_4" )
+		print_screen_output "$partition_data_4"
+	fi
+	if [[ -n $partition_data_5 ]];then
+		partition_data_5=$( create_print_line " " "$partition_data_5" )
+		print_screen_output "$partition_data_5"
+	fi
+	if [[ -n $partition_data_6 ]];then
+		partition_data_6=$( create_print_line " " "$partition_data_6" )
+		print_screen_output "$partition_data_6"
+	fi
+	if [[ -n $partition_data_7 ]];then
+		partition_data_7=$( create_print_line " " "$partition_data_7" )
+		print_screen_output "$partition_data_7"
+	fi
+	if [[ -n $partition_data_8 ]];then
+		partition_data_8=$( create_print_line " " "$partition_data_8" )
+		print_screen_output "$partition_data_8"
 	fi
 }
 
