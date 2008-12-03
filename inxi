@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.6.2-b1-t4
-####  Date: November 22 2008
+####  version: 0.7.1-b1-t1
+####  Date: December 3 2008
 ########################################################################
 ####  inxi is a fork of infobash 3.02, the original bash sys info script by locsmif
 ####  As time permits functionality improvements and recoding will occur.
@@ -31,8 +31,8 @@
 ####  You should have received a copy of the GNU General Public License
 ####  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ####
-####  If you don't understand what Free Software is, please read this page:
-####  http://www.gnu.org/philosophy/free-sw.html - it's quite clear.
+####  If you don't understand what Free Software is, please read (or reread)
+####  this page: http://www.gnu.org/philosophy/free-sw.html
 ########################################################################
 ####  DEPENDENCIES
 ####  bash >=2.05b(bash), df;readlink;stty;tr;uname;wc(coreutils),
@@ -71,6 +71,7 @@
 ####
 ####  For native script konversation support (check distro for correct konvi scripts path):
 ####  ln -s <path to inxi> /usr/share/apps/konversation/scripts/inxi
+####  DCOP doesn't like \n, so avoid using it for most output unless required, as in error messages.
 ########################################################################
 ####  TESTING FLAGS
 ####  inxi supports advanced testing triggers to do various things, using -! <arg>
@@ -137,8 +138,9 @@ B_SHOW_HOST='true'
 B_SHOW_INFO='false'
 B_SHOW_IP='false'
 B_SHOW_NETWORK='false'
-# either -v > 3 or -p will show partitions
+# either -v > 3 or -P will show partitions
 B_SHOW_PARTITIONS='false'
+B_SHOW_PARTITIONS_FULL='false'
 # triggers only short inxi output
 B_SHOW_SHORT_OUTPUT='false'
 B_SHOW_SYSTEM='false'
@@ -342,7 +344,7 @@ print_screen_output()
 
 	if [[ $DEBUG -gt 5 ]];then
 		if [[ $KONVI -eq 1 ]];then
-			# konvi doesn't seem to like \n characters, it just prints them
+			# konvi doesn't seem to like \n characters, it just prints them literally
 			print_data="$( tr '\n' ' ' <<< "$print_data" )"
 			dcop "$DCPORT" "$DCOPOBJ" say "$DCSERVER" "$DCTARGET" "konvi='$KONVI' saying : '$print_data'"
 		elif [[ $KONVI -eq 2 ]];then
@@ -356,7 +358,8 @@ print_screen_output()
 		print_data="$( tr '\n' ' ' <<< "$print_data" )"
 		dcop "$DCPORT" "$DCOPOBJ" say "$DCSERVER" "$DCTARGET" "$print_data"
 	else
-		echo -e "$print_data\n"
+		# the -n is needed to avoid double spacing of output in terminal
+		echo -ne "$print_data\n"
 	fi
 }
 
@@ -412,6 +415,8 @@ sanitize_characters()
 check_script_depends()
 {
 	local app_name='' app_data=''
+	# bc removed from deps for now
+	local depends="df free gawk grep hostname lspci ps readlink runlevel tr uname uptime wc"
 
 	if [[ ! -d /proc/ ]];then
 		error_handler 6
@@ -422,7 +427,7 @@ check_script_depends()
 		do
 			app_data=$( type -p $app_name )
 			if [[ -z $app_data ]];then
-				script_debugger "inxi: Resuming in non X mode: $app_name not found in path"
+				script_debugger "Resuming in non X mode: $app_name not found in path"
 				B_X_RUNNING='false'
 				break
 			fi
@@ -430,8 +435,8 @@ check_script_depends()
 	fi
 
 	app_name=''
-	# bc removed from deps for now
-	for app_name in df free gawk grep hostname lspci ps readlink runlevel tr uname uptime wc
+
+	for app_name in $depends
 	do
 		app_data=$( type -p $app_name )
 		if [[ -z $app_data ]];then
@@ -475,7 +480,8 @@ set_color_scheme()
 	if [[ $1 -ge ${#A_COLOR_SCHEMES[@]} ]];then
 		set -- 1
 	fi
-	SCHEME="$1" # Set a global variable to allow checking for chosen scheme later
+	# Set a global variable to allow checking for chosen scheme later
+	SCHEME="$1"
 	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
 		color_codes=( $ANSI_COLORS )
 	else
@@ -488,6 +494,7 @@ set_color_scheme()
 	IFS=","
 	script_colors=( ${A_COLOR_SCHEMES[$1]} )
 	IFS="$ORIGINAL_IFS"
+	# then assign the colors globally
 	C1="${!script_colors[0]}"
 	C2="${!script_colors[1]}"
 	CN="${!script_colors[2]}"
@@ -536,7 +543,7 @@ get_parameters()
 	# the short form only runs if no args output args are used
 	# no need to run through these if there are no args
 	if [[ -n $1 ]];then
-		while getopts Ac:CdDfFGhHiINPSv:Vx%@:${update_flags} opt
+		while getopts Ac:CdDfFGhHiINpPSv:Vx%@:${update_flags} opt
 		do
 			case $opt in
 			A)	B_SHOW_AUDIO='true'
@@ -584,6 +591,10 @@ get_parameters()
 				use_short='false'
 				;;
 			N)	B_SHOW_NETWORK='true'
+				use_short='false'
+				;;
+			p)	B_SHOW_PARTITIONS_FULL='true'
+				B_SHOW_PARTITIONS='true'
 				use_short='false'
 				;;
 			P)	B_SHOW_PARTITIONS='true'
@@ -692,7 +703,9 @@ show_options()
 	print_screen_output "    Not shown with -F for user security reasons, you shouldn't paste your local/wan IP."
 	print_screen_output "-I  Show information: processes, uptime, memory, irc client, inxi version."
 	print_screen_output "-N  Show network card information."
+	print_screen_output "-p  Show full partition information (-P plus all other detected partitions)."
 	print_screen_output "-P  Show partition information (shows what -v4 would show, but without extra data)."
+	print_screen_output "    Shows, if detected, /, /home/, /var, /boot. Use -p for All partitions."
 	print_screen_output "-S  Show system information: host name, kernel, distro"
 	print_screen_output "-v  Script verbosity levels. Verbosity level number is required."
 	print_screen_output "    Supported levels: 0-${VERBOSITY_LEVELS} Example: $SCRIPT_NAME -v 4"
@@ -768,7 +781,8 @@ script_self_updater()
 		wget -q -O $SCRIPT_PATH/$SCRIPT_NAME $1$SCRIPT_NAME || wget_error=$?
 		if [[ $wget_error -eq 0 ]];then
 			SCRIPT_VERSION_NUMBER=$( grep -im 1 'version:' $SCRIPT_PATH/$SCRIPT_NAME | gawk '{print $3}' )
-			print_screen_output "Successfully updated to $2 version: $SCRIPT_VERSION_NUMBER\nTo run the new version, just start $SCRIPT_NAME again."
+			print_screen_output "Successfully updated to $2 version: $SCRIPT_VERSION_NUMBER"
+			print_screen_output "To run the new version, just start $SCRIPT_NAME again."
 			exit 0
 		fi
 	fi
@@ -1849,8 +1863,8 @@ get_networking_wan_ip_data()
 {
 	local ip=''
 
-	# get ip using wget redirect to stdout
-	ip=$( wget -q -O - http://techpatterns.com/resources/ip.php | awk -F 'is: ' '{
+	# get ip using wget redirect to stdout. This is a clean, text only IP output url.
+	ip=$( wget -q -O - http://smxi.org/opt/ip.php | awk -F 'is: ' '{
 		#gsub("\n","",$2")
 		print $2
 	}' )
@@ -1914,9 +1928,14 @@ get_partition_data()
 	## note: by subtracting from the last field number NF, we avoid a subtle issue with LVM df output, where if
 	## the first field is too long, it will occupy its own line, this way we are getting only the needed data
 	A_PARTITION_DATA=( $( df -h -T | gawk '
+	BEGIN { IGNORECASE=1 }
 	/\/$|\/boot$|\/var$|\/home$/ && ! /aufs/ {
-		print $NF "," $(NF - 4) "," $(NF - 3) "," $(NF - 1)
-	}' )
+		print $NF "," $(NF - 4) "," $(NF - 3) "," $(NF - 1) ",main"
+	}
+	! /\/$|\/boot$|\/var$|\/home$|tmpfs|udev|^filesystem/ && ! /aufs/ {
+		print $NF "," $(NF - 4) "," $(NF - 3) "," $(NF - 1) ",secondary"
+	}
+	' )
 	# now add the swap partition data, doesn't show percent used, someone can figure that in the future
 	# don't want to show swap files, just partitions
 	$( swapon -s | gawk '
@@ -2051,7 +2070,7 @@ print_it_out()
 			print_hard_disk_data
 		fi
 		if [[ $VERBOSITY_LEVEL -ge 4 || $B_SHOW_PARTITIONS == 'true' ]];then
-			print_hdd_partition_data
+			print_partition_data
 		fi
 		if [[ $VERBOSITY_LEVEL -ge 1 || $B_SHOW_INFO == 'true' ]];then
 			print_info_data
@@ -2447,42 +2466,6 @@ print_hard_disk_data()
 	fi
 }
 
-print_hdd_partition_data()
-{
-	local a_partition_working='' partition_used='' swap='' partition_data='' partition_data_2=''
-
-	# set A_PARTITION_DATA
-	get_partition_data
-
-	for (( i=0; i < ${#A_PARTITION_DATA[@]}; i++ ))
-	do
-		IFS=","
-		a_partition_working=(${A_PARTITION_DATA[i]})
-		IFS="$ORIGINAL_IFS"
-		if [[ -n ${a_partition_working[2]} ]];then
-			partition_used=" ${C1}used:${C2} ${a_partition_working[2]} (${a_partition_working[3]})"
-		else
-			partition_used='' # reset partition used to null
-		fi
-		if [[ ${a_partition_working[4]} == 'swap' ]];then
-			swap=" ${C1}swap:${C2}"
-		else
-			swap=''
-		fi
-		if [[ $i < 3 ]];then
-			partition_data="$partition_data${C1}ID:${C2}$swap${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used "
-		else
-			partition_data_2="$partition_data_2${C1}ID:${C2}$swap${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used "
-		fi
-	done
-	partition_data=$( create_print_line "Partition:" "${partition_data}" )
-	print_screen_output "$partition_data"
-	if [[ -n $partition_data_2 ]];then
-		partition_data_2=$( create_print_line " " "${partition_data_2}" )
-		print_screen_output "$partition_data_2"
-	fi
-}
-
 print_info_data()
 {
 	local info_data=''
@@ -2629,6 +2612,66 @@ print_networking_ip_data()
 	if [[ -n $interfaces_2 ]];then
 		interfaces_2=$( create_print_line " " "$interfaces_2" )
 		print_screen_output "$interfaces_2"
+	fi
+}
+
+print_partition_data()
+{
+	local a_partition_working='' partition_used='' swap='' partition_data='' partition_data_2=''
+	local partition_data_3='' partition_data_4='' partition_data_5='' counter=0
+
+	# set A_PARTITION_DATA
+	get_partition_data
+
+	for (( i=0; i < ${#A_PARTITION_DATA[@]}; i++ ))
+	do
+		IFS=","
+		a_partition_working=(${A_PARTITION_DATA[i]})
+		IFS="$ORIGINAL_IFS"
+
+		if [[ $B_SHOW_PARTITIONS_FULL == 'true' ]] || [[ ${a_partition_working[4]} == 'swap' || ${a_partition_working[4]} == 'main' ]];then
+			if [[ -n ${a_partition_working[2]} ]];then
+				partition_used=" ${C1}used:${C2} ${a_partition_working[2]} (${a_partition_working[3]})"
+			else
+				partition_used='' # reset partition used to null
+			fi
+			if [[ ${a_partition_working[4]} == 'swap' ]];then
+				swap=" ${C1}swap:${C2}"
+			else
+				swap=''
+			fi
+			if [[ $counter -lt 3 ]];then
+				partition_data="$partition_data${C1}ID:${C2}$swap${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used "
+			elif [[ $counter -lt 6 ]];then
+				partition_data_2="$partition_data_2${C1}ID:${C2}$swap${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used "
+			elif [[ $counter -lt 9 ]];then
+				partition_data_3="$partition_data_3${C1}ID:${C2}$swap${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used "
+			elif [[ $counter -lt 12 ]];then
+				partition_data_4="$partition_data_4${C1}ID:${C2}$swap${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used "
+			else
+				partition_data_5="$partition_data_5${C1}ID:${C2}$swap${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used "
+			fi
+			# we can't use the $i counter here because it doesn't always increment
+			((counter++))
+		fi
+	done
+	partition_data=$( create_print_line "Partition:" "$partition_data" )
+	print_screen_output "$partition_data"
+	if [[ -n $partition_data_2 ]];then
+		partition_data_2=$( create_print_line " " "$partition_data_2" )
+		print_screen_output "$partition_data_2"
+	fi
+	if [[ -n $partition_data_3 ]];then
+		partition_data_3=$( create_print_line " " "$partition_data_3" )
+		print_screen_output "$partition_data_3"
+	fi
+	if [[ -n $partition_data_4 ]];then
+		partition_data_4=$( create_print_line " " "$partition_data_4" )
+		print_screen_output "$partition_data_4"
+	fi
+	if [[ -n $partition_data_5 ]];then
+		partition_data_5=$( create_print_line " " "$partition_data_5" )
+		print_screen_output "$partition_data_5"
 	fi
 }
 
