@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.8.7
-####  Date: December 13 2008
+####  version: 0.8.8
+####  Date: December 14 2008
 ########################################################################
 ####  inxi is a fork of infobash 3.02, the original bash sys info script by locsmif
 ####  As time permits functionality improvements and recoding will occur.
@@ -101,6 +101,7 @@ A_AUDIO_DATA=''
 A_CMDL=''
 A_CPU_CORE_DATA=''
 A_CPU_DATA=''
+A_DEBUG_BUFFER=''
 A_GFX_CARD_DATA=''
 A_GLX_DATA=''
 A_HDD_DATA=''
@@ -124,6 +125,8 @@ B_SHOW_DISK='false'
 B_HANDLE_CORRUPT_DATA='false'
 # Running in a shell? Defaults to false, and is determined later.
 B_RUNNING_IN_SHELL='false'
+# this sets the debug buffer
+B_SCRIPT_UP='false'
 # Show sound card data
 B_SHOW_AUDIO='false'
 B_SHOW_CPU='false'
@@ -303,31 +306,37 @@ error_handler()
 	exit $1
 }
 
-# note: this debugger is largely useless in its current condition, but
-# we'll leave this up for now. I dumped the all-up debugging variable
-# args: $1 - $@ debugging string text; $2 - type: missing-app/all-up
+# prior to script up set, pack the data into an array
+# then we'll print it out later.
+# args: $1 - $@ debugging string text
 script_debugger()
 {
-	local a_debug_buffer=''
-
-	if [[ $2 == 'all-up' || $2 == 'missing-app' ]];then
-		# only return if not app missing or no debugger
-		if [[ $DEBUG -eq 0 && $2 != 'missing-app' ]];then
-			return
-		elif [[ $DEBUG_BUFFER_INDEX -gt 0 ]];then
-			for (( DEBUG_BUFFER_INDEX=0; DEBUG_BUFFER_INDEX < ${#a_debug_buffer[@]}; DEBUG_BUFFER_INDEX++ ))
-			do
-				print_screen_output "${a_debug_buffer[$DEBUG_BUFFER_INDEX]}"
-			done
-			DEBUG_BUFFER_INDEX=0
-			print_screen_output "$1"
-		fi
+	if [[ $B_SCRIPT_UP == 'true' ]];then
+			# only return if debugger is off and no pre start up errors have occured
+			if [[ $DEBUG -eq 0 && $DEBUG_BUFFER_INDEX -eq 0 ]];then
+				return 0
+			# print out the stored debugging information if errors occured
+			elif [[ $DEBUG_BUFFER_INDEX -gt 0 ]];then
+				for (( DEBUG_BUFFER_INDEX=0; DEBUG_BUFFER_INDEX < ${#A_DEBUG_BUFFER[@]}; DEBUG_BUFFER_INDEX++ ))
+				do
+					print_screen_output "${A_DEBUG_BUFFER[$DEBUG_BUFFER_INDEX]}"
+				done
+				DEBUG_BUFFER_INDEX=0
+			fi
+			# or print out normal debugger messages if debugger is on
+			if [[ $DEBUG -gt 0 ]];then
+				print_screen_output "$1"
+			fi
 	else
-		if [[ $B_DEBUG_FLOOD == 'true' && $DEBUG_BUFFER_INDEX -gt 10 ]];then
-			error_handler 2
-		else
-			a_debug_buffer[DEBUG_BUFFER_INDEX++]="$1"
-		fi
+			if [[ $B_DEBUG_FLOOD == 'true' && $DEBUG_BUFFER_INDEX -gt 10 ]];then
+				error_handler 2
+			# this case stores the data for later printout, will print out only
+			# at B_SCRIPT_UP == 'true' if array index > 0
+			else
+				A_DEBUG_BUFFER[$DEBUG_BUFFER_INDEX]="$1"
+				# increment count for next pre script up debugging error
+				(( DEBUG_BUFFER_INDEX++ ))
+			fi
 	fi
 }
 
@@ -427,7 +436,7 @@ check_script_depends()
 		do
 			app_data=$( type -p $app_name )
 			if [[ -z $app_data ]];then
-				script_debugger "Resuming in non X mode: $app_name not found in path" 'missing-app'
+				script_debugger "Resuming in non X mode: $app_name not found in path"
 				B_X_RUNNING='false'
 				break
 			fi
@@ -2695,12 +2704,20 @@ print_system_data()
 ########################################################################
 #### SCRIPT EXECUTION
 ########################################################################
+# first two functions must be set first for colors etc. Remember, no debugger
+# stuff works on these first two functions unless you set the debugging flag
+# manually. Debugging flag -@ [number] will not work until get_parameters runs.
 set_calculated_variables
-# Check for dependencies before running anything else except above function
-check_script_depends
 
 ## this needs to run before the KONVI stuff is set below
 get_start_client
+
+# "$@" passes every parameter separately quoted, "$*" passes all parameters as one quoted parameter.
+# must be here to allow debugger and other flags to be set.
+get_parameters "$@"
+
+# Check for dependencies before running anything else except above functions
+check_script_depends
 
 # note: this only works if it's run from inside konversation as a script builtin or something
 # only do this if inxi has been started as a konversation script, otherwise bypass this
@@ -2726,16 +2743,14 @@ fi
 # 	print_screen_output "DCSERVER: $DCSERVER"
 # 	print_screen_output "DCTARGET: $DCTARGET"
 
-# "$@" passes every parameter separately quoted, "$*" passes all parameters as one quoted parameter.
-get_parameters "$@"
-
 # If no colorscheme was set in the parameter handling routine, then set the default scheme
 if [[ $COLOR_SCHEME_SET != 'true' ]];then
 	set_color_scheme "$DEFAULT_SCHEME"
 fi
 
 # all the pre-start stuff is in place now
-script_debugger "Debugger: inxi is up and running..." 'all-up'
+B_SCRIPT_UP='true'
+script_debugger "Debugger: $SCRIPT_NAME is up and running..."
 
 # then create the output
 print_it_out
