@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.8.11.b2.7
-####  Date: December 16 2008
+####  version: 0.8.13.b2.1
+####  Date: December 22 2008
 ########################################################################
 ####  inxi is a fork of infobash 3.02, the original bash sys info script by locsmif
 ####  As time permits functionality improvements and recoding will occur.
@@ -12,7 +12,7 @@
 ####  Gaim/Pidgin, Weechat, KVIrc and Kopete.
 ####  Original infobash author and copyright holder:
 ####  Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif
-####  inxi version: Copyright (C) 2008 Warren Scott Rogers & Harald Hope
+####  inxi version: Copyright (C) 2008 Scott Rogers & Harald Hope
 ####  Further fixes (listed as known): Horst Tritremmel <hjt at sidux.com>
 ####
 ####  Current script home page: http://techpatterns.com/forums/about1131.html
@@ -154,6 +154,19 @@ if [[ -n $DISPLAY ]];then
 	B_X_RUNNING='true'
 fi
 
+### Directory/file exist flags
+B_PROC='false'
+B_CPUINFO='false'
+B_MEMINFO='false'
+B_ASOUND_CARDS='false'
+B_BASH_ARRAY='false'
+B_IFCONFIG='false'
+
+### Directory's used when present 
+CPUINFO='/proc/cpuinfo'
+MEMINFO='/proc/meminfo'
+ASOUND_DEVICE='/proc/asound/cards'
+
 ### Variable initializations: constants
 DCOPOBJ="default"
 DEBUG=0 # Set debug levels from 1-10
@@ -257,6 +270,155 @@ fi
 # there's a check for Konversation-specific config files.
 # Any one of these can override the above if inxi is run
 # from Konversation!
+
+########################################################################
+#### MAIN: Where it all begins
+########################################################################
+main()
+{
+
+init
+# first two functions must be set first for colors etc. Remember, no debugger
+# stuff works on these first two functions unless you set the debugging flag
+# manually. Debugging flag -@ [number] will not work until get_parameters runs.
+set_calculated_variables
+
+## this needs to run before the KONVI stuff is set below
+get_start_client
+
+# Check for dependencies before running anything else except above functions
+check_script_depends
+check_script_suggested_apps
+
+# note: this only works if it's run from inside konversation as a script builtin or something
+# only do this if inxi has been started as a konversation script, otherwise bypass this
+if [[ $KONVI -eq 1 ]];then
+	DCPORT="$1"
+	DCSERVER="$2"
+	DCTARGET="$3"
+	shift 3
+	# The section below is on request of Argonel from the Konversation developer team:
+	# it sources config files like $HOME/.kde/share/apps/konversation/scripts/inxi.conf
+	IFS=":"
+	for kde_config in $( kde-config --path data )
+	do
+		if [[ -r ${kde_config}${KONVI_CFG} ]];then
+			source "${kde_config}${KONVI_CFG}"
+			break
+		fi
+	done
+	IFS="$ORIGINAL_IFS"
+fi
+## leave this for debugging dcop stuff if we get that working
+# 	print_screen_output "DCPORT: $DCPORT"
+# 	print_screen_output "DCSERVER: $DCSERVER"
+# 	print_screen_output "DCTARGET: $DCTARGET"
+
+# "$@" passes every parameter separately quoted, "$*" passes all parameters as one quoted parameter.
+# must be here to allow debugger and other flags to be set.
+get_parameters "$@"
+
+# If no colorscheme was set in the parameter handling routine, then set the default scheme
+if [[ $COLOR_SCHEME_SET != 'true' ]];then
+	set_color_scheme "$DEFAULT_SCHEME"
+fi
+
+# all the pre-start stuff is in place now
+B_SCRIPT_UP='true'
+script_debugger "Debugger: $SCRIPT_NAME is up and running..."
+
+# then create the output
+print_it_out
+
+## last steps
+if [[ $B_RUNNING_IN_SHELL == 'true' && $SCHEME -gt 0 ]];then
+	echo -n "[0m"
+fi
+
+# weechat's executor plugin forced me to do this, and rightfully so, because else the exit code
+# from the last command is taken..
+exit 0
+}
+
+#### -------------------------------------------------------------------
+#### basic tests: init some boleans
+#### -------------------------------------------------------------------
+
+# initialize some boleans, these directories are used throughout the script
+# some apps are used for extended functions
+init()
+{
+	if [[ -e /proc/ ]];then 
+		B_PROC='true'
+	fi
+
+	if [[ -e $CPUINFO ]]; then
+		B_CPUINFO='true'
+	fi
+
+	if [[ -e $MEMINFO ]];then
+		B_MEMINFO='true'
+	fi
+
+	if [[ -e ASOUND_DEVICE ]];then
+		B_ASOUND_CARDS='true'
+	fi
+}
+
+check_script_suggested_apps()
+{
+	local bash_array_test=( "one" "two" )
+
+	# check for array ability of bash, this is only good for the warning at this time
+	# the boolean could be used later
+	# bash version 2.05b is used in DSL
+	# bash version 3.0 is used in Puppy Linux
+	# versions older than 3.1 don't handle arrays
+	# distro's using below 2.05b are unknown, released in 2002
+	if [[ ${bash_array_test[1]} == "two" ]];then
+		B_BASH_ARRAY='true'
+	else
+		script_debugger "Suggestion: Bash v3.1 or above is needed for array usage"
+	fi
+	
+	# lack of ifconfig will throw an error only upon it's usage
+	if [[ -x ifconfig ]];then
+		B_IFCONFIG='true'
+	fi 
+}
+
+# Determine if any of the absolutely necessary tools are absent
+check_script_depends()
+{
+	local app_name='' app_data=''
+	# bc removed from deps for now
+	local depends="df free gawk grep hostname lspci ps readlink tr uname uptime wc"
+
+	if [[ ! -d /proc/ ]];then
+		error_handler 6
+	fi
+	if [[ $B_X_RUNNING == 'true' ]];then
+		for app_name in xrandr xdpyinfo glxinfo
+		do
+			app_data=$( type -p $app_name )
+			if [[ -z $app_data ]];then
+				script_debugger "Resuming in non X mode: $app_name not found in path"
+				B_X_RUNNING='false'
+				break
+			fi
+		done
+	fi
+
+	app_name=''
+
+	for app_name in $depends
+	do
+		app_data=$( type -p $app_name )
+		if [[ -z $app_data ]];then
+			error_handler 5 "$app_name"
+		fi
+	done
+}
 
 ########################################################################
 #### UTILITY FUNCTIONS
@@ -417,43 +579,6 @@ sanitize_characters()
 		gsub(/^ +| +$/,\"\")   ## (pipe char) with (nothing)
 		print                  ## prints (returns) cleaned input
 	}"
-}
-
-#### -------------------------------------------------------------------
-#### basic tests
-#### -------------------------------------------------------------------
-
-# Determine if any of the absolutely necessary tools are absent
-check_script_depends()
-{
-	local app_name='' app_data=''
-	# bc removed from deps for now
-	local depends="df free gawk grep hostname lspci ps readlink tr uname uptime wc"
-
-	if [[ ! -d /proc/ ]];then
-		error_handler 6
-	fi
-	if [[ $B_X_RUNNING == 'true' ]];then
-		for app_name in xrandr xdpyinfo glxinfo
-		do
-			app_data=$( type -p $app_name )
-			if [[ -z $app_data ]];then
-				script_debugger "Resuming in non X mode: $app_name not found in path"
-				B_X_RUNNING='false'
-				break
-			fi
-		done
-	fi
-
-	app_name=''
-
-	for app_name in $depends
-	do
-		app_data=$( type -p $app_name )
-		if [[ -z $app_data ]];then
-			error_handler 5 "$app_name"
-		fi
-	done
 }
 
 # Filter boilerplate & buzzwords.
@@ -1314,18 +1439,17 @@ get_distro_data()
 			# This is a known bug, search for the word "strange" inside comments
 			# echo "i='$i' a_distro_glob[@]='${a_distro_glob[@]}'"
 			if [[ " ${a_distro_glob[@]} " == *" $i "* ]];then
-				distro_file="${i}"
-				break
-			fi
-		done
-		# Now lets see if the distro file is in the known-good working-lsb-list
-		# if so, use lsb-release
-		# this is for only those distro's with self named release/version files
-		# because Mint does not use such, it must be done as below
-		for j in $DISTROS_LSB_GOOD
-		do
-			if [[ " ${distro_file} " == *" $j "* ]];then
-				distro_file='lsb-release'
+				# Now lets see if the distro file is in the known-good working-lsb-list
+				# if so, use lsb-release, if not, then just use the found file
+				# this is for only those distro's with self named release/version files
+				# because Mint does not use such, it must be done as below
+				## this if statement requires the spaces and * as it is, else it won't work
+				##
+				if [[ " $DISTROS_LSB_GOOD " == *" ${i} "* && -f /etc/lsb-release ]];then
+					distro_file='lsb-release'
+				else
+					distro_file="${i}"
+				fi
 				break
 			fi
 		done
@@ -2727,64 +2851,8 @@ print_system_data()
 ########################################################################
 #### SCRIPT EXECUTION
 ########################################################################
-# first two functions must be set first for colors etc. Remember, no debugger
-# stuff works on these first two functions unless you set the debugging flag
-# manually. Debugging flag -@ [number] will not work until get_parameters runs.
-set_calculated_variables
 
-## this needs to run before the KONVI stuff is set below
-get_start_client
+main $@ ## From the End comes the Beginning
 
-# Check for dependencies before running anything else except above functions
-check_script_depends
-
-# note: this only works if it's run from inside konversation as a script builtin or something
-# only do this if inxi has been started as a konversation script, otherwise bypass this
-if [[ $KONVI -eq 1 ]];then
-	DCPORT="$1"
-	DCSERVER="$2"
-	DCTARGET="$3"
-	shift 3
-	# The section below is on request of Argonel from the Konversation developer team:
-	# it sources config files like $HOME/.kde/share/apps/konversation/scripts/inxi.conf
-	IFS=":"
-	for kde_config in $( kde-config --path data )
-	do
-		if [[ -r ${kde_config}${KONVI_CFG} ]];then
-			source "${kde_config}${KONVI_CFG}"
-			break
-		fi
-	done
-	IFS="$ORIGINAL_IFS"
-fi
-## leave this for debugging dcop stuff if we get that working
-# 	print_screen_output "DCPORT: $DCPORT"
-# 	print_screen_output "DCSERVER: $DCSERVER"
-# 	print_screen_output "DCTARGET: $DCTARGET"
-
-# "$@" passes every parameter separately quoted, "$*" passes all parameters as one quoted parameter.
-# must be here to allow debugger and other flags to be set.
-get_parameters "$@"
-
-# If no colorscheme was set in the parameter handling routine, then set the default scheme
-if [[ $COLOR_SCHEME_SET != 'true' ]];then
-	set_color_scheme "$DEFAULT_SCHEME"
-fi
-
-# all the pre-start stuff is in place now
-B_SCRIPT_UP='true'
-script_debugger "Debugger: $SCRIPT_NAME is up and running..."
-
-# then create the output
-print_it_out
-
-## last steps
-if [[ $B_RUNNING_IN_SHELL == 'true' && $SCHEME -gt 0 ]];then
-	echo -n "[0m"
-fi
-
-# weechat's executor plugin forced me to do this, and rightfully so, because else the exit code
-# from the last command is taken..
-exit 0
 ## note: this EOF is needed for smxi handling, this is what triggers the full download ok
 ###**EOF**###
