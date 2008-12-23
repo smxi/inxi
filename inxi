@@ -159,13 +159,17 @@ B_PROC='false'
 B_CPUINFO='false'
 B_MEMINFO='false'
 B_ASOUND_CARDS='false'
+B_ASOUND_VERSION='false'
 B_BASH_ARRAY='false'
 B_IFCONFIG='false'
+B_LSB_DIR='false'
 
 ### Directory's used when present 
 CPUINFO='/proc/cpuinfo'
 MEMINFO='/proc/meminfo'
 ASOUND_DEVICE='/proc/asound/cards'
+ASOUND_VERSION='/proc/asound/version'
+LSB_RELEASE='/etc/lsb-release'
 
 ### Variable initializations: constants
 DCOPOBJ="default"
@@ -348,21 +352,37 @@ exit 0
 # some apps are used for extended functions
 init()
 {
-	if [[ -e /proc/ ]];then 
+	if [[ -d "/proc/" ]];then 
 		B_PROC='true'
+	else
+		error_handler 6
 	fi
 
-	if [[ -e $CPUINFO ]]; then
+	if [[ -e "$CPUINFO" ]]; then
 		B_CPUINFO='true'
 	fi
 
-	if [[ -e $MEMINFO ]];then
+	if [[ -e "$MEMINFO" ]];then
 		B_MEMINFO='true'
 	fi
 
-	if [[ -e ASOUND_DEVICE ]];then
+	if [[ -e "$ASOUND_DEVICE" ]];then
 		B_ASOUND_CARDS='true'
 	fi
+
+	if [[ -e "$ASOUND_VERSION" ]];then
+		B_ASOUND_VERSION='true'
+	fi
+
+	if [[ -f "$LSB_RELEASE" ]];then
+		B_LSB_DIR='true'
+	fi
+	
+	# lack of ifconfig will throw an error only upon it's usage
+	if [[ -x ifconfig ]];then
+		B_IFCONFIG='true'
+	fi 
+
 }
 
 check_script_suggested_apps()
@@ -381,10 +401,7 @@ check_script_suggested_apps()
 		script_debugger "Suggestion: Bash v3.1 or above is needed for array usage"
 	fi
 	
-	# lack of ifconfig will throw an error only upon it's usage
-	if [[ -x ifconfig ]];then
-		B_IFCONFIG='true'
-	fi 
+	
 }
 
 # Determine if any of the absolutely necessary tools are absent
@@ -394,9 +411,6 @@ check_script_depends()
 	# bc removed from deps for now
 	local depends="df free gawk grep hostname lspci ps readlink tr uname uptime wc"
 
-	if [[ ! -d /proc/ ]];then
-		error_handler 6
-	fi
 	if [[ $B_X_RUNNING == 'true' ]];then
 		for app_name in xrandr xdpyinfo glxinfo
 		do
@@ -476,31 +490,31 @@ error_handler()
 script_debugger()
 {
 	if [[ $B_SCRIPT_UP == 'true' ]];then
-			# only return if debugger is off and no pre start up errors have occured
-			if [[ $DEBUG -eq 0 && $DEBUG_BUFFER_INDEX -eq 0 ]];then
-				return 0
-			# print out the stored debugging information if errors occured
-			elif [[ $DEBUG_BUFFER_INDEX -gt 0 ]];then
-				for (( DEBUG_BUFFER_INDEX=0; DEBUG_BUFFER_INDEX < ${#A_DEBUG_BUFFER[@]}; DEBUG_BUFFER_INDEX++ ))
-				do
-					print_screen_output "${A_DEBUG_BUFFER[$DEBUG_BUFFER_INDEX]}"
-				done
-				DEBUG_BUFFER_INDEX=0
-			fi
-			# or print out normal debugger messages if debugger is on
-			if [[ $DEBUG -gt 0 ]];then
-				print_screen_output "$1"
-			fi
+		# only return if debugger is off and no pre start up errors have occured
+		if [[ $DEBUG -eq 0 && $DEBUG_BUFFER_INDEX -eq 0 ]];then
+			return 0
+		# print out the stored debugging information if errors occured
+		elif [[ $DEBUG_BUFFER_INDEX -gt 0 ]];then
+			for (( DEBUG_BUFFER_INDEX=0; DEBUG_BUFFER_INDEX < ${#A_DEBUG_BUFFER[@]}; DEBUG_BUFFER_INDEX++ ))
+			do
+				print_screen_output "${A_DEBUG_BUFFER[$DEBUG_BUFFER_INDEX]}"
+			done
+			DEBUG_BUFFER_INDEX=0
+		fi
+		# or print out normal debugger messages if debugger is on
+		if [[ $DEBUG -gt 0 ]];then
+			print_screen_output "$1"
+		fi
 	else
-			if [[ $B_DEBUG_FLOOD == 'true' && $DEBUG_BUFFER_INDEX -gt 10 ]];then
-				error_handler 2
-			# this case stores the data for later printout, will print out only
-			# at B_SCRIPT_UP == 'true' if array index > 0
-			else
-				A_DEBUG_BUFFER[$DEBUG_BUFFER_INDEX]="$1"
-				# increment count for next pre script up debugging error
-				(( DEBUG_BUFFER_INDEX++ ))
-			fi
+		if [[ $B_DEBUG_FLOOD == 'true' && $DEBUG_BUFFER_INDEX -gt 10 ]];then
+			error_handler 2
+		# this case stores the data for later printout, will print out only
+		# at B_SCRIPT_UP == 'true' if array index > 0
+		else
+			A_DEBUG_BUFFER[$DEBUG_BUFFER_INDEX]="$1"
+			# increment count for next pre script up debugging error
+			(( DEBUG_BUFFER_INDEX++ ))
+		fi
 	fi
 }
 
@@ -859,8 +873,8 @@ show_options()
 	print_screen_output "-h - this help menu."
 	if [[ $B_ALLOW_UPDATE == 'true' ]];then
 		print_screen_output "-U  Auto-update script. Note: if you installed as root, you"
+		print_screen_output "    must be root to update, otherwise user is fine."
 	fi
-	print_screen_output "    must be root to update, otherwise user is fine."
 	print_screen_output "-V  $SCRIPT_NAME version information. Prints information then exits."
 	print_screen_output "-%  Overrides defective or corrupted data."
 	print_screen_output "-@  Triggers debugger output. Requires debugging level 1-10."
@@ -1182,7 +1196,7 @@ get_audio_data()
 	IFS=$'\n'
 	# this first step handles the drivers for cases where the second step fails to find one
 	device_count=$( egrep -ic '(multimedia audio controller|audio device)' <<< "$lspci_data" )
-	if [[ $device_count -eq 1 && -f /proc/asound/cards ]];then
+	if [[ $device_count -eq 1 && -f $ASOUND_DEVICE ]];then
 		alsa_driver=$( gawk -F ']: ' '
 		{ IGNORECASE=1 }
 		# filtering out modems and usb devices like webcams, this might get a
@@ -1193,7 +1207,7 @@ get_audio_data()
 			if ( driver != "" ){
 				print driver
 			}
-		}'  /proc/asound/cards )
+		}'  $ASOUND_DEVICE )
 	fi
 	# this is to safeguard against line breaks from results > 1, which if inserted into following
 	# array will create a false array entry. This is a hack, not a permanent solution.
@@ -1269,7 +1283,7 @@ get_audio_data()
 	}') )
 
 	# in case of failure of first check do this instead
-	if [[ ${#A_AUDIO_DATA[@]} -eq 0 && -f /proc/asound/cards ]];then
+	if [[ ${#A_AUDIO_DATA[@]} -eq 0 && -f $ASOUND_DEVICE ]];then
 		A_AUDIO_DATA=( $( gawk -F ']: ' '
 		{ IGNORECASE=1 }
 		$1 !~ /modem/ && $2 !~ /modem/ {
@@ -1278,7 +1292,7 @@ get_audio_data()
 			if ( card != "" ){
 				print card","driver
 			}
-		}'  /proc/asound/cards ) )
+		}'  $ASOUND_DEVICE ) )
 	fi
 	IFS="$ORIGINAL_IFS"
 
@@ -1293,7 +1307,7 @@ get_audio_alsa_data()
 	local alsa_data=''
 
 	# now we'll get the alsa data if the file exists
-	if [[ -e /proc/asound/version ]];then
+	if [[ -e "$B_ASOUND_VERSION" ]];then
 		alsa_data=$( gawk '
 			{ IGNORECASE=1 }
 			# some alsa strings have the build date in (...)
@@ -1306,7 +1320,7 @@ get_audio_alsa_data()
 				if ( $0 != "" ){
 					print $0
 				}
-		}' /proc/asound/version )
+		}' $B_ASOUND_VERSION )
 	fi
 	echo "$alsa_data"
 }
@@ -1317,10 +1331,10 @@ get_cpu_core_count()
 {
 	## Because of the upcoming release of cpus with core counts over 6, a count of cores is given after Deca (10)
 	# count the number of processors given
-	local cpu_core_count=$(grep -ic "cpu cores" /proc/cpuinfo| cut -d':' -f2)
+	local cpu_core_count=$(grep -ic "cpu cores" $CPUINFO| cut -d':' -f2)
 
 	if [[ $cpu_core_count -eq 0 ]];then
-		cpu_core_count=$(grep -ic "^processor" /proc/cpuinfo| cut -d':' -f2)
+		cpu_core_count=$(grep -ic "^processor" $CPUINFO| cut -d':' -f2)
 	fi
 	local cpu_alpha_count=''
 
@@ -1354,7 +1368,7 @@ get_cpu_data()
 	IFS=$'\n'
 	A_CPU_DATA=($(gawk -F': ' '
 	{ IGNORECASE=1 }
-	# TAKE NOTE: \t+ will work for /proc/cpuinfo, but SOME ARBITRARY FILE used for TESTING might contain SPACES!
+	# TAKE NOTE: \t+ will work for $CPUINFO, but SOME ARBITRARY FILE used for TESTING might contain SPACES!
 	# Therefore PATCH to use [ \t]+ when TESTING!
 	/^processor\t+:/ { nr = $NF }
 
@@ -1411,7 +1425,7 @@ get_cpu_data()
 		else {
 			printf("%s %s\n", max, "Mhz")
 		}
-	}' /proc/cpuinfo))
+	}' $CPUINFO))
 
 	IFS="$ORIGINAL_IFS"
 }
@@ -1445,7 +1459,7 @@ get_distro_data()
 				# because Mint does not use such, it must be done as below
 				## this if statement requires the spaces and * as it is, else it won't work
 				##
-				if [[ " $DISTROS_LSB_GOOD " == *" ${i} "* && -f /etc/lsb-release ]];then
+				if [[ " $DISTROS_LSB_GOOD " == *" ${i} "* && "$B_LSB_DIR" ]];then
 					distro_file='lsb-release'
 				else
 					distro_file="${i}"
@@ -1469,7 +1483,7 @@ get_distro_data()
 	# otherwise try  the default debian/ubuntu /etc/issue file
 	elif [[ -f /etc/issue ]];then
 		# lsb gives more manageable and accurate output than issue, but mint should use issue for now
-		if [[ -f /etc/lsb-release && -z $( grep -i 'mint' /etc/issue ) ]];then
+		if [[ "$B_LSB_DIR" && -z $( grep -i 'mint' /etc/issue ) ]];then
 			distro=$( get_distro_lsb_data )
 		else
 			distro=$( gawk '
@@ -1490,7 +1504,7 @@ get_distro_data()
 	# : ${distro:=Unknown distro o_O}
 	## test for /etc/lsb-release as a backup in case of failure, in cases where > one version/release file
 	## were found but the above resulted in null distro value
-	if [[ -z $distro && -f /etc/lsb-release ]];then
+	if [[ -z $distro && "$B_LSB_DIR" ]];then
 		distro=$( get_distro_lsb_data )
 	fi
 	## finally, if all else has failed, give up
@@ -1511,7 +1525,7 @@ get_distro_lsb_data()
 {
 	local distro=''
 
-	if [[ -f /etc/lsb-release && $1 != 'app' ]];then
+	if [[ "$B_LSB_DIR" && $1 != 'app' ]];then
 		distro=$( gawk -F '=' '
 
 		{ IGNORECASE=1 }
@@ -1540,7 +1554,7 @@ get_distro_lsb_data()
 		}
 		END {
 			print distroId distroRelease distroCodename
-		}' /etc/lsb-release )
+		}' $LSB_RELEASE )
 	fi
 	# this is HORRIBLY slow, but I don't know why, it runs fast in shell
 # 	if [[  -n $( which lsb_release ) && $1 == 'app' ]];then
@@ -1912,7 +1926,7 @@ get_memory_data()
 	END {
 		used = tot-notused
 		printf("%.1f/%.1fMB\n", used/1024, tot/1024)
-	}' /proc/meminfo )
+	}' $MEMINFO )
 
 	echo "$memory"
 }
@@ -2024,7 +2038,7 @@ get_networking_wan_ip_data()
 
 get_networking_local_ip_data()
 {
-	if [[ -n $( which ifconfig ) ]];then
+	if [[ B_IFCONFIG ]];then
 		IFS=$'\n'
 		A_INTERFACES_DATA=( $( ifconfig | gawk '
 		BEGIN { IGNORECASE=1 }
@@ -2069,12 +2083,14 @@ get_networking_local_ip_data()
 
 get_partition_data()
 {
+	local excluded_file_types='--exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660'
+
 	IFS=$'\n'
 	# sample line: /dev/sda2     ext3     15G  8.9G  4.9G  65% /home
 	# $NF = partition name; $(NF - 4) = partition size; $(NF - 3) = used, in gB; $(NF - 1) = percent used
 	## note: by subtracting from the last field number NF, we avoid a subtle issue with LVM df output, where if
 	## the first field is too long, it will occupy its own line, this way we are getting only the needed data
-	A_PARTITION_DATA=( $( df -h -T --exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660 | gawk '
+	A_PARTITION_DATA=( $( df -h -T  "$excluded_file_types" | gawk '
 	BEGIN { IGNORECASE=1 }
 	/\/$|\/boot$|\/var$|\/home$|\/tmp$|\/usr$/ && ! /aufs/ {
 		print $NF "," $(NF - 4) "," $(NF - 3) "," $(NF - 1) ",main"
@@ -2238,7 +2254,7 @@ print_it_out()
 # these will also be loaded in each relevant print function for long output
 print_short_data()
 {
-	local current_kernel=$( uname -a | gawk '{print $1,$3,$(NF-1)}' )
+	local current_kernel=$( uname -rm ) # | gawk '{print $1,$3,$(NF-1)}' )
 	local processes="$(( $( ps aux | wc -l ) - 1 ))"
 	local short_data='' i='' b_background_black='false'
 	local memory=$( get_memory_data )
@@ -2331,7 +2347,7 @@ print_audio_data()
 # 		if [[ -n ${a_audio_working[2]} ]];then
 # 			port_data=" ${C1}at port${C2} ${a_audio_working[2]}"
 # 		fi
-		# this should only trigger if the /proc/asound/cards data is used, not lspci -nn
+		# this should only trigger if the $ASOUND_DEVICE data is used, not lspci -nn
 		if [[ -n ${a_audio_working[3]} && $B_EXTRA_DATA == 'true' ]];then
 			module_version=$( print_module_version "${a_audio_working[3]}" )
 		fi
@@ -2634,7 +2650,7 @@ print_info_data()
 
 	# this only triggers if no X data is present
 	if [[ $B_X_RUNNING != 'true' ]];then
-		if [[ -a $suggested_app ]];then
+		if [[ -e $suggested_app ]];then
 			runlvl="$( runlevel | gawk '{ print $2 }' )"
 			info_data="${info_data} ${C1}Runlevel${C2} ${runlvl}${CN}"
 		fi
@@ -2830,7 +2846,7 @@ print_system_data()
 {
 	local system_data='' bits=''
 	local host_name=$( hostname )
-	local current_kernel=$( uname -a | gawk '{print $1,$3,$(NF-1)}' )
+	local current_kernel=$( uname -rm ) # | gawk '{print $1,$3,$(NF-1)}' )
 	local distro="$( get_distro_data )"
 		# check for 64 bit first
 	if [ -n "$( uname -m | grep -o 'x86_64' )" ];then
@@ -2840,9 +2856,9 @@ print_system_data()
 	fi
 
 	if [[ $B_SHOW_HOST == 'true' ]];then
-		system_data=$( create_print_line "System:" "${C1}Host${C2} $host_name ${C1}running${C2}" )
+		system_data=$( create_print_line "System:" "${C1}Host${C2} $host_name ${C1}Kernel${C2}" )
 	else
-		system_data=$( create_print_line "System:" "${C1}running${C2} ${CN}" )
+		system_data=$( create_print_line "System:" "${C1}Kernel${C2} ${CN}" )
 	fi
 	system_data="$system_data ${C2}$current_kernel $bits ${C1}Distro${C2} $distro"
 	print_screen_output "$system_data"
