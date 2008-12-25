@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.8.13.b2.5
-####  Date: December 22 2008
+####  version: 0.9
+####  Date: December 24 2008
 ########################################################################
 ####  inxi is a fork of infobash 3.02, the original bash sys info script by locsmif
 ####  As time permits functionality improvements and recoding will occur.
@@ -35,14 +35,15 @@
 ####  this page: http://www.gnu.org/philosophy/free-sw.html
 ########################################################################
 ####  DEPENDENCIES
-####  bash >=2.05b(bash), df;readlink;stty;tr;uname;wc(coreutils),
+####  bash >=3.0(bash), df;readlink;stty;tr;uname;wc(coreutils),
 ####  gawk(gawk), grep(grep), hostname(hostname), lspci(pciutils),
 ####  ps;uptime(procps), glxinfo;xdpyinfo;xrandr(xbase-clients)
 ####  Also the proc filesystem should be present and mounted
 ####
 ####  RECOMMENDS (Needed to run certain features)
 ####  For local interfaces/IP test: ifconfig (in net-tools for Debian systems)
-####  runlevel(sysvinit: to view current runlevel while not in X window system
+####  runlevel(sysvinit): to view current runlevel while not in X window system
+####  Bash 3.1 for proper array use
 ########################################################################
 ####  CONVENTIONS:
 ####  Indentation: TABS
@@ -161,14 +162,18 @@ B_BASH_ARRAY='false'
 B_IFCONFIG='false'
 B_LSB_DIR='false'
 B_SCSI_DIR='false'
+B_MODULES_DIR='false' #
+B_PARTITIONS_DIR='false' #
 
 ### Directory's used when present 
-CPUINFO='/proc/cpuinfo'
-MEMINFO='/proc/meminfo'
-ASOUND_DEVICE='/proc/asound/cards'
-ASOUND_VERSION='/proc/asound/version'
-LSB_RELEASE='/etc/lsb-release'
-SCSI_DIR='/proc/scsi/scsi'
+DIR_CPUINFO='/proc/cpuinfo'
+DIR_MEMINFO='/proc/meminfo'
+DIR_ASOUND_DEVICE='/proc/asound/cards'
+DIR_ASOUND_VERSION='/proc/asound/version'
+DIR_LSB_RELEASE='/etc/lsb-release'
+DIR_SCSI='/proc/scsi/scsi'
+DIR_MODULES='/proc/modules' #
+DIR_PARTITIONS='/proc/partitions' #
 
 ### Variable initializations: constants
 DCOPOBJ="default"
@@ -248,6 +253,9 @@ DISTROS_DERIVED="antix-version kanotix-version knoppix-version mandrake-release 
 DISTROS_EXCLUDE_LIST="debian_version ubuntu_version"
 DISTROS_PRIMARY="gentoo-release redhat-release slackware-version SuSE-release"
 DISTROS_LSB_GOOD="mandrake-release mandriva-release mandrakelinux-release"
+## Distros with known problems
+# DSL (Bash 2.05b: grep -m doesn't work; arrays won't work) --> unusable output
+# Puppy Linux 4.1.2 (Bash 3.0: arrays won't work) --> works partially
 
 ### Bans Data
 # Precede a banword with $'\2' to prevent it from being subject to automated escaping by the make_ban_lists routine
@@ -357,27 +365,27 @@ init()
 		error_handler 6
 	fi
 
-	if [[ -e "$CPUINFO" ]]; then
+	if [[ -e "$DIR_CPUINFO" ]]; then
 		B_CPUINFO='true'
 	fi
 
-	if [[ -e "$MEMINFO" ]];then
+	if [[ -e "$DIR_MEMINFO" ]];then
 		B_MEMINFO='true'
 	fi
 
-	if [[ -e "$ASOUND_DEVICE" ]];then
+	if [[ -e "$DIR_ASOUND_DEVICE" ]];then
 		B_ASOUND_CARDS='true'
 	fi
 
-	if [[ -e "$ASOUND_VERSION" ]];then
+	if [[ -e "$DIR_ASOUND_VERSION" ]];then
 		B_ASOUND_VERSION='true'
 	fi
 
-	if [[ -f "$LSB_RELEASE" ]];then
+	if [[ -f "$DIR_LSB_RELEASE" ]];then
 		B_LSB_DIR='true'
 	fi
 
-	if [[ -e "$SCSI_DIR" ]];then
+	if [[ -e "$DIR_SCSI" ]];then
 		B_SCSI_DIR='true'
 	fi
 	
@@ -388,6 +396,14 @@ init()
 	
 	if [[ -n $DISPLAY ]];then
 		B_X_RUNNING='true'
+	fi
+
+	if [[ -e $DIR_MODULES ]];then
+		B_MODULES_DIR='true'
+	fi
+
+	if [[ -e $DIR_PARTITIONS ]];then
+		B_PARTITIONS_DIR='true'
 	fi
 }
 
@@ -404,7 +420,7 @@ check_script_suggested_apps()
 	if [[ ${bash_array_test[1]} == "two" ]];then
 		B_BASH_ARRAY='true'
 	else
-		script_debugger "Suggestion: Bash v3.1 or above is needed for array usage"
+		script_debugger "Suggestion: Bash v3.1 for optimal inxi output"
 	fi
 	
 	
@@ -1201,7 +1217,7 @@ get_audio_data()
 
 	IFS=$'\n'
 	# this first step handles the drivers for cases where the second step fails to find one
-	device_count=$( egrep -ic '(multimedia audio controller|audio device)' <<< "$lspci_data" )
+	device_count=$( echo "$lspci_data" | egrep -ic '(multimedia audio controller|audio device)' )
 	if [[ $device_count -eq 1 ]] && [[ $B_ASOUND_CARDS == 'true' ]];then
 		alsa_driver=$( gawk -F ']: ' '
 		{ IGNORECASE=1 }
@@ -1213,8 +1229,9 @@ get_audio_data()
 			if ( driver != "" ){
 				print driver
 			}
-		}'  $ASOUND_DEVICE )
+		}'  $DIR_ASOUND_DEVICE )
 	fi
+
 	# this is to safeguard against line breaks from results > 1, which if inserted into following
 	# array will create a false array entry. This is a hack, not a permanent solution.
 	alsa_driver=$( echo $alsa_driver )
@@ -1289,7 +1306,7 @@ get_audio_data()
 	}') )
 
 	# in case of failure of first check do this instead
-	if [[ ${#A_AUDIO_DATA[@]} -eq 0 ]] && [[ $B_ASOUND_CARDS ]];then
+	if [[ ${#A_AUDIO_DATA[@]} -eq 0 ]] && [[ $B_ASOUND_CARDS == 'true' ]];then
 		A_AUDIO_DATA=( $( gawk -F ']: ' '
 		{ IGNORECASE=1 }
 		$1 !~ /modem/ && $2 !~ /modem/ {
@@ -1298,7 +1315,7 @@ get_audio_data()
 			if ( card != "" ){
 				print card","driver
 			}
-		}'  $ASOUND_DEVICE ) )
+		}'  $DIR_ASOUND_DEVICE ) )
 	fi
 	IFS="$ORIGINAL_IFS"
 
@@ -1326,7 +1343,7 @@ get_audio_alsa_data()
 				if ( $0 != "" ){
 					print $0
 				}
-		}' $ASOUND_VERSION )
+		}' $DIR_ASOUND_VERSION )
 	fi
 	echo "$alsa_data"
 }
@@ -1338,10 +1355,10 @@ get_cpu_core_count()
 	if [[ $B_CPUINFO == 'true' ]]; then
 		## Because of the upcoming release of cpus with core counts over 6, a count of cores is given after Deca (10)
 		# count the number of processors given
-		local cpu_core_count=$(grep -ic "cpu cores" $CPUINFO| cut -d':' -f2)
+		local cpu_core_count=$(grep -ic "cpu cores" $DIR_CPUINFO| cut -d':' -f2)
 
 		if [[ $cpu_core_count -eq 0 ]];then
-			cpu_core_count=$(grep -ic "^processor" $CPUINFO| cut -d':' -f2)
+			cpu_core_count=$(grep -ic "^processor" $DIR_CPUINFO| cut -d':' -f2)
 		fi
 		local cpu_alpha_count=''
 
@@ -1377,7 +1394,7 @@ get_cpu_data()
 		IFS=$'\n'
 		A_CPU_DATA=($(gawk -F': ' '
 		{ IGNORECASE=1 }
-		# TAKE NOTE: \t+ will work for $CPUINFO, but SOME ARBITRARY FILE used for TESTING might contain SPACES!
+		# TAKE NOTE: \t+ will work for $DIR_CPUINFO, but SOME ARBITRARY FILE used for TESTING might contain SPACES!
 		# Therefore PATCH to use [ \t]+ when TESTING!
 		/^processor\t+:/ { nr = $NF }
 
@@ -1434,7 +1451,7 @@ get_cpu_data()
 			else {
 				printf("%s %s\n", max, "Mhz")
 			}
-		}' $CPUINFO))
+		}' $DIR_CPUINFO))
 	fi
 
 	IFS="$ORIGINAL_IFS"
@@ -1565,7 +1582,7 @@ get_distro_lsb_data()
 		}
 		END {
 			print distroId distroRelease distroCodename
-		}' $LSB_RELEASE )
+		}' $DIR_LSB_RELEASE )
 	fi
 	# this is HORRIBLY slow, but I don't know why, it runs fast in shell
 # 	if [[  -n $( which lsb_release ) && $1 == 'app' ]];then
@@ -1694,9 +1711,11 @@ get_graphics_res_data()
 get_graphics_agp_data()
 {
 	local agp_module=''
-
-	## not used currently
-	agp_module=$( gawk '/agp/ && !/agpgart/ && $3 > 0 { print(gensub(/(.*)_agp.*/,"\\1","g",$1)) }' /proc/modules )
+	
+	if [[ B_MODULES_DIR == 'true' ]];then
+		## not used currently
+		agp_module=$( gawk '/agp/ && !/agpgart/ && $3 > 0 { print(gensub(/(.*)_agp.*/,"\\1","g",$1)) }' $DIR_MODULES )
+	fi
 }
 
 ## create array of x vendor/version data
@@ -1773,35 +1792,38 @@ get_hdd_data_basic()
 	# disk-dev, capacity, name, usb or not
 	# final item is the total of the disk
 	IFS=$'\n'
-	A_HDD_DATA=( $( gawk -v hddused="$hdd_used" '
-	/[hs]d[a-z]$/ {
-		driveSize = $(NF - 1)*1024/1000**3
-		gsub(/,/, " ", driveSize)
-		gsub(/^ +| +$/, "", driveSize)
-		printf( $NF",%.1fGB,,\n", driveSize )
-	}
-	# See http://lanana.org/docs/device-list/devices-2.6+.txt for major numbers used below
-	# $1 ~ /^(3|22|33|8)$/ && $2 % 16 == 0  {size+=$3}
-	# special case from this data: 8     0  156290904 sda
-	$1 ~ /^(3|22|33|8)$/ && $NF ~ /[hs]d[a-z]$/ && ( $2 % 16 == 0 || $2 % 16 == 8 )  {size+=$3}
-	END {
-		size = size*1024/1000**3                   # calculate size in GB size
-		workingUsed = hddused*1024/1000**3         # calculate workingUsed in GB used
-		# this handles a special case with livecds where no hdd_used is detected
-		if ( size > 0 && hddused == "na" ) {
-			size = sprintf( "%.1f", size )
-			print size "GB,-"
+
+	if [[ B_PARTITIONS_DIR == 'true' ]];then
+		A_HDD_DATA=( $( gawk -v hddused="$hdd_used" '
+		/[hs]d[a-z]$/ {
+			driveSize = $(NF - 1)*1024/1000**3
+			gsub(/,/, " ", driveSize)
+			gsub(/^ +| +$/, "", driveSize)
+			printf( $NF",%.1fGB,,\n", driveSize )
 		}
-		else if ( size > 0 && workingUsed > 0 ) {
-			diskUsed = workingUsed*100/size  # calculate used percentage
-			diskUsed = sprintf( "%.1f", diskUsed )
-			size = sprintf( "%.1f", size )
-			print size "GB," diskUsed "% used"
-		}
-		else {
-			print "NA,-" # print an empty array, this will be further handled in the print out function
-		}
-	}'  /proc/partitions ) )
+		# See http://lanana.org/docs/device-list/devices-2.6+.txt for major numbers used below
+		# $1 ~ /^(3|22|33|8)$/ && $2 % 16 == 0  {size+=$3}
+		# special case from this data: 8     0  156290904 sda
+		$1 ~ /^(3|22|33|8)$/ && $NF ~ /[hs]d[a-z]$/ && ( $2 % 16 == 0 || $2 % 16 == 8 )  {size+=$3}
+		END {
+			size = size*1024/1000**3                   # calculate size in GB size
+			workingUsed = hddused*1024/1000**3         # calculate workingUsed in GB used
+			# this handles a special case with livecds where no hdd_used is detected
+			if ( size > 0 && hddused == "na" ) {
+				size = sprintf( "%.1f", size )
+				print size "GB,-"
+			}
+			else if ( size > 0 && workingUsed > 0 ) {
+				diskUsed = workingUsed*100/size  # calculate used percentage
+				diskUsed = sprintf( "%.1f", diskUsed )
+				size = sprintf( "%.1f", size )
+				print size "GB," diskUsed "% used"
+			}
+			else {
+				print "NA,-" # print an empty array, this will be further handled in the print out function
+			}
+		}'  $DIR_PARTITIONS ) )
+	fi
 	IFS="$ORIGINAL_IFS"
 }
 
@@ -1866,7 +1888,7 @@ get_hard_drive_data_advanced()
 					print c
 				}
 			}
-		}' $SCSI_DIR ) )
+		}' $DIR_SCSI ) )
 	fi
 	IFS="$ORIGINAL_IFS"
 
@@ -1937,7 +1959,7 @@ get_memory_data()
 	END {
 		used = tot-notused
 		printf("%.1f/%.1fMB\n", used/1024, tot/1024)
-	}' $MEMINFO )
+	}' $DIR_MEMINFO )
 
 	echo "$memory"
 }
@@ -2359,7 +2381,7 @@ print_audio_data()
 # 		if [[ -n ${a_audio_working[2]} ]];then
 # 			port_data=" ${C1}at port${C2} ${a_audio_working[2]}"
 # 		fi
-		# this should only trigger if the $ASOUND_DEVICE data is used, not lspci -nn
+		# this should only trigger if the $DIR_ASOUND_DEVICE data is used, not lspci -nn
 		if [[ -n ${a_audio_working[3]} && $B_EXTRA_DATA == 'true' ]];then
 			module_version=$( print_module_version "${a_audio_working[3]}" )
 		fi
