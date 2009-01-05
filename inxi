@@ -1,8 +1,15 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.9.1
-####  Date: December 25 2008
+####  version: 0.9.2
+####  Date: January 5, 2009
+########################################################################
+####  SPECIAL THANKS
+########################################################################
+####  Special thanks to all those in lsc for their tireless dedication
+####  with helping test inxi modules
+########################################################################
+####  ABOUT INXI
 ########################################################################
 ####  inxi is a fork of infobash 3.02, the original bash sys info script by locsmif
 ####  As time permits functionality improvements and recoding will occur.
@@ -39,6 +46,12 @@
 ####  gawk(gawk), grep(grep), hostname(hostname), lspci(pciutils),
 ####  ps;uptime(procps), glxinfo;xdpyinfo;xrandr(xbase-clients)
 ####  Also the proc filesystem should be present and mounted
+####
+####	Apparently unpatched bash 3.0 has arrays broken; bug reports:
+####	http://ftp.gnu.org/gnu/bash/bash-3.0-patches/bash30-008
+####	http://lists.gnu.org/archive/html/bug-bash/2004-08/msg00144.html
+####
+####	Arrays work in bash 2.05b, but "egrep -m" does not
 ####
 ####  RECOMMENDS (Needed to run certain features)
 ####  For local interfaces/IP test: ifconfig (in net-tools for Debian systems)
@@ -103,6 +116,7 @@ A_AUDIO_DATA=''
 A_CMDL=''
 A_CPU_CORE_DATA=''
 A_CPU_DATA=''
+A_CPU_TYPE_PCNT_CCNT=''
 A_DEBUG_BUFFER=''
 A_GFX_CARD_DATA=''
 A_GLX_DATA=''
@@ -174,6 +188,7 @@ DIR_LSB_RELEASE='/etc/lsb-release'
 DIR_SCSI='/proc/scsi/scsi'
 DIR_MODULES='/proc/modules' #
 DIR_PARTITIONS='/proc/partitions' #
+DIR_IFCONFIG='/sbin/ifconfig' 
 
 ### Variable initializations: constants
 DCOPOBJ="default"
@@ -287,12 +302,13 @@ fi
 ########################################################################
 main()
 {
-
-init
 # first two functions must be set first for colors etc. Remember, no debugger
 # stuff works on these first two functions unless you set the debugging flag
 # manually. Debugging flag -@ [number] will not work until get_parameters runs.
 set_calculated_variables
+
+# initialize some booleans
+init
 
 ## this needs to run before the KONVI stuff is set below
 get_start_client
@@ -300,6 +316,7 @@ get_start_client
 # Check for dependencies before running anything else except above functions
 check_script_depends
 check_script_suggested_apps
+discover_ht_multicore_smp_cpu_data
 
 # note: this only works if it's run from inside konversation as a script builtin or something
 # only do this if inxi has been started as a konversation script, otherwise bypass this
@@ -357,6 +374,7 @@ exit 0
 
 # initialize some boleans, these directories are used throughout the script
 # some apps are used for extended functions
+# any directory used, should be checked here first
 init()
 {
 	if [[ -d "/proc/" ]];then 
@@ -390,19 +408,24 @@ init()
 	fi
 	
 	# lack of ifconfig will throw an error only upon it's usage
-	if [[ -x ifconfig ]];then
+	if [[ -x ifconfig ]]; then
 		B_IFCONFIG='true'
+		DIR_IFCONFIG='ifconfig' # change from full path to use $PATH
+	elif [[ -x "$DIR_IFCONFIG" ]];then
+		B_IFCONFIG='true'
+	else
+		A_INTERFACES_DATA=( "Interfaces tool requires missing app: $DIR_IFCONFIG" )
 	fi 
 	
 	if [[ -n $DISPLAY ]];then
 		B_X_RUNNING='true'
 	fi
 
-	if [[ -e $DIR_MODULES ]];then
+	if [[ -e "$DIR_MODULES" ]];then
 		B_MODULES_DIR='true'
 	fi
 
-	if [[ -e $DIR_PARTITIONS ]];then
+	if [[ -e "$DIR_PARTITIONS" ]];then
 		B_PARTITIONS_DIR='true'
 	fi
 }
@@ -417,10 +440,10 @@ check_script_suggested_apps()
 	# bash version 3.0 is used in Puppy Linux
 	# versions older than 3.1 don't handle arrays
 	# distro's using below 2.05b are unknown, released in 2002
-	if [[ ${bash_array_test[1]} == "two" ]];then
+	if [[ ${bash_array_test[1]} -eq "two" ]];then
 		B_BASH_ARRAY='true'
 	else
-		script_debugger "Suggestion: Bash v3.1 for optimal inxi output"
+		script_debugger "Suggestion: update to Bash v3.1 for optimal inxi output"
 	fi
 	
 	
@@ -1132,22 +1155,22 @@ get_start_client()
 				do
 					case ${A_CMDL[i]} in
 						*dsirc*)
-							IRC_CLIENT="KSirc"
-							# Dynamic runpath detection is too complex with KSirc, because KSirc is started from
-							# kdeinit. /proc/<pid of the grandparent of this process>/exe is a link to /usr/bin/kdeinit
-							# with one parameter which contains parameters separated by spaces(??), first param being KSirc.
-							# Then, KSirc runs dsirc as the perl irc script and wraps around it. When /exec is executed,
-							# dsirc is the program that runs inxi, therefore that is the parent process that we see.
-							# You can imagine how hosed I am if I try to make inxi find out dynamically with which path
-							# KSirc was run by browsing up the process tree in /proc. That alone is straightjacket material.
-							# (KSirc sucks anyway ;)
-							IRC_CLIENT_VERSION=" $( ksirc -v | gawk '
-							/KSirc:/ {
-								print $2
-								exit
-							}' )"
-							break
-							;;
+						IRC_CLIENT="KSirc"
+						# Dynamic runpath detection is too complex with KSirc, because KSirc is started from
+						# kdeinit. /proc/<pid of the grandparent of this process>/exe is a link to /usr/bin/kdeinit
+						# with one parameter which contains parameters separated by spaces(??), first param being KSirc.
+						# Then, KSirc runs dsirc as the perl irc script and wraps around it. When /exec is executed,
+						# dsirc is the program that runs inxi, therefore that is the parent process that we see.
+						# You can imagine how hosed I am if I try to make inxi find out dynamically with which path
+						# KSirc was run by browsing up the process tree in /proc. That alone is straightjacket material.
+						# (KSirc sucks anyway ;)
+						IRC_CLIENT_VERSION=" $( ksirc -v | gawk '
+						/KSirc:/ {
+							print $2
+							exit
+						}' )"
+						break
+						;;
 					esac
 				done
 				if [[ -z $IRC_CLIENT_VERSION ]];then
@@ -1348,6 +1371,89 @@ get_audio_alsa_data()
 	echo "$alsa_data"
 }
 
+## this is for counting processors and finding HT types
+discover_ht_multicore_smp_cpu_data()
+{
+
+# in /proc/cpuinfo
+# if > 1 processor && processor id == core id then Hyperthreaded (HT)
+# if > 1 processor && different processor ids then Multiple Processors (SMP)
+# if > 1 processor && processor id != core id then Multi-Core Processors (MCP)
+# if = 1 processor then single core/processor Uni-Processor (UP)
+
+	if [[ $B_CPUINFO == 'true' ]]; then
+	{
+		A_CPU_TYPE_PCNT_CCNT=( $(gawk '
+				BEGIN { FS=": "; i = 0 } {IGNORECASE = 1}
+				/^processor/ { num_of_processors = $NF + 1 } 	# counts logical processors, both HT and physical
+				/^cpu cores/ { num_of_cores = $NF }		# counts physical cores
+				/^physical/ { physical_id[i] = $NF }		# array of physical cpus ids
+				/^core id/ { core_id[i] = $NF; i++ }		# array of core ids
+				{
+					processors = 1
+					cores = 1	# single cores are obviously a Uni-processor
+					type = "UP"
+					cpu_temp = 0
+					core_temp = 0
+			
+					# look for the largest id number, and assign it
+					for ( j = 0; j <= num_of_processors; j++)
+					{
+						if ( physical[j] > cpu_temp )
+						{				
+							cpu_temp = physical[j]
+						}
+						if ( core_id[j] > core_temp )
+						{
+							core_temp = core_id[j]
+						}
+					}
+
+					physical_cpu_count = cpu_temp + 1
+					core_count = core_temp + 1
+
+					# looking at logical processor counts over 1, which means either HT, SMP or MCP
+					if ( num_of_processors > 1 )
+					{
+						if ( physical_cpu_count == 1 )
+						{
+							if ( physical_cpu_count == core_count )
+							{
+								type = "HT"  # this is more than likely a P4 w/HT or an Atom 270
+							}
+							else
+							{
+								if ( core_count == num_of_cores && core_count == num_of_processors)
+								{
+									type = "MCP"
+									cores = core_count
+								}
+								else
+								{
+									type = "HT"		# this is i7 or Atom 330
+									cores = core_count
+								}
+							}
+						}
+						else  
+						{
+							type = "SMP"
+							processors = physical_cpu_count
+
+							if ( num_of_cores > 1 )
+							{
+								type = "SMPMC"	# processors could be both MCP and SMP
+								cores = core_count 
+							}
+						}
+					}
+				}
+				END { print type " " processors " " cores } 
+				' $DIR_CPUINFO ))
+	}
+	fi
+}
+
 ## create A_CPU_CORE_DATA, currently with two values: integer core count; core string text
 ## return value cpu core count string, this helps resolve the multi redundant lines of old style output
 get_cpu_core_count()
@@ -1355,17 +1461,12 @@ get_cpu_core_count()
 	if [[ $B_CPUINFO == 'true' ]]; then
 		## Because of the upcoming release of cpus with core counts over 6, a count of cores is given after Deca (10)
 		# count the number of processors given
-		local cpu_core_count=$(grep -ic "cpu cores" $DIR_CPUINFO| cut -d':' -f2)
+		local cpu_core_count=${A_CPU_TYPE_PCNT_CCNT[2]}
+		local cpu_type=''
 
-		if [[ $cpu_core_count -eq 0 ]];then
-			cpu_core_count=$(grep -ic "^processor" $DIR_CPUINFO| cut -d':' -f2)
+		if [[ ${A_CPU_TYPE_PCNT_CCNT[0]} == "HT" || ${A_CPU_TYPE_PCNT_CCNT[0]} == "SMP" ]]; then
+			cpu_type=${A_CPU_TYPE_PCNT_CCNT[0]}
 		fi
-		local cpu_alpha_count=''
-
-		if [[ $cpu_core_count -lt 2 ]]; then
-			cpu_core_count=1
-		fi
-	fi
 
 	# match the numberic value to an alpha value
 	case $cpu_core_count in
@@ -1382,7 +1483,9 @@ get_cpu_core_count()
 		*) cpu_alpha_count='Multi';;
 	esac
 	# create array, core count integer; core count string
-	A_CPU_CORE_DATA=( "$cpu_core_count" "$cpu_alpha_count Core"  )
+	A_CPU_CORE_DATA=( "$cpu_core_count" "$cpu_alpha_count Core $cpu_type" )
+	
+	fi
 }
 
 ## main cpu data collector
@@ -2073,7 +2176,7 @@ get_networking_local_ip_data()
 {
 	if [[ $B_IFCONFIG == 'true' ]];then
 		IFS=$'\n'
-		A_INTERFACES_DATA=( $( ifconfig | gawk '
+		A_INTERFACES_DATA=( $( $DIR_IFCONFIG | gawk '
 		BEGIN { IGNORECASE=1 }
 		$0 !~ /^lo/ {
 			# not clear on why inet is coming through, but this gets rid of it
@@ -2109,8 +2212,6 @@ get_networking_local_ip_data()
 			}
 		}') )
 		IFS="$ORIGINAL_IFS"
-	else
-		A_INTERFACES_DATA=( "Interfaces tool requires missing app: ifconfig" )
 	fi
 }
 
