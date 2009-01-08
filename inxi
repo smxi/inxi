@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.9.1.b2.2
-####  Date: January 5, 2009
+####  version: 0.9.3.b2.1
+####  Date: January 8, 2009
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -179,7 +179,7 @@ B_SCSI_DIR='false'
 B_MODULES_DIR='false' #
 B_PARTITIONS_DIR='false' #
 
-### Directory's used when present 
+### Directory's used when present
 DIR_CPUINFO='/proc/cpuinfo'
 DIR_MEMINFO='/proc/meminfo'
 DIR_ASOUND_DEVICE='/proc/asound/cards'
@@ -188,7 +188,7 @@ DIR_LSB_RELEASE='/etc/lsb-release'
 DIR_SCSI='/proc/scsi/scsi'
 DIR_MODULES='/proc/modules' #
 DIR_PARTITIONS='/proc/partitions' #
-DIR_IFCONFIG='/sbin/ifconfig' 
+DIR_IFCONFIG='/sbin/ifconfig'
 
 ### Variable initializations: constants
 DCOPOBJ="default"
@@ -302,82 +302,110 @@ fi
 ########################################################################
 main()
 {
-# first two functions must be set first for colors etc. Remember, no debugger
-# stuff works on these first two functions unless you set the debugging flag
-# manually. Debugging flag -@ [number] will not work until get_parameters runs.
-set_calculated_variables
+	# first init function must be set first for colors etc. Remember, no debugger
+	# stuff works on this function unless you set the debugging flag
+	# manually. Debugging flag -@ [number] will not work until get_parameters runs.
+	initialize_script_data
 
-# initialize some booleans
-init
+	## this needs to run before the KONVI stuff is set below
+	get_start_client
 
-## this needs to run before the KONVI stuff is set below
-get_start_client
+	# Check for dependencies before running anything else except above functions
+	check_script_depends
+	check_script_suggested_apps
 
-# Check for dependencies before running anything else except above functions
-check_script_depends
-check_script_suggested_apps
-discover_ht_multicore_smp_cpu_data
+	# note: this only works if it's run from inside konversation as a script builtin or something
+	# only do this if inxi has been started as a konversation script, otherwise bypass this
+	if [[ $KONVI -eq 1 ]];then
+		DCPORT="$1"
+		DCSERVER="$2"
+		DCTARGET="$3"
+		shift 3
+		# The section below is on request of Argonel from the Konversation developer team:
+		# it sources config files like $HOME/.kde/share/apps/konversation/scripts/inxi.conf
+		IFS=":"
+		for kde_config in $( kde-config --path data )
+		do
+			if [[ -r ${kde_config}${KONVI_CFG} ]];then
+				source "${kde_config}${KONVI_CFG}"
+				break
+			fi
+		done
+		IFS="$ORIGINAL_IFS"
+	fi
+	## leave this for debugging dcop stuff if we get that working
+	# 	print_screen_output "DCPORT: $DCPORT"
+	# 	print_screen_output "DCSERVER: $DCSERVER"
+	# 	print_screen_output "DCTARGET: $DCTARGET"
 
-# note: this only works if it's run from inside konversation as a script builtin or something
-# only do this if inxi has been started as a konversation script, otherwise bypass this
-if [[ $KONVI -eq 1 ]];then
-	DCPORT="$1"
-	DCSERVER="$2"
-	DCTARGET="$3"
-	shift 3
-	# The section below is on request of Argonel from the Konversation developer team:
-	# it sources config files like $HOME/.kde/share/apps/konversation/scripts/inxi.conf
-	IFS=":"
-	for kde_config in $( kde-config --path data )
-	do
-		if [[ -r ${kde_config}${KONVI_CFG} ]];then
-			source "${kde_config}${KONVI_CFG}"
-			break
-		fi
-	done
-	IFS="$ORIGINAL_IFS"
-fi
-## leave this for debugging dcop stuff if we get that working
-# 	print_screen_output "DCPORT: $DCPORT"
-# 	print_screen_output "DCSERVER: $DCSERVER"
-# 	print_screen_output "DCTARGET: $DCTARGET"
+	# "$@" passes every parameter separately quoted, "$*" passes all parameters as one quoted parameter.
+	# must be here to allow debugger and other flags to be set.
+	get_parameters "$@"
 
-# "$@" passes every parameter separately quoted, "$*" passes all parameters as one quoted parameter.
-# must be here to allow debugger and other flags to be set.
-get_parameters "$@"
+	# If no colorscheme was set in the parameter handling routine, then set the default scheme
+	if [[ $COLOR_SCHEME_SET != 'true' ]];then
+		set_color_scheme "$DEFAULT_SCHEME"
+	fi
 
-# If no colorscheme was set in the parameter handling routine, then set the default scheme
-if [[ $COLOR_SCHEME_SET != 'true' ]];then
-	set_color_scheme "$DEFAULT_SCHEME"
-fi
+	# all the pre-start stuff is in place now
+	B_SCRIPT_UP='true'
+	script_debugger "Debugger: $SCRIPT_NAME is up and running..."
 
-# all the pre-start stuff is in place now
-B_SCRIPT_UP='true'
-script_debugger "Debugger: $SCRIPT_NAME is up and running..."
+	# then create the output
+	print_it_out
 
-# then create the output
-print_it_out
+	## last steps
+	if [[ $B_RUNNING_IN_SHELL == 'true' && $SCHEME -gt 0 ]];then
+		echo -n "[0m"
+	fi
 
-## last steps
-if [[ $B_RUNNING_IN_SHELL == 'true' && $SCHEME -gt 0 ]];then
-	echo -n "[0m"
-fi
-
-# weechat's executor plugin forced me to do this, and rightfully so, because else the exit code
-# from the last command is taken..
-exit 0
+	# weechat's executor plugin forced me to do this, and rightfully so, because else the exit code
+	# from the last command is taken..
+	exit 0
 }
 
 #### -------------------------------------------------------------------
-#### basic tests: init some boleans
+#### basic tests: set script data, booleans, PATH
 #### -------------------------------------------------------------------
 
+# Set PATH data so we can access all programs as user. Set BAN lists.
 # initialize some boleans, these directories are used throughout the script
-# some apps are used for extended functions
-# any directory used, should be checked here first
-init()
+# some apps are used for extended functions any directory used, should be
+# checked here first.
+initialize_script_data()
 {
-	if [[ -d "/proc/" ]];then 
+	local path='' sys_path='' added_path='' b_path_found=''
+	# Extra path variable to make execute failures less likely, merged below
+	local extra_paths="/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin"
+
+	# Fallback paths put into $extra_paths; This might, among others, help on gentoo.
+	# Now, create a difference of $PATH and $extra_paths and add that to $PATH:
+	IFS=":"
+	for path in $extra_paths
+	do
+		b_path_found='false'
+		for sys_path in $PATH
+		do
+			if [[ $path == $sys_path ]];then
+				b_path_found='true'
+			fi
+		done
+		if [[ $b_path_found == 'false' ]];then
+			added_path="$added_path:$path"
+		fi
+	done
+	IFS="$ORIGINAL_IFS"
+	PATH="${PATH}${added_path}"
+	##echo "PATH='$PATH'"
+	##/bin/sh -c 'echo "PATH in subshell=\"$PATH\""'
+
+	# Do this after sourcing of config overrides so user can customize banwords
+	BAN_LIST_NORMAL=$( make_ban_lists "${A_NORMAL_BANS[@]}" ) # Contrary to my previous belief, "${ARR[@]}" passes a quoted list, not one string
+	BAN_LIST_CPU=$( make_ban_lists "${A_CPU_BANS[@]}" )
+	##echo "BAN_LIST_NORMAL='$BAN_LIST_NORMAL'"
+
+	# now set the script BOOLEANS for files required to run features
+	if [[ -d "/proc/" ]];then
 		B_PROC='true'
 	else
 		error_handler 6
@@ -406,7 +434,7 @@ init()
 	if [[ -e "$DIR_SCSI" ]];then
 		B_SCSI_DIR='true'
 	fi
-	
+
 	# lack of ifconfig will throw an error only upon it's usage
 	if [[ -x ifconfig ]]; then
 		B_IFCONFIG='true'
@@ -415,8 +443,8 @@ init()
 		B_IFCONFIG='true'
 	else
 		A_INTERFACES_DATA=( "Interfaces tool requires missing app: $DIR_IFCONFIG" )
-	fi 
-	
+	fi
+
 	if [[ -n $DISPLAY ]];then
 		B_X_RUNNING='true'
 	fi
@@ -445,8 +473,6 @@ check_script_suggested_apps()
 	else
 		script_debugger "Suggestion: update to Bash v3.1 for optimal inxi output"
 	fi
-	
-	
 }
 
 # Determine if any of the absolutely necessary tools are absent
@@ -479,12 +505,87 @@ check_script_depends()
 	done
 }
 
+## note: this is now running inside each gawk sequence directly to avoid exiting gawk
+## looping in bash through arrays, then re-entering gawk to clean up, then writing back to array
+## in bash. For now I'll leave this here because there's still some interesting stuff to get re methods
+# Enforce boilerplate and buzzword filters
+# args: $1 - BAN_LIST_NORMAL/BAN_LIST_CPU; $2 - string to sanitize
+sanitize_characters()
+{
+	# Cannot use strong quotes to unquote a string with pipes in it!
+	# bash will interpret the |'s as usual and try to run a subshell!
+	# Using weak quotes instead, or use '"..."'
+	echo "$2" | gawk "
+	BEGIN { IGNORECASE=1 } {
+		gsub(/${!1}/,\"\")
+		gsub(/ [ ]+/,\" \")    ## ([ ]+) with (space)
+		gsub(/^ +| +$/,\"\")   ## (pipe char) with (nothing)
+		print                  ## prints (returns) cleaned input
+	}"
+}
+
+# Filter boilerplate & buzzwords.
+# args: $1 - quoted: "$@" array of ban terms
+make_ban_lists()
+{
+	local ban_list=''
+	# Iterate over $@
+	## note: this is a weird, non-intuitive method, needs some documentation or rewriting
+	## if you declare ban_string it stops working, have to read up on this
+	for ban_string
+	do
+		# echo "term=\"$ban_string\"" # >&2
+		if [[ ${ban_string:0:1} = $'\2' ]];then
+			ban_list="${ban_list}${ban_list+|}${ban_string:1:${#ban_string}-1}"
+		else
+			# Automatically escapes [ ] ( ) . and +
+			ban_list="${ban_list}${ban_list+|}$( echo "$ban_string" | gawk '{
+				gsub(/([\[\]+().])/,"\\\\&")
+				print
+			}' )"
+		fi
+	done
+
+	echo "$ban_list"
+}
+# make_ban_lists "${A_CPU_BANS[@]}";exit
+
+# Set the colorscheme
+# args: $1 = <scheme number>|<"none">
+set_color_scheme()
+{
+	local i='' script_colors='' color_codes=''
+
+	if [[ $1 -ge ${#A_COLOR_SCHEMES[@]} ]];then
+		set -- 1
+	fi
+	# Set a global variable to allow checking for chosen scheme later
+	SCHEME="$1"
+	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
+		color_codes=( $ANSI_COLORS )
+	else
+		color_codes=( $IRC_COLORS )
+	fi
+	for (( i=0; i < ${#A_COLORS_AVAILABLE[@]}; i++ ))
+	do
+		eval "${A_COLORS_AVAILABLE[i]}=\"${color_codes[i]}\""
+	done
+	IFS=","
+	script_colors=( ${A_COLOR_SCHEMES[$1]} )
+	IFS="$ORIGINAL_IFS"
+	# then assign the colors globally
+	C1="${!script_colors[0]}"
+	C2="${!script_colors[1]}"
+	CN="${!script_colors[2]}"
+	# ((COLOR_SCHEME++)) ## note: why is this? ##
+}
+
 ########################################################################
 #### UTILITY FUNCTIONS
 ########################################################################
 
 #### -------------------------------------------------------------------
-#### error handler and debugger
+#### error handler, debugger, script updater
 #### -------------------------------------------------------------------
 
 # Error handling
@@ -563,6 +664,38 @@ script_debugger()
 	fi
 }
 
+# args: $1 - download url, not including file name; $2 - string to print out
+# note that $1 must end in / to properly construct the url path
+script_self_updater()
+{
+	local wget_error=0
+	print_screen_output "Starting $SCRIPT_NAME self updater."
+	print_screen_output "Currently running $SCRIPT_NAME version number: $SCRIPT_VERSION_NUMBER"
+	print_screen_output "Updating $SCRIPT_NAME in $SCRIPT_PATH using $2 as download source..."
+	# first test if path is good, need to make sure it's good because we're -O overwriting file
+	wget -q --spider $1$SCRIPT_NAME || wget_error=$?
+	# then do the actual download
+	if [[ $wget_error -eq 0 ]];then
+		wget -q -O $SCRIPT_PATH/$SCRIPT_NAME $1$SCRIPT_NAME || wget_error=$?
+		if [[ $wget_error -eq 0 ]];then
+			SCRIPT_VERSION_NUMBER=$( grep -im 1 'version:' $SCRIPT_PATH/$SCRIPT_NAME | gawk '{print $3}' )
+			print_screen_output "Successfully updated to $2 version: $SCRIPT_VERSION_NUMBER"
+			print_screen_output "To run the new version, just start $SCRIPT_NAME again."
+			exit 0
+		fi
+	fi
+	# now run the error handlers on any wget failure
+	if [[ $wget_error -gt 0 ]];then
+		if [[ $2 == 'svn server' ]];then
+			error_handler 8 "$wget_error"
+		elif [[ $2 == 'alt server' ]];then
+			error_handler 10 "$1"
+		else
+			error_handler 12 "$1"
+		fi
+	fi
+}
+
 #### -------------------------------------------------------------------
 #### print / output cleaners
 #### -------------------------------------------------------------------
@@ -621,108 +754,9 @@ remove_erroneous_chars()
 	}' "$1"      ## prints (returns) cleaned input
 }
 
-## note: this is now running inside each gawk sequence directly to avoid exiting gawk
-## looping in bash through arrays, then re-entering gawk to clean up, then writing back to array
-## in bash. For now I'll leave this here because there's still some interesting stuff to get re methods
-# Enforce boilerplate and buzzword filters
-# args: $1 - BAN_LIST_NORMAL/BAN_LIST_CPU; $2 - string to sanitize
-sanitize_characters()
-{
-	# Cannot use strong quotes to unquote a string with pipes in it!
-	# bash will interpret the |'s as usual and try to run a subshell!
-	# Using weak quotes instead, or use '"..."'
-	echo "$2" | gawk "
-	BEGIN { IGNORECASE=1 } {
-		gsub(/${!1}/,\"\")
-		gsub(/ [ ]+/,\" \")    ## ([ ]+) with (space)
-		gsub(/^ +| +$/,\"\")   ## (pipe char) with (nothing)
-		print                  ## prints (returns) cleaned input
-	}"
-}
-
-# Filter boilerplate & buzzwords.
-# args: $1 - quoted: "$@" array of ban terms
-make_ban_lists()
-{
-	local ban_list=''
-	# Iterate over $@
-	## note: this is a weird, non-intuitive method, needs some documentation or rewriting
-	## if you declare ban_string it stops working, have to read up on this
-	for ban_string
-	do
-		# echo "term=\"$ban_string\"" # >&2
-		if [[ ${ban_string:0:1} = $'\2' ]];then
-			ban_list="${ban_list}${ban_list+|}${ban_string:1:${#ban_string}-1}"
-		else
-			# Automatically escapes [ ] ( ) . and +
-			ban_list="${ban_list}${ban_list+|}$( echo "$ban_string" | gawk '{
-				gsub(/([\[\]+().])/,"\\\\&")
-				print
-			}' )"
-		fi
-	done
-
-	echo "$ban_list"
-}
-# make_ban_lists "${A_CPU_BANS[@]}";exit
-
-# Set the colorscheme
-# args: $1 = <scheme number>|<"none">
-set_color_scheme()
-{
-	local i='' script_colors='' color_codes=''
-
-	if [[ $1 -ge ${#A_COLOR_SCHEMES[@]} ]];then
-		set -- 1
-	fi
-	# Set a global variable to allow checking for chosen scheme later
-	SCHEME="$1"
-	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
-		color_codes=( $ANSI_COLORS )
-	else
-		color_codes=( $IRC_COLORS )
-	fi
-	for (( i=0; i < ${#A_COLORS_AVAILABLE[@]}; i++ ))
-	do
-		eval "${A_COLORS_AVAILABLE[i]}=\"${color_codes[i]}\""
-	done
-	IFS=","
-	script_colors=( ${A_COLOR_SCHEMES[$1]} )
-	IFS="$ORIGINAL_IFS"
-	# then assign the colors globally
-	C1="${!script_colors[0]}"
-	C2="${!script_colors[1]}"
-	CN="${!script_colors[2]}"
-	# ((COLOR_SCHEME++)) ## note: why is this? ##
-}
-
-# Parse the null separated commandline under /proc/<pid passed in $1>/cmdline
-# args: $1 - $PPID
-get_cmdline()
-{
-	local i=0 ppid=$1
-
-	if [[ ! -e /proc/$ppid/cmdline ]];then
-		echo 0
-		return
-	fi
-	##print_screen_output "Marker"
-	##print_screen_output "\$ppid='$ppid' -=- $(< /proc/$ppid/cmdline)"
-	unset A_CMDL
-	## note: need to figure this one out, and ideally clean it up and make it readable
-	while read -d $'\0' L && [ "$i" -lt 32 ]
-	do
-		A_CMDL[i++]="$L" ## note: make sure this is valid - What does L mean? ##
-	done < /proc/$ppid/cmdline
-	##print_screen_output "\$i='$i'"
-	if [[ $i -eq 0 ]];then
-		A_CMDL[0]=$(< /proc/$ppid/cmdline)
-		if [[ -n ${A_CMDL[0]} ]];then
-			i=1
-		fi
-	fi
-	CMDL_MAX=$i
-}
+#### -------------------------------------------------------------------
+#### parameter handling, print usage functions.
+#### -------------------------------------------------------------------
 
 # Get the parameters. Note: standard options should be lower case, advanced or testing, upper
 # args: $1 - full script startup args: $@
@@ -962,38 +996,6 @@ print_version_info()
 	print_screen_output "(at your option) any later version."
 }
 
-# args: $1 - download url, not including file name; $2 - string to print out
-# note that $1 must end in / to properly construct the url path
-script_self_updater()
-{
-	local wget_error=0
-	print_screen_output "Starting $SCRIPT_NAME self updater."
-	print_screen_output "Currently running $SCRIPT_NAME version number: $SCRIPT_VERSION_NUMBER"
-	print_screen_output "Updating $SCRIPT_NAME in $SCRIPT_PATH using $2 as download source..."
-	# first test if path is good, need to make sure it's good because we're -O overwriting file
-	wget -q --spider $1$SCRIPT_NAME || wget_error=$?
-	# then do the actual download
-	if [[ $wget_error -eq 0 ]];then
-		wget -q -O $SCRIPT_PATH/$SCRIPT_NAME $1$SCRIPT_NAME || wget_error=$?
-		if [[ $wget_error -eq 0 ]];then
-			SCRIPT_VERSION_NUMBER=$( grep -im 1 'version:' $SCRIPT_PATH/$SCRIPT_NAME | gawk '{print $3}' )
-			print_screen_output "Successfully updated to $2 version: $SCRIPT_VERSION_NUMBER"
-			print_screen_output "To run the new version, just start $SCRIPT_NAME again."
-			exit 0
-		fi
-	fi
-	# now run the error handlers on any wget failure
-	if [[ $wget_error -gt 0 ]];then
-		if [[ $2 == 'svn server' ]];then
-			error_handler 8 "$wget_error"
-		elif [[ $2 == 'alt server' ]];then
-			error_handler 10 "$1"
-		else
-			error_handler 12 "$1"
-		fi
-	fi
-}
-
 ########################################################################
 #### MAIN FUNCTIONS
 ########################################################################
@@ -1195,39 +1197,32 @@ get_start_client()
 	fi
 }
 
-## this is a mishmash and will be mostly moved to other places over time, for now
-## it's just a holder for some misc stuff that has to happen
-set_calculated_variables()
+# Parse the null separated commandline under /proc/<pid passed in $1>/cmdline
+# args: $1 - $PPID
+get_cmdline()
 {
-	local path='' sys_path='' added_path='' b_path_found=''
-	# Extra path variable to make execute failures less likely, merged below
-	local extra_paths="/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin"
+	local i=0 ppid=$1
 
-	# Fallback paths put into $extra_paths; This might, among others, help on gentoo.
-	# Now, create a difference of $PATH and $extra_paths and add that to $PATH:
-	IFS=":"
-	for path in $extra_paths
+	if [[ ! -e /proc/$ppid/cmdline ]];then
+		echo 0
+		return
+	fi
+	##print_screen_output "Marker"
+	##print_screen_output "\$ppid='$ppid' -=- $(< /proc/$ppid/cmdline)"
+	unset A_CMDL
+	## note: need to figure this one out, and ideally clean it up and make it readable
+	while read -d $'\0' L && [ "$i" -lt 32 ]
 	do
-		b_path_found='false'
-		for sys_path in $PATH
-		do
-			if [[ $path == $sys_path ]];then
-				b_path_found='true'
-			fi
-		done
-		if [[ $b_path_found == 'false' ]];then
-			added_path="$added_path:$path"
+		A_CMDL[i++]="$L" ## note: make sure this is valid - What does L mean? ##
+	done < /proc/$ppid/cmdline
+	##print_screen_output "\$i='$i'"
+	if [[ $i -eq 0 ]];then
+		A_CMDL[0]=$(< /proc/$ppid/cmdline)
+		if [[ -n ${A_CMDL[0]} ]];then
+			i=1
 		fi
-	done
-	IFS="$ORIGINAL_IFS"
-	PATH="${PATH}${added_path}"
-	##echo "PATH='$PATH'"
-	##/bin/sh -c 'echo "PATH in subshell=\"$PATH\""'
-
-	# Do this after sourcing of config overrides so user can customize banwords
-	BAN_LIST_NORMAL=$( make_ban_lists "${A_NORMAL_BANS[@]}" ) # Contrary to my previous belief, "${ARR[@]}" passes a quoted list, not one string
-	BAN_LIST_CPU=$( make_ban_lists "${A_CPU_BANS[@]}" )
-	##echo "BAN_LIST_NORMAL='$BAN_LIST_NORMAL'"
+	fi
+	CMDL_MAX=$i
 }
 
 #### -------------------------------------------------------------------
@@ -1371,120 +1366,39 @@ get_audio_alsa_data()
 	echo "$alsa_data"
 }
 
-## this is for counting processors and finding HT types
-discover_ht_multicore_smp_cpu_data()
-{
-
-# in /proc/cpuinfo
-# if > 1 processor && processor id == core id then Hyperthreaded (HT)
-# if > 1 processor && different processor ids then Multiple Processors (SMP)
-# if > 1 processor && processor id != core id then Multi-Core Processors (MCP)
-# if = 1 processor then single core/processor Uni-Processor (UP)
-
-	if [[ $B_CPUINFO == 'true' ]]; then
-	{
-		A_CPU_TYPE_PCNT_CCNT=( $(gawk '
-				BEGIN { FS=": "; i = 0 } {IGNORECASE = 1}
-				/^processor/ { num_of_processors = $NF + 1 } 	# counts logical processors, both HT and physical
-				/^cpu cores/ { num_of_cores = $NF }		# counts physical cores
-				/^physical/ { physical_id[i] = $NF }		# array of physical cpus ids
-				/^core id/ { core_id[i] = $NF; i++ }		# array of core ids
-				{
-					processors = 1
-					cores = 1	# single cores are obviously a Uni-processor
-					type = "UP"
-					cpu_temp = 0
-					core_temp = 0
-			
-					# look for the largest id number, and assign it
-					for ( j = 0; j <= num_of_processors; j++)
-					{
-						if ( physical[j] > cpu_temp )
-						{				
-							cpu_temp = physical[j]
-						}
-						if ( core_id[j] > core_temp )
-						{
-							core_temp = core_id[j]
-						}
-					}
-
-					physical_cpu_count = cpu_temp + 1
-					core_count = core_temp + 1
-
-					# looking at logical processor counts over 1, which means either HT, SMP or MCP
-					if ( num_of_processors > 1 )
-					{
-						if ( physical_cpu_count == 1 )
-						{
-							if ( physical_cpu_count == core_count )
-							{
-								type = "HT"  # this is more than likely a P4 w/HT or an Atom 270
-							}
-							else
-							{
-								if ( core_count == num_of_cores && core_count == num_of_processors)
-								{
-									type = "MCP"
-									cores = core_count
-								}
-								else
-								{
-									type = "HT"		# this is i7 or Atom 330
-									cores = core_count
-								}
-							}
-						}
-						else  
-						{
-							type = "SMP"
-							processors = physical_cpu_count
-
-							if ( num_of_cores > 1 )
-							{
-								type = "SMPMC"	# processors could be both MCP and SMP
-								cores = core_count 
-							}
-						}
-					}
-				}
-				END { print type " " processors " " cores } 
-				' $DIR_CPUINFO ))
-	}
-	fi
-}
-
 ## create A_CPU_CORE_DATA, currently with two values: integer core count; core string text
 ## return value cpu core count string, this helps resolve the multi redundant lines of old style output
 get_cpu_core_count()
 {
 	if [[ $B_CPUINFO == 'true' ]]; then
+		# load the A_CPU_TYPE_PCNT_CCNT core data array
+		get_cpu_ht_multicore_smp_data
 		## Because of the upcoming release of cpus with core counts over 6, a count of cores is given after Deca (10)
 		# count the number of processors given
 		local cpu_core_count=${A_CPU_TYPE_PCNT_CCNT[2]}
 		local cpu_type=''
 
 		if [[ ${A_CPU_TYPE_PCNT_CCNT[0]} == "HT" || ${A_CPU_TYPE_PCNT_CCNT[0]} == "SMP" ]]; then
-			cpu_type=${A_CPU_TYPE_PCNT_CCNT[0]}
+			# note the use of the space, this avoids a double space if this is null in the output
+			cpu_type=" ${A_CPU_TYPE_PCNT_CCNT[0]}"
 		fi
 
-	# match the numberic value to an alpha value
-	case $cpu_core_count in
-		1) cpu_alpha_count='Single';;
-		2) cpu_alpha_count='Dual';;
-		3) cpu_alpha_count='Triple';;
-		4) cpu_alpha_count='Quad';;
-		5) cpu_alpha_count='Penta';;
-		6) cpu_alpha_count='Hexa';;
-		7) cpu_alpha_count='Hepta';;
-		8) cpu_alpha_count='Octa';;
-		9) cpu_alpha_count='Ennea';;
-		10) cpu_alpha_count='Deca';;
-		*) cpu_alpha_count='Multi';;
-	esac
-	# create array, core count integer; core count string
-	A_CPU_CORE_DATA=( "$cpu_core_count" "$cpu_alpha_count Core $cpu_type" )
-	
+		# match the numberic value to an alpha value
+		case $cpu_core_count in
+			1) cpu_alpha_count='Single';;
+			2) cpu_alpha_count='Dual';;
+			3) cpu_alpha_count='Triple';;
+			4) cpu_alpha_count='Quad';;
+			5) cpu_alpha_count='Penta';;
+			6) cpu_alpha_count='Hexa';;
+			7) cpu_alpha_count='Hepta';;
+			8) cpu_alpha_count='Octa';;
+			9) cpu_alpha_count='Ennea';;
+			10) cpu_alpha_count='Deca';;
+			*) cpu_alpha_count='Multi';;
+		esac
+		# create array, core count integer; core count string
+		A_CPU_CORE_DATA=( "$cpu_core_count" "$cpu_alpha_count Core$cpu_type" )
 	fi
 }
 
@@ -1558,6 +1472,88 @@ get_cpu_data()
 	fi
 
 	IFS="$ORIGINAL_IFS"
+}
+
+## this is for counting processors and finding HT types
+get_cpu_ht_multicore_smp_data()
+{
+	# in /proc/cpuinfo
+	# if > 1 processor && processor id == core id then Hyperthreaded (HT)
+	# if > 1 processor && different processor ids then Multiple Processors (SMP)
+	# if > 1 processor && processor id != core id then Multi-Core Processors (MCP)
+	# if = 1 processor then single core/processor Uni-Processor (UP)
+
+	if [[ $B_CPUINFO == 'true' ]]; then
+	{
+		A_CPU_TYPE_PCNT_CCNT=( $(gawk '
+		BEGIN { FS=": "; i = 0 } {IGNORECASE = 1}
+		/^processor/ { num_of_processors = $NF + 1 } 	# counts logical processors, both HT and physical
+		/^cpu cores/ { num_of_cores = $NF }		# counts physical cores
+		/^physical/ { physical_id[i] = $NF }		# array of physical cpus ids
+		/^core id/ { core_id[i] = $NF; i++ }		# array of core ids
+		{
+			processors = 1
+			cores = 1	# single cores are obviously a Uni-processor
+			type = "UP"
+			cpu_temp = 0
+			core_temp = 0
+
+			# look for the largest id number, and assign it
+			for ( j = 0; j <= num_of_processors; j++)
+			{
+				if ( physical[j] > cpu_temp )
+				{
+					cpu_temp = physical[j]
+				}
+				if ( core_id[j] > core_temp )
+				{
+					core_temp = core_id[j]
+				}
+			}
+
+			physical_cpu_count = cpu_temp + 1
+			core_count = core_temp + 1
+
+			# looking at logical processor counts over 1, which means either HT, SMP or MCP
+			if ( num_of_processors > 1 )
+			{
+				if ( physical_cpu_count == 1 )
+				{
+					if ( physical_cpu_count == core_count )
+					{
+						type = "HT"  # this is more than likely a P4 w/HT or an Atom 270
+					}
+					else
+					{
+						if ( core_count == num_of_cores && core_count == num_of_processors)
+						{
+							type = "MCP"
+							cores = core_count
+						}
+						else
+						{
+							type = "HT"		# this is i7 or Atom 330
+							cores = core_count
+						}
+					}
+				}
+				else
+				{
+					type = "SMP"
+					processors = physical_cpu_count
+
+					if ( num_of_cores > 1 )
+					{
+						type = "SMPMC"	# processors could be both MCP and SMP
+						cores = core_count
+					}
+				}
+			}
+		}
+		END { print type " " processors " " cores }
+		' $DIR_CPUINFO ))
+	}
+	fi
 }
 
 # for more on distro id, please reference this python thread: http://bugs.python.org/issue1322
@@ -1814,7 +1810,7 @@ get_graphics_res_data()
 get_graphics_agp_data()
 {
 	local agp_module=''
-	
+
 	if [[ B_MODULES_DIR == 'true' ]];then
 		## not used currently
 		agp_module=$( gawk '/agp/ && !/agpgart/ && $3 > 0 { print(gensub(/(.*)_agp.*/,"\\1","g",$1)) }' $DIR_MODULES )
@@ -1867,7 +1863,7 @@ get_hdd_data_basic()
 
 	hdd_used=$( df | gawk '
 	p {
-		if (/^\/dev\/(mapper\/|[hs]d[a-z][0-9]+)/) {
+		if (/^\/dev\/(mapper\/|[h]d[a-z][0-9]+)/) {
 			if (NF == 1) {
 				getline
 				if (NF == 5) {
