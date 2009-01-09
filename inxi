@@ -1,8 +1,15 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.8.8-b1-t2
-####  Date: December 14 2008
+####  version: 0.9.3-b1-t1
+####  Date: January 8, 2009
+########################################################################
+####  SPECIAL THANKS
+########################################################################
+####  Special thanks to all those in lsc for their tireless dedication
+####  with helping test inxi modules
+########################################################################
+####  ABOUT INXI
 ########################################################################
 ####  inxi is a fork of infobash 3.02, the original bash sys info script by locsmif
 ####  As time permits functionality improvements and recoding will occur.
@@ -12,7 +19,7 @@
 ####  Gaim/Pidgin, Weechat, KVIrc and Kopete.
 ####  Original infobash author and copyright holder:
 ####  Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif
-####  inxi version: Copyright (C) 2008 Warren Scott Rogers & Harald Hope
+####  inxi version: Copyright (C) 2008 Scott Rogers & Harald Hope
 ####  Further fixes (listed as known): Horst Tritremmel <hjt at sidux.com>
 ####
 ####  Current script home page: http://techpatterns.com/forums/about1131.html
@@ -35,13 +42,21 @@
 ####  this page: http://www.gnu.org/philosophy/free-sw.html
 ########################################################################
 ####  DEPENDENCIES
-####  bash >=2.05b(bash), df;readlink;stty;tr;uname;wc(coreutils),
+####  bash >=3.0(bash), df;readlink;stty;tr;uname;wc(coreutils),
 ####  gawk(gawk), grep(grep), hostname(hostname), lspci(pciutils),
-####  ps;uptime(procps), runlevel(sysvinit), glxinfo;xdpyinfo;xrandr(xbase-clients)
+####  ps;uptime(procps), glxinfo;xdpyinfo;xrandr(xbase-clients)
 ####  Also the proc filesystem should be present and mounted
+####
+####	Apparently unpatched bash 3.0 has arrays broken; bug reports:
+####	http://ftp.gnu.org/gnu/bash/bash-3.0-patches/bash30-008
+####	http://lists.gnu.org/archive/html/bug-bash/2004-08/msg00144.html
+####
+####	Arrays work in bash 2.05b, but "egrep -m" does not
 ####
 ####  RECOMMENDS (Needed to run certain features)
 ####  For local interfaces/IP test: ifconfig (in net-tools for Debian systems)
+####  runlevel(sysvinit): to view current runlevel while not in X window system
+####  Bash 3.1 for proper array use
 ########################################################################
 ####  CONVENTIONS:
 ####  Indentation: TABS
@@ -101,6 +116,7 @@ A_AUDIO_DATA=''
 A_CMDL=''
 A_CPU_CORE_DATA=''
 A_CPU_DATA=''
+A_CPU_TYPE_PCNT_CCNT=''
 A_DEBUG_BUFFER=''
 A_GFX_CARD_DATA=''
 A_GLX_DATA=''
@@ -149,9 +165,30 @@ B_TESTING_1='false'
 B_TESTING_2='false'
 # Test for X running
 B_X_RUNNING='false'
-if [[ -n $DISPLAY ]];then
-	B_X_RUNNING='true'
-fi
+
+### Directory/file exist flags; test as [[ $(boolean) ]] not [[ $boolean ]]
+B_PROC='false'
+B_CPUINFO='false'
+B_MEMINFO='false'
+B_ASOUND_CARDS='false'
+B_ASOUND_VERSION='false'
+B_BASH_ARRAY='false'
+B_IFCONFIG='false'
+B_LSB_DIR='false'
+B_SCSI_DIR='false'
+B_MODULES_DIR='false' #
+B_PARTITIONS_DIR='false' #
+
+### Directory's used when present
+DIR_CPUINFO='/proc/cpuinfo'
+DIR_MEMINFO='/proc/meminfo'
+DIR_ASOUND_DEVICE='/proc/asound/cards'
+DIR_ASOUND_VERSION='/proc/asound/version'
+DIR_LSB_RELEASE='/etc/lsb-release'
+DIR_SCSI='/proc/scsi/scsi'
+DIR_MODULES='/proc/modules' #
+DIR_PARTITIONS='/proc/partitions' #
+DIR_IFCONFIG='/sbin/ifconfig'
 
 ### Variable initializations: constants
 DCOPOBJ="default"
@@ -197,7 +234,7 @@ SCRIPT_VERSION_NUMBER=$( grep -im 1 'version:' $SCRIPT_PATH/$SCRIPT_NAME | gawk 
 SCRIPT_DOWNLOAD='http://inxi.googlecode.com/svn/trunk/'
 SCRIPT_DOWNLOAD_BRANCH_1='http://inxi.googlecode.com/svn/branches/one/'
 SCRIPT_DOWNLOAD_BRANCH_2='http://inxi.googlecode.com/svn/branches/two/'
-SCRIPT_DOWNLOAD_DEV='http://techpatterns.com/downloads/distro/'
+SCRIPT_DOWNLOAD_DEV='http://smxi.org/test/'
 KONVI_CFG="konversation/scripts/$SCRIPT_NAME.conf" # relative path to $(kde-config --path data)
 
 ### Script Localization
@@ -226,10 +263,14 @@ CN=''
 ### Distro Data
 # In cases of derived distros where the version file of the base distro can also be found under /etc,
 # the derived distro's version file should go first. (Such as with Sabayon / Gentoo)
-DISTROS_DERIVED="antix-version kanotix-version knoppix-version redhat-release sabayon-release sidux-version turbolinux-release zenwalk-version"
+DISTROS_DERIVED="antix-version kanotix-version knoppix-version mandrake-release sabayon-release sidux-version turbolinux-release zenwalk-version"
 # debian_version excluded from DISTROS_PRIMARY so Debian can fall through to /etc/issue detection. Same goes for Ubuntu.
 DISTROS_EXCLUDE_LIST="debian_version ubuntu_version"
-DISTROS_PRIMARY="gentoo-release mandrake-release redhat-release slackware-version SuSE-release"
+DISTROS_PRIMARY="gentoo-release redhat-release slackware-version SuSE-release"
+DISTROS_LSB_GOOD="mandrake-release mandriva-release mandrakelinux-release"
+## Distros with known problems
+# DSL (Bash 2.05b: grep -m doesn't work; arrays won't work) --> unusable output
+# Puppy Linux 4.1.2 (Bash 3.0: arrays won't work) --> works partially
 
 ### Bans Data
 # Precede a banword with $'\2' to prevent it from being subject to automated escaping by the make_ban_lists routine
@@ -257,11 +298,294 @@ fi
 # from Konversation!
 
 ########################################################################
+#### MAIN: Where it all begins
+########################################################################
+main()
+{
+	# first init function must be set first for colors etc. Remember, no debugger
+	# stuff works on this function unless you set the debugging flag
+	# manually. Debugging flag -@ [number] will not work until get_parameters runs.
+	initialize_script_data
+
+	## this needs to run before the KONVI stuff is set below
+	get_start_client
+
+	# Check for dependencies before running anything else except above functions
+	check_script_depends
+	check_script_suggested_apps
+
+	# note: this only works if it's run from inside konversation as a script builtin or something
+	# only do this if inxi has been started as a konversation script, otherwise bypass this
+	if [[ $KONVI -eq 1 ]];then
+		DCPORT="$1"
+		DCSERVER="$2"
+		DCTARGET="$3"
+		shift 3
+		# The section below is on request of Argonel from the Konversation developer team:
+		# it sources config files like $HOME/.kde/share/apps/konversation/scripts/inxi.conf
+		IFS=":"
+		for kde_config in $( kde-config --path data )
+		do
+			if [[ -r ${kde_config}${KONVI_CFG} ]];then
+				source "${kde_config}${KONVI_CFG}"
+				break
+			fi
+		done
+		IFS="$ORIGINAL_IFS"
+	fi
+	## leave this for debugging dcop stuff if we get that working
+	# 	print_screen_output "DCPORT: $DCPORT"
+	# 	print_screen_output "DCSERVER: $DCSERVER"
+	# 	print_screen_output "DCTARGET: $DCTARGET"
+
+	# "$@" passes every parameter separately quoted, "$*" passes all parameters as one quoted parameter.
+	# must be here to allow debugger and other flags to be set.
+	get_parameters "$@"
+
+	# If no colorscheme was set in the parameter handling routine, then set the default scheme
+	if [[ $COLOR_SCHEME_SET != 'true' ]];then
+		set_color_scheme "$DEFAULT_SCHEME"
+	fi
+
+	# all the pre-start stuff is in place now
+	B_SCRIPT_UP='true'
+	script_debugger "Debugger: $SCRIPT_NAME is up and running..."
+
+	# then create the output
+	print_it_out
+
+	## last steps
+	if [[ $B_RUNNING_IN_SHELL == 'true' && $SCHEME -gt 0 ]];then
+		echo -n "[0m"
+	fi
+
+	# weechat's executor plugin forced me to do this, and rightfully so, because else the exit code
+	# from the last command is taken..
+	exit 0
+}
+
+#### -------------------------------------------------------------------
+#### basic tests: set script data, booleans, PATH
+#### -------------------------------------------------------------------
+
+# Set PATH data so we can access all programs as user. Set BAN lists.
+# initialize some boleans, these directories are used throughout the script
+# some apps are used for extended functions any directory used, should be
+# checked here first.
+initialize_script_data()
+{
+	local path='' sys_path='' added_path='' b_path_found=''
+	# Extra path variable to make execute failures less likely, merged below
+	local extra_paths="/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin"
+
+	# Fallback paths put into $extra_paths; This might, among others, help on gentoo.
+	# Now, create a difference of $PATH and $extra_paths and add that to $PATH:
+	IFS=":"
+	for path in $extra_paths
+	do
+		b_path_found='false'
+		for sys_path in $PATH
+		do
+			if [[ $path == $sys_path ]];then
+				b_path_found='true'
+			fi
+		done
+		if [[ $b_path_found == 'false' ]];then
+			added_path="$added_path:$path"
+		fi
+	done
+	IFS="$ORIGINAL_IFS"
+	PATH="${PATH}${added_path}"
+	##echo "PATH='$PATH'"
+	##/bin/sh -c 'echo "PATH in subshell=\"$PATH\""'
+
+	# Do this after sourcing of config overrides so user can customize banwords
+	BAN_LIST_NORMAL=$( make_ban_lists "${A_NORMAL_BANS[@]}" ) # Contrary to my previous belief, "${ARR[@]}" passes a quoted list, not one string
+	BAN_LIST_CPU=$( make_ban_lists "${A_CPU_BANS[@]}" )
+	##echo "BAN_LIST_NORMAL='$BAN_LIST_NORMAL'"
+
+	# now set the script BOOLEANS for files required to run features
+	if [[ -d "/proc/" ]];then
+		B_PROC='true'
+	else
+		error_handler 6
+	fi
+
+	if [[ -e "$DIR_CPUINFO" ]]; then
+		B_CPUINFO='true'
+	fi
+
+	if [[ -e "$DIR_MEMINFO" ]];then
+		B_MEMINFO='true'
+	fi
+
+	if [[ -e "$DIR_ASOUND_DEVICE" ]];then
+		B_ASOUND_CARDS='true'
+	fi
+
+	if [[ -e "$DIR_ASOUND_VERSION" ]];then
+		B_ASOUND_VERSION='true'
+	fi
+
+	if [[ -f "$DIR_LSB_RELEASE" ]];then
+		B_LSB_DIR='true'
+	fi
+
+	if [[ -e "$DIR_SCSI" ]];then
+		B_SCSI_DIR='true'
+	fi
+
+	# lack of ifconfig will throw an error only upon it's usage
+	if [[ -x ifconfig ]]; then
+		B_IFCONFIG='true'
+		DIR_IFCONFIG='ifconfig' # change from full path to use $PATH
+	elif [[ -x "$DIR_IFCONFIG" ]];then
+		B_IFCONFIG='true'
+	else
+		A_INTERFACES_DATA=( "Interfaces tool requires missing app: $DIR_IFCONFIG" )
+	fi
+
+	if [[ -n $DISPLAY ]];then
+		B_X_RUNNING='true'
+	fi
+
+	if [[ -e "$DIR_MODULES" ]];then
+		B_MODULES_DIR='true'
+	fi
+
+	if [[ -e "$DIR_PARTITIONS" ]];then
+		B_PARTITIONS_DIR='true'
+	fi
+}
+
+check_script_suggested_apps()
+{
+	local bash_array_test=( "one" "two" )
+
+	# check for array ability of bash, this is only good for the warning at this time
+	# the boolean could be used later
+	# bash version 2.05b is used in DSL
+	# bash version 3.0 is used in Puppy Linux
+	# versions older than 3.1 don't handle arrays
+	# distro's using below 2.05b are unknown, released in 2002
+	if [[ ${bash_array_test[1]} -eq "two" ]];then
+		B_BASH_ARRAY='true'
+	else
+		script_debugger "Suggestion: update to Bash v3.1 for optimal inxi output"
+	fi
+}
+
+# Determine if any of the absolutely necessary tools are absent
+check_script_depends()
+{
+	local app_name='' app_data=''
+	# bc removed from deps for now
+	local depends="df free gawk grep hostname lspci ps readlink tr uname uptime wc"
+
+	if [[ $B_X_RUNNING == 'true' ]];then
+		for app_name in xrandr xdpyinfo glxinfo
+		do
+			app_data=$( type -p $app_name )
+			if [[ -z $app_data ]];then
+				script_debugger "Resuming in non X mode: $app_name not found in path"
+				B_X_RUNNING='false'
+				break
+			fi
+		done
+	fi
+
+	app_name=''
+
+	for app_name in $depends
+	do
+		app_data=$( type -p $app_name )
+		if [[ -z $app_data ]];then
+			error_handler 5 "$app_name"
+		fi
+	done
+}
+
+## note: this is now running inside each gawk sequence directly to avoid exiting gawk
+## looping in bash through arrays, then re-entering gawk to clean up, then writing back to array
+## in bash. For now I'll leave this here because there's still some interesting stuff to get re methods
+# Enforce boilerplate and buzzword filters
+# args: $1 - BAN_LIST_NORMAL/BAN_LIST_CPU; $2 - string to sanitize
+sanitize_characters()
+{
+	# Cannot use strong quotes to unquote a string with pipes in it!
+	# bash will interpret the |'s as usual and try to run a subshell!
+	# Using weak quotes instead, or use '"..."'
+	echo "$2" | gawk "
+	BEGIN { IGNORECASE=1 } {
+		gsub(/${!1}/,\"\")
+		gsub(/ [ ]+/,\" \")    ## ([ ]+) with (space)
+		gsub(/^ +| +$/,\"\")   ## (pipe char) with (nothing)
+		print                  ## prints (returns) cleaned input
+	}"
+}
+
+# Filter boilerplate & buzzwords.
+# args: $1 - quoted: "$@" array of ban terms
+make_ban_lists()
+{
+	local ban_list=''
+	# Iterate over $@
+	## note: this is a weird, non-intuitive method, needs some documentation or rewriting
+	## if you declare ban_string it stops working, have to read up on this
+	for ban_string
+	do
+		# echo "term=\"$ban_string\"" # >&2
+		if [[ ${ban_string:0:1} = $'\2' ]];then
+			ban_list="${ban_list}${ban_list+|}${ban_string:1:${#ban_string}-1}"
+		else
+			# Automatically escapes [ ] ( ) . and +
+			ban_list="${ban_list}${ban_list+|}$( echo "$ban_string" | gawk '{
+				gsub(/([\[\]+().])/,"\\\\&")
+				print
+			}' )"
+		fi
+	done
+
+	echo "$ban_list"
+}
+# make_ban_lists "${A_CPU_BANS[@]}";exit
+
+# Set the colorscheme
+# args: $1 = <scheme number>|<"none">
+set_color_scheme()
+{
+	local i='' script_colors='' color_codes=''
+
+	if [[ $1 -ge ${#A_COLOR_SCHEMES[@]} ]];then
+		set -- 1
+	fi
+	# Set a global variable to allow checking for chosen scheme later
+	SCHEME="$1"
+	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
+		color_codes=( $ANSI_COLORS )
+	else
+		color_codes=( $IRC_COLORS )
+	fi
+	for (( i=0; i < ${#A_COLORS_AVAILABLE[@]}; i++ ))
+	do
+		eval "${A_COLORS_AVAILABLE[i]}=\"${color_codes[i]}\""
+	done
+	IFS=","
+	script_colors=( ${A_COLOR_SCHEMES[$1]} )
+	IFS="$ORIGINAL_IFS"
+	# then assign the colors globally
+	C1="${!script_colors[0]}"
+	C2="${!script_colors[1]}"
+	CN="${!script_colors[2]}"
+	# ((COLOR_SCHEME++)) ## note: why is this? ##
+}
+
+########################################################################
 #### UTILITY FUNCTIONS
 ########################################################################
 
 #### -------------------------------------------------------------------
-#### error handler and debugger
+#### error handler, debugger, script updater
 #### -------------------------------------------------------------------
 
 # Error handling
@@ -312,31 +636,63 @@ error_handler()
 script_debugger()
 {
 	if [[ $B_SCRIPT_UP == 'true' ]];then
-			# only return if debugger is off and no pre start up errors have occured
-			if [[ $DEBUG -eq 0 && $DEBUG_BUFFER_INDEX -eq 0 ]];then
-				return 0
-			# print out the stored debugging information if errors occured
-			elif [[ $DEBUG_BUFFER_INDEX -gt 0 ]];then
-				for (( DEBUG_BUFFER_INDEX=0; DEBUG_BUFFER_INDEX < ${#A_DEBUG_BUFFER[@]}; DEBUG_BUFFER_INDEX++ ))
-				do
-					print_screen_output "${A_DEBUG_BUFFER[$DEBUG_BUFFER_INDEX]}"
-				done
-				DEBUG_BUFFER_INDEX=0
-			fi
-			# or print out normal debugger messages if debugger is on
-			if [[ $DEBUG -gt 0 ]];then
-				print_screen_output "$1"
-			fi
+		# only return if debugger is off and no pre start up errors have occured
+		if [[ $DEBUG -eq 0 && $DEBUG_BUFFER_INDEX -eq 0 ]];then
+			return 0
+		# print out the stored debugging information if errors occured
+		elif [[ $DEBUG_BUFFER_INDEX -gt 0 ]];then
+			for (( DEBUG_BUFFER_INDEX=0; DEBUG_BUFFER_INDEX < ${#A_DEBUG_BUFFER[@]}; DEBUG_BUFFER_INDEX++ ))
+			do
+				print_screen_output "${A_DEBUG_BUFFER[$DEBUG_BUFFER_INDEX]}"
+			done
+			DEBUG_BUFFER_INDEX=0
+		fi
+		# or print out normal debugger messages if debugger is on
+		if [[ $DEBUG -gt 0 ]];then
+			print_screen_output "$1"
+		fi
 	else
-			if [[ $B_DEBUG_FLOOD == 'true' && $DEBUG_BUFFER_INDEX -gt 10 ]];then
-				error_handler 2
-			# this case stores the data for later printout, will print out only
-			# at B_SCRIPT_UP == 'true' if array index > 0
-			else
-				A_DEBUG_BUFFER[$DEBUG_BUFFER_INDEX]="$1"
-				# increment count for next pre script up debugging error
-				(( DEBUG_BUFFER_INDEX++ ))
-			fi
+		if [[ $B_DEBUG_FLOOD == 'true' && $DEBUG_BUFFER_INDEX -gt 10 ]];then
+			error_handler 2
+		# this case stores the data for later printout, will print out only
+		# at B_SCRIPT_UP == 'true' if array index > 0
+		else
+			A_DEBUG_BUFFER[$DEBUG_BUFFER_INDEX]="$1"
+			# increment count for next pre script up debugging error
+			(( DEBUG_BUFFER_INDEX++ ))
+		fi
+	fi
+}
+
+# args: $1 - download url, not including file name; $2 - string to print out
+# note that $1 must end in / to properly construct the url path
+script_self_updater()
+{
+	local wget_error=0
+	print_screen_output "Starting $SCRIPT_NAME self updater."
+	print_screen_output "Currently running $SCRIPT_NAME version number: $SCRIPT_VERSION_NUMBER"
+	print_screen_output "Updating $SCRIPT_NAME in $SCRIPT_PATH using $2 as download source..."
+	# first test if path is good, need to make sure it's good because we're -O overwriting file
+	wget -q --spider $1$SCRIPT_NAME || wget_error=$?
+	# then do the actual download
+	if [[ $wget_error -eq 0 ]];then
+		wget -q -O $SCRIPT_PATH/$SCRIPT_NAME $1$SCRIPT_NAME || wget_error=$?
+		if [[ $wget_error -eq 0 ]];then
+			SCRIPT_VERSION_NUMBER=$( grep -im 1 'version:' $SCRIPT_PATH/$SCRIPT_NAME | gawk '{print $3}' )
+			print_screen_output "Successfully updated to $2 version: $SCRIPT_VERSION_NUMBER"
+			print_screen_output "To run the new version, just start $SCRIPT_NAME again."
+			exit 0
+		fi
+	fi
+	# now run the error handlers on any wget failure
+	if [[ $wget_error -gt 0 ]];then
+		if [[ $2 == 'svn server' ]];then
+			error_handler 8 "$wget_error"
+		elif [[ $2 == 'alt server' ]];then
+			error_handler 10 "$1"
+		else
+			error_handler 12 "$1"
+		fi
 	fi
 }
 
@@ -398,145 +754,9 @@ remove_erroneous_chars()
 	}' "$1"      ## prints (returns) cleaned input
 }
 
-## note: this is now running inside each gawk sequence directly to avoid exiting gawk
-## looping in bash through arrays, then re-entering gawk to clean up, then writing back to array
-## in bash. For now I'll leave this here because there's still some interesting stuff to get re methods
-# Enforce boilerplate and buzzword filters
-# args: $1 - BAN_LIST_NORMAL/BAN_LIST_CPU; $2 - string to sanitize
-sanitize_characters()
-{
-	# Cannot use strong quotes to unquote a string with pipes in it!
-	# bash will interpret the |'s as usual and try to run a subshell!
-	# Using weak quotes instead, or use '"..."'
-	echo "$2" | gawk "
-	BEGIN { IGNORECASE=1 } {
-		gsub(/${!1}/,\"\")
-		gsub(/ [ ]+/,\" \")    ## ([ ]+) with (space)
-		gsub(/^ +| +$/,\"\")   ## (pipe char) with (nothing)
-		print                  ## prints (returns) cleaned input
-	}"
-}
-
 #### -------------------------------------------------------------------
-#### basic tests
+#### parameter handling, print usage functions.
 #### -------------------------------------------------------------------
-
-# Determine if any of the absolutely necessary tools are absent
-check_script_depends()
-{
-	local app_name='' app_data=''
-	# bc removed from deps for now
-	local depends="df free gawk grep hostname lspci ps readlink runlevel tr uname uptime wc"
-
-	if [[ ! -d /proc/ ]];then
-		error_handler 6
-	fi
-	if [[ $B_X_RUNNING == 'true' ]];then
-		for app_name in xrandr xdpyinfo glxinfo
-		do
-			app_data=$( type -p $app_name )
-			if [[ -z $app_data ]];then
-				script_debugger "Resuming in non X mode: $app_name not found in path"
-				B_X_RUNNING='false'
-				break
-			fi
-		done
-	fi
-
-	app_name=''
-
-	for app_name in $depends
-	do
-		app_data=$( type -p $app_name )
-		if [[ -z $app_data ]];then
-			error_handler 5 "$app_name"
-		fi
-	done
-}
-
-# Filter boilerplate & buzzwords.
-# args: $1 - quoted: "$@" array of ban terms
-make_ban_lists()
-{
-	local ban_list=''
-	# Iterate over $@
-	## note: this is a weird, non-intuitive method, needs some documentation or rewriting
-	## if you declare ban_string it stops working, have to read up on this
-	for ban_string
-	do
-		# echo "term=\"$ban_string\"" # >&2
-		if [[ ${ban_string:0:1} = $'\2' ]];then
-			ban_list="${ban_list}${ban_list+|}${ban_string:1:${#ban_string}-1}"
-		else
-			# Automatically escapes [ ] ( ) . and +
-			ban_list="${ban_list}${ban_list+|}$( echo "$ban_string" | gawk '{
-				gsub(/([\[\]+().])/,"\\\\&")
-				print
-			}' )"
-		fi
-	done
-
-	echo "$ban_list"
-}
-# make_ban_lists "${A_CPU_BANS[@]}";exit
-
-# Set the colorscheme
-# args: $1 = <scheme number>|<"none">
-set_color_scheme()
-{
-	local i='' script_colors='' color_codes=''
-
-	if [[ $1 -ge ${#A_COLOR_SCHEMES[@]} ]];then
-		set -- 1
-	fi
-	# Set a global variable to allow checking for chosen scheme later
-	SCHEME="$1"
-	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
-		color_codes=( $ANSI_COLORS )
-	else
-		color_codes=( $IRC_COLORS )
-	fi
-	for (( i=0; i < ${#A_COLORS_AVAILABLE[@]}; i++ ))
-	do
-		eval "${A_COLORS_AVAILABLE[i]}=\"${color_codes[i]}\""
-	done
-	IFS=","
-	script_colors=( ${A_COLOR_SCHEMES[$1]} )
-	IFS="$ORIGINAL_IFS"
-	# then assign the colors globally
-	C1="${!script_colors[0]}"
-	C2="${!script_colors[1]}"
-	CN="${!script_colors[2]}"
-	# ((COLOR_SCHEME++)) ## note: why is this? ##
-}
-
-# Parse the null separated commandline under /proc/<pid passed in $1>/cmdline
-# args: $1 - $PPID
-get_cmdline()
-{
-	local i=0 ppid=$1
-
-	if [[ ! -e /proc/$ppid/cmdline ]];then
-		echo 0
-		return
-	fi
-	##print_screen_output "Marker"
-	##print_screen_output "\$ppid='$ppid' -=- $(< /proc/$ppid/cmdline)"
-	unset A_CMDL
-	## note: need to figure this one out, and ideally clean it up and make it readable
-	while read -d $'\0' L && [ "$i" -lt 32 ]
-	do
-		A_CMDL[i++]="$L" ## note: make sure this is valid - What does L mean? ##
-	done < /proc/$ppid/cmdline
-	##print_screen_output "\$i='$i'"
-	if [[ $i -eq 0 ]];then
-		A_CMDL[0]=$(< /proc/$ppid/cmdline)
-		if [[ -n ${A_CMDL[0]} ]];then
-			i=1
-		fi
-	fi
-	CMDL_MAX=$i
-}
 
 # Get the parameters. Note: standard options should be lower case, advanced or testing, upper
 # args: $1 - full script startup args: $@
@@ -732,8 +952,8 @@ show_options()
 	print_screen_output "-h - this help menu."
 	if [[ $B_ALLOW_UPDATE == 'true' ]];then
 		print_screen_output "-U  Auto-update script. Note: if you installed as root, you"
+		print_screen_output "    must be root to update, otherwise user is fine."
 	fi
-	print_screen_output "    must be root to update, otherwise user is fine."
 	print_screen_output "-V  $SCRIPT_NAME version information. Prints information then exits."
 	print_screen_output "-%  Overrides defective or corrupted data."
 	print_screen_output "-@  Triggers debugger output. Requires debugging level 1-10."
@@ -774,38 +994,6 @@ print_version_info()
 	print_screen_output "it under the terms of the GNU General Public License as published by"
 	print_screen_output "the Free Software Foundation; either version 3 of the License, or"
 	print_screen_output "(at your option) any later version."
-}
-
-# args: $1 - download url, not including file name; $2 - string to print out
-# note that $1 must end in / to properly construct the url path
-script_self_updater()
-{
-	local wget_error=0
-	print_screen_output "Starting $SCRIPT_NAME self updater."
-	print_screen_output "Currently running $SCRIPT_NAME version number: $SCRIPT_VERSION_NUMBER"
-	print_screen_output "Updating $SCRIPT_NAME in $SCRIPT_PATH using $2 as download source..."
-	# first test if path is good, need to make sure it's good because we're -O overwriting file
-	wget -q --spider $1$SCRIPT_NAME || wget_error=$?
-	# then do the actual download
-	if [[ $wget_error -eq 0 ]];then
-		wget -q -O $SCRIPT_PATH/$SCRIPT_NAME $1$SCRIPT_NAME || wget_error=$?
-		if [[ $wget_error -eq 0 ]];then
-			SCRIPT_VERSION_NUMBER=$( grep -im 1 'version:' $SCRIPT_PATH/$SCRIPT_NAME | gawk '{print $3}' )
-			print_screen_output "Successfully updated to $2 version: $SCRIPT_VERSION_NUMBER"
-			print_screen_output "To run the new version, just start $SCRIPT_NAME again."
-			exit 0
-		fi
-	fi
-	# now run the error handlers on any wget failure
-	if [[ $wget_error -gt 0 ]];then
-		if [[ $2 == 'svn server' ]];then
-			error_handler 8 "$wget_error"
-		elif [[ $2 == 'alt server' ]];then
-			error_handler 10 "$1"
-		else
-			error_handler 12 "$1"
-		fi
-	fi
 }
 
 ########################################################################
@@ -969,22 +1157,22 @@ get_start_client()
 				do
 					case ${A_CMDL[i]} in
 						*dsirc*)
-							IRC_CLIENT="KSirc"
-							# Dynamic runpath detection is too complex with KSirc, because KSirc is started from
-							# kdeinit. /proc/<pid of the grandparent of this process>/exe is a link to /usr/bin/kdeinit
-							# with one parameter which contains parameters separated by spaces(??), first param being KSirc.
-							# Then, KSirc runs dsirc as the perl irc script and wraps around it. When /exec is executed,
-							# dsirc is the program that runs inxi, therefore that is the parent process that we see.
-							# You can imagine how hosed I am if I try to make inxi find out dynamically with which path
-							# KSirc was run by browsing up the process tree in /proc. That alone is straightjacket material.
-							# (KSirc sucks anyway ;)
-							IRC_CLIENT_VERSION=" $( ksirc -v | gawk '
-							/KSirc:/ {
-								print $2
-								exit
-							}' )"
-							break
-							;;
+						IRC_CLIENT="KSirc"
+						# Dynamic runpath detection is too complex with KSirc, because KSirc is started from
+						# kdeinit. /proc/<pid of the grandparent of this process>/exe is a link to /usr/bin/kdeinit
+						# with one parameter which contains parameters separated by spaces(??), first param being KSirc.
+						# Then, KSirc runs dsirc as the perl irc script and wraps around it. When /exec is executed,
+						# dsirc is the program that runs inxi, therefore that is the parent process that we see.
+						# You can imagine how hosed I am if I try to make inxi find out dynamically with which path
+						# KSirc was run by browsing up the process tree in /proc. That alone is straightjacket material.
+						# (KSirc sucks anyway ;)
+						IRC_CLIENT_VERSION=" $( ksirc -v | gawk '
+						/KSirc:/ {
+							print $2
+							exit
+						}' )"
+						break
+						;;
 					esac
 				done
 				if [[ -z $IRC_CLIENT_VERSION ]];then
@@ -1009,39 +1197,32 @@ get_start_client()
 	fi
 }
 
-## this is a mishmash and will be mostly moved to other places over time, for now
-## it's just a holder for some misc stuff that has to happen
-set_calculated_variables()
+# Parse the null separated commandline under /proc/<pid passed in $1>/cmdline
+# args: $1 - $PPID
+get_cmdline()
 {
-	local path='' sys_path='' added_path='' b_path_found=''
-	# Extra path variable to make execute failures less likely, merged below
-	local extra_paths="/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin"
+	local i=0 ppid=$1
 
-	# Fallback paths put into $extra_paths; This might, among others, help on gentoo.
-	# Now, create a difference of $PATH and $extra_paths and add that to $PATH:
-	IFS=":"
-	for path in $extra_paths
+	if [[ ! -e /proc/$ppid/cmdline ]];then
+		echo 0
+		return
+	fi
+	##print_screen_output "Marker"
+	##print_screen_output "\$ppid='$ppid' -=- $(< /proc/$ppid/cmdline)"
+	unset A_CMDL
+	## note: need to figure this one out, and ideally clean it up and make it readable
+	while read -d $'\0' L && [ "$i" -lt 32 ]
 	do
-		b_path_found='false'
-		for sys_path in $PATH
-		do
-			if [[ $path == $sys_path ]];then
-				b_path_found='true'
-			fi
-		done
-		if [[ $b_path_found == 'false' ]];then
-			added_path="$added_path:$path"
+		A_CMDL[i++]="$L" ## note: make sure this is valid - What does L mean? ##
+	done < /proc/$ppid/cmdline
+	##print_screen_output "\$i='$i'"
+	if [[ $i -eq 0 ]];then
+		A_CMDL[0]=$(< /proc/$ppid/cmdline)
+		if [[ -n ${A_CMDL[0]} ]];then
+			i=1
 		fi
-	done
-	IFS="$ORIGINAL_IFS"
-	PATH="${PATH}${added_path}"
-	##echo "PATH='$PATH'"
-	##/bin/sh -c 'echo "PATH in subshell=\"$PATH\""'
-
-	# Do this after sourcing of config overrides so user can customize banwords
-	BAN_LIST_NORMAL=$( make_ban_lists "${A_NORMAL_BANS[@]}" ) # Contrary to my previous belief, "${ARR[@]}" passes a quoted list, not one string
-	BAN_LIST_CPU=$( make_ban_lists "${A_CPU_BANS[@]}" )
-	##echo "BAN_LIST_NORMAL='$BAN_LIST_NORMAL'"
+	fi
+	CMDL_MAX=$i
 }
 
 #### -------------------------------------------------------------------
@@ -1054,8 +1235,8 @@ get_audio_data()
 
 	IFS=$'\n'
 	# this first step handles the drivers for cases where the second step fails to find one
-	device_count=$( egrep -ic '(multimedia audio controller|audio device)' <<< "$lspci_data" )
-	if [[ $device_count -eq 1 && -f /proc/asound/cards ]];then
+	device_count=$( echo "$lspci_data" | egrep -ic '(multimedia audio controller|audio device)' )
+	if [[ $device_count -eq 1 ]] && [[ $B_ASOUND_CARDS == 'true' ]];then
 		alsa_driver=$( gawk -F ']: ' '
 		{ IGNORECASE=1 }
 		# filtering out modems and usb devices like webcams, this might get a
@@ -1066,8 +1247,9 @@ get_audio_data()
 			if ( driver != "" ){
 				print driver
 			}
-		}'  /proc/asound/cards )
+		}'  $DIR_ASOUND_DEVICE )
 	fi
+
 	# this is to safeguard against line breaks from results > 1, which if inserted into following
 	# array will create a false array entry. This is a hack, not a permanent solution.
 	alsa_driver=$( echo $alsa_driver )
@@ -1142,7 +1324,7 @@ get_audio_data()
 	}') )
 
 	# in case of failure of first check do this instead
-	if [[ ${#A_AUDIO_DATA[@]} -eq 0 && -f /proc/asound/cards ]];then
+	if [[ ${#A_AUDIO_DATA[@]} -eq 0 ]] && [[ $B_ASOUND_CARDS == 'true' ]];then
 		A_AUDIO_DATA=( $( gawk -F ']: ' '
 		{ IGNORECASE=1 }
 		$1 !~ /modem/ && $2 !~ /modem/ {
@@ -1151,7 +1333,7 @@ get_audio_data()
 			if ( card != "" ){
 				print card","driver
 			}
-		}'  /proc/asound/cards ) )
+		}'  $DIR_ASOUND_DEVICE ) )
 	fi
 	IFS="$ORIGINAL_IFS"
 
@@ -1166,7 +1348,7 @@ get_audio_alsa_data()
 	local alsa_data=''
 
 	# now we'll get the alsa data if the file exists
-	if [[ -e /proc/asound/version ]];then
+	if [[ $B_ASOUND_VERSION == 'true' ]];then
 		alsa_data=$( gawk '
 			{ IGNORECASE=1 }
 			# some alsa strings have the build date in (...)
@@ -1179,7 +1361,7 @@ get_audio_alsa_data()
 				if ( $0 != "" ){
 					print $0
 				}
-		}' /proc/asound/version )
+		}' $DIR_ASOUND_VERSION )
 	fi
 	echo "$alsa_data"
 }
@@ -1188,112 +1370,197 @@ get_audio_alsa_data()
 ## return value cpu core count string, this helps resolve the multi redundant lines of old style output
 get_cpu_core_count()
 {
-	## Because of the upcoming release of cpus with core counts over 6, a count of cores is given after Deca (10)
-	# count the number of processors given
-	local cpu_core_count=$(grep -ic "cpu cores" /proc/cpuinfo| cut -d':' -f2)
+	if [[ $B_CPUINFO == 'true' ]]; then
+		# load the A_CPU_TYPE_PCNT_CCNT core data array
+		get_cpu_ht_multicore_smp_data
+		## Because of the upcoming release of cpus with core counts over 6, a count of cores is given after Deca (10)
+		# count the number of processors given
+		local cpu_core_count=${A_CPU_TYPE_PCNT_CCNT[2]}
+		local cpu_type=''
 
-	if [[ $cpu_core_count -eq 0 ]];then
-		cpu_core_count=$(grep -ic "^processor" /proc/cpuinfo| cut -d':' -f2)
+		if [[ ${A_CPU_TYPE_PCNT_CCNT[0]} == "HT" || ${A_CPU_TYPE_PCNT_CCNT[0]} == "SMP" ]]; then
+			# note the use of the space, this avoids a double space if this is null in the output
+			cpu_type=" ${A_CPU_TYPE_PCNT_CCNT[0]}"
+		fi
+
+		# match the numberic value to an alpha value
+		case $cpu_core_count in
+			1) cpu_alpha_count='Single';;
+			2) cpu_alpha_count='Dual';;
+			3) cpu_alpha_count='Triple';;
+			4) cpu_alpha_count='Quad';;
+			5) cpu_alpha_count='Penta';;
+			6) cpu_alpha_count='Hexa';;
+			7) cpu_alpha_count='Hepta';;
+			8) cpu_alpha_count='Octa';;
+			9) cpu_alpha_count='Ennea';;
+			10) cpu_alpha_count='Deca';;
+			*) cpu_alpha_count='Multi';;
+		esac
+		# create array, core count integer; core count string
+		A_CPU_CORE_DATA=( "$cpu_core_count" "$cpu_alpha_count Core$cpu_type" )
 	fi
-	local cpu_alpha_count=''
-
-	if [[ $cpu_core_count -lt 2 ]]; then
-		cpu_core_count=1
-	fi
-
-	# match the numberic value to an alpha value
-	case $cpu_core_count in
-		1) cpu_alpha_count='Single';;
-		2) cpu_alpha_count='Dual';;
-		3) cpu_alpha_count='Triple';;
-		4) cpu_alpha_count='Quad';;
-		5) cpu_alpha_count='Penta';;
-		6) cpu_alpha_count='Hexa';;
-		7) cpu_alpha_count='Hepta';;
-		8) cpu_alpha_count='Octa';;
-		9) cpu_alpha_count='Ennea';;
-		10) cpu_alpha_count='Deca';;
-		*) cpu_alpha_count='Multi';;
-	esac
-	# create array, core count integer; core count string
-	A_CPU_CORE_DATA=( "$cpu_core_count" "$cpu_alpha_count Core"  )
 }
 
 ## main cpu data collector
 get_cpu_data()
 {
-	local i='' j='' cpu_array_nu='' a_cpu_working='' multi_cpu=''
+	local i='' j='' cpu_array_nu='' a_cpu_working='' multi_cpu='' bits=''
 
-	IFS=$'\n'
-	A_CPU_DATA=($(gawk -F': ' '
-	{ IGNORECASE=1 }
-	# TAKE NOTE: \t+ will work for /proc/cpuinfo, but SOME ARBITRARY FILE used for TESTING might contain SPACES!
-	# Therefore PATCH to use [ \t]+ when TESTING!
-	/^processor\t+:/ { nr = $NF }
+	if [[ $B_CPUINFO == 'true' ]];then
+		IFS=$'\n'
+		A_CPU_DATA=($(gawk -F': ' '
+		{ IGNORECASE=1 }
+		# TAKE NOTE: \t+ will work for $DIR_CPUINFO, but SOME ARBITRARY FILE used for TESTING might contain SPACES!
+		# Therefore PATCH to use [ \t]+ when TESTING!
+		/^processor\t+:/ { nr = $NF }
 
-	/^model name|^cpu\t+:/ {
-		gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF )
-		gsub(/'"$BAN_LIST_CPU"'/, "", $NF )
-		gsub(/,/, " ", $NF)
-		gsub(/^ +| +$/, "", $NF)
-		gsub(/ [ \t]+/, " ", $NF)
-		cpu[nr, "model"] = $NF
-	}
-
-	/^cpu MHz|^clock\t+:/ {
-		if (!min) {
-			min = $NF
+		/^model name|^cpu\t+:/ {
+			gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF )
+			gsub(/'"$BAN_LIST_CPU"'/, "", $NF )
+			gsub(/,/, " ", $NF)
+			gsub(/^ +| +$/, "", $NF)
+			gsub(/ [ \t]+/, " ", $NF)
+			cpu[nr, "model"] = $NF
 		}
-		else {
-			if ($NF < min) {
+
+		/^cpu MHz|^clock\t+:/ {
+			if (!min) {
 				min = $NF
 			}
+			else {
+				if ($NF < min) {
+					min = $NF
+				}
+			}
+
+			if ($NF > max) {
+				max = $NF
+			}
+			gsub(/MHZ/,"",$NF) ## clears out for cell cpu
+			gsub(/.00[0]+$/,".00",$NF) ## clears out excessive zeros
+			cpu[nr, "speed"] = $NF
 		}
 
-		if ($NF > max) {
-			max = $NF
-		}
-		gsub(/MHZ/,"",$NF) ## clears out for cell cpu
-		gsub(/.00[0]+$/,".00",$NF) ## clears out excessive zeros
-		cpu[nr, "speed"] = $NF
-	}
+		/^cache size/      { cpu[nr, "cache"] = $NF }
 
-	/^cache size/      { cpu[nr, "cache"] = $NF }
+		/^flags/      { cpu[nr, "flags"] = $NF }
 
-	/^flags/      { cpu[nr, "flags"] = $NF }
+		/^bogomips/   { cpu[nr, "bogomips"] = $NF }
 
-	/^bogomips/   { cpu[nr, "bogomips"] = $NF }
+		/vendor_id/ {
+			gsub(/genuine|authentic/,"",$NF)
+			cpu[nr, "vendor"] = tolower( $NF )
+		}
 
-	/vendor_id/ {
-		gsub(/genuine|authentic/,"",$NF)
-		cpu[nr, "vendor"] = tolower( $NF )
-	}
-
-	END {
-		#if (!nr) { print ",,,"; exit } # <- should this be necessary or should bash handle that
-		for ( i = 0; i <= nr; i++ ) {
-			print cpu[i, "model"] "," cpu[i, "speed"] "," cpu[i, "cache"] "," cpu[i, "flags"] "," cpu[i, "bogomips"] ","  cpu[nr, "vendor"]
-		}
-		if (!min) {
-			print "not found"
-			exit
-		}
-		if (min != max) {
-			printf("Min:%s%s Max:%s%s\n", min, "Mhz", max, "Mhz")
-		}
-		else {
-			printf("%s %s\n", max, "Mhz")
-		}
-	}' /proc/cpuinfo))
+		END {
+			#if (!nr) { print ",,,"; exit } # <- should this be necessary or should bash handle that
+			for ( i = 0; i <= nr; i++ ) {
+				print cpu[i, "model"] "," cpu[i, "speed"] "," cpu[i, "cache"] "," cpu[i, "flags"] "," cpu[i, "bogomips"] ","  cpu[nr, "vendor"]
+			}
+			if (!min) {
+				print "not found"
+				exit
+			}
+			if (min != max) {
+				printf("Min:%s%s Max:%s%s\n", min, "Mhz", max, "Mhz")
+			}
+			else {
+				printf("%s %s\n", max, "Mhz")
+			}
+		}' $DIR_CPUINFO))
+	fi
 
 	IFS="$ORIGINAL_IFS"
+}
+
+## this is for counting processors and finding HT types
+get_cpu_ht_multicore_smp_data()
+{
+	# in /proc/cpuinfo
+	# if > 1 processor && processor id == core id then Hyperthreaded (HT)
+	# if > 1 processor && different processor ids then Multiple Processors (SMP)
+	# if > 1 processor && processor id != core id then Multi-Core Processors (MCP)
+	# if = 1 processor then single core/processor Uni-Processor (UP)
+
+	if [[ $B_CPUINFO == 'true' ]]; then
+	{
+		A_CPU_TYPE_PCNT_CCNT=( $(gawk '
+		BEGIN { FS=": "; i = 0 } {IGNORECASE = 1}
+		/^processor/ { num_of_processors = $NF + 1 } 	# counts logical processors, both HT and physical
+		/^cpu cores/ { num_of_cores = $NF }		# counts physical cores
+		/^physical/ { physical_id[i] = $NF }		# array of physical cpus ids
+		/^core id/ { core_id[i] = $NF; i++ }		# array of core ids
+		{
+			processors = 1
+			cores = 1	# single cores are obviously a Uni-processor
+			type = "UP"
+			cpu_temp = 0
+			core_temp = 0
+
+			# look for the largest id number, and assign it
+			for ( j = 0; j <= num_of_processors; j++)
+			{
+				if ( physical[j] > cpu_temp )
+				{
+					cpu_temp = physical[j]
+				}
+				if ( core_id[j] > core_temp )
+				{
+					core_temp = core_id[j]
+				}
+			}
+
+			physical_cpu_count = cpu_temp + 1
+			core_count = core_temp + 1
+
+			# looking at logical processor counts over 1, which means either HT, SMP or MCP
+			if ( num_of_processors > 1 )
+			{
+				if ( physical_cpu_count == 1 )
+				{
+					if ( physical_cpu_count == core_count )
+					{
+						type = "HT"  # this is more than likely a P4 w/HT or an Atom 270
+					}
+					else
+					{
+						if ( core_count == num_of_cores && core_count == num_of_processors)
+						{
+							type = "MCP"
+							cores = core_count
+						}
+						else
+						{
+							type = "HT"		# this is i7 or Atom 330
+							cores = core_count
+						}
+					}
+				}
+				else
+				{
+					type = "SMP"
+					processors = physical_cpu_count
+
+					if ( num_of_cores > 1 )
+					{
+						type = "SMPMC"	# processors could be both MCP and SMP
+						cores = core_count
+					}
+				}
+			}
+		}
+		END { print type " " processors " " cores }
+		' $DIR_CPUINFO ))
+	}
+	fi
 }
 
 # for more on distro id, please reference this python thread: http://bugs.python.org/issue1322
 ## return distro name/id if found
 get_distro_data()
 {
-	local i='' distro='' distro_file='' a_distro_glob=''
+	local i='' j='' distro='' distro_file='' a_distro_glob=''
 
 	# get the wild carded array of release/version /etc files if present
 	shopt -s nullglob
@@ -1312,7 +1579,17 @@ get_distro_data()
 			# This is a known bug, search for the word "strange" inside comments
 			# echo "i='$i' a_distro_glob[@]='${a_distro_glob[@]}'"
 			if [[ " ${a_distro_glob[@]} " == *" $i "* ]];then
-				distro_file="${i}"
+				# Now lets see if the distro file is in the known-good working-lsb-list
+				# if so, use lsb-release, if not, then just use the found file
+				# this is for only those distro's with self named release/version files
+				# because Mint does not use such, it must be done as below
+				## this if statement requires the spaces and * as it is, else it won't work
+				##
+				if [[ " $DISTROS_LSB_GOOD " == *" ${i} "* ]] && [[ $B_LSB_DIR == 'true' ]];then
+					distro_file='lsb-release'
+				else
+					distro_file="${i}"
+				fi
 				break
 			fi
 		done
@@ -1332,7 +1609,8 @@ get_distro_data()
 	# otherwise try  the default debian/ubuntu /etc/issue file
 	elif [[ -f /etc/issue ]];then
 		# lsb gives more manageable and accurate output than issue, but mint should use issue for now
-		if [[ -f /etc/lsb-release && -z $( grep -i 'mint' /etc/issue ) ]];then
+		# some bashism, boolean must be in parenthesis to work correctly, ie [[ $(boolean) ]] not [[ $boolean ]]
+		if [[ $B_LSB_DIR == 'true' ]] && [[ -z $( grep -i 'mint' /etc/issue ) ]];then
 			distro=$( get_distro_lsb_data )
 		else
 			distro=$( gawk '
@@ -1346,14 +1624,14 @@ get_distro_data()
 		fi
 	fi
 
-	if [[ ${#distro} -gt 80 && $B_HANDLE_CORRUPT_DATA != 'true' ]];then
+	if [[ ${#distro} -gt 80 ]] &&  [[ $B_HANDLE_CORRUPT_DATA != 'true' ]];then
 		distro="${RED}/etc/${distro_file} corrupted, use -% to override${NORMAL}"
 	fi
 	## note: would like to actually understand the method even if it's not used
 	# : ${distro:=Unknown distro o_O}
 	## test for /etc/lsb-release as a backup in case of failure, in cases where > one version/release file
 	## were found but the above resulted in null distro value
-	if [[ -z $distro && -f /etc/lsb-release ]];then
+	if [[ -z $distro ]] && [[ $B_LSB_DIR == 'true' ]];then
 		distro=$( get_distro_lsb_data )
 	fi
 	## finally, if all else has failed, give up
@@ -1374,7 +1652,7 @@ get_distro_lsb_data()
 {
 	local distro=''
 
-	if [[ -f /etc/lsb-release && $1 != 'app' ]];then
+	if [[ $B_LSB_DIR == 'true' ]] && [[ $1 != 'app' ]];then
 		distro=$( gawk -F '=' '
 
 		{ IGNORECASE=1 }
@@ -1403,7 +1681,7 @@ get_distro_lsb_data()
 		}
 		END {
 			print distroId distroRelease distroCodename
-		}' /etc/lsb-release )
+		}' $DIR_LSB_RELEASE )
 	fi
 	# this is HORRIBLY slow, but I don't know why, it runs fast in shell
 # 	if [[  -n $( which lsb_release ) && $1 == 'app' ]];then
@@ -1533,8 +1811,10 @@ get_graphics_agp_data()
 {
 	local agp_module=''
 
-	## not used currently
-	agp_module=$( gawk '/agp/ && !/agpgart/ && $3 > 0 { print(gensub(/(.*)_agp.*/,"\\1","g",$1)) }' /proc/modules )
+	if [[ B_MODULES_DIR == 'true' ]];then
+		## not used currently
+		agp_module=$( gawk '/agp/ && !/agpgart/ && $3 > 0 { print(gensub(/(.*)_agp.*/,"\\1","g",$1)) }' $DIR_MODULES )
+	fi
 }
 
 ## create array of x vendor/version data
@@ -1581,65 +1861,83 @@ get_hdd_data_basic()
 {
 	local hdd_used=''
 
-	hdd_used=$( df | gawk '
-	p {
-		if (/^\/dev\/(mapper\/|[hs]d[a-z][0-9]+)/) {
-			if (NF == 1) {
-				getline
-				if (NF == 5) {
-					c += $2
-				}
-				else {
-					next
-				}
-			}
-			else if (NF == 6) {
-				c += $3
-			}
+# 	dfdata="Filesystem           1K-blocks      Used Available Use% Mounted on
+# /dev/hdc7              5289348   2811800   2208864  57% /
+# tmpfs                  1037688         0   1037688   0% /lib/init/rw
+# udev                     10240       116     10124   2% /dev
+# tmpfs                  1037688         0   1037688   0% /dev/shm
+# /dev/hdc8              8420132   4218360   3774044  53% /home
+# /dev/hdc5             32981408  20955204  12026204  64% /media/hd2
+# /dev/sdb1            390700768 188926868 201773900  49% /media/Snusmumrikken
+# /dev/sda1            732572000 248156936 484415064  34% /media/Mr. Big"
+
+	# hdd_used=$( df | gawk '
+	hdd_used=$( echo "$dfdata" | gawk '
+	/^\/dev\/(mapper\/|[hs]d[a-z][0-9]+)/ {
+		# this handles the case where the first item is too long
+		# and makes df wrap output to next line, so here we advance
+		# it to the next line for that single case
+		if ( NF == 1 ) {
+			getline
 		}
+
+			if ( $4 ~ /.*\%/ ) {
+				used += $2
+			}
+			else if ( $5 ~ /.*\%/ ) {
+				used += $3
+			}
+			else {
+				next
+			}
 	}
-	/^Filesystem/ { p++ }
 	END {
-		print c
+		print used
 	}' )
 
 	if [[ -z $hdd_used ]];then
 		hdd_used='na'
 	fi
+	echo hdd_used $hdd_used
 
 	# create the initial array strings:
 	# disk-dev, capacity, name, usb or not
 	# final item is the total of the disk
 	IFS=$'\n'
-	A_HDD_DATA=( $( gawk -v hddused="$hdd_used" '
-	/[hs]d[a-z]$/ {
-		driveSize = $(NF - 1)*1024/1000**3
-		gsub(/,/, " ", driveSize)
-		gsub(/^ +| +$/, "", driveSize)
-		printf( $NF",%.1fGB,,\n", driveSize )
-	}
-	# See http://lanana.org/docs/device-list/devices-2.6+.txt for major numbers used below
-	# $1 ~ /^(3|22|33|8)$/ && $2 % 16 == 0  {size+=$3}
-	# special case from this data: 8     0  156290904 sda
-	$1 ~ /^(3|22|33|8)$/ && $NF ~ /[hs]d[a-z]$/ && ( $2 % 16 == 0 || $2 % 16 == 8 )  {size+=$3}
-	END {
-		size = size*1024/1000**3                   # calculate size in GB size
-		workingUsed = hddused*1024/1000**3         # calculate workingUsed in GB used
-		# this handles a special case with livecds where no hdd_used is detected
-		if ( size > 0 && hddused == "na" ) {
-			size = sprintf( "%.1f", size )
-			print size "GB,-"
+
+	if [[ $B_PARTITIONS_DIR == 'true' ]];then
+		A_HDD_DATA=( $( gawk -v hddused="$hdd_used" '
+		/[hs]d[a-z]$/ {
+			driveSize = $(NF - 1)*1024/1000**3
+			gsub(/,/, " ", driveSize)
+			gsub(/^ +| +$/, "", driveSize)
+			printf( $NF",%.1fGB,,\n", driveSize )
 		}
-		else if ( size > 0 && workingUsed > 0 ) {
-			diskUsed = workingUsed*100/size  # calculate used percentage
-			diskUsed = sprintf( "%.1f", diskUsed )
-			size = sprintf( "%.1f", size )
-			print size "GB," diskUsed "% used"
+		# See http://lanana.org/docs/device-list/devices-2.6+.txt for major numbers used below
+		# $1 ~ /^(3|22|33|8)$/ && $2 % 16 == 0  {size+=$3}
+		# special case from this data: 8     0  156290904 sda
+		$1 ~ /^(3|22|33|8)$/ && $NF ~ /[hs]d[a-z]$/ && ( $2 % 16 == 0 || $2 % 16 == 8 ) {
+			size += $3
 		}
-		else {
-			print "NA,-" # print an empty array, this will be further handled in the print out function
-		}
-	}'  /proc/partitions ) )
+		END {
+			size = size*1024/1000**3                   # calculate size in GB size
+			workingUsed = hddused*1024/1000**3         # calculate workingUsed in GB used
+			# this handles a special case with livecds where no hdd_used is detected
+			if ( size > 0 && hddused == "na" ) {
+				size = sprintf( "%.1f", size )
+				print size "GB,-"
+			}
+			else if ( size > 0 && workingUsed > 0 ) {
+				diskUsed = workingUsed*100/size  # calculate used percentage
+				diskUsed = sprintf( "%.1f", diskUsed )
+				size = sprintf( "%.1f", size )
+				print size "GB," diskUsed "% used"
+			}
+			else {
+				print "NA,-" # print an empty array, this will be further handled in the print out function
+			}
+		}'  $DIR_PARTITIONS ) )
+	fi
 	IFS="$ORIGINAL_IFS"
 }
 
@@ -1679,7 +1977,7 @@ get_hard_drive_data_advanced()
 	## then handle libata names
 	# first get the ata device names, put them into an array
 	IFS=$'\n'
-	if [[ -e /proc/scsi/scsi ]]; then
+	if [[ $B_SCSI_DIR == 'true' ]]; then
 		a_temp_scsi=( $( gawk  '
 		BEGIN { IGNORECASE=1 }
 		/host/ {
@@ -1704,7 +2002,7 @@ get_hard_drive_data_advanced()
 					print c
 				}
 			}
-		}' /proc/scsi/scsi) )
+		}' $DIR_SCSI ) )
 	fi
 	IFS="$ORIGINAL_IFS"
 
@@ -1775,7 +2073,7 @@ get_memory_data()
 	END {
 		used = tot-notused
 		printf("%.1f/%.1fMB\n", used/1024, tot/1024)
-	}' /proc/meminfo )
+	}' $DIR_MEMINFO )
 
 	echo "$memory"
 }
@@ -1887,9 +2185,9 @@ get_networking_wan_ip_data()
 
 get_networking_local_ip_data()
 {
-	if [[ -n $( which ifconfig ) ]];then
+	if [[ $B_IFCONFIG == 'true' ]];then
 		IFS=$'\n'
-		A_INTERFACES_DATA=( $( ifconfig | gawk '
+		A_INTERFACES_DATA=( $( $DIR_IFCONFIG | gawk '
 		BEGIN { IGNORECASE=1 }
 		$0 !~ /^lo/ {
 			# not clear on why inet is coming through, but this gets rid of it
@@ -1925,19 +2223,20 @@ get_networking_local_ip_data()
 			}
 		}') )
 		IFS="$ORIGINAL_IFS"
-	else
-		A_INTERFACES_DATA=( "Interfaces tool requires missing app: ifconfig" )
 	fi
 }
 
 get_partition_data()
 {
+	#local excluded_file_types='--exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660'
+	# df doesn't seem to work in script with variables like at the command line
+
 	IFS=$'\n'
 	# sample line: /dev/sda2     ext3     15G  8.9G  4.9G  65% /home
 	# $NF = partition name; $(NF - 4) = partition size; $(NF - 3) = used, in gB; $(NF - 1) = percent used
 	## note: by subtracting from the last field number NF, we avoid a subtle issue with LVM df output, where if
 	## the first field is too long, it will occupy its own line, this way we are getting only the needed data
-	A_PARTITION_DATA=( $( df -h -T --exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660 | gawk '
+	A_PARTITION_DATA=( $( df -h -T  --exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660 | gawk '
 	BEGIN { IGNORECASE=1 }
 	/\/$|\/boot$|\/var$|\/home$|\/tmp$|\/usr$/ && ! /aufs/ {
 		print $NF "," $(NF - 4) "," $(NF - 3) "," $(NF - 1) ",main"
@@ -2101,7 +2400,7 @@ print_it_out()
 # these will also be loaded in each relevant print function for long output
 print_short_data()
 {
-	local current_kernel=$( uname -a | gawk '{print $1,$3,$(NF-1)}' )
+	local current_kernel=$( uname -rm ) # | gawk '{print $1,$3,$(NF-1)}' )
 	local processes="$(( $( ps aux | wc -l ) - 1 ))"
 	local short_data='' i='' b_background_black='false'
 	local memory=$( get_memory_data )
@@ -2159,7 +2458,7 @@ print_short_data()
 			#C1="${C1},1"; C2="${C2},1"; CN="${CN},1"
 		fi
 	fi
-	short_data="${C1}CPU${CN}[${C2}${cpu_core_count_string} ${cpu_model} ${C1}clocked at${C2} ${min_max_clock}${CN}] ${C1}Kernel${CN}[${C2}${current_kernel}${CN}] ${C1}Up${CN}[${C2}${FL2}${FL1}${up_time}${FL1}${CN}] ${C1}Mem${CN}[${C2}${FL2}${FL1}${memory}${FL1}${CN}] ${C1}HDD${CN}[${C2}${FL2}${FL1}${hdd_capacity}($hdd_used)${FL1}${CN}] ${C1}Procs${CN}[${C2}${FL2}${FL1}${processes}${FL1}${CN}]"
+	short_data="${C1}CPU${CN}[${C2}${cpu_core_count_string} ${cpu_model} ${C1}clocked at${C2} ${min_max_clock}${CN}] ${C1}Kernel${CN}[${C2} ${current_kernel}${CN}] ${C1}Up${CN}[${C2}${FL2}${FL1}${up_time}${FL1}${CN}] ${C1}Mem${CN}[${C2}${FL2}${FL1}${memory}${FL1}${CN}] ${C1}HDD${CN}[${C2}${FL2}${FL1}${hdd_capacity}($hdd_used)${FL1}${CN}] ${C1}Procs${CN}[${C2}${FL2}${FL1}${processes}${FL1}${CN}]"
 
 	if [[ $SHOW_IRC -gt 0 ]];then
 		short_data="${short_data} ${C1}Client${CN}[${C2}${IRC_CLIENT}${IRC_CLIENT_VERSION}${CN}]"
@@ -2194,7 +2493,7 @@ print_audio_data()
 # 		if [[ -n ${a_audio_working[2]} ]];then
 # 			port_data=" ${C1}at port${C2} ${a_audio_working[2]}"
 # 		fi
-		# this should only trigger if the /proc/asound/cards data is used, not lspci -nn
+		# this should only trigger if the $DIR_ASOUND_DEVICE data is used, not lspci -nn
 		if [[ -n ${a_audio_working[3]} && $B_EXTRA_DATA == 'true' ]];then
 			module_version=$( print_module_version "${a_audio_working[3]}" )
 		fi
@@ -2413,7 +2712,7 @@ print_gfx_data()
 	fi
 
 	## note: if glx render or version have no content, then mesa is true
-	if [[ $B_X_RUNNING == 'true' && $b_is_mesa != 'true' ]];then
+	if [[ $B_X_RUNNING == 'true' ]] && [[ $b_is_mesa != 'true' ]];then
 		gfx_data=$( create_print_line " " "${C1}GLX Renderer${C2} ${glx_renderer} ${C1}GLX Version${C2} ${glx_version}${CN}" )
 		if [[ $B_HANDLE_CORRUPT_DATA == 'true' ]];then
 			gfx_data="${gfx_data} ${C1}Direct rendering${C2} ${glx_direct_render}${CN}"
@@ -2438,7 +2737,7 @@ print_hard_disk_data()
 	local hdd_capacity=${a_hdd_basic_working[0]}
 	local hdd_used=${a_hdd_basic_working[1]}
 
-	if [[ $VERBOSITY_LEVEL -ge 3 || $B_SHOW_DISK == 'true' ]];then
+	if [[ $VERBOSITY_LEVEL -ge 3 ]] || [[ $B_SHOW_DISK == 'true' ]];then
 	## note: the output part of this should be in the print hdd data function, not here
 		get_hard_drive_data_advanced
 		for (( i=0; i < ${#A_HDD_DATA[@]} - 1; i++ ))
@@ -2484,8 +2783,9 @@ print_hard_disk_data()
 
 print_info_data()
 {
+	local suggested_app="runlevel"
 	local info_data=''
-	local runlvl="$( runlevel | gawk '{ print $2 }' )"
+	local runlvl=''
 	local memory="$( get_memory_data )"
 	local processes="$(( $( ps aux | wc -l ) - 1 ))"
 	local up_time="$( get_uptime )"
@@ -2496,7 +2796,10 @@ print_info_data()
 
 	# this only triggers if no X data is present
 	if [[ $B_X_RUNNING != 'true' ]];then
-		info_data="${info_data} ${C1}Runlevel${C2} ${runlvl}${CN}"
+		if [[ -e $suggested_app ]];then
+			runlvl="$( runlevel | gawk '{ print $2 }' )"
+			info_data="${info_data} ${C1}Runlevel${C2} ${runlvl}${CN}"
+		fi
 	fi
 
 	if [[ $SHOW_IRC -gt 0 ]];then
@@ -2687,81 +2990,31 @@ print_partition_data()
 
 print_system_data()
 {
-	local system_data=''
+	local system_data='' bits=''
 	local host_name=$( hostname )
-	local current_kernel=$( uname -a | gawk '{print $1,$3,$(NF-1)}' )
+	local current_kernel=$( uname -rm ) # | gawk '{print $1,$3,$(NF-1)}' )
 	local distro="$( get_distro_data )"
+		# check for 64 bit first
+	if [ -n "$( uname -m | grep -o 'x86_64' )" ];then
+		bits="(64 bit)"
+	else
+		bits="(32 bit)"
+	fi
 
 	if [[ $B_SHOW_HOST == 'true' ]];then
-		system_data=$( create_print_line "System:" "${C1}Host${C2} $host_name ${C1}running${C2} ${CN}" )
+		system_data=$( create_print_line "System:" "${C1}Host${C2} $host_name ${C1}Kernel${C2}" )
 	else
-		system_data=$( create_print_line "System:" "${C1}running${C2} ${CN}" )
+		system_data=$( create_print_line "System:" "${C1}Kernel${C2} ${CN}" )
 	fi
-	system_data="$system_data ${C2}$current_kernel ${C1}Distro${C2} $distro ${CN}"
+	system_data="$system_data ${C2} $current_kernel $bits ${C1}Distro${C2} $distro"
 	print_screen_output "$system_data"
 }
 
 ########################################################################
 #### SCRIPT EXECUTION
 ########################################################################
-# first two functions must be set first for colors etc. Remember, no debugger
-# stuff works on these first two functions unless you set the debugging flag
-# manually. Debugging flag -@ [number] will not work until get_parameters runs.
-set_calculated_variables
 
-## this needs to run before the KONVI stuff is set below
-get_start_client
+main $@ ## From the End comes the Beginning
 
-# Check for dependencies before running anything else except above functions
-check_script_depends
-
-# note: this only works if it's run from inside konversation as a script builtin or something
-# only do this if inxi has been started as a konversation script, otherwise bypass this
-if [[ $KONVI -eq 1 ]];then
-	DCPORT="$1"
-	DCSERVER="$2"
-	DCTARGET="$3"
-	shift 3
-	# The section below is on request of Argonel from the Konversation developer team:
-	# it sources config files like $HOME/.kde/share/apps/konversation/scripts/inxi.conf
-	IFS=":"
-	for kde_config in $( kde-config --path data )
-	do
-		if [[ -r ${kde_config}${KONVI_CFG} ]];then
-			source "${kde_config}${KONVI_CFG}"
-			break
-		fi
-	done
-	IFS="$ORIGINAL_IFS"
-fi
-## leave this for debugging dcop stuff if we get that working
-# 	print_screen_output "DCPORT: $DCPORT"
-# 	print_screen_output "DCSERVER: $DCSERVER"
-# 	print_screen_output "DCTARGET: $DCTARGET"
-
-# "$@" passes every parameter separately quoted, "$*" passes all parameters as one quoted parameter.
-# must be here to allow debugger and other flags to be set.
-get_parameters "$@"
-
-# If no colorscheme was set in the parameter handling routine, then set the default scheme
-if [[ $COLOR_SCHEME_SET != 'true' ]];then
-	set_color_scheme "$DEFAULT_SCHEME"
-fi
-
-# all the pre-start stuff is in place now
-B_SCRIPT_UP='true'
-script_debugger "Debugger: $SCRIPT_NAME is up and running..."
-
-# then create the output
-print_it_out
-
-## last steps
-if [[ $B_RUNNING_IN_SHELL == 'true' && $SCHEME -gt 0 ]];then
-	echo -n "[0m"
-fi
-
-# weechat's executor plugin forced me to do this, and rightfully so, because else the exit code
-# from the last command is taken..
-exit 0
 ## note: this EOF is needed for smxi handling, this is what triggers the full download ok
 ###**EOF**###
