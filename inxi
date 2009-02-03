@@ -1,7 +1,7 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.9.8-b1-t5
+####  version: 0.9.8-b1-t6
 ####  Date: 3 February 2009
 ########################################################################
 ####  SPECIAL THANKS
@@ -186,8 +186,8 @@ B_MODULES_DIR='false' #
 B_PARTITIONS_DIR='false' #
 
 ### Directory's used when present
-DIR_CPUINFO='/proc/cpuinfo'
-# DIR_CPUINFO="$HOME/bin/scripts/inxi/svn/modules/data/xeon_2x_2"
+# DIR_CPUINFO='/proc/cpuinfo'
+DIR_CPUINFO="$HOME/bin/scripts/inxi/svn/modules/data/xeon_2x_2"
 DIR_MEMINFO='/proc/meminfo'
 DIR_ASOUND_DEVICE='/proc/asound/cards'
 DIR_ASOUND_VERSION='/proc/asound/version'
@@ -1416,7 +1416,7 @@ get_cpu_core_count()
 		esac
 		# create array, core count integer; core count string
 		# A_CPU_CORE_DATA=( "$cpu_core_count" "$cpu_alpha_count Core$cpu_type" )
-		A_CPU_CORE_DATA=( "$cpu_physical_count" "$cpu_alpha_count" "$cpu_type" )
+		A_CPU_CORE_DATA=( "$cpu_physical_count" "$cpu_alpha_count" "$cpu_type" "$cpu_core_count" )
 	fi
 }
 
@@ -1556,22 +1556,16 @@ get_cpu_ht_multicore_smp_data()
 			for ( j in a_physical_id ) {
 				index_temp = a_physical_id[j]
 				a_cpu_physical_working[index_temp] = a_physical_id[j]
-# 				print "a_physical_id: " a_physical_id[j]
-# 				print "a_cpu_physical_working: " a_cpu_physical_working[index_temp]
 			}
 			# note that length() is a gawk >= 3.1.5 only method, better to do it manually
 			for ( j in a_cpu_physical_working ) {
 				++physical_cpu_count
 			}
-# 			print "physical_cpu_count: " physical_cpu_count
 			core_count = core_count + 1
-# 			print "core_count: " core_count
-# 			print "num_of_processors: " num_of_processors
 			# looking at logical processor counts over 1, which means either HT, SMP or MCP
 			# http://en.wikipedia.org/wiki/Symmetric_multiprocessing
 			if ( num_of_processors > 1 ) {
 				per_cpu_core_count = num_of_processors / physical_cpu_count
-# 				print ":working_core_count " working_core_count
 				if ( physical_cpu_count == per_cpu_core_count && physical_cpu_count > 1 ) {
 					type = "SMP-HT"
 				}
@@ -1592,7 +1586,6 @@ get_cpu_ht_multicore_smp_data()
 		' $DIR_CPUINFO
 		) )
 	fi
-	echo A_CPU_TYPE_PCNT_CCNT: ${A_CPU_TYPE_PCNT_CCNT[@]}
 }
 
 # for more on distro id, please reference this python thread: http://bugs.python.org/issue1322
@@ -2486,16 +2479,17 @@ print_short_data()
 	get_cpu_core_count
 	local cpc_plural='' cpu_count_print='' model_plural=''
 	local cpu_physical_count=${A_CPU_CORE_DATA[0]}
-	local cpu_core_count=${A_CPU_CORE_DATA[1]}
+	local cpu_core_count=${A_CPU_CORE_DATA[3]}
+	local cpu_core_alpha=${A_CPU_CORE_DATA[1]}
 	local cpu_type=${A_CPU_CORE_DATA[2]}
-
-	if [ "$cpu_physical_count" -gt 1 ];then
+	local cores_per_cpu=$(( $cpu_core_count / $cpu_physical_count ))
+	if [[ "$cpu_physical_count" -gt 1 ]];then
 		cpc_plural='(s)'
 		model_plural='s'
 		cpu_count_print="$cpu_physical_count "
 	fi
-	local cores_per_cpu=$(( $cpu_core_count / $cpu_physical_count ))
-	local cpu_data_string="${cpu_count_print}${cpu_core_count} core ${cpu_type}"
+
+	local cpu_data_string="${cpu_count_print}${cpu_core_alpha} core ${cpu_type}"
 # 	local cpu_core_count=${A_CPU_CORE_DATA[0]}
 
 	# load A_HDD_DATA
@@ -2660,16 +2654,17 @@ print_cpu_data()
 	get_cpu_core_count
 	local cpc_plural='' cpu_count_print='' model_plural=''
 	local cpu_physical_count=${A_CPU_CORE_DATA[0]}
-	local cpu_core_count=${A_CPU_CORE_DATA[1]}
+	local cpu_core_count=${A_CPU_CORE_DATA[3]}
+	local cpu_core_alpha=${A_CPU_CORE_DATA[1]}
 	local cpu_type=${A_CPU_CORE_DATA[2]}
 
-	if [ "$cpu_physical_count" -gt 1 ];then
+	if [[ "$cpu_physical_count" -gt 1 ]];then
 		cpc_plural='(s)'
 		cpu_count_print="$cpu_physical_count "
 		model_plural='s'
 	fi
-	local cores_per_cpu=$(( $cpu_core_count / $cpu_physical_count ))
-	local cpu_data_string="${cpu_count_print}${cpu_core_count} core ${cpu_type}"
+
+	local cpu_data_string="${cpu_count_print}${cpu_core_alpha} core ${cpu_type}"
 	# Strange (and also some expected) behavior encountered. If print_screen_output() uses $1
 	# as the parameter to output to the screen, then passing "<text1> ${ARR[@]} <text2>"
 	# will output only <text1> and first element of ARR. That "@" splits in elements and "*" _doesn't_,
@@ -2694,10 +2689,11 @@ print_cpu_data()
 			bmip_data=" ${C1}bmips${C2} $bmip_data"
 		fi
 		## note: this handles how intel reports L2, total instead of per core like AMD does
+		# note that we need to multiply by number of actual cpus here to get true cache size
 		if [[ $cpu_vendor != 'intel' ]];then
-			cpu_cache=$( calculate_multicore_data "${a_cpu_working[2]}" "$cpu_core_count"  )
+			cpu_cache=$( calculate_multicore_data "${a_cpu_working[2]}" "$(( $cpu_core_count * $cpu_physical_count ))"  )
 		else
-			cpu_cache="${a_cpu_working[2]}"
+			cpu_cache=$( calculate_multicore_data "${a_cpu_working[2]}" "$cpu_physical_count"  )
 		fi
 		# only print shortened list
 		if [[ $B_CPU_FLAGS_FULL != 'true' ]];then
@@ -3092,7 +3088,7 @@ print_system_data()
 	local current_kernel=$( uname -rm ) # | gawk '{print $1,$3,$(NF-1)}' )
 	local distro="$( get_distro_data )"
 		# check for 64 bit first
-	if [ -n "$( uname -m | grep -o 'x86_64' )" ];then
+	if [[ -n "$( uname -m | grep -o 'x86_64' )" ]];then
 		bits="(64 bit)"
 	else
 		bits="(32 bit)"
