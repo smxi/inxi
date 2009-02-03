@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.9.7-b1-t2
-####  Date: 26 January 2009
+####  version: 0.9.8-b1-t1
+####  Date: 3 February 2009
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -90,6 +90,9 @@
 ####  For native script konversation support (check distro for correct konvi scripts path):
 ####  ln -s <path to inxi> /usr/share/apps/konversation/scripts/inxi
 ####  DCOP doesn't like \n, so avoid using it for most output unless required, as in error messages.
+########################################################################
+####  Valuable Resources
+####  awk arrays: http://www.math.utah.edu/docs/info/gawk_12.html
 ########################################################################
 ####  TESTING FLAGS
 ####  inxi supports advanced testing triggers to do various things, using -! <arg>
@@ -1393,30 +1396,33 @@ get_cpu_core_count()
 		get_cpu_ht_multicore_smp_data
 		## Because of the upcoming release of cpus with core counts over 6, a count of cores is given after Deca (10)
 		# count the number of processors given
+		local cpu_physical_count=${A_CPU_TYPE_PCNT_CCNT[1]}
 		local cpu_core_count=${A_CPU_TYPE_PCNT_CCNT[2]}
-		local cpu_type=''
+		local cpu_type=${A_CPU_TYPE_PCNT_CCNT[0]}
 
-		if [[ ${A_CPU_TYPE_PCNT_CCNT[0]} == "HT" || ${A_CPU_TYPE_PCNT_CCNT[0]} == "SMP" ]]; then
-			# note the use of the space, this avoids a double space if this is null in the output
-			cpu_type=" ${A_CPU_TYPE_PCNT_CCNT[0]}"
-		fi
+		case ${A_CPU_TYPE_PCNT_CCNT[0]} in
+			HT|SMP-HT|SMP)
+				cpu_type="${A_CPU_TYPE_PCNT_CCNT[0]}"
+				;;
+		esac
 
 		# match the numberic value to an alpha value
 		case $cpu_core_count in
-			1) cpu_alpha_count='Single';;
-			2) cpu_alpha_count='Dual';;
-			3) cpu_alpha_count='Triple';;
-			4) cpu_alpha_count='Quad';;
-			5) cpu_alpha_count='Penta';;
-			6) cpu_alpha_count='Hexa';;
-			7) cpu_alpha_count='Hepta';;
-			8) cpu_alpha_count='Octa';;
-			9) cpu_alpha_count='Ennea';;
-			10) cpu_alpha_count='Deca';;
-			*) cpu_alpha_count='Multi';;
+			1) cpu_alpha_count='single';;
+			2) cpu_alpha_count='dual';;
+			3) cpu_alpha_count='triple';;
+			4) cpu_alpha_count='quad';;
+			5) cpu_alpha_count='penta';;
+			6) cpu_alpha_count='hexa';;
+			7) cpu_alpha_count='hepta';;
+			8) cpu_alpha_count='octa';;
+			9) cpu_alpha_count='ennea';;
+			10) cpu_alpha_count='deca';;
+			*) cpu_alpha_count='multi';;
 		esac
 		# create array, core count integer; core count string
-		A_CPU_CORE_DATA=( "$cpu_core_count" "$cpu_alpha_count Core$cpu_type" )
+		# A_CPU_CORE_DATA=( "$cpu_core_count" "$cpu_alpha_count Core$cpu_type" )
+		A_CPU_CORE_DATA=( "$cpu_physical_count" "$cpu_alpha_count" "$cpu_type" )
 	fi
 }
 
@@ -1519,12 +1525,13 @@ get_cpu_ht_multicore_smp_data()
 		BEGIN {
 			FS=": "
 			IGNORECASE = 1
-			i = 0
-			processors = 1
+			core_count = 0
 			cores = 1	# single cores are obviously a Uni-processor
+			i = 0
+			index_temp = ""
+			physical_cpu_count = 0
+			processors = 1
 			type = "UP"
-			cpu_temp = 0
-			core_temp = 0
 		}
 		# counts logical processors, both HT and physical
 		/^processor/ {
@@ -1536,65 +1543,83 @@ get_cpu_ht_multicore_smp_data()
 		}
 		# array of physical cpus ids
 		/^physical/ {
-			physical_id[i] = $NF
+			a_physical_id[i] = $NF
 		}
 		# array of core ids
 		/^core id/ {
-			core_id[i] = $NF
+			a_core_id[i] = $NF
 			i++
-# 			print "i: " i
 		}
 		END {
 			# look for the largest id number, and assign it
 			for ( j = 0; j < num_of_processors; j++ ) {
-				if ( physical_id[j] > cpu_temp ) {
-					cpu_temp = physical_id[j]
-# 					print "physical_id: " physical_id[j]
-				}
-				if ( core_id[j] > core_temp ) {
-					core_temp = core_id[j]
-# 					print "core_temp: " core_id[j]
+				if ( a_core_id[j] > core_count ) {
+					core_count = a_core_id[j]
 				}
 			}
-
-			physical_cpu_count = cpu_temp + 1
-			core_count = core_temp + 1
-
+			# trick, set the index equal to value, if the same, it will overwrite
+			# this lets us create the actual array of true cpu physical ids
+			for ( j in a_physical_id ) {
+				index_temp = a_physical_id[j]
+				a_cpu_physical_working[index_temp] = a_physical_id[j]
+# 				print "a_physical_id: " a_physical_id[j]
+# 				print "a_cpu_physical_working: " a_cpu_physical_working[index_temp]
+			}
+			# note that length() is a gawk >= 3.1.5 only method, better to do it manually
+			for ( j in a_cpu_physical_working ) {
+				++physical_cpu_count
+			}
 # 			print "physical_cpu_count: " physical_cpu_count
-
+			core_count = core_count + 1
+# 			print "core_count: " core_count
+# 			print "num_of_processors: " num_of_processors
 			# looking at logical processor counts over 1, which means either HT, SMP or MCP
+			# http://en.wikipedia.org/wiki/Symmetric_multiprocessing
 			if ( num_of_processors > 1 ) {
-				if ( physical_cpu_count == 1 ) {
-					if ( physical_cpu_count == core_count ) {
-						type = "HT"  # this is more than likely a P4 w/HT or an Atom 270
-					}
-					else {
-						if ( core_count == num_of_cores && core_count == num_of_processors) {
-							type = "MCP"
-							cores = core_count
-						}
-						else {
-							type = "HT"		# this is i7 or Atom 330
-							cores = core_count
-						}
-					}
+				per_cpu_core_count = num_of_processors / physical_cpu_count
+# 				print ":working_core_count " working_core_count
+				if ( physical_cpu_count == per_cpu_core_count && physical_cpu_count > 1 ) {
+					type = "SMP-HT"
+				}
+				else if ( physical_cpu_count == per_cpu_core_count ) {
+					type = "HT"  # this is more than likely a P4 w/HT or an Atom 270
 				}
 				else {
 					type = "SMP"
-					processors = physical_cpu_count
-
-					if ( num_of_cores > 1 ) {
-						type = "SMPMC"	# processors could be both MCP and SMP
-						cores = core_count
-					}
 				}
+# 				if ( 1.1 == 1 ){print "yes"}else{print "no"}
+
+# 				if ( physical_cpu_count == 1 ) {
+# 					if ( physical_cpu_count == core_count ) {
+# 						type = "HT"  # this is more than likely a P4 w/HT or an Atom 270
+# 					}
+# 					else {
+# 						if ( core_count == num_of_cores && core_count == num_of_processors) {
+# 							type = "MCP"
+# 							cores = core_count
+# 						}
+# 						else {
+# 							type = "HT"		# this is i7 or Atom 330 or some Xeons
+# 							cores = core_count
+# 						}
+# 					}
+# 				}
+# 				else {
+# 					type = "SMP"
+# 					processors = physical_cpu_count
+#
+# 					if ( num_of_cores > 1 ) {
+# 						type = "SMPMC"	# processors could be both MCP and SMP
+# 						cores = core_count
+# 					}
+# 				}
 			}
-			print type " " processors " " cores
+			print type " " physical_cpu_count " " core_count
 		}
 		' $DIR_CPUINFO
 		) )
 	fi
-# 	echo A_CPU_TYPE_PCNT_CCNT:1 ${A_CPU_TYPE_PCNT_CCNT[@]}
+	echo A_CPU_TYPE_PCNT_CCNT: ${A_CPU_TYPE_PCNT_CCNT[@]}
 }
 
 # for more on distro id, please reference this python thread: http://bugs.python.org/issue1322
@@ -2486,8 +2511,17 @@ print_short_data()
 
 	# set A_CPU_CORE_DATA
 	get_cpu_core_count
-	local cpu_core_count_string="${A_CPU_CORE_DATA[1]}"
-	local cpu_core_count=${A_CPU_CORE_DATA[0]}
+	local cpc_plural=''
+	local cpu_physical_count=${A_CPU_CORE_DATA[0]}
+	local cpu_core_count=${A_CPU_CORE_DATA[1]}
+	local cpu_type=${A_CPU_CORE_DATA[2]}
+
+	if [ "$cpu_physical_count" -gt 1 ];then
+		cpc_plural='(s)'
+	fi
+	local cores_per_cpu=$(( $cpu_core_count / $cpu_physical_count ))
+	local cpu_data_string="${cpu_physical_count} ${cpu_core_count} core ${cpu_type}"
+# 	local cpu_core_count=${A_CPU_CORE_DATA[0]}
 
 	# load A_HDD_DATA
 	get_hdd_data_basic
@@ -2536,7 +2570,7 @@ print_short_data()
 			#C1="${C1},1"; C2="${C2},1"; CN="${CN},1"
 		fi
 	fi
-	short_data="${C1}CPU${CN}[${C2}${cpu_core_count_string} ${cpu_model} ${C1}clocked at${C2} ${min_max_clock}${CN}] ${C1}Kernel${CN}[${C2} ${current_kernel}${CN}] ${C1}Up${CN}[${C2}${FL2}${FL1}${up_time}${FL1}${CN}] ${C1}Mem${CN}[${C2}${FL2}${FL1}${memory}${FL1}${CN}] ${C1}HDD${CN}[${C2}${FL2}${FL1}${hdd_capacity}($hdd_used)${FL1}${CN}] ${C1}Procs${CN}[${C2}${FL2}${FL1}${processes}${FL1}${CN}]"
+	short_data="${C1}CPU$cpc_plural${CN}[${cpu_model}${C2} ${cpu_data_string} ${C1}clocked at${C2} ${min_max_clock}${CN}] ${C1}Kernel${CN}[${C2} ${current_kernel}${CN}] ${C1}Up${CN}[${C2}${FL2}${FL1}${up_time}${FL1}${CN}] ${C1}Mem${CN}[${C2}${FL2}${FL1}${memory}${FL1}${CN}] ${C1}HDD${CN}[${C2}${FL2}${FL1}${hdd_capacity}($hdd_used)${FL1}${CN}] ${C1}Procs${CN}[${C2}${FL2}${FL1}${processes}${FL1}${CN}]"
 
 	if [[ $SHOW_IRC -gt 0 ]];then
 		short_data="${short_data} ${C1}Client${CN}[${C2}${IRC_CLIENT}${IRC_CLIENT_VERSION}${CN}]"
@@ -2649,8 +2683,16 @@ print_cpu_data()
 
 	# set A_CPU_CORE_DATA
 	get_cpu_core_count
-	local cpu_core_count_string="${A_CPU_CORE_DATA[1]}"
-	local cpu_core_count=${A_CPU_CORE_DATA[0]}
+	local cpc_plural=''
+	local cpu_physical_count=${A_CPU_CORE_DATA[0]}
+	local cpu_core_count=${A_CPU_CORE_DATA[1]}
+	local cpu_type=${A_CPU_CORE_DATA[2]}
+
+	if [ "$cpu_physical_count" -gt 1 ];then
+		cpc_plural='(s)'
+	fi
+	local cores_per_cpu=$(( $cpu_core_count / $cpu_physical_count ))
+	local cpu_data_string="${cpu_physical_count} ${cpu_core_count} core ${cpu_type}"
 	# Strange (and also some expected) behavior encountered. If print_screen_output() uses $1
 	# as the parameter to output to the screen, then passing "<text1> ${ARR[@]} <text2>"
 	# will output only <text1> and first element of ARR. That "@" splits in elements and "*" _doesn't_,
@@ -2663,7 +2705,7 @@ print_cpu_data()
 		a_cpu_working[2]="unknown"
 	fi
 
-	cpu_data=$( create_print_line "CPU:" "${C1}${cpu_core_count_string}${C2} ${a_cpu_working[0]}" )
+	cpu_data=$( create_print_line "CPU$cpc_plural:" "${C1}${cpu_data_string}${C2} ${a_cpu_working[0]}" )
 	if [[ $VERBOSITY_LEVEL -ge 3 || $B_SHOW_CPU == 'true' ]];then
 		# update for multicore, bogomips x core count.
 		if [[ $B_EXTRA_DATA == 'true' ]];then
