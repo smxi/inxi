@@ -1,7 +1,7 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.9.8
+####  version: 0.9.9
 ####  Date: 3 February 2009
 ########################################################################
 ####  SPECIAL THANKS
@@ -1519,18 +1519,19 @@ get_cpu_ht_multicore_smp_data()
 			FS=": "
 			IGNORECASE = 1
 			core_count = 0
-			cores = 1	# single cores are obviously a Uni-processor
 			i = 0
 			index_temp = ""
+			num_of_cores = 0
 			physical_cpu_count = 0
+			processor_logical_count = 0
 			processors = 1
 			type = "UP"
 		}
 		# counts logical processors, both HT and physical
 		/^processor/ {
-			num_of_processors = $NF + 1
+			processor_logical_count = $NF + 1
 		}
-		# counts physical cores
+		# counts physical cores (not used currently)
 		/^cpu cores/ {
 			num_of_cores = $NF
 		}
@@ -1545,11 +1546,12 @@ get_cpu_ht_multicore_smp_data()
 		}
 		END {
 			# look for the largest id number, and assign it
-			for ( j = 0; j < num_of_processors; j++ ) {
+			for ( j = 0; j < processor_logical_count; j++ ) {
 				if ( a_core_id[j] > core_count ) {
 					core_count = a_core_id[j]
 				}
 			}
+			core_count = core_count + 1
 			# trick, set the index equal to value, if the same, it will overwrite
 			# this lets us create the actual array of true cpu physical ids
 			for ( j in a_physical_id ) {
@@ -1560,15 +1562,14 @@ get_cpu_ht_multicore_smp_data()
 			for ( j in a_cpu_physical_working ) {
 				++physical_cpu_count
 			}
-			core_count = core_count + 1
+
 			# looking at logical processor counts over 1, which means either HT, SMP or MCP
 			# http://en.wikipedia.org/wiki/Symmetric_multiprocessing
-			if ( num_of_processors > 1 ) {
-				per_cpu_core_count = num_of_processors / physical_cpu_count
-				if ( physical_cpu_count == per_cpu_core_count && physical_cpu_count > 1 ) {
-					type = "SMP-HT"
+			if ( processor_logical_count > 1 ) {
+				if ( processor_logical_count > core_count && physical_cpu_count > 1 ) {
+					type = "SMP-HT" # could be Xeon/P4 HT dual cpu
 				}
-				else if ( physical_cpu_count == per_cpu_core_count ) {
+				else if ( processor_logical_count > core_count ) {
 					type = "HT"  # this is more than likely a P4 w/HT or an Atom 270
 				}
 				else {
@@ -2481,14 +2482,14 @@ print_short_data()
 	local cpu_core_count=${A_CPU_CORE_DATA[3]}
 	local cpu_core_alpha=${A_CPU_CORE_DATA[1]}
 	local cpu_type=${A_CPU_CORE_DATA[2]}
-	local cores_per_cpu=$(( $cpu_core_count / $cpu_physical_count ))
+
 	if [[ "$cpu_physical_count" -gt 1 ]];then
 		cpc_plural='(s)'
 		model_plural='s'
 		cpu_count_print="$cpu_physical_count "
 	fi
 
-	local cpu_data_string="${cpu_count_print}${cpu_core_alpha} core ${cpu_type}"
+	local cpu_data_string="${cpu_count_print}${cpu_core_alpha} core"
 # 	local cpu_core_count=${A_CPU_CORE_DATA[0]}
 
 	# load A_HDD_DATA
@@ -2538,7 +2539,7 @@ print_short_data()
 			#C1="${C1},1"; C2="${C2},1"; CN="${CN},1"
 		fi
 	fi
-	short_data="${C1}CPU$cpc_plural${CN}[${C2} ${cpu_data_string} ${cpu_model}$model_plural ${C1}clocked at${C2} ${min_max_clock}${CN}] ${C1}Kernel${CN}[${C2} ${current_kernel}${CN}] ${C1}Up${CN}[${C2}${FL2}${FL1}${up_time}${FL1}${CN}] ${C1}Mem${CN}[${C2}${FL2}${FL1}${memory}${FL1}${CN}] ${C1}HDD${CN}[${C2}${FL2}${FL1}${hdd_capacity}($hdd_used)${FL1}${CN}] ${C1}Procs${CN}[${C2}${FL2}${FL1}${processes}${FL1}${CN}]"
+	short_data="${C1}CPU$cpc_plural${CN}[${C2} ${cpu_data_string} ${cpu_model}$model_plural (${cpu_type}) ${C1}clocked at${C2} ${min_max_clock}${CN}] ${C1}Kernel${CN}[${C2} ${current_kernel}${CN}] ${C1}Up${CN}[${C2}${FL2}${FL1}${up_time}${FL1}${CN}] ${C1}Mem${CN}[${C2}${FL2}${FL1}${memory}${FL1}${CN}] ${C1}HDD${CN}[${C2}${FL2}${FL1}${hdd_capacity}($hdd_used)${FL1}${CN}] ${C1}Procs${CN}[${C2}${FL2}${FL1}${processes}${FL1}${CN}]"
 
 	if [[ $SHOW_IRC -gt 0 ]];then
 		short_data="${short_data} ${C1}Client${CN}[${C2}${IRC_CLIENT}${IRC_CLIENT_VERSION}${CN}]"
@@ -2663,7 +2664,7 @@ print_cpu_data()
 		model_plural='s'
 	fi
 
-	local cpu_data_string="${cpu_count_print}${cpu_core_alpha} core ${cpu_type}"
+	local cpu_data_string="${cpu_count_print}${cpu_core_alpha} core"
 	# Strange (and also some expected) behavior encountered. If print_screen_output() uses $1
 	# as the parameter to output to the screen, then passing "<text1> ${ARR[@]} <text2>"
 	# will output only <text1> and first element of ARR. That "@" splits in elements and "*" _doesn't_,
@@ -2676,12 +2677,12 @@ print_cpu_data()
 		a_cpu_working[2]="unknown"
 	fi
 
-	cpu_data=$( create_print_line "CPU$cpc_plural:" "${C1}${cpu_data_string}${C2} ${a_cpu_working[0]}$model_plural" )
+	cpu_data=$( create_print_line "CPU$cpc_plural:" "${C1}${cpu_data_string}${C2} ${a_cpu_working[0]}$model_plural (${cpu_type})" )
 	if [[ $VERBOSITY_LEVEL -ge 3 || $B_SHOW_CPU == 'true' ]];then
 		# update for multicore, bogomips x core count.
 		if [[ $B_EXTRA_DATA == 'true' ]];then
 # 			if [[ $cpu_vendor != 'intel' ]];then
-				bmip_data=$( calculate_multicore_data "${a_cpu_working[4]}" "$(( $cpu_core_count * $cpu_physical_count ))"  )
+				bmip_data=$( calculate_multicore_data "${a_cpu_working[4]}" "$(( $cpu_core_count * $cpu_physical_count ))" )
 # 			else
 # 				bmip_data="${a_cpu_working[4]}"
 # 			fi
