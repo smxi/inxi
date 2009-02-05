@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.9.9
-####  Date: 3 February 2009
+####  version: 0.10.0-b1-t6
+####  Date: 4 February 2009
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -159,6 +159,7 @@ B_SHOW_GRAPHICS='false'
 B_SHOW_HOST='true'
 B_SHOW_INFO='false'
 B_SHOW_IP='false'
+B_SHOW_LABELS='false'
 B_SHOW_NETWORK='false'
 # either -v > 3 or -P will show partitions
 B_SHOW_PARTITIONS='false'
@@ -166,6 +167,7 @@ B_SHOW_PARTITIONS_FULL='false'
 # triggers only short inxi output
 B_SHOW_SHORT_OUTPUT='false'
 B_SHOW_SYSTEM='false'
+B_SHOW_UUIDS='false'
 # triggers various debugging and new option testing
 B_TESTING_1='false'
 B_TESTING_2='false'
@@ -183,6 +185,7 @@ B_IFCONFIG='false'
 B_LSB_DIR='false'
 B_SCSI_DIR='false'
 B_MODULES_DIR='false' #
+B_MOUNTS_DIR='false'
 B_PARTITIONS_DIR='false' #
 
 ### Directory's used when present
@@ -193,6 +196,7 @@ DIR_ASOUND_VERSION='/proc/asound/version'
 DIR_LSB_RELEASE='/etc/lsb-release'
 DIR_SCSI='/proc/scsi/scsi'
 DIR_MODULES='/proc/modules' #
+DIR_MOUNTS='/proc/mounts'
 DIR_PARTITIONS='/proc/partitions' #
 DIR_IFCONFIG='/sbin/ifconfig'
 
@@ -457,6 +461,10 @@ initialize_script_data()
 
 	if [[ -e "$DIR_MODULES" ]];then
 		B_MODULES_DIR='true'
+	fi
+
+	if [[ -e "$DIR_MOUNTS" ]];then
+		B_MOUNTS_DIR='true'
 	fi
 
 	if [[ -e "$DIR_PARTITIONS" ]];then
@@ -784,7 +792,7 @@ get_parameters()
 	# the short form only runs if no args output args are used
 	# no need to run through these if there are no args
 	if [[ -n $1 ]];then
-		while getopts Ac:CdDfFGhHiINpPSv:Vx%@:${update_flags} opt
+		while getopts Ac:CdDfFGhHiIlNpPSuv:Vx%@:${update_flags} opt
 		do
 			case $opt in
 			A)	B_SHOW_AUDIO='true'
@@ -831,6 +839,10 @@ get_parameters()
 			I)	B_SHOW_INFO='true'
 				use_short='false'
 				;;
+			l)	B_SHOW_LABELS='true'
+				B_SHOW_PARTITIONS='true'
+				use_short='false'
+				;;
 			N)	B_SHOW_NETWORK='true'
 				use_short='false'
 				;;
@@ -842,6 +854,10 @@ get_parameters()
 				use_short='false'
 				;;
 			S)	B_SHOW_SYSTEM='true'
+				use_short='false'
+				;;
+			u)	B_SHOW_UUIDS='true'
+				B_SHOW_PARTITIONS='true'
 				use_short='false'
 				;;
 			v)	if [[ -n $( egrep "^[0-9][0-9]?$" <<< $OPTARG ) && $OPTARG -le $VERBOSITY_LEVELS ]];then
@@ -943,12 +959,14 @@ show_options()
 	print_screen_output "-i  Show Wan IP address, and shows local interfaces (requires ifconfig network tool)."
 	print_screen_output "    Not shown with -F for user security reasons, you shouldn't paste your local/wan IP."
 	print_screen_output "-I  Show information: processes, uptime, memory, irc client, inxi version."
+	print_screen_output "-l  Show partition labels. Default: short partition -P. For full -p output, use: -pl (or -plu)."
 	print_screen_output "-N  Show network card information."
 	print_screen_output "-p  Show full partition information (-P plus all other detected partitions)."
 	print_screen_output "    If any of your partitions have spaces in their names, they will not show with -p"
 	print_screen_output "-P  Show partition information (shows what -v4 would show, but without extra data)."
 	print_screen_output "    Shows, if detected: / /boot /home /tmp /usr /var. Use -p for All partitions."
 	print_screen_output "-S  Show system information: host name, kernel, distro"
+	print_screen_output "-u  Show partition UUIDs. Default: short partition -P. For full -p output, use: -pu (or -plu)."
 	print_screen_output "-v  Script verbosity levels. Verbosity level number is required."
 	print_screen_output "    Supported levels: 0-${VERBOSITY_LEVELS} Example: $SCRIPT_NAME -v 4"
 	print_screen_output "    0 - short output, same as: $SCRIPT_NAME"
@@ -2314,8 +2332,9 @@ get_partition_data()
 		# the test show the wrong data in each of the fields, if no x%, then do not use
 		if ( $(NF - 1) ~ /[0-9]+\%/ ) {
 			# cleaning up user name here to avoid showing too much info on irc
-			partitionName=gensub( /^\/home\/(.*)\/(.*)/, "/home/###/\\2", 1, $NF )
-			print partitionName "," $(NF - 4) "," $(NF - 3) "," $(NF - 1) ",secondary"
+			# partitionName=gensub( /^\/home\/(.*)\/(.*)/, "/home/###/\\2", 1, $NF )
+			# print partitionName "," $(NF - 4) "," $(NF - 3) "," $(NF - 1) ",secondary"
+			print $NF "," $(NF - 4) "," $(NF - 3) "," $(NF - 1) ",secondary"
 		}
 	}
 	' )
@@ -2324,9 +2343,137 @@ get_partition_data()
 	$( swapon -s | gawk '
 	/^\/dev\/[hs]d[a-z]/ {
 		size = sprintf( "%.2f", $3*1024/1000**3 )
-		print $1 "," size "GB,,,swap"
+		devBase = gensub( /^(\/dev\/)(.+)$/, "\\2", 1, $1 )
+		print $1 "," size "GB,,,swap," devBase
 	}' ) )
 	IFS="$ORIGINAL_IFS"
+
+	if [[ "$B_SHOW_LABELS" == 'true' || "$B_SHOW_UUIDS" == 'true' ]];then
+		get_partition_data_advanced
+	fi
+}
+
+# first get the locations of the mount points for label/uuid detection
+get_partition_data_advanced()
+{
+	local a_partition_working='' dev_partition_data=''
+	local dev_disk_label='' dev_disk_uuid='' dev_item='' dev_label='' dev_uuid=''
+
+	if [[ -d /dev/disk/by-label ]];then
+		dev_disk_label="$( ls -l /dev/disk/by-label )"
+	fi
+	if [[ -d /dev/disk/by-uuid ]];then
+		dev_disk_uuid="$( ls -l /dev/disk/by-uuid )"
+	fi
+
+	if [[ "$B_MOUNTS_DIR" == 'true' ]];then
+		for (( i=0; i < ${#A_PARTITION_DATA[@]}; i++ ))
+		do
+			IFS=","
+			a_partition_working=( ${A_PARTITION_DATA[i]} )
+			IFS="$ORIGINAL_IFS"
+			# note: for swap this will already be set
+			if [[ -z "${a_partition_working[5]}" ]];then
+				mount_point=$( sed 's|/|\\/|g'  <<< ${a_partition_working[0]} )
+				#echo mount_point $mount_point
+				dev_partition_data=$( gawk '
+				BEGIN {
+					IGNORECASE = 1
+					partition = ""
+					partTemp = ""
+				}
+				/[ \t]'$mount_point'[ \t]/ && $1 != "rootfs" {
+					# initialize the variables
+					label = ""
+					uuid = ""
+
+					# slice out the /dev
+					partition=gensub( /^(\/dev\/)(.+)$/, "\\2", 1, $1 )
+					# label and uuid can occur for root, set partition to null now
+					if ( partition ~ /by-label/ ) {
+						label=gensub( /^(\/dev\/disk\/by-label\/)(.+)$/, "\\2", 1, $1 )
+						partition = ""
+					}
+					if ( partition ~ /by-uuid/ ) {
+						uuid=gensub( /^(\/dev\/disk\/by-uuid\/)(.+)$/, "\\2", 1, $1 )
+						partition = ""
+					}
+
+					# handle Arch /dev/root for / id
+					if ( partition == "root" ) {
+						# if this works, great, otherwise, just set this to null values
+						partTemp="'$( readlink /dev/root 2>/dev/null )'"
+						if ( partTemp != "" ) {
+							if ( partTemp ~ /^[hs]d[a-z][0-9]+$/ ) {
+								partition=gensub( /^(\/dev\/)(.+)$/, "\\2", 1, partTemp )
+							}
+							else if ( partTemp ~ /by-uuid\/[a-z0-9]+-[a-z0-9]+-[a-z0-9]+/ ) {
+								uuid=gensub( /^(\/dev\/disk\/by-uuid\/)(.+)$/, "\\2", 1, partTemp )
+							}
+							else if ( partTemp ~ /by-label/ ) {
+								label=gensub( /^(\/dev\/disk\/by-label\/)(.+)$/, "\\2", 1, partTemp )
+							}
+						}
+						else {
+							partition = ""
+							label = ""
+							uuid = ""
+						}
+					}
+					print partition "," label "," uuid
+				}'	$DIR_MOUNTS )
+
+# 				echo dev_partition_data: $dev_partition_data
+				# assemble everything we could get for dev/h/dx, label, and uuid
+				IFS=","
+				A_PARTITION_DATA[i]=${a_partition_working[0]}","${a_partition_working[1]}","${a_partition_working[2]}","${a_partition_working[3]}","${a_partition_working[4]}","$dev_partition_data
+				IFS="$ORIGINAL_IFS"
+			fi
+			## now we're ready to proceed filling in the data
+			IFS=","
+			a_partition_working=( ${A_PARTITION_DATA[i]} )
+			IFS="$ORIGINAL_IFS"
+
+			dev_item=${a_partition_working[5]}
+			dev_label=${a_partition_working[6]}
+			dev_uuid=${a_partition_working[7]}
+
+			# first if the dev data/label data is incomplete, try to get missing piece
+			if [[ -n "$dev_disk_label" ]];then
+				if [[ -n "$dev_item" && -z "$dev_label" ]];then
+					dev_label=$( echo "$dev_disk_label" | gawk '
+					/'$dev_item'$/ {
+						print $(NF - 2)
+					}' )
+				elif [[ -z "$dev_item" && -n "$dev_label" ]];then
+					dev_item=$( echo "$dev_disk_label" | gawk '
+					/'$dev_label'/ {
+						item=gensub( /..\/..\/(.+)/, "\\1", 1, $NF )
+						print item
+					}' )
+				fi
+			fi
+			# then if dev data/uuid is incomplete, try to get missing piece
+			if [[ -n "$dev_disk_uuid" ]];then
+				if [[ -n "$dev_item" && -z "$dev_uuid" ]];then
+					dev_uuid=$( echo "$dev_disk_uuid" | gawk '
+					/'$dev_item'$/ {
+						print $(NF - 2)
+					}' )
+				elif [[ -z "$dev_item" && -n "$dev_uuid" ]];then
+					dev_item=$( echo "$dev_disk_uuid" | gawk '
+					/'$dev_uuid'/ {
+						item=gensub( /..\/..\/(.+)/, "\\1", 1, $NF )
+						print item
+					}' )
+				fi
+			fi
+			# assemble everything we could get for dev/h/dx, label, and uuid
+			IFS=","
+			A_PARTITION_DATA[i]=${a_partition_working[0]}","${a_partition_working[1]}","${a_partition_working[2]}","${a_partition_working[3]}","${a_partition_working[4]}","$dev_item","$dev_label","$dev_uuid
+			IFS="$ORIGINAL_IFS"
+		done
+	fi
 }
 
 ## return uptime string
@@ -3031,6 +3178,7 @@ print_partition_data()
 {
 	local a_partition_working='' partition_used='' swap='' partition_data=''
 	local counter=0 line_max=160  i=0 a_partition_data='' line_starter=''
+	local partitionIdClean='' part_dev='' full_dev='' part_label='' full_label='' part_uuid='' full_uuid=''
 
 	# this handles the different, shorter, irc colors strings embedded in variable data
 	if [[ $B_RUNNING_IN_SHELL != 'true' ]];then
@@ -3039,6 +3187,9 @@ print_partition_data()
 	# and no color string data at all
 	if [[ $SCHEME -eq 0 ]];then
 		line_max=75
+	fi
+	if [[ "$B_SHOW_LABELS" == 'true' || "$B_SHOW_UUIDS" == 'true' ]];then
+		line_max=20
 	fi
 
 	# set A_PARTITION_DATA
@@ -3051,18 +3202,45 @@ print_partition_data()
 		IFS="$ORIGINAL_IFS"
 
 		if [[ $B_SHOW_PARTITIONS_FULL == 'true' ]] || [[ ${a_partition_working[4]} == 'swap' || ${a_partition_working[4]} == 'main' ]];then
-			if [[ -n ${a_partition_working[2]} ]];then
+			if [[ -n "${a_partition_working[2]}" ]];then
 				partition_used=" ${C1}used:${C2} ${a_partition_working[2]} (${a_partition_working[3]})"
 			else
 				partition_used='' # reset partition used to null
 			fi
-			if [[ ${a_partition_working[4]} == 'swap' ]];then
+			if [[ "${a_partition_working[4]}" == 'swap' ]];then
 				swap=" ${C1}swap:${C2}"
 			else
 				swap=''
 			fi
+			# don't show user names in output
+			if [[ "$B_SHOW_LABELS" == 'true' || "$B_SHOW_UUIDS" == 'true' ]];then
+				if [[ -n "${a_partition_working[5]}" ]];then
+					part_dev="/dev/${a_partition_working[5]}"
+				else
+					part_dev='N/A'
+				fi
+				full_dev=" ${C1}dev:${C2} $part_dev"
+				if [[ "$B_SHOW_LABELS" == 'true' ]];then
+					if [[ -n "${a_partition_working[6]}" ]];then
+						part_label="${a_partition_working[6]}"
+					else
+						part_label='N/A'
+					fi
+					full_label=" ${C1}label:${C2} $part_label"
+				fi
+				if [[ "$B_SHOW_UUIDS" == 'true' ]];then
+					if [[ -n "${a_partition_working[7]}" ]];then
+						part_uuid="${a_partition_working[7]}"
+					else
+						part_uuid='N/A'
+					fi
+					full_uuid=" ${C1}uuid:${C2} $part_uuid"
+				fi
+			fi
+			partitionIdClean=$( sed -r 's|/home/(.*)/(.*)|/home/##/\2|' <<< ${a_partition_working[0]} )
 			# because these lines can vary widely, using dynamic length handling here
-			a_partition_data[$counter]="${a_partition_data[$counter]}${C1}ID:${C2}$swap${a_partition_working[0]} ${C1}size:${C2} ${a_partition_working[1]}$partition_used "
+			a_partition_data[$counter]="${a_partition_data[$counter]}${C1}ID:${C2}$swap$partitionIdClean ${C1}size:${C2} ${a_partition_working[1]}$partition_used$full_dev$full_label$full_uuid"
+
 			if [[ $( wc -c <<< ${a_partition_data[$counter]} ) -gt $line_max ]];then
 				((counter++))
 			fi
