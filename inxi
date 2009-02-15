@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 0.10.2-b1-t3
-####  Date: 5 February 2009
+####  version: 1.0.2-b1-t1
+####  Date: 11 February 2009
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -78,6 +78,7 @@
 ####  All variables MUST be initialized / declared explicitly
 ####, globals UPPER CASE, at top of script, SOME_VARIABLE='' (words separated by _ ).
 ####  Locals always with: local some_variable= (lower case, words separated by _ )
+####  Locals that will be inherited by child functions: Some_Variable (so you know they are inherited)
 ####  and at the top of the function.
 ####
 ####  Booleans should start with b_ or B_ and state clearly what is being tested
@@ -236,8 +237,8 @@ shopt -u nullglob
 # Backup the current Internal Field Separator
 ORIGINAL_IFS="$IFS"
 # These two determine separators in single line output, to force irc clients not to break off sections
-FL1='-'
-FL2=''
+SEP1='-'
+SEP2='~'
 
 ### Script names/paths
 SCRIPT_NAME="inxi"
@@ -1267,7 +1268,7 @@ get_audio_data()
 
 	IFS=$'\n'
 	# this first step handles the drivers for cases where the second step fails to find one
-	device_count=$( echo "$lspci_data" | egrep -ic '(multimedia audio controller|audio device)' )
+	device_count=$( echo "$Lspci_Data" | egrep -ic '(multimedia audio controller|audio device)' )
 	if [[ $device_count -eq 1 ]] && [[ $B_ASOUND_CARDS == 'true' ]];then
 		alsa_driver=$( gawk -F ']: ' '
 		BEGIN {
@@ -1289,7 +1290,7 @@ get_audio_data()
 	alsa_driver=$( echo $alsa_driver )
 	# now we'll build the main audio data, card name, driver, and port. If no driver is found,
 	# and if the first method above is not null, and one card is found, it will use that instead.
-	A_AUDIO_DATA=( $( echo "$lspci_data" | gawk -F ': ' -v alsaDriver="$alsa_driver" '
+	A_AUDIO_DATA=( $( echo "$Lspci_Data" | gawk -F ': ' -v alsaDriver="$alsa_driver" '
 	BEGIN {
 		IGNORECASE=1
 	}
@@ -1769,7 +1770,7 @@ get_graphics_card_data()
 	local i=''
 
 	IFS=$'\n'
-	A_GFX_CARD_DATA=( $( echo "$lspci_data" | gawk -F': ' '
+	A_GFX_CARD_DATA=( $( echo "$Lspci_Data" | gawk -F': ' '
 	BEGIN {
 		IGNORECASE=1
 	}
@@ -1791,7 +1792,7 @@ get_graphics_card_data()
 	fi
 
 	# GFXMEM is UNUSED at the moment, because it shows AGP aperture size, which is not necessarily equal to GFX memory..
-	# GFXMEM="size=[$(echo "$lspci_data" | gawk '/VGA/{while (!/^$/) {getline;if (/size=[0-9][0-9]*M/) {size2=gensub(/.*\[size=([0-9]+)M\].*/,"\\1","g",$0);if (size<size2){size=size2}}}}END{print size2}')M]"
+	# GFXMEM="size=[$(echo "$Lspci_Data" | gawk '/VGA/{while (!/^$/) {getline;if (/size=[0-9][0-9]*M/) {size2=gensub(/.*\[size=([0-9]+)M\].*/,"\\1","g",$0);if (size<size2){size=size2}}}}END{print size2}')M]"
 }
 
 ## create array of glx data
@@ -1941,7 +1942,8 @@ get_hdd_data_basic()
 	local hdd_used=''
 
 	hdd_used=$( df | gawk '
-	/^\/dev\/(mapper\/|[hs]d[a-z][0-9]+)/ {
+	# also handles odd dm-1 type, from lvm
+	/^\/dev\/(mapper\/|[hs]d[a-z][0-9]+|dm[-]?[0-9]+)/ {
 		# this handles the case where the first item is too long
 		# and makes df wrap output to next line, so here we advance
 		# it to the next line for that single case
@@ -2182,7 +2184,7 @@ get_module_version_number()
 get_networking_data()
 {
 	IFS=$'\n'
-	A_NETWORK_DATA=( $( echo "$lspci_data" | gawk '
+	A_NETWORK_DATA=( $( echo "$Lspci_Data" | gawk '
 	BEGIN {
 		IGNORECASE=1
 	}
@@ -2324,19 +2326,32 @@ get_partition_data()
 	BEGIN {
 		IGNORECASE=1
 	}
-	/\/$|\/boot$|\/var$|\/home$|\/tmp$|\/usr$/ && ! /aufs/ {
+	# this handles yet another fredforfaen special case where a mounted drive
+	# has the search string in its name
+	$NF ~ /^\/$|^\/boot$|^\/var$|^\/home$|^\/tmp$|^\/usr$/ && ! /aufs/ {
 		print $NF "," $(NF - 4) "," $(NF - 3) "," $(NF - 1) ",main"
+	}
+	# this is required because below we are subtracting from NF, so it has to be
+	# > 1, actually greater than 4, but that is so unlikely to occur because
+	# the real issue is long file system names that force the wrap of df output: //fileserver/main
+	( NF == 1 ) {
+		getline
 	}
 	# skip all these, including the first, header line. Use the --exclude-type
 	# to handle new filesystems types we do not want listed here
-	! /\/$|\/boot$|\/var$|\/home$|\/tmp$|\/usr$|^filesystem/ {
+	$NF !~ /^\/$|^\/boot$|^\/var$|^\/home$|^\/tmp$|^\/usr$|^filesystem/ {
 		# this is to avoid file systems with spaces in their names, that will make
 		# the test show the wrong data in each of the fields, if no x%, then do not use
+		# using 3 cases, first default, standard, 2nd, 3rd, handles one and two spaces in name
 		if ( $(NF - 1) ~ /[0-9]+\%/ ) {
-			# cleaning up user name here to avoid showing too much info on irc
-			# partitionName=gensub( /^\/home\/(.*)\/(.*)/, "/home/###/\\2", 1, $NF )
-			# print partitionName "," $(NF - 4) "," $(NF - 3) "," $(NF - 1) ",secondary"
 			print $NF "," $(NF - 4) "," $(NF - 3) "," $(NF - 1) ",secondary"
+		}
+		# these two cases construct the space containing name
+		else if ( $(NF - 2) ~ /[0-9]+\%/ ) {
+			print $(NF - 1) " " $NF "," $(NF - 5) "," $(NF - 4) "," $(NF - 2) ",secondary"
+		}
+		else if ( $(NF - 3) ~ /[0-9]+\%/ ) {
+			print $(NF - 2) " " $(NF - 1) " " $NF "," $(NF - 6) "," $(NF - 5) "," $(NF - 3) ",secondary"
 		}
 	}
 	' )
@@ -2442,47 +2457,35 @@ get_partition_data_advanced()
 			dev_uuid=${a_partition_working[7]}
 
 			# then if dev data/uuid is incomplete, try to get missing piece
-			# it's more likely we'll get a uuid than a label.
-			if [[ -n $dev_disk_uuid ]];then
-				if [[ -n $dev_item && -z $dev_uuid ]];then
-					dev_uuid=$( echo "$dev_disk_uuid" | gawk '
-					/'$dev_item'$/ {
-						print $(NF - 2)
-					}' )
-				elif [[ -z $dev_item && -n $dev_uuid ]];then
-					dev_item=$( echo "$dev_disk_uuid" | gawk '
+			# it's more likely we'll get a uuid than a label. But this should get the
+			# dev item set no matter what, so then we can get the rest of any missing data
+			# first we'll get the dev_item if it's missing
+			if [[ -n $dev_disk_uuid ]] && [[ -z $dev_item && -n $dev_uuid ]];then
+				dev_item=$( echo "$dev_disk_uuid" | gawk '
 					/'$dev_uuid'/ {
 						item=gensub( /..\/..\/(.+)/, "\\1", 1, $NF )
 						print item
 					}' )
-				# last chance, if nothing found, check with uuid
-				elif [[ -n $dev_disk_label ]];then
-					if [[ -z $dev_item && -n $dev_label ]];then
-						dev_item=$( echo "$dev_disk_label" | gawk '
-						/'$dev_label'/ {
-							item=gensub( /..\/..\/(.+)/, "\\1", 1, $NF )
-							print item
-						}' )
-					fi
-				fi
-			fi
-
-			# first if the dev data/label data is incomplete, try to get missing piece
-			if [[ -n $dev_disk_label ]];then
-				if [[ -n $dev_item && -z $dev_label ]];then
-					dev_label=$( echo "$dev_disk_label" | gawk '
-					/'$dev_item'$/ {
-						print $(NF - 2)
-					}' )
-				elif [[ -z $dev_item && -n $dev_label ]];then
-					dev_item=$( echo "$dev_disk_label" | gawk '
+			elif [[ -n $dev_disk_label ]] && [[ -z $dev_item && -n $dev_label ]];then
+				dev_item=$( echo "$dev_disk_label" | gawk '
 					/'$dev_label'/ {
 						item=gensub( /..\/..\/(.+)/, "\\1", 1, $NF )
 						print item
 					}' )
-				fi
 			fi
+			if [[ -n $dev_disk_uuid ]] && [[ -n $dev_item && -z $dev_uuid ]];then
+				dev_uuid=$( echo "$dev_disk_uuid" | gawk '
+				/'$dev_item'$/ {
+					print $(NF - 2)
+				}' )
+			fi
+			if [[ -n $dev_disk_label ]] && [[ -n $dev_item && -z $dev_label ]];then
+				dev_label=$( echo "$dev_disk_label" | gawk '
+				/'$dev_item'/ {
+					print $(NF - 2)
+				}' )
 
+			fi
 			# assemble everything we could get for dev/h/dx, label, and uuid
 			IFS=","
 			A_PARTITION_DATA[i]=${a_partition_working[0]}","${a_partition_working[1]}","${a_partition_working[2]}","${a_partition_working[3]}","${a_partition_working[4]}","$dev_item","$dev_label","$dev_uuid
@@ -2589,16 +2592,16 @@ process_cpu_flags()
 
 #### MASTER PRINT FUNCTION - triggers all line item print functions
 ## main function to print out, master for all sub print functions.
-## note that it passes local variable values on to its children,
-## and in some cases, their children, with lspci_data
 print_it_out()
 {
-	local lspci_data='' # only for verbose
+	# note that print_it_out passes local variable values on to its children,
+	# and in some cases, their children, with Lspci_Data
+	local Lspci_Data='' # only for verbose
 
 	if [[ $B_SHOW_SHORT_OUTPUT == 'true' ]];then
 		print_short_data
 	else
-		lspci_data="$( get_lspci_data )"
+		Lspci_Data="$( get_lspci_data )"
 		if [[ $VERBOSITY_LEVEL -ge 1 || $B_SHOW_SYSTEM == 'true' ]];then
 			print_system_data
 		fi
@@ -2701,12 +2704,12 @@ print_short_data()
 			#C1="${C1},1"; C2="${C2},1"; CN="${CN},1"
 		fi
 	fi
-	short_data="${C1}CPU$cpc_plural${CN}[${C2} ${cpu_data_string} ${cpu_model}$model_plural (${cpu_type}) ${C1}clocked at${C2} ${min_max_clock}${CN}] ${C1}Kernel${CN}[${C2} ${current_kernel}${CN}] ${C1}Up${CN}[${C2}${FL2}${FL1}${up_time}${FL1}${CN}] ${C1}Mem${CN}[${C2}${FL2}${FL1}${memory}${FL1}${CN}] ${C1}HDD${CN}[${C2}${FL2}${FL1}${hdd_capacity}($hdd_used)${FL1}${CN}] ${C1}Procs${CN}[${C2}${FL2}${FL1}${processes}${FL1}${CN}]"
+	short_data="${C1}CPU$cpc_plural${CN}[${C2}${SEP1}${cpu_data_string} ${cpu_model}$model_plural (${cpu_type}) clocked at ${min_max_clock}${SEP1}${CN}] ${C1}Kernel${CN}[${C2}${SEP1}${current_kernel}${SEP1}${CN}] ${C1}Up${CN}[${C2}${SEP1}${up_time}${SEP1}${CN}] ${C1}Mem${CN}[${C2}${SEP1}${memory}${SEP1}${CN}] ${C1}HDD${CN}[${C2}${SEP1}${hdd_capacity}($hdd_used)${SEP1}${CN}] ${C1}Procs${CN}[${C2}${SEP1}${processes}${SEP1}${CN}]"
 
 	if [[ $SHOW_IRC -gt 0 ]];then
-		short_data="${short_data} ${C1}Client${CN}[${C2}${IRC_CLIENT}${IRC_CLIENT_VERSION}${CN}]"
+		short_data="${short_data} ${C1}Client${CN}[${C2}${SEP1}${IRC_CLIENT}${IRC_CLIENT_VERSION}${SEP1}${CN}]"
 	fi
-	short_data="${short_data} ${CN}:: ${C1}$SCRIPT_NAME${C2} $SCRIPT_VERSION_NUMBER${CN}"
+	short_data="${short_data} ${C1}$SCRIPT_NAME${C2}${CN}[${C2}${SEP1}$SCRIPT_VERSION_NUMBER${SEP1}${CN}]"
 	if [[ $SCHEME -gt 0 ]];then
 		short_data="${short_data} $NORMAL"
 	fi
@@ -3216,7 +3219,8 @@ print_partition_data()
 		IFS=","
 		a_partition_working=(${A_PARTITION_DATA[i]})
 		IFS="$ORIGINAL_IFS"
-
+		full_label=''
+		full_uuid=''
 		if [[ $B_SHOW_PARTITIONS_FULL == 'true' ]] || [[ ${a_partition_working[4]} == 'swap' || ${a_partition_working[4]} == 'main' ]];then
 			if [[ -n ${a_partition_working[2]} ]];then
 				partition_used=" ${C1}used:${C2} ${a_partition_working[2]} (${a_partition_working[3]})"
@@ -3231,7 +3235,7 @@ print_partition_data()
 			# don't show user names in output
 			if [[ $B_SHOW_LABELS == 'true' || $B_SHOW_UUIDS == 'true' ]];then
 				if [[ -n ${a_partition_working[5]} ]];then
-					if [[ -z $( grep '^//' <<< ${a_partition_working[5]} ) ]];then
+					if [[ -z $( grep -E '(^//|:/)' <<< ${a_partition_working[5]} ) ]];then
 						part_dev="/dev/${a_partition_working[5]}"
 						dev_remote='dev'
 					else
@@ -3242,7 +3246,7 @@ print_partition_data()
 					part_dev='N/A'
 				fi
 				full_dev=" ${C1}$dev_remote:${C2} $part_dev"
-				if [[ $B_SHOW_LABELS == 'true' ]];then
+				if [[ $B_SHOW_LABELS == 'true' && $dev_remote != 'remote' ]];then
 					if [[ -n ${a_partition_working[6]} ]];then
 						part_label="${a_partition_working[6]}"
 					else
@@ -3250,7 +3254,7 @@ print_partition_data()
 					fi
 					full_label=" ${C1}label:${C2} $part_label"
 				fi
-				if [[ $B_SHOW_UUIDS == 'true' ]];then
+				if [[ $B_SHOW_UUIDS == 'true' && $dev_remote != 'remote' ]];then
 					if [[ -n ${a_partition_working[7]} ]];then
 						part_uuid="${a_partition_working[7]}"
 					else
@@ -3261,7 +3265,7 @@ print_partition_data()
 			fi
 			partitionIdClean=$( sed -r 's|/home/(.*)/(.*)|/home/##/\2|' <<< ${a_partition_working[0]} )
 			# because these lines can vary widely, using dynamic length handling here
-			a_partition_data[$counter]="${a_partition_data[$counter]}${C1}ID:${C2}$swap$partitionIdClean ${C1}size:${C2} ${a_partition_working[1]}$partition_used$full_dev$full_label$full_uuid"
+			a_partition_data[$counter]="${a_partition_data[$counter]}${C1}ID:${C2}$swap$partitionIdClean ${C1}size:${C2} ${a_partition_working[1]}$partition_used$full_dev$full_label$full_uuid "
 
 			if [[ $( wc -c <<< ${a_partition_data[$counter]} ) -gt $line_max ]];then
 				((counter++))
