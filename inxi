@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.0.3
-####  Date: 17 February 2009
+####  version: 1.0.4
+####  Date: 1 March 2009
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -21,7 +21,7 @@
 ####  Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif
 ####  inxi version: Copyright (C) 2008-9 Scott Rogers & Harald Hope
 ####  Further fixes (listed as known): Horst Tritremmel <hjt at sidux.com>
-####  Steven Barrett (aka: damentz) - usb audio patch;
+####  Steven Barrett (aka: damentz) - usb audio patch; swap percent used patch
 ####
 ####  Current script home page: http://techpatterns.com/forums/about1131.html
 ####  Script svn: http://code.google.com/p/inxi
@@ -1985,13 +1985,13 @@ get_hdd_data_basic()
 {
 	local hdd_used=''
 
-	hdd_used=$( df | gawk '
+	hdd_used=$( df --exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660 | gawk '
 	# also handles odd dm-1 type, from lvm
 	/^\/dev\/(mapper\/|[hs]d[a-z][0-9]+|dm[-]?[0-9]+)/ {
 		# this handles the case where the first item is too long
 		# and makes df wrap output to next line, so here we advance
 		# it to the next line for that single case
-		if ( NF == 1 ) {
+		if ( NF < 5 && $0 !~ /.*\%/ ) {
 			getline
 		}
 		# if the first item caused a wrap, use one less than standard
@@ -2024,7 +2024,8 @@ get_hdd_data_basic()
 	IFS=$'\n'
 
 	if [[ $B_PARTITIONS_DIR == 'true' ]];then
-		A_HDD_DATA=( $( gawk -v hddused="$hdd_used" '
+		A_HDD_DATA=( $(
+		gawk -v hddused="$hdd_used" '
 		/[hs]d[a-z]$/ {
 			driveSize = $(NF - 1)*1024/1000**3
 			gsub(/,/, " ", driveSize)
@@ -2032,11 +2033,14 @@ get_hdd_data_basic()
 			printf( $NF",%.1fGB,,\n", driveSize )
 		}
 		# See http://lanana.org/docs/device-list/devices-2.6+.txt for major numbers used below
-		# $1 ~ /^(3|22|33|8)$/ && $2 % 16 == 0  {size+=$3}
+		# $1 ~ /^(3|22|33|8)$/ && $2 % 16 == 0  {
+		#	size += $3
+		# }
 		# special case from this data: 8     0  156290904 sda
 		$1 ~ /^(3|22|33|8)$/ && $NF ~ /[hs]d[a-z]$/ && ( $2 % 16 == 0 || $2 % 16 == 8 ) {
 			size += $3
 		}
+
 		END {
 			size = size*1024/1000**3                   # calculate size in GB size
 			workingUsed = hddused*1024/1000**3         # calculate workingUsed in GB used
@@ -2054,7 +2058,8 @@ get_hdd_data_basic()
 			else {
 				print "NA,-" # print an empty array, this will be further handled in the print out function
 			}
-		}'  $DIR_PARTITIONS ) )
+		}' $DIR_PARTITIONS
+ 		) )
 	fi
 	IFS="$ORIGINAL_IFS"
 }
@@ -2366,7 +2371,7 @@ get_partition_data()
 	# $NF = partition name; $(NF - 4) = partition size; $(NF - 3) = used, in gB; $(NF - 1) = percent used
 	## note: by subtracting from the last field number NF, we avoid a subtle issue with LVM df output, where if
 	## the first field is too long, it will occupy its own line, this way we are getting only the needed data
-	A_PARTITION_DATA=( $( df -h -T  --exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660 | gawk '
+	A_PARTITION_DATA=( $( df -h -T --exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660 | gawk '
 	BEGIN {
 		IGNORECASE=1
 	}
@@ -2399,13 +2404,20 @@ get_partition_data()
 		}
 	}
 	' )
-	# now add the swap partition data, doesn't show percent used, someone can figure that in the future
-	# don't want to show swap files, just partitions
+	# now add the swap partition data, don't want to show swap files, just partitions,
+	# though this can include /dev/ramzswap0. Note: you can also use /proc/swaps for this
+	# data, it's the same exact output as swapon -s
 	$( swapon -s | gawk '
-	/^\/dev\/[hs]d[a-z]/ {
+	BEGIN {
+		swapCounter = 1
+	}
+	/^\/dev/ {
 		size = sprintf( "%.2f", $3*1024/1000**3 )
 		devBase = gensub( /^(\/dev\/)(.+)$/, "\\2", 1, $1 )
-		print $1 "," size "GB,,,swap," devBase
+		used = sprintf( "%.2f", $4*1024/1000**3 )
+		percentUsed = sprintf( "%.0f", ( $4/$3 )*100 )
+		print "swap-" swapCounter "," size "GB," used "GB," percentUsed "\%,main," devBase
+		swapCounter = ++swapCounter
 	}' ) )
 	IFS="$ORIGINAL_IFS"
 
@@ -3243,7 +3255,7 @@ print_networking_ip_data()
 
 print_partition_data()
 {
-	local a_partition_working='' partition_used='' swap='' partition_data=''
+	local a_partition_working='' partition_used='' partition_data=''
 	local counter=0 line_max=160  i=0 a_partition_data='' line_starter=''
 	local partitionIdClean='' part_dev='' full_dev='' part_label='' full_label=''
 	local part_uuid='' full_uuid='' dev_remote=''
@@ -3270,17 +3282,13 @@ print_partition_data()
 		IFS="$ORIGINAL_IFS"
 		full_label=''
 		full_uuid=''
-		if [[ $B_SHOW_PARTITIONS_FULL == 'true' ]] || [[ ${a_partition_working[4]} == 'swap' || ${a_partition_working[4]} == 'main' ]];then
+		if [[ $B_SHOW_PARTITIONS_FULL == 'true' ]] || [[ ${a_partition_working[4]} == 'main' ]];then
 			if [[ -n ${a_partition_working[2]} ]];then
 				partition_used=" ${C1}used:${C2} ${a_partition_working[2]} (${a_partition_working[3]})"
 			else
 				partition_used='' # reset partition used to null
 			fi
-			if [[ ${a_partition_working[4]} == 'swap' ]];then
-				swap=" ${C1}swap:${C2}"
-			else
-				swap=''
-			fi
+
 			# don't show user names in output
 			if [[ $B_SHOW_LABELS == 'true' || $B_SHOW_UUIDS == 'true' ]];then
 				if [[ -n ${a_partition_working[5]} ]];then
@@ -3314,7 +3322,7 @@ print_partition_data()
 			fi
 			partitionIdClean=$( sed -r 's|/home/(.*)/(.*)|/home/##/\2|' <<< ${a_partition_working[0]} )
 			# because these lines can vary widely, using dynamic length handling here
-			a_partition_data[$counter]="${a_partition_data[$counter]}${C1}ID:${C2}$swap$partitionIdClean ${C1}size:${C2} ${a_partition_working[1]}$partition_used$full_dev$full_label$full_uuid "
+			a_partition_data[$counter]="${a_partition_data[$counter]}${C1}ID:${C2}$partitionIdClean ${C1}size:${C2} ${a_partition_working[1]}$partition_used$full_dev$full_label$full_uuid "
 
 			if [[ $( wc -c <<< ${a_partition_data[$counter]} ) -gt $line_max ]];then
 				((counter++))
