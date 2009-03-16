@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.0.8
-####  Date: 13 March 2009
+####  version: 1.0.9
+####  Date: 16 March 2009
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -151,6 +151,7 @@ B_EXTRA_DATA='false'
 B_SHOW_DISK='false'
 # override certain errors due to currupted data
 B_HANDLE_CORRUPT_DATA='false'
+B_ROOT='false'
 # Running in a shell? Defaults to false, and is determined later.
 B_RUNNING_IN_SHELL='false'
 # this sets the debug buffer
@@ -477,6 +478,10 @@ initialize_script_data()
 
 	if [[ -e $DIR_PARTITIONS ]];then
 		B_PARTITIONS_DIR='true'
+	fi
+	# gfx output will require this flag
+	if [[ $( whoami ) == 'root' ]];then
+		B_ROOT='true'
 	fi
 }
 
@@ -1953,7 +1958,7 @@ get_graphics_res_data()
 {
 	local screen_resolution=''
 
-	if [[ $B_X_RUNNING == 'true' ]];then
+	if [[ $B_X_RUNNING == 'true' && $B_ROOT != 'true' ]];then
 		# Added the two ?'s , because the resolution is now reported without spaces around the 'x', as in
 		# 1400x1050 instead of 1400 x 1050. Change as of X.org version 1.3.0
 		screen_resolution=$( xrandr | gawk '
@@ -1977,7 +1982,7 @@ get_graphics_res_data()
 			}' )
 		fi
 	else
-		screen_resolution=$( stty -F $( readlink /proc/$PPID/fd/0 ) size | gawk '{ print $2"x"$1 }' )
+		screen_resolution=$( stty -F $( readlink /proc/$PPID/fd/0 ) size | gawk '{print $2"x"$1}' )
 	fi
 	echo "$screen_resolution"
 }
@@ -3059,16 +3064,16 @@ print_cpu_flags_full()
 
 print_gfx_data()
 {
-	local gfx_data='' i='' card_one='Card '
+	local gfx_data='' i='' card_one='Card ' root_alert=''
 	local screen_resolution="$( get_graphics_res_data )"
 	local b_is_mesa='false'
-
 	# set A_GFX_CARD_DATA
 	get_graphics_card_data
 	# set A_X_DATA
 	get_graphics_x_data
 	local x_vendor=${A_X_DATA[0]}
 	local x_version=${A_X_DATA[1]}
+	local display_full_string="${C1}$x_vendor${C2} $x_version "
 	# set A_GLX_DATA
 	get_graphics_glx_data
 	local glx_renderer="${A_GLX_DATA[0]}"
@@ -3078,6 +3083,22 @@ print_gfx_data()
 	local glx_direct_render=$( gawk '{
 		print $1
 	}'  <<< "${A_GLX_DATA[2]}" )
+	# some basic error handling:
+	if [[ -z $screen_resolution ]];then
+		screen_resolution='N/A'
+	fi
+
+	if [[ $B_X_RUNNING == 'true' && $B_ROOT != 'true' ]];then
+		if [[ -z $x_vendor || -z $x_version ]];then
+			x_vendor='X-Vendor: N/A'
+		fi
+		display_full_string="${C1}$x_vendor${C2} $x_version ${C1}Res:${C2} ${screen_resolution} "
+	else
+		if [[ $B_X_RUNNING == 'true' && $B_ROOT == 'true' ]];then
+			root_alert="${C1}Gfx Data:${C2} N/A for root user"
+		fi
+		display_full_string="${C1}tty res:${C2} ${screen_resolution} $root_alert"
+	fi
 
 	if [[ ${#A_GFX_CARD_DATA[@]} -gt 1 ]];then
 		i=1
@@ -3088,13 +3109,7 @@ print_gfx_data()
 		done
 		card_one='Card-1 '
 	fi
-	gfx_data=$( create_print_line "Graphics:" "${C1}$card_one${C2}${A_GFX_CARD_DATA[0]}${gfx_data}" )
-
-	if [[ $B_X_RUNNING == 'true' ]];then
-		gfx_data="${gfx_data} ${C1}$x_vendor${C2} $x_version ${C1}Res${C2} ${screen_resolution}"
-	else
-		gfx_data="${gfx_data} ${C1} tty resolution ${CN}(${C2} ${screen_resolution} ${CN})"
-	fi
+	gfx_data=$( create_print_line "Graphics:" "${C1}$card_one${C2}${A_GFX_CARD_DATA[0]}${gfx_data} $display_full_string" )
 	print_screen_output "$gfx_data"
 
 # 	if [[ -z $glx_renderer || -z $glx_version ]];then
@@ -3103,7 +3118,16 @@ print_gfx_data()
 
 	## note: if glx render or version have no content, then mesa is true
 	# if [[ $B_X_RUNNING == 'true' ]] && [[ $b_is_mesa != 'true' ]];then
-	if [[ $B_X_RUNNING == 'true' ]];then
+	if [[ $B_X_RUNNING == 'true' && $B_ROOT != 'true' ]];then
+		if [[ -z $glx_renderer ]];then
+			glx_renderer='N/A'
+		fi
+		if [[ -z $glx_version ]];then
+			glx_version='N/A'
+		fi
+		if [[ -z $glx_direct_render ]];then
+			glx_direct_render='N/A'
+		fi
 		gfx_data=$( create_print_line " " "${C1}GLX Renderer${C2} ${glx_renderer} ${C1}GLX Version${C2} ${glx_version}${CN}" )
 		if [[ $B_HANDLE_CORRUPT_DATA == 'true' || $B_EXTRA_DATA == 'true' ]];then
 			gfx_data="$gfx_data ${C1}Direct Rendering${C2} ${glx_direct_render}${CN}"
