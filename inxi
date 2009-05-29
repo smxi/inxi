@@ -1,7 +1,7 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.0.13
+####  version: 1.0.15
 ####  Date: 28 May 2009
 ########################################################################
 ####  SPECIAL THANKS
@@ -161,6 +161,7 @@ B_EXTRA_DATA='false'
 # override certain errors due to currupted data
 B_HANDLE_CORRUPT_DATA='false'
 B_LOG_COLORS='false'
+B_LOG_FULL_DATA='false'
 B_ROOT='false'
 # Running in a shell? Defaults to false, and is determined later.
 B_RUNNING_IN_SHELL='false'
@@ -222,7 +223,7 @@ DIR_IFCONFIG='/sbin/ifconfig'
 
 ### Variable initializations: constants
 DCOPOBJ="default"
-DEBUG=0 # Set debug levels from 1-10
+DEBUG=0 # Set debug levels from 1-10 (8-10 trigger logging levels)
 # Debug Buffer Index, index into a debug buffer storing debug messages until inxi is 'all up'
 DEBUG_BUFFER_INDEX=0
 ## note: the debugger rerouting to /dev/null has been moved to the end of the get_parameters function
@@ -234,7 +235,7 @@ DEFAULT_SCHEME=2
 # Default indentation level
 INDENT=10
 
-# logging eval variables, start and end function: Insert to LOGFS LOGFE when debug level == 10
+# logging eval variables, start and end function: Insert to LOGFS LOGFE when debug level >= 8
 LOGFS_STRING='log_function_data fs $FUNCNAME "$( echo $@ )"'
 LOGFE_STRING='log_function_data fe $FUNCNAME'
 LOGFS=''
@@ -755,11 +756,11 @@ script_debugger()
 # NOTE: no logging available until get_parameters is run, since that's what sets logging
 # in order to trigger earlier logging manually set B_USE_LOGGING to true in top variables.
 # $1 alone: logs data; $2 with or without $3 logs func start/end.
-# $1 type (fs/fe) or logged data; [$2 is $FUNCNAME; [$3 - function args]]
+# $1 type (fs/fe/cat/raw) or logged data; [$2 is $FUNCNAME; [$3 - function args]]
 log_function_data()
 {
 	if [ "$B_USE_LOGGING" == 'true' ];then
-		local logged_data='' spacer="  "
+		local logged_data='' spacer='   ' line='----------------------------------------'
 		case $1 in
 			fs)
 				logged_data="Function: $2 - Primary: Start"
@@ -772,16 +773,30 @@ log_function_data()
 				logged_data="Function: $2 - Primary: End"
 				spacer=''
 				;;
+			cat)
+				if [[ $B_LOG_FULL_DATA == 'true' ]];then
+					logged_data="\n$line\nFull file data: cat $2\n\n$( cat $2 )\n$line\n"
+					spacer=''
+				fi
+				;;
+			raw)
+				if [[ $B_LOG_FULL_DATA == 'true' ]];then
+					logged_data="\n$line\nRaw system data:\n\n$2\n$line\n"
+					spacer=''
+				fi
+				;;
 			*)
 				logged_data="$1"
 				;;
 		esac
 		# Create any required line breaks and strip out escape color code, either ansi (case 1)or irc (case 2).
 		# This pattern doesn't work for irc colors, if we need that someone can figure it out
-		if [[ $B_LOG_COLORS != 'true' ]];then
-			echo -e "${spacer}$logged_data" | sed -r 's/\x1b\[[0-9]{1,2}(;[0-9]{1,2}){0,2}m//g' >> $LOG_FILE
-		else
-			echo -e "${spacer}$logged_data" >> $LOG_FILE
+		if [[ -n $logged_data ]];then
+			if [[ $B_LOG_COLORS != 'true' ]];then
+				echo -e "${spacer}$logged_data" | sed -r 's/\x1b\[[0-9]{1,2}(;[0-9]{1,2}){0,2}m//g' >> $LOG_FILE
+			else
+				echo -e "${spacer}$logged_data" >> $LOG_FILE
+			fi
 		fi
 	fi
 }
@@ -1035,10 +1050,12 @@ get_parameters()
 			@)	if [[ -n $( egrep "^([1-9]|10)$" <<< $OPTARG ) ]];then
 					DEBUG=$OPTARG
 					exec 2>&1
-					# switch on logging only for -@ 10
-					if [[ $OPTARG -ge 9 ]];then
+					# switch on logging only for -@ 8-10
+					if [[ $OPTARG -ge 8 ]];then
 						if [[ $OPTARG -eq 10 ]];then
 							B_LOG_COLORS='true'
+						elif [[ $OPTARG -eq 9 ]];then		
+							B_LOG_FULL_DATA='true'
 						fi
 						B_USE_LOGGING='true'
 						# pack the logging data for evals function start/end
@@ -1153,7 +1170,8 @@ show_options()
 	fi
 	print_screen_output "-V  $SCRIPT_NAME version information. Prints information then exits."
 	print_screen_output "-%  Overrides defective or corrupted data."
-	print_screen_output "-@  Triggers debugger output. Requires debugging level 1-10."
+	print_screen_output "-@  Triggers debugger output. Requires debugging level 1-10 (8-10 - logging)."
+	print_screen_output "    8 - basic logging; 9 - full file/sys info logging; 10 - color logging."
 	if [[ $1 == 'full' ]];then
 		print_screen_output ""
 		print_screen_output "Developer and Testing Options (Advanced):"
@@ -1504,6 +1522,7 @@ get_audio_data()
 				print driver
 			}
 		}'  $DIR_ASOUND_DEVICE )
+		log_function_data 'cat' "$DIR_ASOUND_DEVICE"
 	fi
 
 	# this is to safeguard against line breaks from results > 1, which if inserted into following
@@ -1607,6 +1626,7 @@ get_audio_data()
 			# corresponding line. Finally, strip out commas as they will change the driver :)
 			usb_id=$( cat $usb_proc_file/usbid )
 			usb_data=$( lsusb -v 2>/dev/null | grep "$usb_id" )
+			log_function_data 'raw' "usb_data:\n$usb_data"
 			usb_data=$( gawk '{
 				gsub( /,/, " ", $0 )
 				for( i=7; i <= NF; i++ ) {
@@ -1654,6 +1674,7 @@ get_audio_alsa_data()
 					print $0
 				}
 		}' $DIR_ASOUND_VERSION )
+		log_function_data 'cat' "$DIR_ASOUND_VERSION"
 	fi
 	echo "$alsa_data"
 	log_function_data "alsa_data: $alsa_data"
@@ -1775,6 +1796,7 @@ get_cpu_data()
 				printf("%s %s\n", max, "Mhz")
 			}
 		}' $DIR_CPUINFO ) )
+		log_function_data 'cat' "$DIR_CPUINFO"
 	fi
 
 	IFS="$ORIGINAL_IFS"
@@ -1865,8 +1887,7 @@ get_cpu_ht_multicore_smp_data()
 			}
 			print type " " physical_cpu_count " " core_count
 		}
-		' $DIR_CPUINFO
-		) )
+		' $DIR_CPUINFO ) )
 	fi
 	log_function_data "A_CPU_TYPE_PCNT_CCNT: ${A_CPU_TYPE_PCNT_CCNT[@]}"
 	eval $LOGFE
@@ -1911,14 +1932,14 @@ get_distro_data()
 			fi
 		done
 	fi
-
+	log_function_data "distro_file: $distro_file"
 	# first test for the legacy antiX distro id file
 	if [[ -e /etc/antiX ]];then
 		distro="$( egrep -oi 'antix.*\.iso' <<< $( remove_erroneous_chars '/etc/antiX' ) | sed 's/\.iso//' )"
 	# this handles case where only one release/version file was found, and it's lsb-release. This would
 	# never apply for ubuntu or debian, which will filter down to the following conditions. In general
 	# if there's a specific distro release file available, that's to be preferred, but this is a good backup.
-	elif [[ -n $distro_file && -f /etc/lsb_release && " $DISTROS_LSB_GOOD" == *" $distro_file "* ]];then
+	elif [[ -n $distro_file && -f $DIR_LSB_RELEASE && " $DISTROS_LSB_GOOD" == *" $distro_file "* ]];then
 		distro=$( get_distro_lsb_data )
 	elif [[ $distro_file == 'lsb-release' ]];then
 		distro=$( get_distro_lsb_data )
@@ -2008,6 +2029,7 @@ get_distro_lsb_data()
 		END {
 			print distroId distroRelease distroCodename
 		}' $DIR_LSB_RELEASE )
+		log_function_data 'cat' "$DIR_LSB_RELEASE"
 	fi
 	# this is HORRIBLY slow, but I don't know why, it runs fast in shell
 # 	if [[  -n $( which lsb_release ) && $1 == 'app' ]];then
@@ -2133,7 +2155,7 @@ get_graphics_glx_data()
 get_graphics_res_data()
 {
 	eval $LOGFS
-	local screen_resolution=''
+	local screen_resolution='' 
 
 	if [[ $B_X_RUNNING == 'true' && $B_ROOT != 'true' ]];then
 		# Added the two ?'s , because the resolution is now reported without spaces around the 'x', as in
@@ -2174,12 +2196,13 @@ get_graphics_agp_data()
 	eval $LOGFS
 	local agp_module=''
 
-	if [[ B_MODULES_DIR == 'true' ]];then
+	if [[ $B_MODULES_DIR == 'true' ]];then
 		## not used currently
 		agp_module=$( gawk '
 		/agp/ && !/agpgart/ && $3 > 0 {
 			print(gensub(/(.*)_agp.*/,"\\1","g",$1))
 		}' $DIR_MODULES )
+		log_function_data 'cat' "$DIR_MODULES"
 	fi
 	log_function_data "agp_module: $agp_module"
 	eval $LOGFE
@@ -2238,8 +2261,10 @@ get_hdd_data_basic()
 {
 	eval $LOGFS
 	local hdd_used=''
-
-	hdd_used=$( df --exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660 | gawk '
+	local hdd_data="$( df --exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660 )"
+	log_function_data 'raw' "hdd_data:\n$hdd_data"
+	
+	hdd_used=$( echo "$hdd_data" | gawk '
 	# also handles odd dm-1 type, from lvm
 	/^\/dev\/(mapper\/|[hs]d[a-z][0-9]+|dm[-]?[0-9]+)/ {
 		# this handles the case where the first item is too long
@@ -2312,8 +2337,8 @@ get_hdd_data_basic()
 			else {
 				print "NA,-" # print an empty array, this will be further handled in the print out function
 			}
-		}' $DIR_PARTITIONS
- 		) )
+		}' $DIR_PARTITIONS ) )
+ 		log_function_data 'cat' "$DIR_PARTITIONS"
 	fi
 	IFS="$ORIGINAL_IFS"
 	log_function_data "A_HDD_DATA: ${A_HDD_DATA[@]}"
@@ -2385,6 +2410,7 @@ get_hard_drive_data_advanced()
 				}
 			}
 		}' $DIR_SCSI ) )
+		log_function_data 'cat' "$DIR_SCSI"
 	fi
 	IFS="$ORIGINAL_IFS"
 
@@ -2447,7 +2473,7 @@ get_lspci_data()
 	}' )"
 	
 	echo "$lspci_data"
-	log_function_data "lspci_data: $lspci_data"
+	log_function_data 'raw' "lspci_data:\n$lspci_data"
 	eval $LOGFE
 }
 
@@ -2456,19 +2482,20 @@ get_memory_data()
 {
 	eval $LOGFS
 	local memory=''
-
-	memory=$( gawk '
-	/^MemTotal:/ {
-		tot = $2
-	}
-	/^(MemFree|Buffers|Cached):/ {
-		notused+=$2
-	}
-	END {
-		used = tot-notused
-		printf("%.1f/%.1fMB\n", used/1024, tot/1024)
-	}' $DIR_MEMINFO )
-
+	if [[ $B_MEMINFO == 'true' ]];then
+		memory=$( gawk '
+		/^MemTotal:/ {
+			tot = $2
+		}
+		/^(MemFree|Buffers|Cached):/ {
+			notused+=$2
+		}
+		END {
+			used = tot-notused
+			printf("%.1f/%.1fMB\n", used/1024, tot/1024)
+		}' $DIR_MEMINFO )
+		log_function_data 'cat' "$DIR_MEMINFO"
+	fi
 	echo "$memory"
 	log_function_data "memory: $memory"
 	eval $LOGFE
@@ -2645,13 +2672,16 @@ get_partition_data()
 	eval $LOGFS
 	#local excluded_file_types='--exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660'
 	# df doesn't seem to work in script with variables like at the command line
-
+	local main_partition_data="$( df -h -T --exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660 )"
+	local swap_data="$( swapon -s )"
+	log_function_data 'raw' "main_partition_data:\n$main_partition_data\n\nswap_data:\n$swap_data"
+	
 	IFS=$'\n'
 	# sample line: /dev/sda2     ext3     15G  8.9G  4.9G  65% /home
 	# $NF = partition name; $(NF - 4) = partition size; $(NF - 3) = used, in gB; $(NF - 1) = percent used
 	## note: by subtracting from the last field number NF, we avoid a subtle issue with LVM df output, where if
 	## the first field is too long, it will occupy its own line, this way we are getting only the needed data
-	A_PARTITION_DATA=( $( df -h -T --exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660 | gawk '
+	A_PARTITION_DATA=( $( echo "$main_partition_data" | gawk '
 	BEGIN {
 		IGNORECASE=1
 	}
@@ -2693,7 +2723,7 @@ get_partition_data()
 	# now add the swap partition data, don't want to show swap files, just partitions,
 	# though this can include /dev/ramzswap0. Note: you can also use /proc/swaps for this
 	# data, it's the same exact output as swapon -s
-	$( swapon -s | gawk '
+	$( echo "$swap_data" | gawk '
 	BEGIN {
 		swapCounter = 1
 	}
@@ -2728,6 +2758,7 @@ get_partition_data_advanced()
 	if [[ -d /dev/disk/by-uuid ]];then
 		dev_disk_uuid="$( ls -l /dev/disk/by-uuid )"
 	fi
+	log_function_data 'raw' "dev_disk_label:\n$dev_disk_label\n\ndev_disk_uuid:\n$dev_disk_uuid"
 
 	if [[ $B_MOUNTS_DIR == 'true' ]];then
 		for (( i=0; i < ${#A_PARTITION_DATA[@]}; i++ ))
@@ -2843,6 +2874,7 @@ get_partition_data_advanced()
 			A_PARTITION_DATA[i]=${a_partition_working[0]}","${a_partition_working[1]}","${a_partition_working[2]}","${a_partition_working[3]}","${a_partition_working[4]}","$dev_item","$dev_label","$dev_uuid
 			IFS="$ORIGINAL_IFS"
 		done
+		log_function_data 'cat' "$DIR_MOUNTS"
 	fi
 	log_function_data "A_PARTITION_DATA: ${A_PARTITION_DATA[@]}"
 	eval $LOGFE
