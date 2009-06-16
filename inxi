@@ -1,13 +1,13 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.0.12
-####  Date: 28 May 2009
+####  version: 1.0.17-beta (dbus)
+####  Date: 16 June 2009
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
-####  Special thanks to all those in lsc for their tireless dedication
-####  with helping test inxi modules
+####  Special thanks to all those in #lsc and #smxi for their tireless 
+####  dedication helping test inxi modules.
 ########################################################################
 ####  ABOUT INXI
 ########################################################################
@@ -104,6 +104,23 @@
 ####
 ####  As with all 'rules' there are acceptions, these are noted where used.
 ####
+###################################################################################
+####	KDE Konversation information.  Moving from dcop(qt3/KDE3) to dbus(qt4/KDE4)
+###################################################################################
+####	dcop and dbus	-- these talk back to Konversation from this script
+####	
+####	Scripting info	-- http://konversation.berlios.de/docs/scripting.html
+####			-- http://www.kde.org.uk/apps/konversation/
+####
+####	dbus info	-- http://dbus.freedesktop.org/doc/dbus-tutorial.html
+####	view dbus info	-- https://fedorahosted.org/d-feet/
+####			-- or run qdbus
+####	Konvi dbus/usage-- qdbus org.kde.konversation /irc say <server> <target-channel> <output>
+####
+####	Python usage	-- http://wiki.python.org/moin/DbusExamples  (just in case)
+####
+####	Because webpages come and go, the above information needs to be moved to inxi's wiki
+####	
 ########################################################################
 ####  Valuable Resources
 ####  gawk arrays: http://www.math.utah.edu/docs/info/gawk_12.html
@@ -119,6 +136,10 @@
 ####  -! 13 - triggers an update from svn branch three - if present, of course
 ####  -! 14 - triggers an update from svn branch four - if present, of course
 ####  -! <http://......> - Triggers an update from whatever server you list.
+#### LOG FLAGS (logs to $HOME/.inxi/inxi.log with rotate 3 total)
+####  -@ 8  - Basic data logging of generated data / array values
+####  -@ 9  - Full logging of all data used, including cat of files and system data
+####  -@ 10 - Basic data logging plus color code logging
 ########################################################################
 #### VARIABLES
 ########################################################################
@@ -158,9 +179,10 @@ B_CPU_FLAGS_FULL='false'
 B_DEBUG_FLOOD='false'
 # show extra output data
 B_EXTRA_DATA='false'
-B_SHOW_DISK='false'
 # override certain errors due to currupted data
 B_HANDLE_CORRUPT_DATA='false'
+B_LOG_COLORS='false'
+B_LOG_FULL_DATA='false'
 B_ROOT='false'
 # Running in a shell? Defaults to false, and is determined later.
 B_RUNNING_IN_SHELL='false'
@@ -169,6 +191,7 @@ B_SCRIPT_UP='false'
 # Show sound card data
 B_SHOW_AUDIO='false'
 B_SHOW_CPU='false'
+B_SHOW_DISK='false'
 # Show full hard disk output
 B_SHOW_FULL_HDD='false'
 B_SHOW_GRAPHICS='false'
@@ -188,8 +211,12 @@ B_SHOW_UUIDS='false'
 # triggers various debugging and new option testing
 B_TESTING_1='false'
 B_TESTING_2='false'
+# set to true here for debug logging from script start
+B_USE_LOGGING='false'
 # Test for X running
 B_X_RUNNING='false'
+# test for dbus irc client
+B_DBUS_CLIENT='false'
 
 ### Directory/file exist flags; test as [[ $(boolean) ]] not [[ $boolean ]]
 B_PROC='false'
@@ -219,7 +246,7 @@ DIR_IFCONFIG='/sbin/ifconfig'
 
 ### Variable initializations: constants
 DCOPOBJ="default"
-DEBUG=0 # Set debug levels from 1-10
+DEBUG=0 # Set debug levels from 1-10 (8-10 trigger logging levels)
 # Debug Buffer Index, index into a debug buffer storing debug messages until inxi is 'all up'
 DEBUG_BUFFER_INDEX=0
 ## note: the debugger rerouting to /dev/null has been moved to the end of the get_parameters function
@@ -230,7 +257,18 @@ DEBUG_BUFFER_INDEX=0
 DEFAULT_SCHEME=2
 # Default indentation level
 INDENT=10
-# default to false, no konversation found, 1 is /cmd inxi start, 2 is native konvi script mode
+
+# logging eval variables, start and end function: Insert to LOGFS LOGFE when debug level >= 8
+LOGFS_STRING='log_function_data fs $FUNCNAME "$( echo $@ )"'
+LOGFE_STRING='log_function_data fe $FUNCNAME'
+LOGFS=''
+LOGFE=''
+# uncomment for debugging from script start
+# LOGFS=$LOGFS_STRING
+# LOGFE=$LOGFE_STRING
+
+# default to false, no konversation found, 1 is native konvi (qt3/KDE3) script mode, 2 is /cmd inxi start,
+##	3 is Konversation > 1.2 (qt4/KDE4) 
 KONVI=0
 # NO_CPU_COUNT=0	# Wether or not the string "dual" or similar is found in cpuinfo output. If so, avoid dups.
 # This is a variable that controls how many parameters inxi will parse in a /proc/<pid>/cmdline file before stopping.
@@ -255,7 +293,11 @@ ORIGINAL_IFS="$IFS"
 SEP1='-'
 SEP2='~'
 
-### Script names/paths
+### Script names/paths - must be non root writable
+SCRIPT_DATA_DIR="$HOME/.inxi"
+LOG_FILE="$SCRIPT_DATA_DIR/inxi.log"
+LOG_FILE_1="$SCRIPT_DATA_DIR/inxi.1.log"
+LOG_FILE_2="$SCRIPT_DATA_DIR/inxi.2.log"
 SCRIPT_NAME="inxi"
 SCRIPT_PATH=""			#filled-in in Main
 SCRIPT_VERSION_NUMBER=""	#filled-in in Main
@@ -281,6 +323,7 @@ IRC_COLORS="   \x0314   \x0301   \x0304   \x0305   \x0309   \x0303   \x0308   \x
 #                            BLUE     DBLUE    MAGENTA  DMAGENTA CYAN     DCYAN    WHITE    GREY     NORMAL
 ANSI_COLORS="$ANSI_COLORS [1;34m [0;34m [1;35m [0;35m [1;36m [0;36m [1;37m [0;37m [0;37m"
 IRC_COLORS=" $IRC_COLORS    \x0312   \x0302   \x0313   \x0306   \x0311   \x0310   \x0300   \x0315   \x03"
+
 #ANSI_COLORS=($ANSI_COLORS); IRC_COLORS=($IRC_COLORS)
 A_COLORS_AVAILABLE=( DGREY BLACK RED DRED GREEN DGREEN YELLOW DYELLOW BLUE DBLUE MAGENTA DMAGENTA CYAN DCYAN WHITE GREY NORMAL )
 # See above for notes on EMPTY
@@ -323,16 +366,19 @@ BAN_LIST_CPU=''
 ########################################################################
 main()
 {
-	# first init function must be set first for colors etc. Remember, no debugger
-	# stuff works on this function unless you set the debugging flag manually.
-	# Debugging flag -@ [number] will not work until get_parameters runs.
-		# This function just initializes variables
-	initialize_script_data
+	eval $LOGFS
+	
 
 	# Check for dependencies BEFORE running ANYTHING else except above functions
 	# Not all distro's have these depends installed by default
 	check_script_depends
 	check_script_suggested_apps
+
+	# first init function must be set first for colors etc. Remember, no debugger
+	# stuff works on this function unless you set the debugging flag manually.
+	# Debugging flag -@ [number] will not work until get_parameters runs.
+		# This function just initializes variables
+	initialize_script_data
 
 	### Only continue if depends ok
 	SCRIPT_PATH=$( dirname $0 )
@@ -342,21 +388,35 @@ main()
 	if [[ -s /etc/$SCRIPT_NAME.conf ]];then
 		source /etc/$SCRIPT_NAME.conf
 	fi
-	# Source user config overrides
-	if [[ -s $HOME/.$SCRIPT_NAME ]];then
-		source $HOME/.$SCRIPT_NAME
+	# Source user config overrides, ~/.inxi/inxi.conf
+	if [[ -s $HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf ]];then
+		source $HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf
 	fi
 
 	## this needs to run before the KONVI stuff is set below
+	## Konversation 1.2 apparently does not like the $PPID test in get_start_client
+	## So far there is no known way to detect if qt4_konvi is the parent process
+	## this method will infer qt4_konvi as parent
+	
 	get_start_client
 
 	# note: this only works if it's run from inside konversation as a script builtin or something
-	# only do this if inxi has been started as a konversation script, otherwise bypass this
-	if [[ $KONVI -eq 1 ]];then
-		DCPORT="$1"
-		DCSERVER="$2"
-		DCTARGET="$3"
-		shift 3
+	# only do this if inxi has been started as a konversation script, otherwise bypass this	
+#	KONVI=3 ## for testing puroses
+	## 
+	if [[ $KONVI -eq 1 || $KONVI -eq 3 ]];then
+		
+		if [[ $KONVI -eq 1 ]]; then ## dcop Konversation (ie 1.x < 1.2(qt3))	
+			DCPORT="$1"
+			DCSERVER="$2"
+			DCTARGET="$3"
+			shift 3
+		elif [[ $KONVI -eq 3 ]]; then ## dbus Konversation (> 1.2 (qt4))
+			DCSERVER="$1" ##dbus testing
+			DCTARGET="$2" ##dbus testing
+			shift 2
+		fi
+
 		# The section below is on request of Argonel from the Konversation developer team:
 		# it sources config files like $HOME/.kde/share/apps/konversation/scripts/inxi.conf
 		IFS=":"
@@ -369,6 +429,7 @@ main()
 		done
 		IFS="$ORIGINAL_IFS"
 	fi
+
 	## leave this for debugging dcop stuff if we get that working
 	# 	print_screen_output "DCPORT: $DCPORT"
 	# 	print_screen_output "DCSERVER: $DCSERVER"
@@ -394,7 +455,7 @@ main()
 	if [[ $B_RUNNING_IN_SHELL == 'true' && $SCHEME -gt 0 ]];then
 		echo -n "[0m"
 	fi
-
+	eval $LOGFE
 	# weechat's executor plugin forced me to do this, and rightfully so, because else the exit code
 	# from the last command is taken..
 	exit 0
@@ -411,6 +472,7 @@ main()
 # No args taken.
 initialize_script_data()
 {
+	eval $LOGFS
 	local path='' sys_path='' added_path='' b_path_found=''
 	# Extra path variable to make execute failures less likely, merged below
 	local extra_paths="/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin"
@@ -502,11 +564,13 @@ initialize_script_data()
 	if [[ $( whoami ) == 'root' ]];then
 		B_ROOT='true'
 	fi
+	eval $LOGFE
 }
 
 # No args taken.
 check_script_suggested_apps()
 {
+	eval $LOGFS
 	local bash_array_test=( "one" "two" )
 
 	# check for array ability of bash, this is only good for the warning at this time
@@ -520,12 +584,14 @@ check_script_suggested_apps()
 	else
 		script_debugger "Suggestion: update to Bash v3.1 for optimal inxi output"
 	fi
+	eval $LOGFE
 }
 
 # Determine if any of the absolutely necessary tools are absent
 # No args taken.
 check_script_depends()
 {
+	eval $LOGFS
 	local app_name='' app_data=''
 	# bc removed from deps for now
 	local depends="df free gawk grep hostname lspci ps readlink tr uname uptime wc"
@@ -552,6 +618,7 @@ check_script_depends()
 			error_handler 5 "$app_name"
 		fi
 	done
+	eval $LOGFE
 }
 
 ## note: this is now running inside each gawk sequence directly to avoid exiting gawk
@@ -561,6 +628,7 @@ check_script_depends()
 # args: $1 - BAN_LIST_NORMAL/BAN_LIST_CPU; $2 - string to sanitize
 sanitize_characters()
 {
+	eval $LOGFS
 	# Cannot use strong quotes to unquote a string with pipes in it!
 	# bash will interpret the |'s as usual and try to run a subshell!
 	# Using weak quotes instead, or use '"..."'
@@ -574,12 +642,14 @@ sanitize_characters()
 		gsub(/^ +| +$/,\"\")   ## (pipe char) with (nothing)
 		print                  ## prints (returns) cleaned input
 	}"
+	eval $LOGFE
 }
 
 # Filter boilerplate & buzzwords.
 # args: $1 - quoted: "$@" array of ban terms
 make_ban_lists()
 {
+	eval $LOGFS
 	local ban_list=''
 	# Iterate over $@
 	## note: this is a weird, non-intuitive method, needs some documentation or rewriting
@@ -599,6 +669,7 @@ make_ban_lists()
 	done
 
 	echo "$ban_list"
+	eval $LOGFS
 }
 # make_ban_lists "${A_CPU_BANS[@]}";exit
 
@@ -606,6 +677,7 @@ make_ban_lists()
 # args: $1 = <scheme number>|<"none">
 set_color_scheme()
 {
+	eval $LOGFS
 	local i='' script_colors='' color_codes=''
 
 	if [[ $1 -ge ${#A_COLOR_SCHEMES[@]} ]];then
@@ -630,6 +702,7 @@ set_color_scheme()
 	C2="${!script_colors[1]}"
 	CN="${!script_colors[2]}"
 	# ((COLOR_SCHEME++)) ## note: why is this? ##
+	eval $LOGFE
 }
 
 ########################################################################
@@ -644,6 +717,7 @@ set_color_scheme()
 # args: $1 - error number; $2 - optional, extra information
 error_handler()
 {
+	eval $LOGFS
 	local error_message=''
 
 	# assemble the error message
@@ -679,6 +753,7 @@ error_handler()
 	esac
 	# then print it and exit
 	print_screen_output "Error $1: $error_message"
+	eval $LOGFE
 	exit $1
 }
 
@@ -687,6 +762,7 @@ error_handler()
 # args: $1 - $@ debugging string text
 script_debugger()
 {
+	eval $LOGFS
 	if [[ $B_SCRIPT_UP == 'true' ]];then
 		# only return if debugger is off and no pre start up errors have occured
 		if [[ $DEBUG -eq 0 && $DEBUG_BUFFER_INDEX -eq 0 ]];then
@@ -714,12 +790,87 @@ script_debugger()
 			(( DEBUG_BUFFER_INDEX++ ))
 		fi
 	fi
+	eval $LOGFE
+}
+
+# NOTE: no logging available until get_parameters is run, since that's what sets logging
+# in order to trigger earlier logging manually set B_USE_LOGGING to true in top variables.
+# $1 alone: logs data; $2 with or without $3 logs func start/end.
+# $1 type (fs/fe/cat/raw) or logged data; [$2 is $FUNCNAME; [$3 - function args]]
+log_function_data()
+{
+	if [ "$B_USE_LOGGING" == 'true' ];then
+		local logged_data='' spacer='   ' line='----------------------------------------'
+		case $1 in
+			fs)
+				logged_data="Function: $2 - Primary: Start"
+				if [ -n "$3" ];then
+					logged_data="$logged_data\n${spacer}Args: $3"
+				fi
+				spacer=''
+				;;
+			fe)
+				logged_data="Function: $2 - Primary: End"
+				spacer=''
+				;;
+			cat)
+				if [[ $B_LOG_FULL_DATA == 'true' ]];then
+					logged_data="\n$line\nFull file data: cat $2\n\n$( cat $2 )\n$line\n"
+					spacer=''
+				fi
+				;;
+			raw)
+				if [[ $B_LOG_FULL_DATA == 'true' ]];then
+					logged_data="\n$line\nRaw system data:\n\n$2\n$line\n"
+					spacer=''
+				fi
+				;;
+			*)
+				logged_data="$1"
+				;;
+		esac
+		# Create any required line breaks and strip out escape color code, either ansi (case 1)or irc (case 2).
+		# This pattern doesn't work for irc colors, if we need that someone can figure it out
+		if [[ -n $logged_data ]];then
+			if [[ $B_LOG_COLORS != 'true' ]];then
+				echo -e "${spacer}$logged_data" | sed -r 's/\x1b\[[0-9]{1,2}(;[0-9]{1,2}){0,2}m//g' >> $LOG_FILE
+			else
+				echo -e "${spacer}$logged_data" >> $LOG_FILE
+			fi
+		fi
+	fi
+}
+
+# called in the initial -@ 10 script args setting so we can get logging as soon as possible
+# will have max 3 files, inxi.log, inxi.1.log, inxi.2.log
+create_rotate_logfiles()
+{
+	if [[ ! -d $SCRIPT_DATA_DIR ]];then
+		mkdir $SCRIPT_DATA_DIR
+	fi
+	# do the rotation if logfile exists
+	if [[ -f $LOG_FILE ]];then
+		# copy if present second to third
+		if [[ -f $LOG_FILE_1 ]];then
+			mv -f $LOG_FILE_1 $LOG_FILE_2
+		fi
+		# then copy initial to second
+		mv -f $LOG_FILE $LOG_FILE_1
+	fi
+	# now create the logfile
+	touch $LOG_FILE
+	# and echo the start data
+	echo "=========================================================" >> $LOG_FILE
+	echo "START $SCRIPT_NAME LOGGING:"                               >> $LOG_FILE
+	echo "Script started: $( date +%Y-%m-%d-%H:%M:%S )"              >> $LOG_FILE
+	echo "=========================================================" >> $LOG_FILE
 }
 
 # args: $1 - download url, not including file name; $2 - string to print out
 # note that $1 must end in / to properly construct the url path
 script_self_updater()
 {
+	eval $LOGFS
 	local wget_error=0
 	print_screen_output "Starting $SCRIPT_NAME self updater."
 	print_screen_output "Currently running $SCRIPT_NAME version number: $SCRIPT_VERSION_NUMBER"
@@ -746,6 +897,7 @@ script_self_updater()
 			error_handler 12 "$1"
 		fi
 	fi
+	eval $LOGFS
 }
 
 #### -------------------------------------------------------------------
@@ -757,6 +909,7 @@ script_self_updater()
 # note: dcop does not seem able to handle \n so that's being stripped out and replaced with space.
 print_screen_output()
 {
+	eval $LOGFS
 	# the double quotes are needed to avoid losing whitespace in data when certain output types are used
 	local print_data="$( echo -e "$1" )"
 
@@ -778,27 +931,38 @@ print_screen_output()
 		fi
 	fi
 
-	if [[ $KONVI -eq 1 ]];then
+	if [[ $KONVI -eq 1 ]]; then ## dcop Konversation (<= 1.1 (qt3))
 		# konvi doesn't seem to like \n characters, it just prints them literally
-		print_data="$( tr '\n' ' ' <<< "$print_data" )"
+		$print_data="$( tr '\n' ' ' <<< "$print_data" )"
 		dcop "$DCPORT" "$DCOPOBJ" say "$DCSERVER" "$DCTARGET" "$print_data"
+
+	elif [[ $KONVI -eq 3 ]]; then ## dbus Konversation (> 1.2 (qt4))
+		qdbus org.kde.konversation /irc say "$DCSERVER" "$DCTARGET" "$print_data"
+
+#	elif [[ $IRC_CLIENT == 'X-Chat' ]]; then
+#		qdbus org.xchat.service print "$print_data\n"
+
 	else
 		# the -n is needed to avoid double spacing of output in terminal
 		echo -ne "$print_data\n"
 	fi
+	eval $LOGFE
 }
 
 ## this handles all verbose line construction with indentation/line starter
 ## args: $1 - null (, actually: " ") or line starter; $2 - line content
 create_print_line()
 {
+	eval $LOGFS
 	printf "${C1}%-${INDENT}s${C2} %s" "$1" "$2"
+	eval $LOGFE
 }
 
 # this removes newline and pipes.
 # args: $1 - string to clean
 remove_erroneous_chars()
 {
+	eval $LOGFS
 	## RS is input record separator
 	## gsub is substitute;
 	gawk '
@@ -814,6 +978,7 @@ remove_erroneous_chars()
 		gsub(/^ +| +$/, "")    ## (pipe char) with (nothing)
 		printf $0
 	}' "$1"      ## prints (returns) cleaned input
+	eval $LOGFE
 }
 
 #### -------------------------------------------------------------------
@@ -824,6 +989,7 @@ remove_erroneous_chars()
 # args: $1 - full script startup args: $@
 get_parameters()
 {
+	eval $LOGFS
 	local opt='' wget_test='' update_flags='U!:'
 	local use_short='true' # this is needed to trigger short output, every v/d/F/line trigger sets this false
 
@@ -931,6 +1097,19 @@ get_parameters()
 			@)	if [[ -n $( egrep "^([1-9]|10)$" <<< $OPTARG ) ]];then
 					DEBUG=$OPTARG
 					exec 2>&1
+					# switch on logging only for -@ 8-10
+					if [[ $OPTARG -ge 8 ]];then
+						if [[ $OPTARG -eq 10 ]];then
+							B_LOG_COLORS='true'
+						elif [[ $OPTARG -eq 9 ]];then		
+							B_LOG_FULL_DATA='true'
+						fi
+						B_USE_LOGGING='true'
+						# pack the logging data for evals function start/end
+						LOGFS=$LOGFS_STRING
+						LOGFE=$LOGFE_STRING
+						create_rotate_logfiles # create/rotate logfiles before we do anything else
+					fi
 				else
 					error_handler 9 "$OPTARG"
 				fi
@@ -982,6 +1161,7 @@ get_parameters()
 	if [[ $use_short == 'true' ]];then
 		B_SHOW_SHORT_OUTPUT='true'
 	fi
+	eval $LOGFE
 }
 
 ## print out help menu, not including Testing or Debugger stuff because it's not needed
@@ -1037,7 +1217,8 @@ show_options()
 	fi
 	print_screen_output "-V  $SCRIPT_NAME version information. Prints information then exits."
 	print_screen_output "-%  Overrides defective or corrupted data."
-	print_screen_output "-@  Triggers debugger output. Requires debugging level 1-10."
+	print_screen_output "-@  Triggers debugger output. Requires debugging level 1-10 (8-10 - logging)."
+	print_screen_output "    8 - basic logging; 9 - full file/sys info logging; 10 - color logging."
 	if [[ $1 == 'full' ]];then
 		print_screen_output ""
 		print_screen_output "Developer and Testing Options (Advanced):"
@@ -1090,8 +1271,10 @@ print_version_info()
 # Determine where inxi was run from, set IRC_CLIENT and IRC_CLIENT_VERSION
 get_start_client()
 {
+	eval $LOGFS
 	local irc_client_path='' irc_client_path_lower='' non_native_konvi='' i=''
 	local b_non_native_app='false' pppid='' app_working_name=''
+	local b_qt4_konvi='false'
 
 	if tty >/dev/null;then
 		IRC_CLIENT='Shell'
@@ -1119,17 +1302,57 @@ get_start_client()
 		# replacing loose detection with tight detection, bugs will be handled with app names
 		# as they appear.
 		case $app_working_name in
+			# check for shell first
+			bash|dash|sh)
+				unset IRC_CLIENT_VERSION
+				IRC_CLIENT="Shell wrapper"
+				;;
+			# now start on irc clients, alphabetically
+			bitchx)
+				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk '
+				/Version/ {
+					a=tolower($2)
+					gsub(/[()]|bitchx-/,"",a)
+					print a
+					exit
+				}
+				$2 == "version" {
+					a=tolower($3)
+					sub(/bitchx-/,"",a)
+					print a
+					exit
+				}' )"
+				IRC_CLIENT="BitchX"
+				;;
+			finch)
+				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 {
+					print $2
+				}' )"
+				IRC_CLIENT="Finch"
+				;;
+			gaim)
+				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 {
+					print $2
+				}' )"
+				IRC_CLIENT="Gaim"
+				;;
+			ircii)
+				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 {
+					print $3
+				}' )"
+				IRC_CLIENT="ircII"
+				;;
 			irssi-text|irssi)
 				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 {
 					print $2
 				}' )"
 				IRC_CLIENT="Irssi"
 				;;
-			konversation)
+			konversation) ## konvi < 1.2 (qt4)
 				# this is necessary to avoid the dcop errors from starting inxi as a /cmd started script
-				if [[ $b_non_native_app == 'true' ]];then
+				if [[ $b_non_native_app == 'true' ]];then  ## true negative is confusing
 					KONVI=2
-				else
+				else # if native app
 					KONVI=1
 				fi
 				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk '
@@ -1171,45 +1394,27 @@ get_start_client()
 				fi
 				IRC_CLIENT="Konversation"
 				;;
-			xchat-gnome)
-				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 {
+			kopete)
+				IRC_CLIENT_VERSION=" $( kopete -v | gawk '
+				/Kopete:/ {
 					print $2
-				}' )"
-				IRC_CLIENT="X-Chat-Gnome"
-				;;
-			xchat)
-				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 {
-					print $2
-				}' )"
-				IRC_CLIENT="X-Chat"
-				;;
-			bitchx)
-				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk '
-				/Version/ {
-					a=tolower($2)
-					gsub(/[()]|bitchx-/,"",a)
-					print a
-					exit
-				}
-				$2 == "version" {
-					a=tolower($3)
-					sub(/bitchx-/,"",a)
-					print a
 					exit
 				}' )"
-				IRC_CLIENT="BitchX"
+				IRC_CLIENT="Kopete"
 				;;
-			ircii)
-				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 {
-					print $3
-				}' )"
-				IRC_CLIENT="ircII"
-				;;
-			gaim)
-				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 {
-					print $2
-				}' )"
-				IRC_CLIENT="Gaim"
+			kvirc)
+				IRC_CLIENT_VERSION=" $( $irc_client_path -v 2>&1 | gawk '{
+					for ( i=2; i<=NF; i++) {
+				 		if ( i == NF ) {
+				 			print $i
+				 		}
+				 		else {
+				 			printf $i" "
+				 		}
+				 	}
+				 	exit
+				 }' )"
+				IRC_CLIENT="KVIrc"
 				;;
 			pidgin)
 				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 {
@@ -1256,28 +1461,19 @@ get_start_client()
 				IRC_CLIENT_VERSION=" $( $irc_client_path -v ) "
 				IRC_CLIENT="Weechat"
 				;;
-			kvirc)
-				IRC_CLIENT_VERSION=" $( $irc_client_path -v 2>&1 | gawk '{
-					for ( i=2; i<=NF; i++) {
-				 		if ( i == NF ) {
-				 			print $i
-				 		}
-				 		else {
-				 			printf $i" "
-				 		}
-				 	}
-				 	exit
-				 }' )"
-				IRC_CLIENT="KVIrc"
-				;;
-			kopete)
-				IRC_CLIENT_VERSION=" $( kopete -v | gawk '
-				/Kopete:/ {
+			xchat-gnome)
+				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 {
 					print $2
-					exit
 				}' )"
-				IRC_CLIENT="Kopete"
+				IRC_CLIENT="X-Chat-Gnome"
 				;;
+			xchat)
+				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 {
+					print $2
+				}' )"
+				IRC_CLIENT="X-Chat"
+				;;
+			# then do some perl type searches, do this last since it's a wildcard search
 			perl*|ksirc|dsirc)
 				unset IRC_CLIENT_VERSION
 				# KSirc is one of the possibilities now. KSirc is a wrapper around dsirc, a perl client
@@ -1308,11 +1504,8 @@ get_start_client()
 					IRC_CLIENT="Unknown Perl client"
 				fi
 				;;
-			bash|dash|sh)
-				unset IRC_CLIENT_VERSION
-				IRC_CLIENT="Shell wrapper"
-				;;
-			*)
+			# then unset, set unknown data
+			*)	
 				IRC_CLIENT="Unknown : ${irc_client_path##*/}"
 				unset IRC_CLIENT_VERSION
 				;;
@@ -1321,9 +1514,68 @@ get_start_client()
 			unset IRC_CLIENT_VERSION
 		fi
 	else
-		IRC_CLIENT="PPID=\"$PPID\" - empty?"
-		unset IRC_CLIENT_VERSION
+		## lets look to see if qt4_konvi is the parent.  There is no direct way to tell, so lets infer it.
+		## because $PPID does not work with qt4_konvi, the above case does not work
+		b_qt4_konvi=$( is_this_qt4_konvi )
+		if [[ $b_qt4_konvi == 'true' ]];then
+			KONVI=3
+			IRC_CLIENT='Konversation'
+			IRC_CLIENT_VERSION=" $( konversation -v | gawk '
+				/Konversation:/ {
+					for ( i=2; i<=NF; i++ ) {
+						if (i == NF) {
+							print $i
+						}
+						else {
+							printf $i" "
+						}
+					}
+					exit
+				}' )"
+		else
+			IRC_CLIENT="PPID=\"$PPID\" - empty?"
+			unset IRC_CLIENT_VERSION
+		fi
 	fi
+	log_function_data "IRC_CLIENT: $IRC_CLIENT :: IRC_CLIENT_VERSION: $IRC_CLIENT_VERSION :: PPID: $PPID"
+	eval $LOGFE
+}
+
+## try to infer the use of Konversation >= 1.2, which shows $PPID improperly
+## no known method of finding Kovni >= 1.2 as parent process, so we look to see if it is running,
+## and all other irc clients are not running.  
+is_this_qt4_konvi()
+{
+	local konvi_qt4_client='' konvi_dbus_exist='' konvi_pid='' konvi_home_dir='' 
+	local konvi='' konvi_qt4_ver='' b_is_qt4=''
+
+	konvi_dbus_exist=$( qdbus | grep "org.kde.konversation" )
+	 
+	if [[ -n $konvi_dbus_exist && -e /usr/share/kde4/apps/konversation ]]; then
+
+		konvi_pid=$( ps -A | grep -i 'konversation' )
+		konvi_pid=$( echo $konvi_pid | gawk '{ print $1 }' ) 
+
+		konvi_home_dir=$( readlink /proc/$konvi_pid/exe )
+		konvi=$( echo $konvi_home_dir | sed "s/\// /g" )
+		konvi=($konvi)
+
+		if [[ ${konvi[2]} == 'konversation' ]];then	
+			konvi_qt4_ver=$( konversation -v | grep -i 'konversation' )
+			konvi_qt4_client=$( echo "$konvi_qt4_ver" | gawk '{ print $2 }' )
+
+			if [[ $konvi_qt4_client > 1.1 ]]; then
+				b_is_qt4='true'
+			fi
+		fi
+	else
+		konvi_qt4="qt3"
+		b_is_qt4='false'
+	fi
+
+	echo $b_is_qt4
+	## for testing this module
+	#qdbus org.kde.konversation /irc say $1 $2 "getpid_dir: $konvi_qt4  qt4_konvi: $konvi_qt4_ver   verNum: $konvi_qt4_ver_num  pid: $konvi_pid ppid: $PPID  konvi_home_dir: ${konvi[2]}"
 }
 
 # This needs some cleanup and comments, not quite understanding what is happening, although generally output is known
@@ -1331,6 +1583,7 @@ get_start_client()
 # args: $1 - $PPID
 get_cmdline()
 {
+	eval $LOGFS
 	local i=0 ppid=$1
 
 	if [[ ! -e /proc/$ppid/cmdline ]];then
@@ -1353,6 +1606,8 @@ get_cmdline()
 		fi
 	fi
 	CMDL_MAX=$i
+	log_function_data "CMDL_MAX: $CMDL_MAX"
+	eval $LOGFE
 }
 
 #### -------------------------------------------------------------------
@@ -1361,6 +1616,7 @@ get_cmdline()
 ## create array of sound cards installed on system, and if found, use asound data as well
 get_audio_data()
 {
+	eval $LOGFS
 	local i='' alsa_data='' alsa_driver='' device_count=''
 	local usb_proc_file='' array_count='' usb_id='' usb_data=''
 
@@ -1381,6 +1637,7 @@ get_audio_data()
 				print driver
 			}
 		}'  $DIR_ASOUND_DEVICE )
+		log_function_data 'cat' "$DIR_ASOUND_DEVICE"
 	fi
 
 	# this is to safeguard against line breaks from results > 1, which if inserted into following
@@ -1484,6 +1741,7 @@ get_audio_data()
 			# corresponding line. Finally, strip out commas as they will change the driver :)
 			usb_id=$( cat $usb_proc_file/usbid )
 			usb_data=$( lsusb -v 2>/dev/null | grep "$usb_id" )
+			log_function_data 'raw' "usb_data:\n$usb_data"
 			usb_data=$( gawk '{
 				gsub( /,/, " ", $0 )
 				for( i=7; i <= NF; i++ ) {
@@ -1505,10 +1763,13 @@ get_audio_data()
 	if [[ ${#A_AUDIO_DATA[@]} -eq 0 ]];then
 		A_AUDIO_DATA[0]='Failed to Detect Sound Card!'
 	fi
+	log_function_data "A_AUDIO_DATA: ${A_AUDIO_DATA[@]}"
+	eval $LOGFE
 }
 
 get_audio_alsa_data()
 {
+	eval $LOGFS
 	local alsa_data=''
 
 	# now we'll get the alsa data if the file exists
@@ -1528,14 +1789,18 @@ get_audio_alsa_data()
 					print $0
 				}
 		}' $DIR_ASOUND_VERSION )
+		log_function_data 'cat' "$DIR_ASOUND_VERSION"
 	fi
 	echo "$alsa_data"
+	log_function_data "alsa_data: $alsa_data"
+	eval $LOGFE
 }
 
 ## create A_CPU_CORE_DATA, currently with two values: integer core count; core string text
 ## return value cpu core count string, this helps resolve the multi redundant lines of old style output
 get_cpu_core_count()
 {
+	eval $LOGFS
 	if [[ $B_CPUINFO == 'true' ]]; then
 		# load the A_CPU_TYPE_PCNT_CCNT core data array
 		get_cpu_ht_multicore_smp_data
@@ -1563,11 +1828,14 @@ get_cpu_core_count()
 		# A_CPU_CORE_DATA=( "$cpu_core_count" "$cpu_alpha_count Core$cpu_type" )
 		A_CPU_CORE_DATA=( "$cpu_physical_count" "$cpu_alpha_count" "$cpu_type" "$cpu_core_count" )
 	fi
+	log_function_data "A_CPU_CORE_DATA: ${A_CPU_CORE_DATA[@]}"
+	eval $LOGFE
 }
 
 ## main cpu data collector
 get_cpu_data()
 {
+	eval $LOGFS
 	local i='' j='' cpu_array_nu='' a_cpu_working='' multi_cpu='' bits=''
 
 	if [[ $B_CPUINFO == 'true' ]];then
@@ -1643,15 +1911,19 @@ get_cpu_data()
 				printf("%s %s\n", max, "Mhz")
 			}
 		}' $DIR_CPUINFO ) )
+		log_function_data 'cat' "$DIR_CPUINFO"
 	fi
 
 	IFS="$ORIGINAL_IFS"
+	log_function_data "A_CPU_DATA: ${A_CPU_DATA[@]}"
+	eval $LOGFE
 # 	echo getMainCpu: ${[@]}
 }
 
 ## this is for counting processors and finding HT types
 get_cpu_ht_multicore_smp_data()
 {
+	eval $LOGFS
 	# in /proc/cpuinfo
 	# 				algorithm
 	# if > 1 processor && processor id (physical id) == core id then Hyperthreaded (HT)
@@ -1730,15 +2002,17 @@ get_cpu_ht_multicore_smp_data()
 			}
 			print type " " physical_cpu_count " " core_count
 		}
-		' $DIR_CPUINFO
-		) )
+		' $DIR_CPUINFO ) )
 	fi
+	log_function_data "A_CPU_TYPE_PCNT_CCNT: ${A_CPU_TYPE_PCNT_CCNT[@]}"
+	eval $LOGFE
 }
 
 # for more on distro id, please reference this python thread: http://bugs.python.org/issue1322
 ## return distro name/id if found
 get_distro_data()
 {
+	eval $LOGFS
 	local i='' j='' distro='' distro_file='' a_distro_glob=''
 
 	# get the wild carded array of release/version /etc files if present
@@ -1773,14 +2047,14 @@ get_distro_data()
 			fi
 		done
 	fi
-
+	log_function_data "distro_file: $distro_file"
 	# first test for the legacy antiX distro id file
 	if [[ -e /etc/antiX ]];then
 		distro="$( egrep -oi 'antix.*\.iso' <<< $( remove_erroneous_chars '/etc/antiX' ) | sed 's/\.iso//' )"
 	# this handles case where only one release/version file was found, and it's lsb-release. This would
 	# never apply for ubuntu or debian, which will filter down to the following conditions. In general
 	# if there's a specific distro release file available, that's to be preferred, but this is a good backup.
-	elif [[ -n $distro_file && -f /etc/lsb_release && " $DISTROS_LSB_GOOD" == *" $distro_file "* ]];then
+	elif [[ -n $distro_file && -f $DIR_LSB_RELEASE && " $DISTROS_LSB_GOOD" == *" $distro_file "* ]];then
 		distro=$( get_distro_lsb_data )
 	elif [[ $distro_file == 'lsb-release' ]];then
 		distro=$( get_distro_lsb_data )
@@ -1829,11 +2103,14 @@ get_distro_data()
 	fi
 
 	echo "$distro"
+	log_function_data "distro: $distro"
+	eval $LOGFE
 }
 
 # args: $1 - optional, app, uses the app test, not being used now
 get_distro_lsb_data()
 {
+	eval $LOGFS
 	local distro=''
 
 	if [[ $B_LSB_DIR == 'true' ]] && [[ $1 != 'app' ]];then
@@ -1867,6 +2144,7 @@ get_distro_lsb_data()
 		END {
 			print distroId distroRelease distroCodename
 		}' $DIR_LSB_RELEASE )
+		log_function_data 'cat' "$DIR_LSB_RELEASE"
 	fi
 	# this is HORRIBLY slow, but I don't know why, it runs fast in shell
 # 	if [[  -n $( which lsb_release ) && $1 == 'app' ]];then
@@ -1890,11 +2168,14 @@ get_distro_lsb_data()
 # 	fi
 
 	echo $distro
+	log_function_data "distro: $distro"
+	eval $LOGFE
 }
 
 ## create array of gfx cards installed on system
 get_graphics_card_data()
 {
+	eval $LOGFS
 	local i=''
 
 	IFS=$'\n'
@@ -1921,11 +2202,14 @@ get_graphics_card_data()
 
 	# GFXMEM is UNUSED at the moment, because it shows AGP aperture size, which is not necessarily equal to GFX memory..
 	# GFXMEM="size=[$(echo "$Lspci_Data" | gawk '/VGA/{while (!/^$/) {getline;if (/size=[0-9][0-9]*M/) {size2=gensub(/.*\[size=([0-9]+)M\].*/,"\\1","g",$0);if (size<size2){size=size2}}}}END{print size2}')M]"
+	log_function_data "A_GFX_CARD_DATA: ${A_GFX_CARD_DATA[@]}"
+	eval $LOGFE
 }
 
 ## create array of glx data
 get_graphics_glx_data()
 {
+	eval $LOGFS
 	if [[ $B_X_RUNNING == 'true' && $B_ROOT != 'true' ]];then
 		IFS=$'\n'
 		A_GLX_DATA=( $( glxinfo | gawk -F ': ' '
@@ -1978,12 +2262,15 @@ get_graphics_glx_data()
 		# GLXR=$(glxinfo | gawk -F ': ' 'BEGIN {IGNORECASE=1} /opengl renderer/ && $2 !~ /mesa/ {seen[$2]++} END {for (i in seen) {printf("%s ",i)}}')
 		#    GLXV=$(glxinfo | gawk -F ': ' 'BEGIN {IGNORECASE=1} /opengl version/ && $2 !~ /mesa/ {seen[$2]++} END {for (i in seen) {printf("%s ",i)}}')
 	fi
+	log_function_data "A_GLX_DATA: ${A_GLX_DATA[@]}"
+	eval $LOGFE
 }
 
 ## return screen resolution / tty resolution
 get_graphics_res_data()
 {
-	local screen_resolution=''
+	eval $LOGFS
+	local screen_resolution='' 
 
 	if [[ $B_X_RUNNING == 'true' && $B_ROOT != 'true' ]];then
 		# Added the two ?'s , because the resolution is now reported without spaces around the 'x', as in
@@ -2014,25 +2301,32 @@ get_graphics_res_data()
 		}' )
 	fi
 	echo "$screen_resolution"
+	log_function_data "screen_resolution: $screen_resolution"
+	eval $LOGFE
 }
 
 ## for possible future data, not currently used
 get_graphics_agp_data()
 {
+	eval $LOGFS
 	local agp_module=''
 
-	if [[ B_MODULES_DIR == 'true' ]];then
+	if [[ $B_MODULES_DIR == 'true' ]];then
 		## not used currently
 		agp_module=$( gawk '
 		/agp/ && !/agpgart/ && $3 > 0 {
 			print(gensub(/(.*)_agp.*/,"\\1","g",$1))
 		}' $DIR_MODULES )
+		log_function_data 'cat' "$DIR_MODULES"
 	fi
+	log_function_data "agp_module: $agp_module"
+	eval $LOGFE
 }
 
 ## create array of x vendor/version data
 get_graphics_x_data()
 {
+	eval $LOGFS
 	local x_vendor='' x_version=''
 
 	if [[ $B_X_RUNNING == 'true' && $B_ROOT != 'true' ]];then
@@ -2073,14 +2367,19 @@ get_graphics_x_data()
 		#This method could be used in the future to detect X when X is not running,
 		#however currently inxi ignores X checks when X is not found.
 	fi
+	log_function_data "A_X_DATA: ${A_X_DATA[@]}"
+	eval $LOGFE
 }
 
 # this gets just the raw data, total space/percent used and disk/name/per disk capacity
 get_hdd_data_basic()
 {
+	eval $LOGFS
 	local hdd_used=''
-
-	hdd_used=$( df --exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660 | gawk '
+	local hdd_data="$( df --exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660 )"
+	log_function_data 'raw' "hdd_data:\n$hdd_data"
+	
+	hdd_used=$( echo "$hdd_data" | gawk '
 	# also handles odd dm-1 type, from lvm
 	/^\/dev\/(mapper\/|[hs]d[a-z][0-9]+|dm[-]?[0-9]+)/ {
 		# this handles the case where the first item is too long
@@ -2112,7 +2411,7 @@ get_hdd_data_basic()
 	if [[ -z $hdd_used ]];then
 		hdd_used='na'
 	fi
-
+	log_function_data "hdd_used: $hdd_used"
 	# create the initial array strings:
 	# disk-dev, capacity, name, usb or not
 	# final item is the total of the disk
@@ -2153,15 +2452,18 @@ get_hdd_data_basic()
 			else {
 				print "NA,-" # print an empty array, this will be further handled in the print out function
 			}
-		}' $DIR_PARTITIONS
- 		) )
+		}' $DIR_PARTITIONS ) )
+ 		log_function_data 'cat' "$DIR_PARTITIONS"
 	fi
 	IFS="$ORIGINAL_IFS"
+	log_function_data "A_HDD_DATA: ${A_HDD_DATA[@]}"
+	eval $LOGFE
 }
 
 ## fills out the A_HDD_DATA array with disk names
 get_hard_drive_data_advanced()
 {
+	eval $LOGFS
 	local a_temp_working='' a_temp_scsi='' temp_holder='' temp_name='' i='' j=''
 	local sd_ls_by_id='' ls_disk_by_id=''
 
@@ -2223,6 +2525,7 @@ get_hard_drive_data_advanced()
 				}
 			}
 		}' $DIR_SCSI ) )
+		log_function_data 'cat' "$DIR_SCSI"
 	fi
 	IFS="$ORIGINAL_IFS"
 
@@ -2272,39 +2575,51 @@ get_hard_drive_data_advanced()
 		done
 		unset ls_disk_by_id # and then let's dump the data we don't need
 	fi
+	log_function_data "A_HDD_DATA: ${A_HDD_DATA[@]}"
+	eval $LOGFE
 }
 
 get_lspci_data()
 {
-	echo "$( lspci -v | gawk '{
+	eval $LOGFS
+	local lspci_data="$( lspci -v | gawk '{
 		gsub(/\(prog-if[^)]*\)/,"")
 		print
 	}' )"
+	
+	echo "$lspci_data"
+	log_function_data 'raw' "lspci_data:\n$lspci_data"
+	eval $LOGFE
 }
 
 ## return memory used/installed
 get_memory_data()
 {
+	eval $LOGFS
 	local memory=''
-
-	memory=$( gawk '
-	/^MemTotal:/ {
-		tot = $2
-	}
-	/^(MemFree|Buffers|Cached):/ {
-		notused+=$2
-	}
-	END {
-		used = tot-notused
-		printf("%.1f/%.1fMB\n", used/1024, tot/1024)
-	}' $DIR_MEMINFO )
-
+	if [[ $B_MEMINFO == 'true' ]];then
+		memory=$( gawk '
+		/^MemTotal:/ {
+			tot = $2
+		}
+		/^(MemFree|Buffers|Cached):/ {
+			notused+=$2
+		}
+		END {
+			used = tot-notused
+			printf("%.1f/%.1fMB\n", used/1024, tot/1024)
+		}' $DIR_MEMINFO )
+		log_function_data 'cat' "$DIR_MEMINFO"
+	fi
 	echo "$memory"
+	log_function_data "memory: $memory"
+	eval $LOGFE
 }
 
 # process and return module version data
 get_module_version_number()
 {
+	eval $LOGFS
 	local module_version=''
 
 	if [[ -n $( which modinfo ) ]];then
@@ -2322,11 +2637,14 @@ get_module_version_number()
 	fi
 
 	echo "$module_version"
+	log_function_data "module_version: $module_version"
+	eval $LOGFE
 }
 
 ## create array of network cards
 get_networking_data()
 {
+	eval $LOGFS
 	IFS=$'\n'
 	A_NETWORK_DATA=( $( echo "$Lspci_Data" | gawk '
 	BEGIN {
@@ -2393,10 +2711,13 @@ get_networking_data()
 		}
 	}') )
 	IFS="$ORIGINAL_IFS"
+	log_function_data "A_NETWORK_DATA: ${A_NETWORK_DATA[@]}"
+	eval $LOGFE
 }
 
 get_networking_wan_ip_data()
 {
+	eval $LOGFS
 	local ip=''
 
 	# get ip using wget redirect to stdout. This is a clean, text only IP output url.
@@ -2409,10 +2730,13 @@ get_networking_wan_ip_data()
 		ip='None Detected!'
 	fi
 	echo "$ip"
+	log_function_data "ip: $ip"
+	eval $LOGFE
 }
 
 get_networking_local_ip_data()
 {
+	eval $LOGFS
 	if [[ $B_IFCONFIG == 'true' ]];then
 		IFS=$'\n'
 		A_INTERFACES_DATA=( $( $DIR_IFCONFIG | gawk '
@@ -2454,19 +2778,25 @@ get_networking_local_ip_data()
 		}') )
 		IFS="$ORIGINAL_IFS"
 	fi
+	log_function_data "A_INTERFACES_DATA: ${A_INTERFACES_DATA[@]}"
+	eval $LOGFE
 }
 
 get_partition_data()
 {
+	eval $LOGFS
 	#local excluded_file_types='--exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660'
 	# df doesn't seem to work in script with variables like at the command line
-
+	local main_partition_data="$( df -h -T --exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660 )"
+	local swap_data="$( swapon -s )"
+	log_function_data 'raw' "main_partition_data:\n$main_partition_data\n\nswap_data:\n$swap_data"
+	
 	IFS=$'\n'
 	# sample line: /dev/sda2     ext3     15G  8.9G  4.9G  65% /home
 	# $NF = partition name; $(NF - 4) = partition size; $(NF - 3) = used, in gB; $(NF - 1) = percent used
 	## note: by subtracting from the last field number NF, we avoid a subtle issue with LVM df output, where if
 	## the first field is too long, it will occupy its own line, this way we are getting only the needed data
-	A_PARTITION_DATA=( $( df -h -T --exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660 | gawk '
+	A_PARTITION_DATA=( $( echo "$main_partition_data" | gawk '
 	BEGIN {
 		IGNORECASE=1
 	}
@@ -2508,7 +2838,7 @@ get_partition_data()
 	# now add the swap partition data, don't want to show swap files, just partitions,
 	# though this can include /dev/ramzswap0. Note: you can also use /proc/swaps for this
 	# data, it's the same exact output as swapon -s
-	$( swapon -s | gawk '
+	$( echo "$swap_data" | gawk '
 	BEGIN {
 		swapCounter = 1
 	}
@@ -2525,11 +2855,14 @@ get_partition_data()
 	if [[ $B_SHOW_LABELS == 'true' || $B_SHOW_UUIDS == 'true' ]];then
 		get_partition_data_advanced
 	fi
+	log_function_data "A_PARTITION_DATA: ${A_PARTITION_DATA[@]}"
+	eval $LOGFE
 }
 
 # first get the locations of the mount points for label/uuid detection
 get_partition_data_advanced()
 {
+	eval $LOGFS
 	local a_partition_working='' dev_partition_data=''
 	local dev_disk_label='' dev_disk_uuid='' dev_item='' dev_label='' dev_uuid=''
 	local mount_point=''
@@ -2540,6 +2873,7 @@ get_partition_data_advanced()
 	if [[ -d /dev/disk/by-uuid ]];then
 		dev_disk_uuid="$( ls -l /dev/disk/by-uuid )"
 	fi
+	log_function_data 'raw' "dev_disk_label:\n$dev_disk_label\n\ndev_disk_uuid:\n$dev_disk_uuid"
 
 	if [[ $B_MOUNTS_DIR == 'true' ]];then
 		for (( i=0; i < ${#A_PARTITION_DATA[@]}; i++ ))
@@ -2655,17 +2989,24 @@ get_partition_data_advanced()
 			A_PARTITION_DATA[i]=${a_partition_working[0]}","${a_partition_working[1]}","${a_partition_working[2]}","${a_partition_working[3]}","${a_partition_working[4]}","$dev_item","$dev_label","$dev_uuid
 			IFS="$ORIGINAL_IFS"
 		done
+		log_function_data 'cat' "$DIR_MOUNTS"
 	fi
+	log_function_data "A_PARTITION_DATA: ${A_PARTITION_DATA[@]}"
+	eval $LOGFE
 }
 
 ## return uptime string
 get_uptime()
 {
+	eval $LOGFS
 	## note: removing gsub(/ /,"",a); to get get space back in there, goes right before print a
-	echo $( uptime | gawk '{
+	local uptime_value="$( uptime | gawk '{
 		a = gensub(/^.*up *([^,]*).*$/,"\\1","g",$0)
 		print a
-	}' )
+	}' )"
+	echo "$uptime_value"
+	log_function_data "uptime_value: $uptime_value"
+	eval $LOGFE
 }
 
 #### -------------------------------------------------------------------
@@ -2676,6 +3017,7 @@ get_uptime()
 # args: $1 - string to handle; $2 - cpu count
 calculate_multicore_data()
 {
+	eval $LOGFS
 	local string_number=$1 string_data=''
 
 	if [[ -n $( egrep -i '( mb| kb)' <<< $1 ) ]];then
@@ -2695,12 +3037,15 @@ calculate_multicore_data()
 		string_number="$string_number "
 	fi
 	echo "$string_number$string_data"
+	log_function_data "string_numberstring_data: $string_number$string_data"
+	eval $LOGFE
 }
 
 # prints out shortened list of flags, the main ones of interest
 # args: $1 - string of cpu flags to process
 process_cpu_flags()
 {
+	eval $LOGFS
 	local cpu_flags="$1"
 
 	# nx = AMD stack protection extensions
@@ -2748,6 +3093,8 @@ process_cpu_flags()
 		cpu_flags="-"
 	fi
 	echo "$cpu_flags"
+	log_function_data "cpu_flags: $cpu_flags"
+	eval $LOGFE
 }
 
 #### -------------------------------------------------------------------
@@ -2758,6 +3105,7 @@ process_cpu_flags()
 ## main function to print out, master for all sub print functions.
 print_it_out()
 {
+	eval $LOGFS
 	# note that print_it_out passes local variable values on to its children,
 	# and in some cases, their children, with Lspci_Data
 	local Lspci_Data='' # only for verbose
@@ -2791,6 +3139,7 @@ print_it_out()
 			print_info_data
 		fi
 	fi
+	eval $LOGFE
 }
 
 #### SHORT OUTPUT PRINT FUNCTION, ie, verbosity 0
@@ -2798,6 +3147,7 @@ print_it_out()
 # these will also be loaded in each relevant print function for long output
 print_short_data()
 {
+	eval $LOGFS
 	local current_kernel=$( uname -rm ) # | gawk '{print $1,$3,$(NF-1)}' )
 	local processes="$(( $( ps aux | wc -l ) - 1 ))"
 	local short_data='' i='' b_background_black='false'
@@ -2878,6 +3228,7 @@ print_short_data()
 		short_data="${short_data} $NORMAL"
 	fi
 	print_screen_output "$short_data"
+	eval $LOGFE
 }
 
 #### LINE ITEM PRINT FUNCTIONS
@@ -2885,6 +3236,7 @@ print_short_data()
 # print sound card data
 print_audio_data()
 {
+	eval $LOGFS
 	local i='' card_one='Card-1' audio_data='' a_audio_data='' port_data=''
 	local a_audio_working='' alsa_driver='' alsa_data='' port_plural='' module_version=''
 	# set A_AUDIO_DATA and get alsa data
@@ -2957,10 +3309,12 @@ print_audio_data()
 			print_screen_output "$audio_data"
 		fi
 	fi
+	eval $LOGFE
 }
 
 print_cpu_data()
 {
+	eval $LOGFS
 	local cpu_data='' i='' cpu_clock_speed='' cpu_multi_clock_data=''
 	local bmip_data='' cpu_cache='' cpu_vendor='' cpu_flags=''
 
@@ -3062,12 +3416,14 @@ print_cpu_data()
 	if [[ $B_CPU_FLAGS_FULL == 'true' ]];then
 		print_cpu_flags_full "${a_cpu_working[3]}"
 	fi
+	eval $LOGFE
 }
 
 # takes list of all flags, split them and prints x per line
 # args: $1 - cpu flag string
 print_cpu_flags_full()
 {
+	eval $LOGFS
 	local cpu_flags_full="$1" a_cpu_flags='' line_starter=''
 	local i=0 counter=0 max_length=18 max_length_add=18 flag='' flag_data=''
 
@@ -3092,10 +3448,12 @@ print_cpu_flags_full()
 		flag_data=$( create_print_line " " "$line_starter${a_cpu_flags[$i]}" )
 		print_screen_output "$flag_data"
 	done
+	eval $LOGFE
 }
 
 print_gfx_data()
 {
+	eval $LOGFS
 	local gfx_data='' i='' card_one='Card' root_alert=''
 	local screen_resolution="$( get_graphics_res_data )"
 	local b_is_mesa='false' display_full_string=''
@@ -3165,10 +3523,12 @@ print_gfx_data()
 		fi
 		print_screen_output "$gfx_data"
 	fi
+	eval $LOGFE
 }
 
 print_hard_disk_data()
 {
+	eval $LOGFS
 	local hdd_data='' hdd_data_2='' a_hdd_working=''
 	local dev_data='' size_data='' hdd_model='' hdd_model_2='' hdd_model_3='' usb_data=''
 
@@ -3225,10 +3585,12 @@ print_hard_disk_data()
 	if [[ -n $hdd_model_2 ]];then
 		print_screen_output "$hdd_data_2"
 	fi
+	eval $LOGFE
 }
 
 print_info_data()
 {
+	eval $LOGFS
 	local suggested_app="runlevel"
 	local info_data=''
 	local runlvl=''
@@ -3257,11 +3619,13 @@ print_info_data()
 		info_data="${info_data} ${NORMAL}"
 	fi
 	print_screen_output "$info_data"
+	eval $LOGFE
 }
 
 # args: $1 - module name (could be > 1, so loop it )
 print_module_version()
 {
+	eval $LOGFS
 	local module_versions='' module='' version=''
 
 	for module in $1
@@ -3275,10 +3639,12 @@ print_module_version()
 	if [[ -n $module_versions ]];then
 		echo " ${C1}v:${C2}$module_versions"
 	fi
+	eval $LOGFE
 }
 
 print_networking_data()
 {
+	eval $LOGFS
 	local i='' card_one='Card-1' network_data='' a_network_working='' port_data='' driver_data=''
 	local card_string='' port_plural='' module_version=''
 	# set A_NETWORK_DATA
@@ -3340,10 +3706,12 @@ print_networking_data()
 	if [[ $B_SHOW_IP == 'true' ]];then
 		print_networking_ip_data
 	fi
+	eval $LOGFE
 }
 
 print_networking_ip_data()
 {
+	eval $LOGFS
 	local ip=$( get_networking_wan_ip_data )
 	local ip_data='' a_interfaces_working='' interfaces='' interfaces_2='' i=''
 
@@ -3378,10 +3746,12 @@ print_networking_ip_data()
 		interfaces_2=$( create_print_line " " "$interfaces_2" )
 		print_screen_output "$interfaces_2"
 	fi
+	eval $LOGFE
 }
 
 print_partition_data()
 {
+	eval $LOGFS
 	local a_partition_working='' partition_used='' partition_data=''
 	local counter=0 line_max=160  i=0 a_partition_data='' line_starter=''
 	local partitionIdClean='' part_dev='' full_dev='' part_label='' full_label=''
@@ -3468,10 +3838,12 @@ print_partition_data()
 		partition_data=$( create_print_line "$line_starter" "${a_partition_data[$i]}" )
 		print_screen_output "$partition_data"
 	done
+	eval $LOGFE
 }
 
 print_system_data()
 {
+	eval $LOGFS
 	local system_data='' bits=''
 	local host_name=$( hostname )
 	local current_kernel=$( uname -rm ) # | gawk '{print $1,$3,$(NF-1)}' )
@@ -3490,6 +3862,7 @@ print_system_data()
 	fi
 	system_data="$system_data $current_kernel $bits ${C1}Distro${C2} $distro"
 	print_screen_output "$system_data"
+	eval $LOGFE
 }
 
 ########################################################################
