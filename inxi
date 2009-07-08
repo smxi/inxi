@@ -1,13 +1,13 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.0.16
-####  Date: 6 June 2009
+####  version: 1.0.17
+####  Date: 7 July 2009
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
-####  Special thanks to all those in lsc for their tireless dedication
-####  with helping test inxi modules
+####  Special thanks to all those in #lsc and #smxi for their tireless 
+####  dedication helping test inxi modules.
 ########################################################################
 ####  ABOUT INXI
 ########################################################################
@@ -104,6 +104,23 @@
 ####
 ####  As with all 'rules' there are acceptions, these are noted where used.
 ####
+###################################################################################
+####	KDE Konversation information.  Moving from dcop(qt3/KDE3) to dbus(qt4/KDE4)
+###################################################################################
+####	dcop and dbus	-- these talk back to Konversation from this script
+####	
+####	Scripting info	-- http://konversation.berlios.de/docs/scripting.html
+####			-- http://www.kde.org.uk/apps/konversation/
+####
+####	dbus info	-- http://dbus.freedesktop.org/doc/dbus-tutorial.html
+####	view dbus info	-- https://fedorahosted.org/d-feet/
+####			-- or run qdbus
+####	Konvi dbus/usage-- qdbus org.kde.konversation /irc say <server> <target-channel> <output>
+####
+####	Python usage	-- http://wiki.python.org/moin/DbusExamples  (just in case)
+####
+####	Because webpages come and go, the above information needs to be moved to inxi's wiki
+####	
 ########################################################################
 ####  Valuable Resources
 ####  gawk arrays: http://www.math.utah.edu/docs/info/gawk_12.html
@@ -198,6 +215,8 @@ B_TESTING_2='false'
 B_USE_LOGGING='false'
 # Test for X running
 B_X_RUNNING='false'
+# test for dbus irc client
+B_DBUS_CLIENT='false'
 
 ### Directory/file exist flags; test as [[ $(boolean) ]] not [[ $boolean ]]
 B_PROC='false'
@@ -235,7 +254,7 @@ DEBUG_BUFFER_INDEX=0
 
 # Defaults to 2, make this 1 for normal, 0 for no colorcodes at all. Set to any other valid scheme you like.
 # Same as runtime parameter.
-DEFAULT_SCHEME=2
+DEFAULT_SCHEME=0
 # Default indentation level
 INDENT=10
 
@@ -248,7 +267,8 @@ LOGFE=''
 # LOGFS=$LOGFS_STRING
 # LOGFE=$LOGFE_STRING
 
-# default to false, no konversation found, 1 is /cmd inxi start, 2 is native konvi script mode
+# default to false, no konversation found, 1 is native konvi (qt3/KDE3) script mode, 2 is /cmd inxi start,
+##	3 is Konversation > 1.2 (qt4/KDE4) 
 KONVI=0
 # NO_CPU_COUNT=0	# Wether or not the string "dual" or similar is found in cpuinfo output. If so, avoid dups.
 # This is a variable that controls how many parameters inxi will parse in a /proc/<pid>/cmdline file before stopping.
@@ -303,6 +323,7 @@ IRC_COLORS="   \x0314   \x0301   \x0304   \x0305   \x0309   \x0303   \x0308   \x
 #                            BLUE     DBLUE    MAGENTA  DMAGENTA CYAN     DCYAN    WHITE    GREY     NORMAL
 ANSI_COLORS="$ANSI_COLORS [1;34m [0;34m [1;35m [0;35m [1;36m [0;36m [1;37m [0;37m [0;37m"
 IRC_COLORS=" $IRC_COLORS    \x0312   \x0302   \x0313   \x0306   \x0311   \x0310   \x0300   \x0315   \x03"
+
 #ANSI_COLORS=($ANSI_COLORS); IRC_COLORS=($IRC_COLORS)
 A_COLORS_AVAILABLE=( DGREY BLACK RED DRED GREEN DGREEN YELLOW DYELLOW BLUE DBLUE MAGENTA DMAGENTA CYAN DCYAN WHITE GREY NORMAL )
 # See above for notes on EMPTY
@@ -347,6 +368,8 @@ main()
 {
 	eval $LOGFS
 	
+	# This function just initializes variables
+	initialize_script_data
 
 	# Check for dependencies BEFORE running ANYTHING else except above functions
 	# Not all distro's have these depends installed by default
@@ -356,9 +379,7 @@ main()
 	# first init function must be set first for colors etc. Remember, no debugger
 	# stuff works on this function unless you set the debugging flag manually.
 	# Debugging flag -@ [number] will not work until get_parameters runs.
-		# This function just initializes variables
-	initialize_script_data
-
+	
 	### Only continue if depends ok
 	SCRIPT_PATH=$( dirname $0 )
 	SCRIPT_VERSION_NUMBER=$( grep -im 1 'version:' $SCRIPT_PATH/$SCRIPT_NAME | gawk '{print $3}' )
@@ -373,15 +394,29 @@ main()
 	fi
 
 	## this needs to run before the KONVI stuff is set below
+	## Konversation 1.2 apparently does not like the $PPID test in get_start_client
+	## So far there is no known way to detect if qt4_konvi is the parent process
+	## this method will infer qt4_konvi as parent
+	
 	get_start_client
 
 	# note: this only works if it's run from inside konversation as a script builtin or something
-	# only do this if inxi has been started as a konversation script, otherwise bypass this
-	if [[ $KONVI -eq 1 ]];then
-		DCPORT="$1"
-		DCSERVER="$2"
-		DCTARGET="$3"
-		shift 3
+	# only do this if inxi has been started as a konversation script, otherwise bypass this	
+#	KONVI=3 ## for testing puroses
+	## 
+	if [[ $KONVI -eq 1 || $KONVI -eq 3 ]];then
+		
+		if [[ $KONVI -eq 1 ]]; then ## dcop Konversation (ie 1.x < 1.2(qt3))	
+			DCPORT="$1"
+			DCSERVER="$2"
+			DCTARGET="$3"
+			shift 3
+		elif [[ $KONVI -eq 3 ]]; then ## dbus Konversation (> 1.2 (qt4))
+			DCSERVER="$1" ##dbus testing
+			DCTARGET="$2" ##dbus testing
+			shift 2
+		fi
+
 		# The section below is on request of Argonel from the Konversation developer team:
 		# it sources config files like $HOME/.kde/share/apps/konversation/scripts/inxi.conf
 		IFS=":"
@@ -394,6 +429,7 @@ main()
 		done
 		IFS="$ORIGINAL_IFS"
 	fi
+
 	## leave this for debugging dcop stuff if we get that working
 	# 	print_screen_output "DCPORT: $DCPORT"
 	# 	print_screen_output "DCSERVER: $DCSERVER"
@@ -554,7 +590,7 @@ check_script_suggested_apps()
 # Determine if any of the absolutely necessary tools are absent
 # No args taken.
 check_script_depends()
-{
+{yeah
 	eval $LOGFS
 	local app_name='' app_data=''
 	# bc removed from deps for now
@@ -895,10 +931,17 @@ print_screen_output()
 		fi
 	fi
 
-	if [[ $KONVI -eq 1 ]];then
+	if [[ $KONVI -eq 1 ]]; then ## dcop Konversation (<= 1.1 (qt3))
 		# konvi doesn't seem to like \n characters, it just prints them literally
-		print_data="$( tr '\n' ' ' <<< "$print_data" )"
+		$print_data="$( tr '\n' ' ' <<< "$print_data" )"
 		dcop "$DCPORT" "$DCOPOBJ" say "$DCSERVER" "$DCTARGET" "$print_data"
+
+	elif [[ $KONVI -eq 3 ]]; then ## dbus Konversation (> 1.2 (qt4))
+		qdbus org.kde.konversation /irc say "$DCSERVER" "$DCTARGET" "$print_data"
+
+#	elif [[ $IRC_CLIENT == 'X-Chat' ]]; then
+#		qdbus org.xchat.service print "$print_data\n"
+
 	else
 		# the -n is needed to avoid double spacing of output in terminal
 		echo -ne "$print_data\n"
@@ -1231,6 +1274,7 @@ get_start_client()
 	eval $LOGFS
 	local irc_client_path='' irc_client_path_lower='' non_native_konvi='' i=''
 	local b_non_native_app='false' pppid='' app_working_name=''
+	local b_qt4_konvi='false'
 
 	if tty >/dev/null;then
 		IRC_CLIENT='Shell'
@@ -1304,11 +1348,11 @@ get_start_client()
 				}' )"
 				IRC_CLIENT="Irssi"
 				;;
-			konversation)
+			konversation) ## konvi < 1.2 (qt4)
 				# this is necessary to avoid the dcop errors from starting inxi as a /cmd started script
-				if [[ $b_non_native_app == 'true' ]];then
+				if [[ $b_non_native_app == 'true' ]];then  ## true negative is confusing
 					KONVI=2
-				else
+				else # if native app
 					KONVI=1
 				fi
 				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk '
@@ -1461,7 +1505,7 @@ get_start_client()
 				fi
 				;;
 			# then unset, set unknown data
-			*)
+			*)	
 				IRC_CLIENT="Unknown : ${irc_client_path##*/}"
 				unset IRC_CLIENT_VERSION
 				;;
@@ -1470,11 +1514,68 @@ get_start_client()
 			unset IRC_CLIENT_VERSION
 		fi
 	else
-		IRC_CLIENT="PPID=\"$PPID\" - empty?"
-		unset IRC_CLIENT_VERSION
+		## lets look to see if qt4_konvi is the parent.  There is no direct way to tell, so lets infer it.
+		## because $PPID does not work with qt4_konvi, the above case does not work
+		b_qt4_konvi=$( is_this_qt4_konvi )
+		if [[ $b_qt4_konvi == 'true' ]];then
+			KONVI=3
+			IRC_CLIENT='Konversation'
+			IRC_CLIENT_VERSION=" $( konversation -v | gawk '
+				/Konversation:/ {
+					for ( i=2; i<=NF; i++ ) {
+						if (i == NF) {
+							print $i
+						}
+						else {
+							printf $i" "
+						}
+					}
+					exit
+				}' )"
+		else
+			IRC_CLIENT="PPID=\"$PPID\" - empty?"
+			unset IRC_CLIENT_VERSION
+		fi
 	fi
 	log_function_data "IRC_CLIENT: $IRC_CLIENT :: IRC_CLIENT_VERSION: $IRC_CLIENT_VERSION :: PPID: $PPID"
 	eval $LOGFE
+}
+
+## try to infer the use of Konversation >= 1.2, which shows $PPID improperly
+## no known method of finding Kovni >= 1.2 as parent process, so we look to see if it is running,
+## and all other irc clients are not running.  
+is_this_qt4_konvi()
+{
+	local konvi_qt4_client='' konvi_dbus_exist='' konvi_pid='' konvi_home_dir='' 
+	local konvi='' konvi_qt4_ver='' b_is_qt4=''
+
+	konvi_dbus_exist=$( qdbus | grep "org.kde.konversation" )
+	 
+	if [[ -n $konvi_dbus_exist && -e /usr/share/kde4/apps/konversation ]]; then
+
+		konvi_pid=$( ps -A | grep -i 'konversation' )
+		konvi_pid=$( echo $konvi_pid | gawk '{ print $1 }' ) 
+
+		konvi_home_dir=$( readlink /proc/$konvi_pid/exe )
+		konvi=$( echo $konvi_home_dir | sed "s/\// /g" )
+		konvi=($konvi)
+
+		if [[ ${konvi[2]} == 'konversation' ]];then	
+			konvi_qt4_ver=$( konversation -v | grep -i 'konversation' )
+			konvi_qt4_client=$( echo "$konvi_qt4_ver" | gawk '{ print $2 }' )
+
+			if [[ $konvi_qt4_client > 1.1 ]]; then
+				b_is_qt4='true'
+			fi
+		fi
+	else
+		konvi_qt4="qt3"
+		b_is_qt4='false'
+	fi
+
+	echo $b_is_qt4
+	## for testing this module
+	#qdbus org.kde.konversation /irc say $1 $2 "getpid_dir: $konvi_qt4  qt4_konvi: $konvi_qt4_ver   verNum: $konvi_qt4_ver_num  pid: $konvi_pid ppid: $PPID  konvi_home_dir: ${konvi[2]}"
 }
 
 # This needs some cleanup and comments, not quite understanding what is happening, although generally output is known
