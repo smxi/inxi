@@ -1,7 +1,7 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.0.89-b1
+####  version: 1.0.90-b1
 ####  Date: 26 July 2009
 ########################################################################
 ####  SPECIAL THANKS
@@ -3018,61 +3018,46 @@ get_sensors_data()
 		BEGIN {
 			IGNORECASE=1
 			moboTemp=""
-			moboTempLock=""
 			cpuTemp=""
-			cpuTempLock=""
+			moboTempReal=""
+			cpuTempReal=""
+			tempUnit=""
+			temp1=""
+			temp2=""
 			cpuFan=""
 			sysFan1=""
 			sysFan2=""
 			sysFan3=""
-			tempData1=""
-			tempData2=""
+			cpuFanReal=""
+			tempFanType="" # set to 1 or 2
 		}
 		# dumping the extra + signs,  nobody has negative temps
 		# also, note gawk treats ° as a space, so we have to get the C/F data
-		# explicitly by testing for $3 or $4 ~ /C|F/ then concatenating manually
 		# there are some guesses here, and we will need a lot more data of
 		# different systems before this can be trusted much. Note that there 
 		# is a hack here to handle cases where search term has 1 or 2 words with space
-		# also, the assumption that temp1 is cpu fan and temp2 is sys temp is not always right.
-		/^(M\/B|MB|SYS) Temp|^temp2:/ {
-			if ( $1 == "temp2:" ) {
-				tempData1=$2
-				tempData2=$3
-			}
-			else {
-				tempData1=$3
-				tempData2=$4
-			}
-			# this avoids problems if temp1 or temp2 are present also
-			if ( moboTempLock != "true" ){
-				moboTemp=gensub( /\+(.+)/, "\\1", 1, tempData1 )
-				if ( tempData2 ~ /C|F/ ){
-					moboTemp=moboTemp "°" tempData2
-				}
-				if ( $1 == "CPU" ) {
-					moboTempLock="true"
-				}
+		/^(M\/B|MB|SYS) Temp/ {
+			moboTemp=gensub( /\+(.+)/, "\\1", 1, $3 )
+			if ( $4 ~ /C|F/ && tempUnit == "" ){
+				tempUnit="°" $4
 			}
 		}
-		/^CPU Temp|^temp1:/ {
-			if ( $1 == "temp1:" ) {
-				tempData1=$2
-				tempData2=$3
+		/^CPU Temp/ {
+			cpuTemp=gensub( /\+(.+)/, "\\1", 1, $3 )
+			if ( $4 ~ /C|F/ && tempUnit == "" ){
+				tempUnit="°" $4
 			}
-			else {
-				tempData1=$3
-				tempData2=$4
+		}
+		/^temp1:/ {
+			temp1=gensub( /\+(.+)/, "\\1", 1, $2 )
+			if ( $3 ~ /C|F/ && tempUnit == "" ){
+				tempUnit="°" $3
 			}
-			# this avoids problems if temp1 or temp2 are present also
-			if ( cpuTempLock != "true" ){
-				cpuTemp=gensub( /\+(.+)/, "\\1", 1, tempData1 )
-				if ( tempData2 ~ /C|F/ ){
-					cpuTemp=cpuTemp "°" tempData2
-				}
-				if ( $1 == "CPU" ) {
-					cpuTempLock="true"
-				}
+		}
+		/^temp2:/ {
+			temp2=gensub( /\+(.+)/, "\\1", 1, $2 )
+			if ( $3 ~ /C|F/ && tempUnit == "" ){
+				tempUnit="°" $3
 			}
 		}
 		# note: can be cpu fan:, cpu fan speed:, etc
@@ -3095,23 +3080,85 @@ get_sensors_data()
 		}
 		
 		END {
-			# rough hack to get rid of bad fan speeds for cases where fan1/2/3 and cpu fan speed are the same:
-			if ( cpuFan == sysFan1 && cpuFan != 0 ) {
+			# first we need to handle the case where we have to determine which temp/fan to use for cpu and mobo:
+			if ( temp1 != "" && temp2 != "" ){
+				if ( temp1 >= temp2 ){
+					tempFanType=1
+				}
+				else {
+					tempFanType=2
+				}
+			}
+			# then get the real cpu temp
+			if ( cpuTemp != "" ){
+				cpuTempReal=cpuTemp
+			}
+			else if ( tempFanType != "" ){
+				if ( tempFanType == 1 ){
+					cpuTempReal=temp1
+				}
+				else {
+					cpuTempReal=temp2
+				}
+			}
+			else if ( temp1 != "" ){
+				cpuTempReal=temp1
+			}
+			# then the real mobo temp
+			if ( moboTemp != "" ){
+				moboTempReal=moboTemp
+			}
+			else if ( tempFanType != "" ){
+				if ( tempFanType == 1 ) {
+					moboTempReal=temp2
+				}
+				else {
+					moboTempReal=temp1
+				}
+			}
+			else {
+				moboTempReal=temp2
+			}
+
+			# then the cpu fan speed
+			if ( cpuFan != "" ) {
+				cpuFanReal=cpuFan
+			}
+			else if ( tempFanType == 1 && sysFan1 != "" ) {
+				cpuFanReal=sysFan1
+			}
+			else if ( tempFanType == 2 && sysFan2 != "" ) {
+				cpuFanReal=sysFan2
+			}
+			
+			# then the mobo fan speed
+			if ( mobFan != "" ) {
+				moboFanReal=moboFan
+			}
+			else if ( tempFanType == 1 && sysFan1 != "" ) {
+				moboFanReal=sysFan2
+			}
+			else if ( tempFanType == 2 && sysFan2 != "" ) {
+				moboFanReal=sysFan1
+			}
+			
+			# then double check the sys fans for duplication
+			if ( cpuFanReal == sysFan1 && cpuFanReal != 0 ) {
 				sysFan1 = ""
 			}
-			if ( cpuFan == sysFan2 && cpuFan != 0 ) {
+			if ( cpuFanReal == sysFan2 && cpuFanReal != 0 ) {
 				sysFan2 = ""
 			}
-			if ( cpuFan == sysFan3 && cpuFan != 0 ) {
+			if ( cpuFanReal == sysFan3 && cpuFanReal != 0 ) {
 				sysFan3 = ""
 			}
 			
 			# if they are ALL null, print error message
-			if ( moboTemp == "" && cpuTemp == "" && cpuFan == "" && sysFan1 == "" && sysFan2 == "" && sysFan3 == "" ) {
+			if ( moboTempReal == "" && cpuTempReal == "" && cpuFanReal == "" && sysFan1Real == "" && sysFan2Real == "" && sysFan3Real == "" ) {
 				print "No active sensors found. Have you configured your sensors yet?"
 			}
 			else {
-				print moboTemp "," cpuTemp "," cpuFan  "," sysFan1 "," sysFan2 "," sysFan3
+				print moboTempReal tempUnit "," cpuTempReal tempUnit "," cpuFanReal  "," sysFan1 "," sysFan2 "," sysFan3
 			}
 		}
 		'
