@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.0.17
-####  Date: 7 July 2009
+####  version: 1.1.0
+####  Date: 28 July 2009
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -167,6 +167,7 @@ A_HDD_DATA=''
 A_INTERFACES_DATA=''
 A_NETWORK_DATA=''
 A_PARTITION_DATA=''
+A_SENSORS_DATA=''
 A_X_DATA=''
 
 ### Boolean true/false globals	## usage: 'B_<var>'
@@ -188,6 +189,8 @@ B_ROOT='false'
 B_RUNNING_IN_SHELL='false'
 # this sets the debug buffer
 B_SCRIPT_UP='false'
+# sensors only if installed
+B_SENSORS='false'
 # Show sound card data
 B_SHOW_AUDIO='false'
 B_SHOW_CPU='false'
@@ -204,6 +207,7 @@ B_SHOW_NETWORK='false'
 # either -v > 3 or -P will show partitions
 B_SHOW_PARTITIONS='false'
 B_SHOW_PARTITIONS_FULL='false'
+B_SHOW_SENSORS='false'
 # triggers only short inxi output
 B_SHOW_SHORT_OUTPUT='false'
 B_SHOW_SYSTEM='false'
@@ -232,17 +236,16 @@ B_MODULES_DIR='false' #
 B_MOUNTS_DIR='false'
 B_PARTITIONS_DIR='false' #
 
-### Directory's used when present
-DIR_CPUINFO='/proc/cpuinfo'
-DIR_MEMINFO='/proc/meminfo'
-DIR_ASOUND_DEVICE='/proc/asound/cards'
-DIR_ASOUND_VERSION='/proc/asound/version'
-DIR_LSB_RELEASE='/etc/lsb-release'
-DIR_SCSI='/proc/scsi/scsi'
-DIR_MODULES='/proc/modules' #
-DIR_MOUNTS='/proc/mounts'
-DIR_PARTITIONS='/proc/partitions' #
-DIR_IFCONFIG='/sbin/ifconfig'
+### File's used when present
+FILE_CPUINFO='/proc/cpuinfo'
+FILE_MEMINFO='/proc/meminfo'
+FILE_ASOUND_DEVICE='/proc/asound/cards'
+FILE_ASOUND_VERSION='/proc/asound/version'
+FILE_LSB_RELEASE='/etc/lsb-release'
+FILE_SCSI='/proc/scsi/scsi'
+FILE_MODULES='/proc/modules'
+FILE_MOUNTS='/proc/mounts'
+FILE_PARTITIONS='/proc/partitions'
 
 ### Variable initializations: constants
 DCOPOBJ="default"
@@ -255,6 +258,7 @@ DEBUG_BUFFER_INDEX=0
 # Defaults to 2, make this 1 for normal, 0 for no colorcodes at all. Set to any other valid scheme you like.
 # Same as runtime parameter.
 DEFAULT_SCHEME=2
+
 # Default indentation level
 INDENT=10
 
@@ -274,6 +278,9 @@ KONVI=0
 # This is a variable that controls how many parameters inxi will parse in a /proc/<pid>/cmdline file before stopping.
 PARAMETER_LIMIT=30
 SCHEME=0 # set default scheme
+# this is set in user prefs file, to override dynamic temp1/temp2 determination of sensors output in case
+# cpu runs colder than mobo
+SENSORS_CPU_NO=''
 # SHOW_IRC=1 to avoid showing the irc client version number, or SHOW_IRC=0 to disable client information completely.
 SHOW_IRC=2
 # Verbosity level defaults to 0, this can also be set with -v0, -v2, -v3, etc as a parameter.
@@ -447,7 +454,7 @@ main()
 	# all the pre-start stuff is in place now
 	B_SCRIPT_UP='true'
 	script_debugger "Debugger: $SCRIPT_NAME is up and running..."
-
+	
 	# then create the output
 	print_it_out
 
@@ -511,53 +518,54 @@ initialize_script_data()
 		error_handler 6
 	fi
 
-	if [[ -e $DIR_CPUINFO ]]; then
+	if [[ -e $FILE_CPUINFO ]]; then
 		B_CPUINFO='true'
 	fi
 
-	if [[ -e $DIR_MEMINFO ]];then
+	if [[ -e $FILE_MEMINFO ]];then
 		B_MEMINFO='true'
 	fi
 
-	if [[ -e $DIR_ASOUND_DEVICE ]];then
+	if [[ -e $FILE_ASOUND_DEVICE ]];then
 		B_ASOUND_CARDS='true'
 	fi
 
-	if [[ -e $DIR_ASOUND_VERSION ]];then
+	if [[ -e $FILE_ASOUND_VERSION ]];then
 		B_ASOUND_VERSION='true'
 	fi
 
-	if [[ -f $DIR_LSB_RELEASE ]];then
+	if [[ -f $FILE_LSB_RELEASE ]];then
 		B_LSB_DIR='true'
 	fi
 
-	if [[ -e $DIR_SCSI ]];then
+	if [[ -e $FILE_SCSI ]];then
 		B_SCSI_DIR='true'
 	fi
 
 	# lack of ifconfig will throw an error only upon it's usage
-	if [[ -x ifconfig ]]; then
-		B_IFCONFIG='true'
-		DIR_IFCONFIG='ifconfig' # change from full path to use $PATH
-	elif [[ -x $DIR_IFCONFIG ]];then
+	if [[ -n $( type -p ifconfig ) ]]; then
 		B_IFCONFIG='true'
 	else
-		A_INTERFACES_DATA=( "Interfaces tool requires missing app: $DIR_IFCONFIG" )
+		A_INTERFACES_DATA=( "Interfaces tool requires missing app: ifconfig" )
+	fi
+	
+	if [[ -n $( type -p sensors ) ]];then
+		B_SENSORS='true'
 	fi
 
 	if [[ -n $DISPLAY ]];then
 		B_X_RUNNING='true'
 	fi
 
-	if [[ -e $DIR_MODULES ]];then
+	if [[ -e $FILE_MODULES ]];then
 		B_MODULES_DIR='true'
 	fi
 
-	if [[ -e $DIR_MOUNTS ]];then
+	if [[ -e $FILE_MOUNTS ]];then
 		B_MOUNTS_DIR='true'
 	fi
 
-	if [[ -e $DIR_PARTITIONS ]];then
+	if [[ -e $FILE_PARTITIONS ]];then
 		B_PARTITIONS_DIR='true'
 	fi
 	# gfx output will require this flag
@@ -1001,7 +1009,7 @@ get_parameters()
 	# the short form only runs if no args output args are used
 	# no need to run through these if there are no args
 	if [[ -n $1 ]];then
-		while getopts Ac:CdDfFGhHiIlNpPSuv:Vx%@:${update_flags} opt
+		while getopts Ac:CdDfFGhHiIlNpPsSuv:Vx%@:${update_flags} opt
 		do
 			case $opt in
 			A)	B_SHOW_AUDIO='true'
@@ -1060,6 +1068,9 @@ get_parameters()
 				use_short='false'
 				;;
 			P)	B_SHOW_PARTITIONS='true'
+				use_short='false'
+				;;
+			s)	B_SHOW_SENSORS='true'
 				use_short='false'
 				;;
 			S)	B_SHOW_SYSTEM='true'
@@ -1196,6 +1207,7 @@ show_options()
 	print_screen_output "-p  Show full partition information (-P plus all other detected partitions)."
 	print_screen_output "-P  Show Partition information (shows what -v 4 would show, but without extra data)."
 	print_screen_output "    Shows, if detected: / /boot /home /tmp /usr /var. Use -p to see all mounted partitions."
+	print_screen_output "-s  Show sensors output (if sensors installed/configured): mobo/cpu temp; detected fan speeds."
 	print_screen_output "-S  Show System information: host name, kernel, distro"
 	print_screen_output "-u  Show partition UUIDs. Default: short partition -P. For full -p output, use: -pu (or -plu)."
 	print_screen_output "-v  Script verbosity levels. Verbosity level number is required."
@@ -1636,8 +1648,8 @@ get_audio_data()
 			if ( driver != "" ){
 				print driver
 			}
-		}'  $DIR_ASOUND_DEVICE )
-		log_function_data 'cat' "$DIR_ASOUND_DEVICE"
+		}'  $FILE_ASOUND_DEVICE )
+		log_function_data 'cat' "$FILE_ASOUND_DEVICE"
 	fi
 
 	# this is to safeguard against line breaks from results > 1, which if inserted into following
@@ -1727,7 +1739,7 @@ get_audio_data()
 			if ( card != "" ){
 				print card","driver
 			}
-		}'  $DIR_ASOUND_DEVICE ) )
+		}'  $FILE_ASOUND_DEVICE ) )
 	fi
 
 	# alsa usb detection by damentz
@@ -1788,8 +1800,8 @@ get_audio_alsa_data()
 				if ( $0 != "" ){
 					print $0
 				}
-		}' $DIR_ASOUND_VERSION )
-		log_function_data 'cat' "$DIR_ASOUND_VERSION"
+		}' $FILE_ASOUND_VERSION )
+		log_function_data 'cat' "$FILE_ASOUND_VERSION"
 	fi
 	echo "$alsa_data"
 	log_function_data "alsa_data: $alsa_data"
@@ -1845,7 +1857,7 @@ get_cpu_data()
 			IGNORECASE=1
 		}
 		# TAKE STRONGER NOTE: \t+ does NOT always work, MUST be [ \t]+
-		# TAKE NOTE: \t+ will work for $DIR_CPUINFO, but SOME ARBITRARY FILE used for TESTING might contain SPACES!
+		# TAKE NOTE: \t+ will work for $FILE_CPUINFO, but SOME ARBITRARY FILE used for TESTING might contain SPACES!
 		# Therefore PATCH to use [ \t]+ when TESTING!
 		/^processor[ \t]+:/ {
 			nr = $NF
@@ -1910,8 +1922,8 @@ get_cpu_data()
 			else {
 				printf("%s %s\n", max, "Mhz")
 			}
-		}' $DIR_CPUINFO ) )
-		log_function_data 'cat' "$DIR_CPUINFO"
+		}' $FILE_CPUINFO ) )
+		log_function_data 'cat' "$FILE_CPUINFO"
 	fi
 
 	IFS="$ORIGINAL_IFS"
@@ -2002,7 +2014,7 @@ get_cpu_ht_multicore_smp_data()
 			}
 			print type " " physical_cpu_count " " core_count
 		}
-		' $DIR_CPUINFO ) )
+		' $FILE_CPUINFO ) )
 	fi
 	log_function_data "A_CPU_TYPE_PCNT_CCNT: ${A_CPU_TYPE_PCNT_CCNT[@]}"
 	eval $LOGFE
@@ -2054,7 +2066,7 @@ get_distro_data()
 	# this handles case where only one release/version file was found, and it's lsb-release. This would
 	# never apply for ubuntu or debian, which will filter down to the following conditions. In general
 	# if there's a specific distro release file available, that's to be preferred, but this is a good backup.
-	elif [[ -n $distro_file && -f $DIR_LSB_RELEASE && " $DISTROS_LSB_GOOD" == *" $distro_file "* ]];then
+	elif [[ -n $distro_file && -f $FILE_LSB_RELEASE && " $DISTROS_LSB_GOOD" == *" $distro_file "* ]];then
 		distro=$( get_distro_lsb_data )
 	elif [[ $distro_file == 'lsb-release' ]];then
 		distro=$( get_distro_lsb_data )
@@ -2143,8 +2155,8 @@ get_distro_lsb_data()
 		}
 		END {
 			print distroId distroRelease distroCodename
-		}' $DIR_LSB_RELEASE )
-		log_function_data 'cat' "$DIR_LSB_RELEASE"
+		}' $FILE_LSB_RELEASE )
+		log_function_data 'cat' "$FILE_LSB_RELEASE"
 	fi
 	# this is HORRIBLY slow, but I don't know why, it runs fast in shell
 # 	if [[  -n $( which lsb_release ) && $1 == 'app' ]];then
@@ -2316,8 +2328,8 @@ get_graphics_agp_data()
 		agp_module=$( gawk '
 		/agp/ && !/agpgart/ && $3 > 0 {
 			print(gensub(/(.*)_agp.*/,"\\1","g",$1))
-		}' $DIR_MODULES )
-		log_function_data 'cat' "$DIR_MODULES"
+		}' $FILE_MODULES )
+		log_function_data 'cat' "$FILE_MODULES"
 	fi
 	log_function_data "agp_module: $agp_module"
 	eval $LOGFE
@@ -2346,7 +2358,8 @@ get_graphics_x_data()
 		# new method added since radeon and X.org and the disappearance of <X server name> version : ...etc
 		# Later on, the normal textual version string returned, e.g. like: X.Org version: 6.8.2
 		# A failover mechanism is in place. (if $x_version is empty, the release number is parsed instead)
-		x_version=$( xdpyinfo | gawk '/version:/ {
+		x_version=$( xdpyinfo | gawk '
+		/version:/ {
 			print $NF
 		}' )
 		if [[ -z $x_version ]];then
@@ -2452,8 +2465,8 @@ get_hdd_data_basic()
 			else {
 				print "NA,-" # print an empty array, this will be further handled in the print out function
 			}
-		}' $DIR_PARTITIONS ) )
- 		log_function_data 'cat' "$DIR_PARTITIONS"
+		}' $FILE_PARTITIONS ) )
+ 		log_function_data 'cat' "$FILE_PARTITIONS"
 	fi
 	IFS="$ORIGINAL_IFS"
 	log_function_data "A_HDD_DATA: ${A_HDD_DATA[@]}"
@@ -2524,8 +2537,8 @@ get_hard_drive_data_advanced()
 					print c
 				}
 			}
-		}' $DIR_SCSI ) )
-		log_function_data 'cat' "$DIR_SCSI"
+		}' $FILE_SCSI ) )
+		log_function_data 'cat' "$FILE_SCSI"
 	fi
 	IFS="$ORIGINAL_IFS"
 
@@ -2608,8 +2621,8 @@ get_memory_data()
 		END {
 			used = tot-notused
 			printf("%.1f/%.1fMB\n", used/1024, tot/1024)
-		}' $DIR_MEMINFO )
-		log_function_data 'cat' "$DIR_MEMINFO"
+		}' $FILE_MEMINFO )
+		log_function_data 'cat' "$FILE_MEMINFO"
 	fi
 	echo "$memory"
 	log_function_data "memory: $memory"
@@ -2739,7 +2752,7 @@ get_networking_local_ip_data()
 	eval $LOGFS
 	if [[ $B_IFCONFIG == 'true' ]];then
 		IFS=$'\n'
-		A_INTERFACES_DATA=( $( $DIR_IFCONFIG | gawk '
+		A_INTERFACES_DATA=( $( ifconfig | gawk '
 		BEGIN {
 			IGNORECASE=1
 		}
@@ -2934,7 +2947,7 @@ get_partition_data_advanced()
 						}
 					}
 					print partition "," label "," uuid
-				}'	$DIR_MOUNTS )
+				}'	$FILE_MOUNTS )
 
 # 				echo dev_partition_data: $dev_partition_data
 				# assemble everything we could get for dev/h/dx, label, and uuid
@@ -2989,9 +3002,282 @@ get_partition_data_advanced()
 			A_PARTITION_DATA[i]=${a_partition_working[0]}","${a_partition_working[1]}","${a_partition_working[2]}","${a_partition_working[3]}","${a_partition_working[4]}","$dev_item","$dev_label","$dev_uuid
 			IFS="$ORIGINAL_IFS"
 		done
-		log_function_data 'cat' "$DIR_MOUNTS"
+		log_function_data 'cat' "$FILE_MOUNTS"
 	fi
 	log_function_data "A_PARTITION_DATA: ${A_PARTITION_DATA[@]}"
+	eval $LOGFE
+}
+
+get_sensors_data()
+{
+	eval $LOGFS
+
+	IFS=","
+	if [[ $B_SENSORS == 'true' ]];then
+		# note: non-configured sensors gives error message, which we need to redirect to stdout
+		A_SENSORS_DATA=( $( 
+		sensors | gawk -v userCpuNo="$SENSORS_CPU_NO" '		
+		BEGIN {
+			IGNORECASE=1
+			moboTemp=""
+			cpuTemp=""
+			core0Temp="" # only if all else fails...
+			moboTempReal=""
+			cpuTempReal=""
+			tempUnit=""
+			temp1=""
+			temp2=""
+			indexCountaFanReal=0
+			indexCountaFanWorking=0
+			i=""
+			j=""
+			sysFanString=""
+			tempFanType="" # set to 1 or 2
+		}
+		# dumping the extra + signs,  nobody has negative temps
+		# also, note gawk treats ° as a space, so we have to get the C/F data
+		# there are some guesses here, and we will need a lot more data of
+		# different systems before this can be trusted much. Note that there 
+		# is a hack here to handle cases where search term has 1 or 2 words with space
+		# note: using arrays starting at 1 for all fan arrays to make it easier overall
+		/^(M\/B|MB|SYS) Temp/ {
+			moboTemp=gensub( /\+(.+)/, "\\1", 1, $3 )
+			if ( $4 ~ /C|F/ && tempUnit == "" ){
+				tempUnit="°" $4
+			}
+		}
+		/^CPU Temp/ {
+			cpuTemp=gensub( /\+(.+)/, "\\1", 1, $3 )
+			if ( $4 ~ /C|F/ && tempUnit == "" ){
+				tempUnit="°" $4
+			}
+		}
+		/^temp1:/ {
+			tempWorking=gensub( /\+(.+)/, "\\1", 1, $2 )
+			if ( temp1 == "" || tempWorking > 0 ) {
+				temp1=tempWorking
+			}
+			if ( $3 ~ /C|F/ && tempUnit == "" ){
+				tempUnit="°" $3
+			}
+		}
+		/^temp2:/ {
+			# add to array if array index does not exist OR if number is > 0
+			
+			tempWorking=gensub( /\+(.+)/, "\\1", 1, $2 )
+			if ( temp2 == "" || tempWorking > 0 ) {
+				temp2=tempWorking
+			}
+			if ( $3 ~ /C|F/ && tempUnit == "" ){
+				tempUnit="°" $3
+			}
+		}
+		# final fallback if all else fails, funtoo user showed sensors putting
+		# temp on wrapped second line, not handled
+		/^core0:|core 0:|core0 Temp/ {
+			if ( $2 ~ /(.+):/ ){
+				tempWorking=$3
+			}
+			else {
+				tempWorking=$2
+			}
+			tempWorking=gensub( /\+(.+)/, "\\1", 1, tempWorking )
+			if ( core0Temp == "" || tempWorking > 0 ) {
+				core0Temp=tempWorking
+			}
+			if ( $3 ~ /C|F/ && tempUnit == "" ){
+				tempUnit="°" $3
+			}
+			else if ( $4 ~ /C|F/ && tempUnit == "" ){
+				tempUnit="°" $4
+			}
+		}
+		
+		# note: can be cpu fan:, cpu fan speed:, etc
+		/^CPU Fan(.*):/ {
+			if ( $3 ~ /(.+):/ ){
+				aFanReal[1]=$4
+			}
+			else {
+				aFanReal[1]=$3
+			}
+		}
+		/^(M\/B|MB|SYS) Fan(.*):/ {
+			if ( $3 ~ /(.+):/ ){
+				aFanReal[2]=$4
+			}
+			else {
+				aFanReal[2]=$3
+			}
+		}
+		/Power_FAN Speed:|P\/S Fan:/ {
+			aFanReal[3]=$3
+		}
+		/POWER FAN Speed:/ {
+			aFanReal[3]=$4
+		}
+		/^FAN1 Speed:|CHASSIS(1)? FAN Speed:/ {
+			if ( $2 == "Speed:" ) {
+				aFanReal[4]=$3
+			}
+			else if ( $3 == "Speed:" ) {
+				aFanReal[4]=$4
+			}
+		}
+		/^FAN([2-9]) Speed:|CHASSIS([2-9]) FAN Speed:/ {
+			sysFanNu=gensub( /(FAN|CHASSIS)([2-9])( FAN)? Speed:/, "\\2", 1, $0 )
+			if ( sysFanNu ~ /([2-9])/ ) {
+				# note: cpu/mobo/ps/fan1 above are 1/2/3/4
+				sysFanNu	= sysFanNu + 4
+				if ( $2 == "Speed:" ) {
+					aFanReal[sysFanNu]=$3
+				}
+				else if ( $3 == "Speed:" ) {
+					aFanReal[sysFanNu]=$4
+				}
+			}
+		}
+		/^fan([0-9]+):/ {
+			sysFanNu=gensub( /fan([0-9]+):/, "\\1", 1, $1 )
+			if ( sysFanNu ~ /([0-9]+)/ ) {
+				# add to array if array index does not exist OR if number is > existing number
+				if ( ! sysFanNu in aFanWorking || $2 >= aFanWorking[sysFanNu] ) {
+					aFanWorking[sysFanNu]=$2
+				}
+			}
+		}
+		
+		END {
+			# first we need to handle the case where we have to determine which temp/fan to use for cpu and mobo:
+			# note, for rare cases of weird cool cpus, user can override in their prefs and force the assignment
+			if ( temp1 != "" && temp2 != "" ){
+				if ( userCpuNo != "" && userCpuNo ~ /(1|2)/ ) {
+					tempFanType=userCpuNo
+				}
+				else {
+					if ( temp1 >= temp2 ) {
+						tempFanType=1
+					}
+					else {
+						tempFanType=2
+					}
+				}
+			}
+			# need a case for no temps at all reported, like with old intels
+			else if ( temp1 == "" && temp2 == "" && cpuTemp == "" && moboTemp == "" ){
+				tempFanType=1
+			}
+			
+			# then get the real cpu temp, best guess is hottest is real
+			if ( cpuTemp != "" ){
+				cpuTempReal=cpuTemp
+			}
+			else if ( tempFanType != "" ){
+				if ( tempFanType == 1 ){
+					cpuTempReal=temp1
+				}
+				else {
+					cpuTempReal=temp2
+				}
+			}
+			else {
+				cpuTempReal=temp1
+			}
+			# if all else fails, use core0 temp if it is present and cpu is null
+			if ( cpuTempReal == "" && core0Temp != "" ) {
+				cpuTempReal=core0Temp
+			}
+			
+			# then the real mobo temp
+			if ( moboTemp != "" ){
+				moboTempReal=moboTemp
+			}
+			else if ( tempFanType != "" ){
+				if ( tempFanType == 1 ) {
+					moboTempReal=temp2
+				}
+				else {
+					moboTempReal=temp1
+				}
+			}
+			else {
+				moboTempReal=temp2
+			}
+			# then set the cpu fan speed
+			if ( aFanReal[1] == "" ) {
+				# note, you cannot test for aFanWorking[1] or [2] != "" 
+				# because that creates an array item in gawk just by the test itself
+				if ( tempFanType == 1 && 1 in aFanWorking ) {
+					aFanReal[1]=aFanWorking[1]
+				}
+				else if ( tempFanType == 2 && 2 in aFanWorking ) {
+					aFanReal[1]=aFanWorking[2]
+				}
+			}
+
+			# then set mobo fan if missing. Note, not trying to guess on either of these
+			if ( ! 2 in aFanReal ) {
+				aFanReal[2] = ""
+			}
+			# then set psu fan if missing
+			if ( ! 3 in aFanReal ) {
+				aFanReal[3] = ""
+			}
+
+			# then we need to get the actual numeric max array count for both fan arrays
+			for (i = 0; i <= 14; i++) {
+				if ( i in aFanReal && i > indexCountaFanReal ) {
+					indexCountaFanReal=i
+				}
+			}
+			for (i = 0; i <= 14; i++) {
+				if ( i in aFanWorking && i > indexCountaFanWorking ) {
+					indexCountaFanWorking=i
+				}
+			}
+			
+			# clear out any duplicates. Primary fan real trumps fan working always if same speed
+			for (i = 1; i <= indexCountaFanReal; i++) {
+				if ( i in aFanReal && aFanReal[i] != "" && aFanReal[i] != 0 ) {
+					for (j = 1; j <= indexCountaFanWorking; j++) {
+						if ( j in aFanWorking && aFanReal[i] == aFanWorking[j] ) {
+							aFanWorking[j] = ""
+						}
+					}
+				}
+			}
+			# then construct the sys_fan string for echo
+			for (j = 1; j <= indexCountaFanWorking; j++) {
+				sysFanString = sysFanString "," aFanWorking[j]
+			}
+			
+			# and then build the temps:
+			if ( moboTempReal != "" ) {
+				moboTempReal = moboTempReal tempUnit
+			}
+			if ( cpuTempReal != "" ) {
+				cpuTempReal = cpuTempReal tempUnit
+			}
+			
+			# if they are ALL null, print error message. psFan is not used in output currently
+			if ( cpuTempReal == "" && moboTempReal == "" && aFanReal[1] == "" && aFanReal[2] == "" && aFanReal[3] == "" && sysFanString == "" ) {
+				print "No active sensors found. Have you configured your sensors yet?"
+			}
+			else {
+				# then build it: afanreals: 1 - cpu; 2 - mobo; 3 - psu
+				print cpuTempReal "," moboTempReal "," aFanReal[1] "," aFanReal[2]  "," aFanReal[3] sysFanString
+			}
+		}
+		'
+		) )
+	# the error case needs to go here because we are setting special array delimiter ','
+	else
+		A_SENSORS_DATA=( "You do not have the sensors app installed." )
+	fi
+	
+	IFS="$ORIGINAL_IFS"
+	log_function_data "A_SENSORS_DATA: ${A_SENSORS_DATA[@]}"
+# 	echo "A_SENSORS_DATA: ${A_SENSORS_DATA[@]}"
 	eval $LOGFE
 }
 
@@ -3059,9 +3345,11 @@ process_cpu_flags()
 		ssel["sse"] = 1
 		ssel["sse2"] = 2
 		ssel["pni"] = 3
+		ssel["sse4"] = 4
 		sses[1] = "sse"
 		sses[2] = "sse2"
 		sses[3] = "sse3"
+		sses[4] = "sse4"
 	}
 	/^(nx|lm|svm|vmx)$/ {
 			if (s) {
@@ -3071,7 +3359,7 @@ process_cpu_flags()
 				s = $0
 			}
 	}
-	/^(sse2?|pni)$/ {
+	/^(sse|sse2|sse4|pni)$/ {
 		if (ssel[$0] > sse) {
 			sse = ssel[$0]
 		}
@@ -3134,6 +3422,9 @@ print_it_out()
 		fi
 		if [[ $VERBOSITY_LEVEL -ge 4 || $B_SHOW_PARTITIONS == 'true' ]];then
 			print_partition_data
+		fi
+		if [[ $VERBOSITY_LEVEL -ge 5 || $B_SHOW_SENSORS == 'true' ]];then
+			print_sensors_data
 		fi
 		if [[ $VERBOSITY_LEVEL -ge 1 || $B_SHOW_INFO == 'true' ]];then
 			print_info_data
@@ -3255,7 +3546,7 @@ print_audio_data()
 # 		if [[ -n ${a_audio_working[2]} ]];then
 # 			port_data=" ${C1}at port${C2} ${a_audio_working[2]}"
 # 		fi
-		# this should only trigger if the $DIR_ASOUND_DEVICE data is used, not lspci -nn
+		# this should only trigger if the $FILE_ASOUND_DEVICE data is used, not lspci -nn
 		if [[ -n ${a_audio_working[3]} && $B_EXTRA_DATA == 'true' ]];then
 			module_version=$( print_module_version "${a_audio_working[3]}" )
 		fi
@@ -3838,6 +4129,93 @@ print_partition_data()
 		partition_data=$( create_print_line "$line_starter" "${a_partition_data[$i]}" )
 		print_screen_output "$partition_data"
 	done
+	eval $LOGFE
+}
+
+print_sensors_data()
+{
+	eval $LOGFS
+	local mobo_temp='' cpu_temp='' cpu_fan='' mobo_fan='' ps_fan='' sys_fans='' sys_fans2='' 
+	local temp_data='' fan_data='' fan_data2='' b_is_error='false' fan_count=0
+	get_sensors_data
+
+	# initial error cases, for missing app or unconfigured sensors
+	if [[ ${#A_SENSORS_DATA[@]} -eq 1 ]];then
+		cpu_temp=${A_SENSORS_DATA[0]}
+		b_is_error='true'
+	else
+		for (( i=0; i < ${#A_SENSORS_DATA[@]}; i++ ))
+		do
+			case $i in
+				0)
+					if [[ -n ${A_SENSORS_DATA[0]} ]];then
+						cpu_temp=${A_SENSORS_DATA[0]}
+					else
+						cpu_temp='N/A'
+					fi
+					cpu_temp="${C1}System Temperatures: cpu:${C2} $cpu_temp "
+					;;
+				1)
+					if [[ -n ${A_SENSORS_DATA[1]} ]];then
+						mobo_temp=${A_SENSORS_DATA[1]}
+					else
+						mobo_temp='N/A'
+					fi
+					mobo_temp="${C1}mobo:${C2} $mobo_temp "
+					;;
+				2)
+					# we need to make sure it's either cpu fan OR cpu fan and sys fan 1
+					if [[ -n ${A_SENSORS_DATA[2]} ]];then
+						cpu_fan="${A_SENSORS_DATA[2]}"
+					elif [[ -z ${A_SENSORS_DATA[2]} && -n ${A_SENSORS_DATA[3]} ]];then
+						cpu_fan="${A_SENSORS_DATA[3]}"
+					else
+						cpu_fan='N/A'
+					fi
+					cpu_fan="${C1}Fan Speeds (in rpm): cpu:${C2} $cpu_fan "
+					(( fan_count++ ))
+					;;
+				3)
+					if [[ -n ${A_SENSORS_DATA[3]} ]];then
+						mobo_fan="${C1}mobo:${C2} ${A_SENSORS_DATA[3]} "
+						(( fan_count++ ))
+					fi
+					;;
+				4)
+					if [[ -n ${A_SENSORS_DATA[4]} ]];then
+						ps_fan="${C1}ps:${C2} ${A_SENSORS_DATA[4]} "
+						(( fan_count++ ))
+					fi
+					;;
+				[5-9]|10|11|12|13|14)
+					if [[ -n ${A_SENSORS_DATA[$i]} ]];then
+						fan_number=$(( $i - 4 )) # sys fans start on array key 5
+						# wrap after fan 6 total
+						if [[ $fan_count -lt 7 ]];then
+							sys_fans="$sys_fans${C1}sys-$fan_number:${C2} ${A_SENSORS_DATA[$i]} "
+						else
+							sys_fans2="$sys_fans2${C1}sys-$fan_number:${C2} ${A_SENSORS_DATA[$i]} "
+						fi
+						(( fan_count++ ))
+					fi
+					;;
+			esac
+		done
+	fi
+	temp_data="$cpu_temp$mobo_temp"
+	temp_data=$( create_print_line "Sensors:" "$temp_data" )
+	print_screen_output "$temp_data"
+	# don't print second or subsequent lines if error data
+	if [[ $b_is_error != 'true' ]];then
+		fan_data="$cpu_fan$mobo_fan$ps_fan$sys_fans"
+		fan_data=$( create_print_line " " "$fan_data" )
+		print_screen_output "$fan_data"
+		# and then second wrapped fan line if needed
+		if [[ -n $sys_fans2 ]];then
+			fan_data2=$( create_print_line " " "$sys_fans2" )
+			print_screen_output "$fan_data2"
+		fi
+	fi
 	eval $LOGFE
 }
 
