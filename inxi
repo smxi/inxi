@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.0.108-b1
-####  Date: 28 July 2009
+####  version: 1.1.1-b1
+####  Date: 29 July 2009
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -3012,27 +3012,32 @@ get_sensors_data()
 {
 	eval $LOGFS
 
-	IFS=","
+	IFS=$'\n'
 	if [[ $B_SENSORS == 'true' ]];then
 		# note: non-configured sensors gives error message, which we need to redirect to stdout
+		# also, -F ':' no space, since some cases have the data starting right after :
 		A_SENSORS_DATA=( $( 
-		sensors | gawk -v userCpuNo="$SENSORS_CPU_NO" '		
+		sensors | gawk -F ': ' -v userCpuNo="$SENSORS_CPU_NO" '		
 		BEGIN {
 			IGNORECASE=1
-			moboTemp=""
-			cpuTemp=""
 			core0Temp="" # only if all else fails...
-			moboTempReal=""
+			cpuTemp=""
 			cpuTempReal=""
-			tempUnit=""
-			temp1=""
-			temp2=""
-			indexCountaFanReal=0
-			indexCountaFanWorking=0
+			fanWorking=""
+			indexCountaFanMain=0
+			indexCountaFanDefault=0
 			i=""
 			j=""
+			moboTemp=""
+			moboTempReal=""
+			psuTemp=""
 			sysFanString=""
+			temp1=""
+			temp2=""
 			tempFanType="" # set to 1 or 2
+			tempUnit=""
+			tempWorking=""
+			tempWorkingUnit=""
 		}
 		# dumping the extra + signs,  nobody has negative temps
 		# also, note gawk treats ° as a space, so we have to get the C/F data
@@ -3040,108 +3045,91 @@ get_sensors_data()
 		# different systems before this can be trusted much. Note that there 
 		# is a hack here to handle cases where search term has 1 or 2 words with space
 		# note: using arrays starting at 1 for all fan arrays to make it easier overall
-		/^(M\/B|MB|SYS) Temp/ {
-			moboTemp=gensub( /\+(.+)/, "\\1", 1, $3 )
-			if ( $4 ~ /C|F/ && tempUnit == "" ){
-				tempUnit="°" $4
+		/^(M\/B|MB|SYS)(.*)\+([0-9]+)(.*)[ \t°](C|F)/ && $2 ~ /^[ \t]*\+([0-9]+)/ {
+			moboTemp=gensub( /[ \t]+\+([0-9\.]*)(.*)/, "\\1", 1, $2 )
+			tempWorkingUnit=gensub( /[ \t]+\+([0-9\.]+)[ \t°]+([CF])(.*)/, "\\2", 1, $2 )
+			if ( tempWorkingUnit ~ /^C|F$/ && tempUnit == "" ){
+				tempUnit="°" tempWorkingUnit
 			}
 		}
-		/^CPU Temp/ {
-			cpuTemp=gensub( /\+(.+)/, "\\1", 1, $3 )
-			if ( $4 ~ /C|F/ && tempUnit == "" ){
-				tempUnit="°" $4
+		/^CPU(.*)\+([0-9]+)(.*)[ \t°](C|F)/ && $2 ~ /^[ \t]*\+([0-9]+)/ {
+			cpuTemp=gensub( /[ \t]+\+([0-9\.]+)(.*)/, "\\1", 1, $2 )
+			tempWorkingUnit=gensub( /[ \t]+\+([0-9\.]+)[ \t°]+([CF])(.*)/, "\\2", 1, $2 )
+			if ( tempWorkingUnit ~ /^C|F$/ && tempUnit == "" ){
+				tempUnit="°" tempWorkingUnit
 			}
 		}
-		/^temp1:/ {
-			tempWorking=gensub( /\+(.+)/, "\\1", 1, $2 )
+		/^(P\/S|Power)(.*)\+([0-9]+)(.*)[ \t°](C|F)/ && $2 ~ /^[ \t]*\+([0-9]+)/ {
+			psuTemp=gensub( /[ \t]+\+([0-9\.]+)(.*)/, "\\1", 1, $2 )
+			tempWorkingUnit=gensub( /[ \t]+\+([0-9\.]+)[ \t°]+([CF])(.*)/, "\\2", 1, $2 )
+			if ( tempWorkingUnit ~ /^C|F$/ && tempUnit == "" ){
+				tempUnit="°" tempWorkingUnit
+			}
+		}
+		$1 ~ /^temp1$/ && $2 ~ /^[ \t]*\+([0-9]+)/ {
+			tempWorking=gensub( /[ \t]+\+([0-9\.]+)(.*)/, "\\1", 1, $2 )
 			if ( temp1 == "" || tempWorking > 0 ) {
 				temp1=tempWorking
 			}
-			if ( $3 ~ /C|F/ && tempUnit == "" ){
-				tempUnit="°" $3
+			tempWorkingUnit=gensub( /[ \t]+\+([0-9\.]+)[ \t°]+([CF])(.*)/, "\\2", 1, $2 )
+			if ( tempWorkingUnit ~ /^C|F$/ && tempUnit == "" ){
+				tempUnit="°" tempWorkingUnit
 			}
 		}
-		/^temp2:/ {
-			# add to array if array index does not exist OR if number is > 0
-			
-			tempWorking=gensub( /\+(.+)/, "\\1", 1, $2 )
+		$1 ~ /^temp2$/ && $2 ~ /^[ \t]*\+([0-9]+)/ {
+			tempWorking=gensub( /[ \t]+\+([0-9\.]+)(.*)/, "\\1", 1, $2 )
 			if ( temp2 == "" || tempWorking > 0 ) {
 				temp2=tempWorking
 			}
-			if ( $3 ~ /C|F/ && tempUnit == "" ){
-				tempUnit="°" $3
-			}
-		}
-		# final fallback if all else fails
-		/^core0:|core 0:|core0 Temp/ {
-			if ( $2 ~ /(.+):/ ){
-				tempWorking=$3
-			}
-			else {
-				tempWorking=$2
-			}
-			tempWorking=gensub( /\+(.+)/, "\\1", 1, tempWorking )
-			if ( core0Temp == "" || tempWorking > 0 ) {
-				core0Temp=tempWorking
-			}
-			if ( $3 ~ /C|F/ && tempUnit == "" ){
-				tempUnit="°" $3
-			}
-			else if ( $4 ~ /C|F/ && tempUnit == "" ){
-				tempUnit="°" $4
+			tempWorkingUnit=gensub( /[ \t]+\+([0-9\.]+)[ \t°]+([CF])(.*)/, "\\2", 1, $2 )
+			if ( tempWorkingUnit ~ /^C|F$/ && tempUnit == "" ){
+				tempUnit="°" tempWorkingUnit
 			}
 		}
 		
-		# note: can be cpu fan:, cpu fan speed:, etc
-		/^CPU Fan(.*):/ {
-			if ( $3 ~ /(.+):/ ){
-				aFanReal[1]=$4
+		# final fallback if all else fails, funtoo user showed sensors putting
+		# temp on wrapped second line, not handled
+		/^(core0|core 0)(.*)\+([0-9]+)(.*)[ \t°](C|F)/ {
+			tempWorking=gensub( /[ \t]+\+([0-9\.]+)(.*)/, "\\1", 1, $2 )
+			if ( core0Temp == "" || tempWorking > 0 ) {
+				core0Temp=tempWorking
 			}
-			else {
-				aFanReal[1]=$3
-			}
-		}
-		/^(M\/B|MB|SYS) Fan(.*):/ {
-			if ( $3 ~ /(.+):/ ){
-				aFanReal[2]=$4
-			}
-			else {
-				aFanReal[2]=$3
+			tempWorkingUnit=gensub( /[ \t]+\+([0-9\.]+)[ \t°]+([CF])(.*)/, "\\2", 1, $2 )
+			if ( tempWorkingUnit ~ /^C|F$/ && tempUnit == "" ){
+				tempUnit="°" tempWorkingUnit
 			}
 		}
-		/Power_FAN Speed:|P\/S Fan:/ {
-			aFanReal[3]=$3
+		
+		# note: can be cpu fan:, cpu fan speed:, etc. Some cases have no space before
+		# $2 starts, so skip that space test in regex
+		/^CPU(.*)[ \t]*([0-9]+)[ \t]RPM/ {
+			aFanMain[1]=gensub( /[ \t]*([0-9]+)[ \t]+(.*)/, "\\1", 1, $2 )
 		}
-		/POWER FAN Speed:/ {
-			aFanReal[3]=$4
+		/^(M\/B|MB|SYS)(.*)[ \t]*([0-9]+)[ \t]RPM/ {
+			aFanMain[2]=gensub( /[ \t]*([0-9]+)[ \t]+(.*)/, "\\1", 1, $2 )
 		}
-		/^FAN1 Speed:|CHASSIS(1)? FAN Speed:/ {
-			if ( $2 == "Speed:" ) {
-				aFanReal[4]=$3
-			}
-			else if ( $3 == "Speed:" ) {
-				aFanReal[4]=$4
-			}
+		/(Power|P\/S|POWER)(.*)[ \t]*([0-9]+)[ \t]RPM/ {
+			aFanMain[3]=gensub( /[ \t]*([0-9]+)[ \t]+(.*)/, "\\1", 1, $2 )
 		}
-		/^FAN([2-9]) Speed:|CHASSIS([2-9]) FAN Speed:/ {
-			sysFanNu=gensub( /(FAN|CHASSIS)([2-9])( FAN)? Speed:/, "\\2", 1, $0 )
-			if ( sysFanNu ~ /([2-9])/ ) {
+
+		/^(FAN(1)? |CHASSIS(1)?)[ \t](.*)[ \t]*([0-9]+)[ \t]RPM/ {
+			aFanMain[4]=gensub( /[ \t]*([0-9]+)[ \t]+(.*)/, "\\1", 1, $2 )
+		}
+		/^FAN([2-9]) |CHASSIS([2-9] )(.*)[ \t]*([0-9]+)[ \t]RPM/ {
+			sysFanNu=gensub( /^(FAN|CHASSIS)([2-9])[ \t]+(.*)/, "\\2", 1, $1 )
+			if ( sysFanNu ~ /^([2-9])$/ ) {
 				# note: cpu/mobo/ps/fan1 above are 1/2/3/4
 				sysFanNu	= sysFanNu + 4
-				if ( $2 == "Speed:" ) {
-					aFanReal[sysFanNu]=$3
-				}
-				else if ( $3 == "Speed:" ) {
-					aFanReal[sysFanNu]=$4
-				}
+				aFanMain[sysFanNu]=gensub( /[ \t]*([0-9]+)[ \t]+(.*)/, "\\1", 1, $2 )
 			}
 		}
-		/^fan([0-9]+):/ {
-			sysFanNu=gensub( /fan([0-9]+):/, "\\1", 1, $1 )
-			if ( sysFanNu ~ /([0-9]+)/ ) {
+		/^fan([0-9]+)(.*)[ \t]*([0-9]+)[ \t]RPM/ {
+			fanWorking=gensub( /[ \t]*([0-9]+)[ \t]+(.*)/, "\\1", 1, $2 )
+			sysFanNu=gensub( /fan([0-9]+)/, "\\1", 1, $1 )
+			if ( sysFanNu ~ /^([0-9]+)$/ ) {
 				# add to array if array index does not exist OR if number is > existing number
-				if ( ! sysFanNu in aFanWorking || $2 >= aFanWorking[sysFanNu] ) {
-					aFanWorking[sysFanNu]=$2
+				if ( ! sysFanNu in aFanDefault || fanWorking >= aFanDefault[sysFanNu] ) {
+					aFanDefault[sysFanNu]=fanWorking
 				}
 			}
 		}
@@ -3203,51 +3191,61 @@ get_sensors_data()
 				moboTempReal=temp2
 			}
 			# then set the cpu fan speed
-			if ( aFanReal[1] == "" ) {
-				# note, you cannot test for aFanWorking[1] or [2] != "" 
+			if ( aFanMain[1] == "" ) {
+				# note, you cannot test for aFanDefault[1] or [2] != "" 
 				# because that creates an array item in gawk just by the test itself
-				if ( tempFanType == 1 && 1 in aFanWorking ) {
-					aFanReal[1]=aFanWorking[1]
+				if ( tempFanType == 1 && 1 in aFanDefault ) {
+					aFanMain[1]=aFanDefault[1]
 				}
-				else if ( tempFanType == 2 && 2 in aFanWorking ) {
-					aFanReal[1]=aFanWorking[2]
+				else if ( tempFanType == 2 && 2 in aFanDefault ) {
+					aFanMain[1]=aFanDefault[2]
 				}
 			}
 
 			# then set mobo fan if missing. Note, not trying to guess on either of these
-			if ( ! 2 in aFanReal ) {
-				aFanReal[2] = ""
-			}
-			# then set psu fan if missing
-			if ( ! 3 in aFanReal ) {
-				aFanReal[3] = ""
-			}
+# 			if ( ! 2 in aFanMain ) {
+# 				aFanMain[2] = ""
+# 			}
+# 			# then set psu fan if missing
+# 			if ( ! 3 in aFanMain ) {
+# 				aFanMain[3] = ""
+# 			}
+			
+
 
 			# then we need to get the actual numeric max array count for both fan arrays
 			for (i = 0; i <= 14; i++) {
-				if ( i in aFanReal && i > indexCountaFanReal ) {
-					indexCountaFanReal=i
+				if ( i in aFanMain && i > indexCountaFanMain ) {
+					indexCountaFanMain=i
 				}
 			}
 			for (i = 0; i <= 14; i++) {
-				if ( i in aFanWorking && i > indexCountaFanWorking ) {
-					indexCountaFanWorking=i
+				if ( i in aFanDefault && i > indexCountaFanDefault ) {
+					indexCountaFanDefault=i
 				}
 			}
 			
 			# clear out any duplicates. Primary fan real trumps fan working always if same speed
-			for (i = 1; i <= indexCountaFanReal; i++) {
-				if ( i in aFanReal && aFanReal[i] != "" && aFanReal[i] != 0 ) {
-					for (j = 1; j <= indexCountaFanWorking; j++) {
-						if ( j in aFanWorking && aFanReal[i] == aFanWorking[j] ) {
-							aFanWorking[j] = ""
+			for (i = 1; i <= indexCountaFanMain; i++) {
+				if ( i in aFanMain && aFanMain[i] != "" && aFanMain[i] != 0 ) {
+					for (j = 1; j <= indexCountaFanDefault; j++) {
+						if ( j in aFanDefault && aFanMain[i] == aFanDefault[j] ) {
+							aFanDefault[j] = ""
 						}
 					}
 				}
 			}
+
 			# then construct the sys_fan string for echo
-			for (j = 1; j <= indexCountaFanWorking; j++) {
-				sysFanString = sysFanString "," aFanWorking[j]
+			for (j = 1; j <= indexCountaFanDefault; j++) {
+				fanDefaultString = fanDefaultString separator aFanDefault[j]
+				separator=","
+			}
+			separator="" # reset to null for next loop
+			# then construct the sys_fan string for echo
+			for (j = 1; j <= indexCountaFanMain; j++) {
+				fanMainString = fanMainString separator aFanMain[j]
+				separator=","
 			}
 			
 			# and then build the temps:
@@ -3259,12 +3257,14 @@ get_sensors_data()
 			}
 			
 			# if they are ALL null, print error message. psFan is not used in output currently
-			if ( cpuTempReal == "" && moboTempReal == "" && aFanReal[1] == "" && aFanReal[2] == "" && aFanReal[3] == "" && sysFanString == "" ) {
+			if ( cpuTempReal == "" && moboTempReal == "" && aFanMain[1] == "" && aFanMain[2] == "" && aFanMain[3] == "" && fanDefaultString == "" ) {
 				print "No active sensors found. Have you configured your sensors yet?"
 			}
 			else {
-				# then build it: afanreals: 1 - cpu; 2 - mobo; 3 - psu
-				print cpuTempReal "," moboTempReal "," aFanReal[1] "," aFanReal[2]  "," aFanReal[3] sysFanString
+				# then build array arrays: 
+				print cpuTempReal "," moboTempReal "," psuTemp
+				print fanMainString
+				print fanDefaultString
 			}
 		}
 		'
@@ -4134,8 +4134,9 @@ print_partition_data()
 print_sensors_data()
 {
 	eval $LOGFS
-	local mobo_temp='' cpu_temp='' cpu_fan='' mobo_fan='' ps_fan='' sys_fans='' sys_fans2='' 
+	local mobo_temp='' cpu_temp='' psu_temp='' cpu_fan='' mobo_fan='' ps_fan='' sys_fans='' sys_fans2='' 
 	local temp_data='' fan_data='' fan_data2='' b_is_error='false' fan_count=0
+	local a_sensors_working=''
 	get_sensors_data
 
 	# initial error cases, for missing app or unconfigured sensors
@@ -4145,58 +4146,92 @@ print_sensors_data()
 	else
 		for (( i=0; i < ${#A_SENSORS_DATA[@]}; i++ ))
 		do
+			IFS=","
+			a_sensors_working=( ${A_SENSORS_DATA[i]} )
+			IFS="$ORIGINAL_IFS"
 			case $i in
+				# first the temp data
 				0)
-					if [[ -n ${A_SENSORS_DATA[0]} ]];then
-						cpu_temp=${A_SENSORS_DATA[0]}
+					if [[ -n ${a_sensors_working[0]} ]];then
+						cpu_temp=${a_sensors_working[0]}
 					else
 						cpu_temp='N/A'
 					fi
 					cpu_temp="${C1}System Temperatures: cpu:${C2} $cpu_temp "
-					;;
-				1)
-					if [[ -n ${A_SENSORS_DATA[1]} ]];then
-						mobo_temp=${A_SENSORS_DATA[1]}
+
+					if [[ -n ${a_sensors_working[1]} ]];then
+						mobo_temp=${a_sensors_working[1]}
 					else
 						mobo_temp='N/A'
 					fi
 					mobo_temp="${C1}mobo:${C2} $mobo_temp "
+
+					if [[ -n ${a_sensors_working[2]} ]];then
+						psu_temp="${C1}psu:${C2} ${a_sensors_working[2]} "
+					fi
+					;;
+				# then the fan data from main fan array
+				1)
+					for (( j=0; j < ${#a_sensors_working[@]}; j++ ))
+					do
+						case $j in
+							0)
+								# we need to make sure it's either cpu fan OR cpu fan and sys fan 1
+								if [[ -n ${a_sensors_working[0]} ]];then
+									cpu_fan="${a_sensors_working[0]}"
+								elif [[ -z ${a_sensors_working[0]} && -n ${a_sensors_working[1]} ]];then
+									cpu_fan="${a_sensors_working[1]}"
+								else
+									cpu_fan='N/A'
+								fi
+								cpu_fan="${C1}Fan Speeds (in rpm): cpu:${C2} $cpu_fan "
+								(( fan_count++ ))
+								;;
+							1)
+								if [[ -n ${a_sensors_working[1]} ]];then
+									mobo_fan="${C1}mobo:${C2} ${a_sensors_working[1]} "
+									(( fan_count++ ))
+								fi
+								;;
+							2)
+								if [[ -n ${a_sensors_working[2]} ]];then
+									ps_fan="${C1}ps:${C2} ${a_sensors_working[2]} "
+									(( fan_count++ ))
+								fi
+								;;
+							[3-9])
+								if [[ -n ${a_sensors_working[$j]} ]];then
+									fan_number=$(( $j - 2 )) # sys fans start on array key 5
+									# wrap after fan 6 total
+									if [[ $fan_count -lt 7 ]];then
+										sys_fans="$sys_fans${C1}sys-$fan_number:${C2} ${a_sensors_working[$j]} "
+									else
+										sys_fans2="$sys_fans2${C1}sys-$fan_number:${C2} ${a_sensors_working[$j]} "
+									fi
+									(( fan_count++ ))
+								fi
+								;;
+						esac
+					done
 					;;
 				2)
-					# we need to make sure it's either cpu fan OR cpu fan and sys fan 1
-					if [[ -n ${A_SENSORS_DATA[2]} ]];then
-						cpu_fan="${A_SENSORS_DATA[2]}"
-					elif [[ -z ${A_SENSORS_DATA[2]} && -n ${A_SENSORS_DATA[3]} ]];then
-						cpu_fan="${A_SENSORS_DATA[3]}"
-					else
-						cpu_fan='N/A'
-					fi
-					cpu_fan="${C1}Fan Speeds (in rpm): cpu:${C2} $cpu_fan "
-					(( fan_count++ ))
-					;;
-				3)
-					if [[ -n ${A_SENSORS_DATA[3]} ]];then
-						mobo_fan="${C1}mobo:${C2} ${A_SENSORS_DATA[3]} "
-						(( fan_count++ ))
-					fi
-					;;
-				4)
-					if [[ -n ${A_SENSORS_DATA[4]} ]];then
-						ps_fan="${C1}ps:${C2} ${A_SENSORS_DATA[4]} "
-						(( fan_count++ ))
-					fi
-					;;
-				[5-9]|10|11|12|13|14)
-					if [[ -n ${A_SENSORS_DATA[$i]} ]];then
-						fan_number=$(( $i - 4 )) # sys fans start on array key 5
-						# wrap after fan 6 total
-						if [[ $fan_count -lt 7 ]];then
-							sys_fans="$sys_fans${C1}sys-$fan_number:${C2} ${A_SENSORS_DATA[$i]} "
-						else
-							sys_fans2="$sys_fans2${C1}sys-$fan_number:${C2} ${A_SENSORS_DATA[$i]} "
-						fi
-						(( fan_count++ ))
-					fi
+					for (( j=0; j < ${#a_sensors_working[@]}; j++ ))
+					do
+						case $j in
+							[0-9]|10|11|12|13|14)
+								if [[ -n ${a_sensors_working[$j]} ]];then
+									fan_number=$(( $j + 1 )) # sys fans start on array key 5
+									# wrap after fan 6 total
+									if [[ $fan_count -lt 7 ]];then
+										sys_fans="$sys_fans${C1}fan-$fan_number:${C2} ${a_sensors_working[$j]} "
+									else
+										sys_fans2="$sys_fans2${C1}fan-$fan_number:${C2} ${a_sensors_working[$j]} "
+									fi
+									(( fan_count++ ))
+								fi
+								;;
+						esac
+					done
 					;;
 			esac
 		done
