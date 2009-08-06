@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.1.3-b1
-####  Date: 29 July 2009
+####  version: 1.1.12-b1
+####  Date: August 6 2009
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -146,7 +146,8 @@
 
 ## NOTE: we can use hwinfo if it's available in all systems, or most, to get
 ## a lot more data and verbosity levels going
-
+# set to default LANG to avoid locales errors with , or .
+LANG=C
 ### Variable initializations: null values
 CMDL_MAX=''
 COLOR_SCHEME=''
@@ -1220,6 +1221,8 @@ show_options()
 	print_screen_output "    5 - For multicore systems, also show per core clock speeds; shows audio card."
 	print_screen_output "-x  Show extra data: bogomips on Cpu; driver version (if available) for Network/Audio;"
 	print_screen_output "    direct rendering status for Graphics (in X). Only works with verbose or line output."
+	print_screen_output "    Shows hdd temp with disk data if you have hddtemp installed, if you are root OR if you have"
+	print_screen_output "    added to /etc/sudoers (sudo v. 1.7 or newer) (path to hddtemp): <username> ALL = NOPASSWD: /usr/sbin/hddtemp"
 	print_screen_output ""
 	print_screen_output "Additional Options:"
 	print_screen_output "-h - this help menu."
@@ -1996,7 +1999,7 @@ get_cpu_ht_multicore_smp_data()
 
 			# looking at logical processor counts over 1, which means either HT, SMP or MCP
 			# http://en.wikipedia.org/wiki/Symmetric_multiprocessing
-			if ( processor_logical_count > 1 ) {
+			if ( processor_logical_count > 1 && core_count > 1 ) {
 				if ( processor_logical_count > core_count && physical_cpu_count > 1 ) {
 					type = "SMP-HT" # could be Xeon/P4 HT dual cpu
 				}
@@ -2182,6 +2185,53 @@ get_distro_lsb_data()
 	echo $distro
 	log_function_data "distro: $distro"
 	eval $LOGFE
+}
+
+get_gpu_temp_data()
+{
+	local gpu_temp='' gpu_fan=''
+
+	# we'll try for nvidia/ati, then add if more are shown
+	if [[ -n $( type -p nvidia-settings ) ]];then
+		gpu_temp=$( nvidia-settings -q GPUCoreTemp | gawk -F ': ' '
+		BEGIN {
+			IGNORECASE=1
+			gpuTemp=""
+			gpuTempWorking=""
+		}
+		/Attribute (.*)[0-9]+\.$/ {
+			gsub(/\./, "", $2)
+			if ( $2 ~ /^[0-9]+$/ ) {
+				gpuTemp=gpuTemp $2 "C "
+			}
+		}
+		END {
+			print gpuTemp
+		}'
+		)
+	elif [[ -n $( type -p aticonfig ) ]];then
+# 		gpu_temp=$( aticonfig --adapter=0 --od-gettemperature | gawk -F ': ' '
+		gpu_temp=$( aticonfig --adapter=all --od-gettemperature | gawk -F ': ' '
+		BEGIN {
+			IGNORECASE=1
+			gpuTemp=""
+			gpuTempWorking=""
+		}
+		/Sensor (.*)[0-9\.]+ / {
+			gpuTempWorking=gensub(/(.*) ([0-9\.]+) (.*)/, "\\2", "1", $2)
+			if ( gpuTempWorking ~ /^[0-9\.]+$/ ) {
+				gpuTemp=gpuTemp gpuTempWorking "C "
+			}
+		}
+		END {
+			print gpuTemp
+		}'
+		)
+	fi
+	
+	if [[ -n $gpu_temp ]];then
+		echo $gpu_temp
+	fi
 }
 
 ## create array of gfx cards installed on system
@@ -2595,6 +2645,27 @@ get_hard_drive_data_advanced()
 	fi
 	log_function_data "A_HDD_DATA: ${A_HDD_DATA[@]}"
 	eval $LOGFE
+}
+
+# a few notes, normally hddtemp requires root, but you can set user rights in /etc/sudoers.
+# args: $1 - /dev/<disk> to be tested for
+get_hdd_temp_data()
+{
+	local hdd_temp='' sudo_command=''
+	
+	if [[ -n $( which hddtemp ) && -n $1 ]];then
+		# only use sudo if not root, -n option requires sudo -V 1.7 or greater. sudo will just error out
+		# which is the safest course here for now, otherwise that interactive sudo password thing is too annoying
+		# important: -n makes it non interactive, no prompt for password
+		if [[ $B_ROOT != 'true' && -n $( which sudo ) ]];then
+			sudo_command='sudo -n '
+		fi
+		# this will fail if regular user and no sudo present, but that's fine, it will just return null
+		hdd_temp=$( eval $sudo_command hddtemp -nq -u C $1 )
+		if [[ -n $hdd_temp && -n $( grep -E '^([0-9]+)$' <<< $hdd_temp ) ]];then
+			echo $hdd_temp
+		fi
+	fi
 }
 
 get_lspci_data()
@@ -3020,9 +3091,9 @@ get_sensors_data()
 	IFS=$'\n'
 	if [[ $B_SENSORS == 'true' ]];then
 		# note: non-configured sensors gives error message, which we need to redirect to stdout
-		# also, -F ':' no space, since some cases have the data starting right after :
+		# also, -F ':' no space, since some cases have the data starting right after,like - :1287
 		A_SENSORS_DATA=( $( 
-		sensors | gawk -F ': ' -v userCpuNo="$SENSORS_CPU_NO" '		
+		sensors | gawk -F ':' -v userCpuNo="$SENSORS_CPU_NO" '
 		BEGIN {
 			IGNORECASE=1
 			core0Temp="" # only if all else fails...
@@ -3036,6 +3107,7 @@ get_sensors_data()
 			moboTemp=""
 			moboTempReal=""
 			psuTemp=""
+			separator=""
 			sysFanString=""
 			temp1=""
 			temp2=""
@@ -3044,31 +3116,35 @@ get_sensors_data()
 			tempWorking=""
 			tempWorkingUnit=""
 		}
-		# dumping the extra + signs,  nobody has negative temps
+		# dumping the extra + signs after testing for them,  nobody has negative temps.
 		# also, note gawk treats ° as a space, so we have to get the C/F data
-		# there are some guesses here, and we will need a lot more data of
-		# different systems before this can be trusted much. Note that there 
-		# is a hack here to handle cases where search term has 1 or 2 words with space
+		# there are some guesses here, but with more sensors samples it will get closer.
 		# note: using arrays starting at 1 for all fan arrays to make it easier overall
+		# more validation because gensub if fails to get match returns full string, so
+		# we have to be sure we are working with the actual real string before assiging
+		# data to real variables and arrays. Extracting C/F degree unit as well to use
+		# when constructing temp items for array. 
+		# note that because of charset issues, no tempUnit="°" tempWorkingUnit degree sign 
+		# used, but it is required in testing regex to avoid error.
 		/^(M\/B|MB|SYS)(.*)\+([0-9]+)(.*)[ \t°](C|F)/ && $2 ~ /^[ \t]*\+([0-9]+)/ {
 			moboTemp=gensub( /[ \t]+\+([0-9\.]*)(.*)/, "\\1", 1, $2 )
 			tempWorkingUnit=gensub( /[ \t]+\+([0-9\.]+)[ \t°]+([CF])(.*)/, "\\2", 1, $2 )
 			if ( tempWorkingUnit ~ /^C|F$/ && tempUnit == "" ){
-				tempUnit="°" tempWorkingUnit
+				tempUnit=tempWorkingUnit
 			}
 		}
 		/^CPU(.*)\+([0-9]+)(.*)[ \t°](C|F)/ && $2 ~ /^[ \t]*\+([0-9]+)/ {
 			cpuTemp=gensub( /[ \t]+\+([0-9\.]+)(.*)/, "\\1", 1, $2 )
 			tempWorkingUnit=gensub( /[ \t]+\+([0-9\.]+)[ \t°]+([CF])(.*)/, "\\2", 1, $2 )
 			if ( tempWorkingUnit ~ /^C|F$/ && tempUnit == "" ){
-				tempUnit="°" tempWorkingUnit
+				tempUnit=tempWorkingUnit
 			}
 		}
 		/^(P\/S|Power)(.*)\+([0-9]+)(.*)[ \t°](C|F)/ && $2 ~ /^[ \t]*\+([0-9]+)/ {
 			psuTemp=gensub( /[ \t]+\+([0-9\.]+)(.*)/, "\\1", 1, $2 )
 			tempWorkingUnit=gensub( /[ \t]+\+([0-9\.]+)[ \t°]+([CF])(.*)/, "\\2", 1, $2 )
 			if ( tempWorkingUnit ~ /^C|F$/ && tempUnit == "" ){
-				tempUnit="°" tempWorkingUnit
+				tempUnit=tempWorkingUnit
 			}
 		}
 		$1 ~ /^temp1$/ && $2 ~ /^[ \t]*\+([0-9]+)/ {
@@ -3078,7 +3154,7 @@ get_sensors_data()
 			}
 			tempWorkingUnit=gensub( /[ \t]+\+([0-9\.]+)[ \t°]+([CF])(.*)/, "\\2", 1, $2 )
 			if ( tempWorkingUnit ~ /^C|F$/ && tempUnit == "" ){
-				tempUnit="°" tempWorkingUnit
+				tempUnit=tempWorkingUnit
 			}
 		}
 		$1 ~ /^temp2$/ && $2 ~ /^[ \t]*\+([0-9]+)/ {
@@ -3088,25 +3164,25 @@ get_sensors_data()
 			}
 			tempWorkingUnit=gensub( /[ \t]+\+([0-9\.]+)[ \t°]+([CF])(.*)/, "\\2", 1, $2 )
 			if ( tempWorkingUnit ~ /^C|F$/ && tempUnit == "" ){
-				tempUnit="°" tempWorkingUnit
+				tempUnit=tempWorkingUnit
 			}
 		}
 		
 		# final fallback if all else fails, funtoo user showed sensors putting
 		# temp on wrapped second line, not handled
-		/^(core0|core 0)(.*)\+([0-9]+)(.*)[ \t°](C|F)/ {
+		/^(core0|core 0)(.*)\+([0-9]+)(.*)[ \t°](C|F)/ && $2 ~ /^[ \t]*\+([0-9]+)/ {
 			tempWorking=gensub( /[ \t]+\+([0-9\.]+)(.*)/, "\\1", 1, $2 )
 			if ( core0Temp == "" || tempWorking > 0 ) {
 				core0Temp=tempWorking
 			}
 			tempWorkingUnit=gensub( /[ \t]+\+([0-9\.]+)[ \t°]+([CF])(.*)/, "\\2", 1, $2 )
 			if ( tempWorkingUnit ~ /^C|F$/ && tempUnit == "" ){
-				tempUnit="°" tempWorkingUnit
+				tempUnit=tempWorkingUnit
 			}
 		}
 		
 		# note: can be cpu fan:, cpu fan speed:, etc. Some cases have no space before
-		# $2 starts, so skip that space test in regex
+		# $2 starts (like so :1234 RPM), so skip that space test in regex
 		/^CPU(.*)[ \t]*([0-9]+)[ \t]RPM/ {
 			aFanMain[1]=gensub( /[ \t]*([0-9]+)[ \t]+(.*)/, "\\1", 1, $2 )
 		}
@@ -3117,14 +3193,14 @@ get_sensors_data()
 			aFanMain[3]=gensub( /[ \t]*([0-9]+)[ \t]+(.*)/, "\\1", 1, $2 )
 		}
 
-		/^(FAN(1)? |CHASSIS(1)?)[ \t](.*)[ \t]*([0-9]+)[ \t]RPM/ {
+		/^(AUX|FAN(1)? |CASE(1)? |CHASSIS(1)? )(.*)[ \t]*([0-9]+)[ \t]RPM/ {
 			aFanMain[4]=gensub( /[ \t]*([0-9]+)[ \t]+(.*)/, "\\1", 1, $2 )
 		}
-		/^FAN([2-9]) |CHASSIS([2-9] )(.*)[ \t]*([0-9]+)[ \t]RPM/ {
-			sysFanNu=gensub( /^(FAN|CHASSIS)([2-9])[ \t]+(.*)/, "\\2", 1, $1 )
+		/^(FAN([2-9]) |CASE([2-9]) |CHASSIS([2-9]) )(.*)[ \t]*([0-9]+)[ \t]RPM/ {
+			sysFanNu=gensub( /^(FAN|CASE|CHASSIS)([2-9])[ \t]+(.*)/, "\\2", 1, $1 )
 			if ( sysFanNu ~ /^([2-9])$/ ) {
 				# note: cpu/mobo/ps/fan1 above are 1/2/3/4
-				sysFanNu	= sysFanNu + 4
+				sysFanNu	= sysFanNu + 3
 				aFanMain[sysFanNu]=gensub( /[ \t]*([0-9]+)[ \t]+(.*)/, "\\1", 1, $2 )
 			}
 		}
@@ -3147,7 +3223,16 @@ get_sensors_data()
 					tempFanType=userCpuNo
 				}
 				else {
-					if ( temp1 >= temp2 ) {
+					# first some fringe cases with cooler cpu than mobo: assume which is cpu temp based on fan speed
+					# but only if other fan speed is 0
+					if ( temp1 >= temp2 && 1 in aFanDefault && 2 in aFanDefault && aFanDefault[1] == 0 && aFanDefault[2] > 0 ) {
+						tempFanType=2
+					}
+					else if ( temp2 >= temp1 && 1 in aFanDefault && 2 in aFanDefault && aFanDefault[2] == 0 && aFanDefault[1] > 0 ) {
+						tempFanType=1
+					}
+					# then handle the standard case if these fringe cases are false
+					else if ( temp1 >= temp2 ) {
 						tempFanType=1
 					}
 					else {
@@ -3179,7 +3264,7 @@ get_sensors_data()
 			if ( cpuTempReal == "" && core0Temp != "" ) {
 				cpuTempReal=core0Temp
 			}
-			
+
 			# then the real mobo temp
 			if ( moboTemp != "" ){
 				moboTempReal=moboTemp
@@ -3201,9 +3286,11 @@ get_sensors_data()
 				# because that creates an array item in gawk just by the test itself
 				if ( tempFanType == 1 && 1 in aFanDefault ) {
 					aFanMain[1]=aFanDefault[1]
+					aFanDefault[1]=""
 				}
 				else if ( tempFanType == 2 && 2 in aFanDefault ) {
 					aFanMain[1]=aFanDefault[2]
+					aFanDefault[2]=""
 				}
 			}
 
@@ -3227,10 +3314,31 @@ get_sensors_data()
 							aFanDefault[j] = ""
 						}
 					}
+					
 				}
 			}
 
-			# then construct the sys_fan string for echo
+			# now see if you can find the fast little mobo fan, > 5000 rpm and put it as mobo
+			# note that gawk is returning true for some test cases when aFanDefault[j] < 5000
+			# which has to be a gawk bug, unless there is something really weird with arrays
+			# note: 500 > aFanDefault[j] < 1000 is the exact trigger, and if you manually 
+			# assign that value below, the > 5000 test works again, and a print of the value
+			# shows the proper value, so the corruption might be internal in awk. 
+			# Note: gensub is the culprit I think, assigning type string for range 501-1000 but 
+			# type integer for all others, this triggers true for >
+			for (j = 1; j <= indexCountaFanDefault; j++) {
+				if ( j in aFanDefault && int( aFanDefault[j] ) > 5000 && aFanMain[2] == "" ) {
+					aFanMain[2] = aFanDefault[j]
+					aFanDefault[j] = ""
+					# then add one if required for output
+					if ( indexCountaFanMain < 2 ) {
+						indexCountaFanMain = 2
+					}
+				}
+			}
+
+			# then construct the sys_fan string for echo, note that iteration 1
+			# makes: fanDefaultString separator null, ie, no space or ,
 			for (j = 1; j <= indexCountaFanDefault; j++) {
 				fanDefaultString = fanDefaultString separator aFanDefault[j]
 				separator=","
@@ -3258,7 +3366,7 @@ get_sensors_data()
 				# then build array arrays: 
 				print cpuTempReal "," moboTempReal "," psuTemp
 				# this is for output, a null print line does NOT create a new array index in bash
-				if ( fanMainString == "" && fanDefaultString == "" ) {
+				if ( fanMainString == "" ) {
 					fanMainString=","
 				}
 				print fanMainString
@@ -3330,47 +3438,53 @@ process_cpu_flags()
 {
 	eval $LOGFS
 	local cpu_flags="$1"
-
+	
 	# nx = AMD stack protection extensions
 	# lm = Intel 64bit extensions
-	# sse, sse2, pni = sse1,2,3 gfx extensions
+	# sse, sse2, pni = sse1,2,3,4,5 gfx extensions
 	# svm = AMD pacifica virtualization extensions
 	# vmx = Intel IVT (vanderpool) virtualization extensions
 	cpu_flags=$( echo "$cpu_flags" | gawk '
 	BEGIN {
 		RS=" "
-		ssel["sse"] = 1
-		ssel["sse2"] = 2
-		ssel["pni"] = 3
-		ssel["sse4"] = 4
-		sses[1] = "sse"
-		sses[2] = "sse2"
-		sses[3] = "sse3"
-		sses[4] = "sse4"
+		a_ssel["sse"] = 1
+		a_ssel["sse2"] = 2
+		a_ssel["pni"] = 3
+		a_ssel["sse4a"] = 4 # 4a must precede 4
+		a_ssel["sse4"] = 5
+		a_ssel["sse5"] = 6
+		a_sses[1] = "sse"
+		a_sses[2] = "sse2"
+		a_sses[3] = "sse3"
+		a_sses[4] = "sse4a"
+		a_sses[5] = "sse4"
+		a_sses[6] = "sse5"
+		sseCounter = 0
+		flag_string = ""
 	}
 	/^(nx|lm|svm|vmx)$/ {
-			if (s) {
-				s = s " " $0
+			if ( flag_string != "" ) {
+				flag_string = flag_string " " $0
 			}
 			else {
-				s = $0
+				flag_string = $0
 			}
 	}
-	/^(sse|sse2|sse4|pni)$/ {
-		if (ssel[$0] > sse) {
-			sse = ssel[$0]
+	/^(sse|sse2|sse4a|sse4|sse5|pni)$/ {
+		if ( a_ssel[$0] > sseCounter ) {
+			sseCounter = a_ssel[$0]
 		}
 	}
 	END {
-		if (sse) {
-			if (s) {
-				s = sses[sse] " " s
+		if ( sseCounter > 0 ) {
+			if ( flag_string != "" ) {
+				flag_string = a_sses[sseCounter] " " flag_string
 			}
 			else {
-				s = sses[sse]
+				flag_string = a_sses[sseCounter]
 			}
 		}
-		print s
+		print flag_string
 	}' )
 
 	#grep -oE '\<(nx|lm|sse[0-9]?|pni|svm|vmx)\>' | tr '\n' ' '))
@@ -3817,7 +3931,7 @@ print_gfx_data()
 print_hard_disk_data()
 {
 	eval $LOGFS
-	local hdd_data='' hdd_data_2='' a_hdd_working=''
+	local hdd_data='' hdd_data_2='' a_hdd_working='' hdd_temp_data='' hdd_counter=0
 	local dev_data='' size_data='' hdd_model='' hdd_model_2='' hdd_model_3='' usb_data=''
 
 	# load A_HDD_DATA
@@ -3849,30 +3963,49 @@ print_hard_disk_data()
 				dev_data="/dev/${a_hdd_working[0]} "
 				size_data=" ${a_hdd_working[1]}"
 			fi
-			# wrap to avoid long lines
-
-			if [[ $i -gt 1 && $B_SHOW_DISK == 'true' ]] || [[ $i -gt 3 ]];then
-				hdd_model_2="${hdd_model_2}${hdd_model_2+${C1}$(($i+1)):${C2}} $usb_data$dev_data${a_hdd_working[2]}$size_data "
-			else
-				hdd_model="${hdd_model}${hdd_model+ ${C1}$(($i+1)):${C2}} $usb_data$dev_data${a_hdd_working[2]}$size_data"
+			
+			if [[ $B_EXTRA_DATA == 'true' && -n $dev_data ]];then
+				hdd_temp_data=$( get_hdd_temp_data "$dev_data" )
+				# error handling is done in get data function
+				if [[ -n $hdd_temp_data ]];then
+					hdd_temp_data=" ${hdd_temp_data}C"
+				else
+					hdd_temp_data=""
+				fi
+			fi
+		
+			if [[ $B_SHOW_DISK == 'true' ]];then
+				hdd_model="${hdd_model}${C1}$(($i+1)):${C2} $usb_data$dev_data${a_hdd_working[2]}$size_data$hdd_temp_data "
+				if [[ -z $hdd_model ]];then
+					hdd_model='None Detected '
+				fi
+				# printing line one, then every other line, and after, if leftovers, print that line.
+				case $i in 
+					0)
+						hdd_data=$( create_print_line "Disks:" "${C1}HDD${C2} ${C1}Total Size:${C2} ${hdd_capacity} (${hdd_used}) ${hdd_model}" )
+						print_screen_output "$hdd_data"
+						hdd_data=''
+						hdd_model=''
+						;;
+					2|4|6|8|10|12|14)
+						hdd_data=$( create_print_line " " "${hdd_model}${CN}" )
+						print_screen_output "$hdd_data"
+						hdd_data=''
+						hdd_model=''
+						;;
+				esac
 			fi
 		done
-		if [[ -z $hdd_model ]];then
-			hdd_model=' None Detected'
-		fi
-		if [[ -n $hdd_model_2 ]];then
-			hdd_data=$( create_print_line "Disks:" "${C1}HDD${C2} ${C1}Total Size:${C2} ${hdd_capacity} (${hdd_used})${hdd_model}" )
-			hdd_data_2=$( create_print_line " " "${hdd_model_2}${CN}" )
-		else
-			hdd_data=$( create_print_line "Disks:" "${C1}HDD${C2} ${C1}Total Size:${C2} ${hdd_capacity} (${hdd_used})${hdd_model}${CN}" )
+		# then print any leftover items
+		if [[ -n $hdd_data ]];then
+			hdd_data=$( create_print_line " " "${hdd_model}${CN}" )
+			print_screen_output "$hdd_data"
 		fi
 	else
 		hdd_data=$( create_print_line "Disks:" "${C1}HDD Total Size:${C2} ${hdd_capacity} (${hdd_used})${CN}" )
+		print_screen_output "$hdd_data"
 	fi
-	print_screen_output "$hdd_data"
-	if [[ -n $hdd_model_2 ]];then
-		print_screen_output "$hdd_data_2"
-	fi
+
 	eval $LOGFE
 }
 
@@ -4133,16 +4266,18 @@ print_sensors_data()
 {
 	eval $LOGFS
 	local mobo_temp='' cpu_temp='' psu_temp='' cpu_fan='' mobo_fan='' ps_fan='' sys_fans='' sys_fans2='' 
-	local temp_data='' fan_data='' fan_data2='' b_is_error='false' fan_count=0
+	local temp_data='' fan_data='' fan_data2='' b_is_error='false' fan_count=0 gpu_temp=''
 	local a_sensors_working=''
 	get_sensors_data
 	
 	IFS=","
 	a_sensors_working=( ${A_SENSORS_DATA[0]} )
 	IFS="$ORIGINAL_IFS"
-	# initial error cases, for missing app or unconfigured sensors
+	# initial error cases, for missing app or unconfigured sensors. Note that array 0
+	# always has at least 3 items, cpu/mobo/psu temp in it. If it's a single item, then
+	# it's an error message, not the real data arrays.
 	if [[ ${#a_sensors_working[@]} -eq 1 ]];then
-		cpu_temp=${A_SENSORS_DATA[0]}
+		cpu_temp="${C1}Error:${C2} ${A_SENSORS_DATA[0]}"
 		b_is_error='true'
 	else
 		for (( i=0; i < ${#A_SENSORS_DATA[@]}; i++ ))
@@ -4170,6 +4305,10 @@ print_sensors_data()
 					if [[ -n ${a_sensors_working[2]} ]];then
 						psu_temp="${C1}psu:${C2} ${a_sensors_working[2]} "
 					fi
+					gpu_temp=$( get_gpu_temp_data )
+					if [[ -n $gpu_temp ]];then
+						gpu_temp="${C1}gpu:${C2} ${gpu_temp} "
+					fi
 					;;
 				# then the fan data from main fan array
 				1)
@@ -4196,7 +4335,7 @@ print_sensors_data()
 								;;
 							2)
 								if [[ -n ${a_sensors_working[2]} ]];then
-									ps_fan="${C1}ps:${C2} ${a_sensors_working[2]} "
+									ps_fan="${C1}psu:${C2} ${a_sensors_working[2]} "
 									(( fan_count++ ))
 								fi
 								;;
@@ -4237,18 +4376,22 @@ print_sensors_data()
 			esac
 		done
 	fi
-	temp_data="$cpu_temp$mobo_temp"
-	temp_data=$( create_print_line "Sensors:" "$temp_data" )
-	print_screen_output "$temp_data"
-	# don't print second or subsequent lines if error data
-	fan_data="$cpu_fan$mobo_fan$ps_fan$sys_fans"
-	if [[ $b_is_error != 'true' && -n $fan_data ]];then
-		fan_data=$( create_print_line " " "$fan_data" )
-		print_screen_output "$fan_data"
-		# and then second wrapped fan line if needed
-		if [[ -n $sys_fans2 ]];then
-			fan_data2=$( create_print_line " " "$sys_fans2" )
-			print_screen_output "$fan_data2"
+	# turning off all output for case where no sensors detected or no sensors output 
+	# unless -s used explicitly. So for -F type output won't show unless valid or -! 1 used
+	if [[ $b_is_error != 'true' || $B_SHOW_SENSORS == 'true' || $B_TESTING_1 == 'true' ]];then
+		temp_data="$cpu_temp$mobo_temp$psu_temp$gpu_temp"
+		temp_data=$( create_print_line "Sensors:" "$temp_data" )
+		print_screen_output "$temp_data"
+		# don't print second or subsequent lines if error data
+		fan_data="$cpu_fan$mobo_fan$ps_fan$sys_fans"
+		if [[ $b_is_error != 'true' && -n $fan_data ]];then
+			fan_data=$( create_print_line " " "$fan_data" )
+			print_screen_output "$fan_data"
+			# and then second wrapped fan line if needed
+			if [[ -n $sys_fans2 ]];then
+				fan_data2=$( create_print_line " " "$sys_fans2" )
+				print_screen_output "$fan_data2"
+			fi
 		fi
 	fi
 	eval $LOGFE
