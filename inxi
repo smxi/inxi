@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.1.14
-####  Date: October 9 2009
+####  version: 1.2.0
+####  Date: October 12 2009
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -154,6 +154,7 @@ COLOR_SCHEME=''
 COLOR_SCHEME_SET=''
 IRC_CLIENT=''
 IRC_CLIENT_VERSION=''
+REPO_DATA=''
 
 ### primary data array holders	## usage: 'A_<var>'
 A_AUDIO_DATA=''
@@ -208,6 +209,7 @@ B_SHOW_NETWORK='false'
 # either -v > 3 or -P will show partitions
 B_SHOW_PARTITIONS='false'
 B_SHOW_PARTITIONS_FULL='false'
+B_SHOW_REPOS='false'
 B_SHOW_SENSORS='false'
 # triggers only short inxi output
 B_SHOW_SHORT_OUTPUT='false'
@@ -1010,7 +1012,7 @@ get_parameters()
 	# the short form only runs if no args output args are used
 	# no need to run through these if there are no args
 	if [[ -n $1 ]];then
-		while getopts Ac:CdDfFGhHiIlNpPsSuv:Vx%@:${update_flags} opt
+		while getopts Ac:CdDfFGhHiIlNpPrsSuv:Vx%@:${update_flags} opt
 		do
 			case $opt in
 			A)	B_SHOW_AUDIO='true'
@@ -1069,6 +1071,9 @@ get_parameters()
 				use_short='false'
 				;;
 			P)	B_SHOW_PARTITIONS='true'
+				use_short='false'
+				;;
+			r)	B_SHOW_REPOS='true'
 				use_short='false'
 				;;
 			s)	B_SHOW_SENSORS='true'
@@ -1208,6 +1213,7 @@ show_options()
 	print_screen_output "-p  Show full partition information (-P plus all other detected partitions)."
 	print_screen_output "-P  Show Partition information (shows what -v 4 would show, but without extra data)."
 	print_screen_output "    Shows, if detected: / /boot /home /tmp /usr /var. Use -p to see all mounted partitions."
+	print_screen_output "-r  Show distro repository data (currently only APT using distros supported, like Debian/Ubuntu etc)."
 	print_screen_output "-s  Show sensors output (if sensors installed/configured): mobo/cpu temp; detected fan speeds."
 	print_screen_output "-S  Show System information: host name, kernel, distro"
 	print_screen_output "-u  Show partition UUIDs. Default: short partition -P. For full -p output, use: -pu (or -plu)."
@@ -3084,6 +3090,16 @@ get_partition_data_advanced()
 	eval $LOGFE
 }
 
+# this will have other repos for rpm, arch, gentoo type sources at some point, for now
+# just APT sourced distros supported. This method will output the file name also, which
+# is useful to create output that's neat.
+get_repo_data()
+{
+	if [[ -f /etc/apt/sources.list ]];then
+		REPO_DATA="$( grep -Esv '(^$|^[[:space:]]*#)' /etc/apt/sources.list /etc/apt/sources.list.d/*.list )"
+	fi
+}
+
 get_sensors_data()
 {
 	eval $LOGFS
@@ -3536,6 +3552,9 @@ print_it_out()
 		fi
 		if [[ $VERBOSITY_LEVEL -ge 5 || $B_SHOW_SENSORS == 'true' ]];then
 			print_sensors_data
+		fi
+		if [[ $B_SHOW_REPOS == 'true' ]];then
+			print_repo_data
 		fi
 		if [[ $VERBOSITY_LEVEL -ge 1 || $B_SHOW_INFO == 'true' ]];then
 			print_info_data
@@ -4264,6 +4283,42 @@ print_partition_data()
 		print_screen_output "$partition_data"
 	done
 	eval $LOGFE
+}
+
+# currently only apt using distros support this feature, but over time we can add others
+print_repo_data()
+{
+	local repo_data='' repo_count=0 repo_line='' file_name='' file_content='' file_name_holder=''
+	local repo_full=''
+	
+	get_repo_data
+	
+	if [[ -n $REPO_DATA ]];then
+		# loop through the variable's lines one by one, update counter each iteration
+		while read repo_line
+		do
+			(( repo_count++ ))
+			file_name=$( cut -d ':' -f 1 <<< $repo_line )
+			file_content=$( cut -d ':' -f 2-6 <<< $repo_line )
+			# check file name, if different, update the holder for print out
+			if [[ $file_name != $file_name_holder ]];then
+				repo_full="${C1}Contents of sources file:${C2} $file_name"
+				file_name_holder=$file_name
+			else
+				repo_full="$file_content"
+			fi
+			# first line print Repos: 
+			if [[ $repo_count -eq 1 ]];then
+				repo_full=$( create_print_line "Repos:" "$repo_full" )
+			else
+				repo_full=$( create_print_line " " "$repo_full" )
+			fi
+			print_screen_output "$repo_full"
+		done <<< "$REPO_DATA"
+	else
+		repo_data=$( create_print_line "Repos:" "${C1}Error:${C2} $SCRIPT_NAME does not support this feature for your distro yet." )
+		print_screen_output "$repo_data"
+	fi
 }
 
 print_sensors_data()
