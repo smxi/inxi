@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.2.2
-####  Date: October 12 2009
+####  version: 1.2.3
+####  Date: October 13 2009
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -3096,9 +3096,64 @@ get_partition_data_advanced()
 # is useful to create output that's neat.
 get_repo_data()
 {
-	if [[ -f /etc/apt/sources.list ]];then
-		REPO_DATA="$( grep -Esv '(^[[:space:]]*$|^[[:space:]]*#)' /etc/apt/sources.list /etc/apt/sources.list.d/*.list )"
+	local repo_file='' 
+	local repo_data_working='' apt_file='/etc/apt/sources.list' yum_repo_dir='/etc/yum.repos.d/'
+	
+	if [[ -f $apt_file || -d $apt_file.d ]];then
+		REPO_DATA="$( grep -Esv '(^[[:space:]]*$|^[[:space:]]*#)' $apt_file $apt_file.d/*.list )"
 		REPO_FILE_ID='apt sources'
+	elif [[ -d $yum_repo_dir ]];then
+		for repo_file in $( ls $yum_repo_dir )
+		do
+			repo_data_working="$( gawk -v repoFile=$repo_file '
+			BEGIN {
+			FS="\n"
+			IGNORECASE=1
+			enabledStatus=""
+			repoTitle=""
+			urlData=""
+			}
+			# this is a hack, assuming that each item has these fields listed, we collect the 3
+			# items one by one, then when the url/enabled fields are set, we print it out and
+			# reset the data. Not elegant but it works.
+			/^\[.+\]/ {
+				gsub( /\[|\]/, "", $1 ) # strip out the brackets
+				repoTitle = $1 " ~ "
+			}
+			/^(mirrorlist|baseurl)/ {
+				sub( /(mirrorlist|baseurl)=/, "", $1 ) # strip out the field starter
+				urlData = $1
+			}
+			/^enabled=/ {
+				enabledStatus = $1
+			}
+			
+			{ 
+				if ( urlData != "" && enabledStatus != "" ){
+					# construct the string for the print function to work with, file name: data
+					# do not print if enabled=0 since it is not active then
+					if ( enabledStatus !~ /enabled=0/ ){
+						print repoFile ":" repoTitle urlData
+					}
+					enabledStatus=""
+					urlData=""
+					repoTitle=""
+				}
+			}
+			' $yum_repo_dir$repo_file )"
+			
+			# then load the global for each file as it gets filled
+			if [[ -n $repo_data_working ]];then
+				if [[ -z $REPO_DATA ]];then
+					REPO_DATA="$repo_data_working"
+				else
+					REPO_DATA="$REPO_DATA
+$repo_data_working"
+				fi
+				repo_data_working=''
+			fi
+		done
+		REPO_FILE_ID='yum repos'
 	fi
 }
 
