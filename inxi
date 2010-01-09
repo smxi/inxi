@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.3.0
-####  Date: January 8 2010
+####  version: 1.3.1
+####  Date: January 9 2010
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -1219,6 +1219,8 @@ show_options()
 	print_screen_output "-l  Show partition labels. Default: short partition -P. For full -p output, use: -pl (or -plu)."
 	print_screen_output "-N  Show Network card information."
 	print_screen_output "-o  Show unmounted partition information (includes UUID and LABEL if available)."
+	print_screen_output "    Shows file system type if you have file installed, if you are root OR if you have"
+	print_screen_output "    added to /etc/sudoers (sudo v. 1.7 or newer): <username> ALL = NOPASSWD: /usr/bin/file (sample)"
 	print_screen_output "-p  Show full partition information (-P plus all other detected partitions)."
 	print_screen_output "-P  Show Partition information (shows what -v 4 would show, but without extra data)."
 	print_screen_output "    Shows, if detected: / /boot /home /tmp /usr /var. Use -p to see all mounted partitions."
@@ -1239,7 +1241,7 @@ show_options()
 	print_screen_output "    direct rendering status for Graphics (in X). Only works with verbose or line output;"
 	print_screen_output "    shows (for single gpu, nvidia driver) screen number gpu is running on."
 	print_screen_output "    Shows hdd temp with disk data if you have hddtemp installed, if you are root OR if you have"
-	print_screen_output "    added to /etc/sudoers (sudo v. 1.7 or newer) (path to hddtemp): <username> ALL = NOPASSWD: /usr/sbin/hddtemp"
+	print_screen_output "    added to /etc/sudoers (sudo v. 1.7 or newer): <username> ALL = NOPASSWD: /usr/sbin/hddtemp (sample)"
 	print_screen_output ""
 	print_screen_output "Additional Options:"
 	print_screen_output "-h - this help menu."
@@ -2684,6 +2686,7 @@ get_hard_drive_data_advanced()
 # args: $1 - /dev/<disk> to be tested for
 get_hdd_temp_data()
 {
+	eval $LOGFS
 	local hdd_temp='' sudo_command=''
 	
 	if [[ -n $( which hddtemp ) && -n $1 ]];then
@@ -2699,6 +2702,7 @@ get_hdd_temp_data()
 			echo $hdd_temp
 		fi
 	fi
+	eval $LOGFE
 }
 
 get_lspci_data()
@@ -3543,7 +3547,7 @@ get_sensors_data()
 get_unmounted_partition_data()
 {
 	eval $LOGFS
-	local a_unmounted_working='' mounted_partitions='' separator=''
+	local a_unmounted_working='' mounted_partitions='' separator='' unmounted_fs=''
 	local dev_disk_label='' dev_disk_uuid='' dev_working='' uuid_working='' label_working=''
 	
 	if [[ $B_PARTITIONS_FILE == 'true' ]];then
@@ -3588,14 +3592,40 @@ get_unmounted_partition_data()
 			uuid_working=$( grep -E "${a_unmounted_working[0]}$" <<< "$dev_disk_uuid"  | gawk '{
 				print $(NF - 2)
 			}' )
+			unmounted_fs=$( get_unmounted_partition_filesystem "/dev/${a_unmounted_working[0]}" )
 			
 			IFS=","
-			A_UNMOUNTED_PARTITION_DATA[i]=${a_unmounted_working[0]}","${a_unmounted_working[1]}","$label_working","$uuid_working
+			A_UNMOUNTED_PARTITION_DATA[i]=${a_unmounted_working[0]}","${a_unmounted_working[1]}","$label_working","$uuid_working","$unmounted_fs
 			IFS="$ORIGINAL_IFS"
 		done
 	fi
 	
 # 	echo "${A_UNMOUNTED_PARTITION_DATA[@]}"
+	eval $LOGFE
+}
+
+# a few notes, normally file -s requires root, but you can set user rights in /etc/sudoers.
+# list of file systems: http://en.wikipedia.org/wiki/List_of_file_systems
+# args: $1 - /dev/<disk><part> to be tested for
+get_unmounted_partition_filesystem()
+{
+	eval $LOGFS
+	local partition_filesystem='' sudo_command=''
+	
+	if [[ -n $( which file ) && -n $1 ]];then
+		# only use sudo if not root, -n option requires sudo -V 1.7 or greater. sudo will just error out
+		# which is the safest course here for now, otherwise that interactive sudo password thing is too annoying
+		# important: -n makes it non interactive, no prompt for password
+		if [[ $B_ROOT != 'true' && -n $( which sudo ) ]];then
+			sudo_command='sudo -n '
+		fi
+		# this will fail if regular user and no sudo present, but that's fine, it will just return null
+		# note the hack that simply slices out the first line if > 1 items found in string
+		partition_filesystem=$( eval $sudo_command file -s $1 | grep -Eio '(ext2|ext3|ext4|ext5|ext[[:space:]]|ntfs|fat32|fat16|fat[[:space:]]\(.*\)|vfat|fatx|tfat|swap|btrfs|ffs[[:space:]]|hfs\+|hfs[[:space:]]plus|hfs[[:space:]]|jfs[[:space:]]|nss[[:space:]]|reiserfs|reiser4|ufs2|ufs[[:space:]]|xfs[[:space:]]|zfs[[:space:]])' | grep -Em 1 '.*' )
+		if [[ -n $partition_filesystem ]];then
+			echo $partition_filesystem
+		fi
+	fi
 	eval $LOGFE
 }
 
@@ -4703,7 +4733,7 @@ print_system_data()
 print_unmounted_partition_data()
 {
 	eval $LOGFS
-	local a_unmounted_data='' line_starter='' unmounted_data=''
+	local a_unmounted_data='' line_starter='' unmounted_data='' full_fs=''
 	local full_dev='' full_size='' full_label='' full_uuid='' full_string=''
 	
 	if [[ -z ${A_PARTITION_DATA} ]];then
@@ -4741,7 +4771,12 @@ print_unmounted_partition_data()
 				full_uuid=${a_unmounted_data[3]}
 			fi
 			full_uuid="${C1}uuid:${C2} $full_uuid"
-			full_string="$full_dev $full_size $full_label $full_uuid"
+			if [[ -z ${a_unmounted_data[4]} ]];then
+				full_fs=''
+			else
+				full_fs="${C1}fs:${C2} ${a_unmounted_data[4]}"
+			fi
+			full_string="$full_dev $full_size $full_label $full_uuid $full_fs"
 			if [[ $i -eq 0 ]];then
 				line_starter='Unmounted:'
 			else
