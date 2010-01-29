@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.3.2
-####  Date: January 14 2010
+####  version: 1.3.3
+####  Date: January 29 2010
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -42,22 +42,39 @@
 ####  If you don't understand what Free Software is, please read (or reread)
 ####  this page: http://www.gnu.org/philosophy/free-sw.html
 ########################################################################
+####  Package names in (...) are the Debian Squeeze package name. Check your 
+####  distro for proper package name by doing this: which <application> 
+####  then find what package owns that application file.
 ####  DEPENDENCIES
-####  bash >=3.0(bash), df;readlink;stty;tr;uname;wc(coreutils),
-####  gawk(gawk), grep(grep), hostname(hostname), lspci(pciutils),
-####  ps;uptime(procps), glxinfo;xdpyinfo;xrandr(xbase-clients)
+####  bash >=3.0 (bash); df, readlink, stty, tr, uname, wc (coreutils),
+####  gawk (gawk); grep (grep); hostname (hostname); lspci (pciutils),
+####  free, ps, uptime (procps); 
 ####  Also the proc filesystem should be present and mounted
 ####
 ####	Apparently unpatched bash 3.0 has arrays broken; bug reports:
 ####	http://ftp.gnu.org/gnu/bash/bash-3.0-patches/bash30-008
 ####	http://lists.gnu.org/archive/html/bug-bash/2004-08/msg00144.html
+####  Bash 3.1 for proper array use
 ####
 ####	Arrays work in bash 2.05b, but "egrep -m" does not
 ####
-####  RECOMMENDS (Needed to run certain features)
-####  For local interfaces/IP test: ifconfig (in net-tools for Debian systems)
-####  runlevel(sysvinit): to view current runlevel while not in X window system
-####  Bash 3.1 for proper array use
+####  RECOMMENDS (Needed to run certain features, listed by option)
+####  -A - for output of usb audio information: lsusb (usbutils)
+####  -Ax - for audio module version: modinfo (module-init-tools)
+####  -Dx - for hdd temp output (root only default): hddtemp (hddtemp)
+####       For user level hdd temp output: sudo (sudo)
+####       Note: requires user action for this feature to run as user (edit /etc/sudoers file)
+####  -G - full graphics output requires:  glxinfo (mesa-utils); xdpyinfo (X11-utils);
+####       xrandr (x11-xserver-utils)
+####  -i - IP information, local/wan - ifconfig (net-tools)
+####  -Ix - view current runlevel while not in X window system (or with -x): runlevel (sysvinit)
+####  -o - for unmounted file system information in unmounted drives (root only default): file (file)
+####       Note: requires user action for this feature to run as user (edit /etc/sudoers file)
+####       For user level unmounted file system type output: sudo (sudo)
+####  -s   For any sensors output, fan, temp, etc: sensors (lm-sensors)
+####       Note: requires setup of lm-sensors (sensors-detect and adding modules/modprobe/reboot,
+####       and ideally, pwmconfig) prior to full output being available. 
+
 ########################################################################
 ####  CONVENTIONS:
 ####  Indentation: TABS
@@ -195,8 +212,6 @@ B_ROOT='false'
 B_RUNNING_IN_SHELL='false'
 # this sets the debug buffer
 B_SCRIPT_UP='false'
-# sensors only if installed
-B_SENSORS='false'
 # Show sound card data
 B_SHOW_AUDIO='false'
 B_SHOW_CPU='false'
@@ -233,7 +248,6 @@ B_ASOUND_DEVICE_FILE='false'
 B_ASOUND_VERSION_FILE='false'
 B_BASH_ARRAY='false'
 B_CPUINFO_FILE='false'
-B_IFCONFIG='false'
 B_LSB_FILE='false'
 B_MEMINFO_FILE='false'
 B_MODULES_FILE='false' #
@@ -550,17 +564,6 @@ initialize_script_data()
 		B_SCSI_FILE='true'
 	fi
 
-	# lack of ifconfig will throw an error only upon it's usage
-	if [[ -n $( type -p ifconfig ) ]]; then
-		B_IFCONFIG='true'
-	else
-		A_INTERFACES_DATA=( "Interfaces tool requires missing app: ifconfig" )
-	fi
-	
-	if [[ -n $( type -p sensors ) ]];then
-		B_SENSORS='true'
-	fi
-
 	if [[ -n $DISPLAY ]];then
 		B_X_RUNNING='true'
 	fi
@@ -608,7 +611,7 @@ check_script_suggested_apps()
 check_script_depends()
 {
 	eval $LOGFS
-	local app_name='' app_data=''
+	local app_name='' app_path=''
 	# bc removed from deps for now
 	local depends="df free gawk grep hostname lspci ps readlink tr uname uptime wc"
 	local x_apps="xrandr xdpyinfo glxinfo"
@@ -616,8 +619,8 @@ check_script_depends()
 	if [[ $B_X_RUNNING == 'true' ]];then
 		for app_name in $x_apps
 		do
-			app_data=$( type -p $app_name )
-			if [[ -z $app_data ]];then
+			app_path=$( type -p $app_name )
+			if [[ -z $app_path ]];then
 				script_debugger "Resuming in non X mode: $app_name not found in path"
 				B_X_RUNNING='false'
 				break
@@ -629,8 +632,8 @@ check_script_depends()
 
 	for app_name in $depends
 	do
-		app_data=$( type -p $app_name )
-		if [[ -z $app_data ]];then
+		app_path=$( type -p $app_name )
+		if [[ -z $app_path ]];then
 			error_handler 5 "$app_name"
 		fi
 	done
@@ -1009,7 +1012,7 @@ get_parameters()
 	local opt='' wget_test='' update_flags='U!:'
 	local use_short='true' # this is needed to trigger short output, every v/d/F/line trigger sets this false
 
-	# <comment here.  what is this for?>
+	# If distro maintainers want to not allow updates, turn off that option for users
 	if [[ $B_ALLOW_UPDATE == 'false' ]];then
 		update_flags=''
 	fi
@@ -1586,10 +1589,8 @@ is_this_qt4_konvi()
 	konvi_dbus_exist=$( qdbus | grep "org.kde.konversation" )
 	 
 	if [[ -n $konvi_dbus_exist && -e /usr/share/kde4/apps/konversation ]]; then
-
 		konvi_pid=$( ps -A | grep -i 'konversation' )
 		konvi_pid=$( echo $konvi_pid | gawk '{ print $1 }' ) 
-
 		konvi_home_dir=$( readlink /proc/$konvi_pid/exe )
 		konvi=$( echo $konvi_home_dir | sed "s/\// /g" )
 		konvi=($konvi)
@@ -1651,7 +1652,7 @@ get_cmdline()
 get_audio_data()
 {
 	eval $LOGFS
-	local i='' alsa_data='' alsa_driver='' device_count=''
+	local i='' alsa_data='' alsa_driver='' device_count='' lsusb_path=''
 	local usb_proc_file='' array_count='' usb_id='' usb_data=''
 
 	IFS=$'\n'
@@ -1766,15 +1767,16 @@ get_audio_data()
 
 	# alsa usb detection by damentz
 	# for every sound card symlink in /proc/asound - display information about it
+	lsusb_path=$( type -p lsusb )
 	for usb_proc_file in /proc/asound/*
 	do
 		# if lsusb exists, the file is a symlink, and contains an important usb exclusive file: continue
-		if [[ -n $( which lsusb ) && -L $usb_proc_file && -e $usb_proc_file/usbid  ]]; then
+		if [[ -n $lsusb_path && -L $usb_proc_file && -e $usb_proc_file/usbid  ]]; then
 			# send error messages of lsusb to /dev/null as it will display a bunch if not a super user
 			# also, find the contents of usbid in lsusb and print everything after the 7th word on the
 			# corresponding line. Finally, strip out commas as they will change the driver :)
 			usb_id=$( cat $usb_proc_file/usbid )
-			usb_data=$( lsusb -v 2>/dev/null | grep "$usb_id" )
+			usb_data=$( $lsusb_path -v 2>/dev/null | grep "$usb_id" )
 			log_function_data 'raw' "usb_data:\n$usb_data"
 			usb_data=$( gawk '{
 				gsub( /,/, " ", $0 )
@@ -2181,7 +2183,7 @@ get_distro_lsb_data()
 		log_function_data 'cat' "$FILE_LSB_RELEASE"
 	fi
 	# this is HORRIBLY slow, but I don't know why, it runs fast in shell
-# 	if [[  -n $( which lsb_release ) && $1 == 'app' ]];then
+# 	if [[  -n $( type -p lsb_release ) && $1 == 'app' ]];then
 # 		distro=$( echo "$( lsb_release -irc )" | gawk '
 # 		{ IGNORECASE=1 }
 # 		/^Distributor ID/ {
@@ -2208,7 +2210,7 @@ get_distro_lsb_data()
 
 get_gpu_temp_data()
 {
-	local gpu_temp='' gpu_fan='' screens='' screen_nu='' gpu_temp_looper='' 
+	local gpu_temp='' gpu_fan='' screens='' screen_nu='' gpu_temp_looper=''
 
 	# we'll try for nvidia/ati, then add if more are shown
 	if [[ -n $( type -p nvidia-settings ) ]];then
@@ -2687,17 +2689,19 @@ get_hard_drive_data_advanced()
 get_hdd_temp_data()
 {
 	eval $LOGFS
-	local hdd_temp='' sudo_command=''
+	local hdd_temp='' sudo_command='' 
+	local hddtemp_path=$( type -p hddtemp ) 
+	local sudo_path=$( type -p sudo )
 	
-	if [[ -n $( which hddtemp ) && -n $1 ]];then
+	if [[ -n $hddtemp_path && -n $1 ]];then
 		# only use sudo if not root, -n option requires sudo -V 1.7 or greater. sudo will just error out
 		# which is the safest course here for now, otherwise that interactive sudo password thing is too annoying
 		# important: -n makes it non interactive, no prompt for password
-		if [[ $B_ROOT != 'true' && -n $( which sudo ) ]];then
+		if [[ $B_ROOT != 'true' && -n $sudo_path ]];then
 			sudo_command='sudo -n '
 		fi
 		# this will fail if regular user and no sudo present, but that's fine, it will just return null
-		hdd_temp=$( eval $sudo_command hddtemp -nq -u C $1 )
+		hdd_temp=$( eval $sudo_command $hddtemp_path -nq -u C $1 )
 		if [[ -n $hdd_temp && -n $( grep -E '^([0-9]+)$' <<< $hdd_temp ) ]];then
 			echo $hdd_temp
 		fi
@@ -2747,9 +2751,10 @@ get_module_version_number()
 {
 	eval $LOGFS
 	local module_version=''
+	local modinfo_path=$( type -p modinfo )
 
-	if [[ -n $( which modinfo ) ]];then
-		module_version=$( modinfo $1 | gawk '
+	if [[ -n $modinfo_path ]];then
+		module_version=$( $modinfo_path $1 2>/dev/null | gawk '
 		BEGIN {
 			IGNORECASE=1
 		}
@@ -2863,9 +2868,13 @@ get_networking_wan_ip_data()
 get_networking_local_ip_data()
 {
 	eval $LOGFS
-	if [[ $B_IFCONFIG == 'true' ]];then
+	
+	local ifconfig_path=$( type -p ifconfig )
+	
+	# lack of ifconfig will throw an error only upon it's usage
+	if [[ -n $ifconfig_path ]];then
 		IFS=$'\n'
-		A_INTERFACES_DATA=( $( ifconfig | gawk '
+		A_INTERFACES_DATA=( $( $ifconfig_path | gawk '
 		BEGIN {
 			IGNORECASE=1
 		}
@@ -2903,6 +2912,8 @@ get_networking_local_ip_data()
 			}
 		}') )
 		IFS="$ORIGINAL_IFS"
+	else
+		A_INTERFACES_DATA=( "Interfaces tool requires missing app: ifconfig" )
 	fi
 	log_function_data "A_INTERFACES_DATA: ${A_INTERFACES_DATA[@]}"
 	eval $LOGFE
@@ -3216,16 +3227,30 @@ $repo_data_working"
 	eval $LOGFE
 }
 
+get_runlevel_data()
+{
+	eval $LOGFS
+	local runlvl=''
+	local runlevel_path=$( type -p runlevel )
+	if [[ -n $runlevel_path ]];then
+		runlvl="$( $runlevel_path | gawk '{ print $2 }' )"
+	fi
+	echo $runlvl
+	eval $LOGFE
+}
+
 get_sensors_data()
 {
 	eval $LOGFS
 	
+	local sensors_path=$( type -p sensors )
+		
 	IFS=$'\n'
-	if [[ $B_SENSORS == 'true' ]];then
+	if [[ -n $sensors_path ]];then
 		# note: non-configured sensors gives error message, which we need to redirect to stdout
 		# also, -F ':' no space, since some cases have the data starting right after,like - :1287
 		A_SENSORS_DATA=( $( 
-  		sensors | gawk -F ':' -v userCpuNo="$SENSORS_CPU_NO" '
+  		$sensors_path | gawk -F ':' -v userCpuNo="$SENSORS_CPU_NO" '
 		BEGIN {
 			IGNORECASE=1
 			core0Temp="" # only if all else fails...
@@ -3612,17 +3637,19 @@ get_unmounted_partition_filesystem()
 {
 	eval $LOGFS
 	local partition_filesystem='' sudo_command=''
+	local file_path=$( type -p file )
+	local sudo_path=$( type -p sudo )
 	
-	if [[ -n $( which file ) && -n $1 ]];then
+	if [[ -n $file_path && -n $1 ]];then
 		# only use sudo if not root, -n option requires sudo -V 1.7 or greater. sudo will just error out
 		# which is the safest course here for now, otherwise that interactive sudo password thing is too annoying
 		# important: -n makes it non interactive, no prompt for password
-		if [[ $B_ROOT != 'true' && -n $( which sudo ) ]];then
+		if [[ $B_ROOT != 'true' && -n $sudo_path ]];then
 			sudo_command='sudo -n '
 		fi
 		# this will fail if regular user and no sudo present, but that's fine, it will just return null
 		# note the hack that simply slices out the first line if > 1 items found in string
-		partition_filesystem=$( eval $sudo_command file -s $1 | grep -Eio '(ext2|ext3|ext4|ext5|ext[[:space:]]|ntfs|fat32|fat16|fat[[:space:]]\(.*\)|vfat|fatx|tfat|swap|btrfs|ffs[[:space:]]|hfs\+|hfs[[:space:]]plus|hfs[[:space:]]extended[[:space:]]version[[:space:]][1-9]|hfsj|hfs[[:space:]]|jfs[[:space:]]|nss[[:space:]]|reiserfs|reiser4|ufs2|ufs[[:space:]]|xfs[[:space:]]|zfs[[:space:]])' | grep -Em 1 '.*' )
+		partition_filesystem=$( eval $sudo_command $file_path -s $1 | grep -Eio '(ext2|ext3|ext4|ext5|ext[[:space:]]|ntfs|fat32|fat16|fat[[:space:]]\(.*\)|vfat|fatx|tfat|swap|btrfs|ffs[[:space:]]|hfs\+|hfs[[:space:]]plus|hfs[[:space:]]extended[[:space:]]version[[:space:]][1-9]|hfsj|hfs[[:space:]]|jfs[[:space:]]|nss[[:space:]]|reiserfs|reiser4|ufs2|ufs[[:space:]]|xfs[[:space:]]|zfs[[:space:]])' | grep -Em 1 '.*' )
 		if [[ -n $partition_filesystem ]];then
 			echo $partition_filesystem
 		fi
@@ -3908,8 +3935,8 @@ print_audio_data()
 # 			port_data=" ${C1}at port${C2} ${a_audio_working[2]}"
 # 		fi
 		# this should only trigger if the $FILE_ASOUND_DEVICE data is used, not lspci -nn
-		if [[ -n ${a_audio_working[3]} && $B_EXTRA_DATA == 'true' ]];then
-			module_version=$( print_module_version "${a_audio_working[3]}" )
+		if [[ -n ${a_audio_working[1]} && $B_EXTRA_DATA == 'true' ]];then
+			module_version=$( print_module_version "${a_audio_working[1]}" 'audio' )
 		fi
 		if [[ -n ${a_audio_working[1]} ]];then
 			alsa_driver=" ${C1}driver${C2} ${a_audio_working[1]}$module_version"
@@ -4259,7 +4286,7 @@ print_hard_disk_data()
 print_info_data()
 {
 	eval $LOGFS
-	local suggested_app="runlevel"
+
 	local info_data=''
 	local runlvl=''
 	local memory="$( get_memory_data )"
@@ -4270,10 +4297,10 @@ print_info_data()
 	# long_last=$( echo -ne "${C1}Processes${C2} ${processes}${CN} | ${C1}Uptime${C2} ${up_time}${CN} | ${C1}Memory${C2} ${MEM}${CN}" )
 	info_data=$( create_print_line "Info:" "${C1}Processes${C2} ${processes} ${C1}Uptime${C2} ${up_time} ${C1}Memory${C2} ${memory}${CN}" )
 
-	# this only triggers if no X data is present
-	if [[ $B_X_RUNNING != 'true' ]];then
-		if [[ -e $suggested_app ]];then
-			runlvl="$( runlevel | gawk '{ print $2 }' )"
+	# this only triggers if no X data is present or if extra data switch is on
+	if [[ $B_X_RUNNING != 'true' || $B_EXTRA_DATA == 'true' ]];then
+		runlvl="$( get_runlevel_data )"
+		if [[ -n $runlvl ]];then
 			info_data="${info_data} ${C1}Runlevel${C2} ${runlvl}${CN}"
 		fi
 	fi
@@ -4290,15 +4317,27 @@ print_info_data()
 	eval $LOGFE
 }
 
-# args: $1 - module name (could be > 1, so loop it )
+# args: $1 - module name (could be > 1, so loop it ); $2 - audio (optional)
 print_module_version()
 {
 	eval $LOGFS
-	local module_versions='' module='' version=''
+	local module_versions='' module='' version='' prefix='' modules=$1
+	
+	# note that sound driver data tends to have upper case, but modules are lower
+	if [[ $2 == 'audio' ]];then
+		prefix='snd_' # sound modules start with snd_
+		modules=$( tr '[A-Z]' '[a-z]' <<< $modules )
+		# special intel processing, generally no version info though
+		if [[ $modules == 'hda intel' ]];then
+			modules='hda_intel'
+		elif [[ $modules == 'intel ich' ]];then
+			modules='intel8x0'
+		fi
+	fi
 
-	for module in $1
+	for module in $modules
 	do
-		version=$( get_module_version_number $module )
+		version=$( get_module_version_number "$prefix$module" )
 		if [[ -n $version ]];then
 			module_versions="$module_versions $version"
 		fi
@@ -4328,8 +4367,8 @@ print_networking_data()
 		if [[ ${#A_NETWORK_DATA[@]} -le 1 ]];then
 			card_one='Card'
 		fi
-		if [[ -n ${a_network_working[3]} && $B_EXTRA_DATA == 'true' ]];then
-			module_version=$( print_module_version "${a_network_working[3]}" )
+		if [[ -n ${a_network_working[1]} && $B_EXTRA_DATA == 'true' ]];then
+			module_version=$( print_module_version "${a_network_working[1]}" )
 		fi
 		if [[ -n ${a_network_working[1]} ]];then
 			driver_data=" ${C1}driver${C2} ${a_network_working[1]}$module_version"
@@ -4354,8 +4393,8 @@ print_networking_data()
 			driver_data=''
 			port_plural=''
 			module_version=''
-			if [[ -n ${a_network_working[3]} && $B_EXTRA_DATA == 'true' ]];then
-				module_version=$( print_module_version "${a_network_working[3]}" )
+			if [[ -n ${a_network_working[1]} && $B_EXTRA_DATA == 'true' ]];then
+				module_version=$( print_module_version "${a_network_working[1]}" )
 			fi
 			if [[ -n ${a_network_working[1]} ]];then
 				driver_data=" ${C1}driver${C2} ${a_network_working[1]}$module_version"
