@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.3.9
-####  Date: February 1 2010
+####  version: 1.3.10
+####  Date: February 5 2010
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -1250,6 +1250,7 @@ show_options()
 	print_screen_output "    4 - Also show partition size/filled data for (if present):/, /home, /var/, /boot"
 	print_screen_output "    5 - For multicore systems, also shows: per core clock speeds; audio card; full disk data."
 	print_screen_output "-x  Show extra data: bogomips on Cpu; driver version (if available) for Network/Audio;"
+	print_screen_output "    for network, audio cards, shows PCI Bus ID number also;"
 	print_screen_output "    direct rendering status for Graphics (in X). Only works with verbose or line output;"
 	print_screen_output "    shows (for single gpu, nvidia driver) screen number gpu is running on."
 	print_screen_output "    Shows hdd temp with disk data if you have hddtemp installed, if you are root OR if you have"
@@ -1700,7 +1701,7 @@ get_audio_data()
 		gsub(/,/, " ", audioCard)
 		gsub(/^ +| +$/, "", audioCard)
 		gsub(/ [ \t]+/, " ", audioCard)
-
+		aPciBusId[audioCard] = gensub(/(^[0-9a-f:\.]+) [^:]+: .+$/,"\\1","g",$0)
 		cards[audioCard]++
 
 		# loop until you get to the end of the data block
@@ -1724,16 +1725,12 @@ get_audio_data()
 			useDrivers=""
 			useModules=""
 			usePorts=""
+			usePciBusId=""
+			 
 			if (cards[i]>1) {
 				a[j]=cards[i]"x "i
 				if (drivers[i] != "") {
 					useDrivers=drivers[i]
-				}
-				if (ports[i] != "") {
-					usePorts = ports[i]
-				}
-				if (modules[i] != "" ) {
-					useModules = modules[i]
 				}
 			}
 			else {
@@ -1746,15 +1743,18 @@ get_audio_data()
 				else if ( alsaDriver != "" ) {
 					useDrivers=alsaDriver
 				}
-				if (ports[i] != "") {
-					usePorts=ports[i]
-				}
-				if (modules[i] != "" ) {
-					useModules = modules[i]
-				}
+			}
+			if (ports[i] != "") {
+				usePorts = ports[i]
+			}
+			if (modules[i] != "" ) {
+				useModules = modules[i]
+			}
+			if ( aPciBusId[i] != "" ) {
+				usePciBusId = aPciBusId[i]
 			}
 			# create array primary item for master array
-			print a[j] "," useDrivers "," usePorts "," useModules
+			print a[j] "," useDrivers "," usePorts "," useModules "," usePciBusId
 			j++
 		}
 	}') )
@@ -2796,13 +2796,15 @@ get_module_version_number()
 get_networking_data()
 {
 	eval $LOGFS
+	
 	IFS=$'\n'
 	A_NETWORK_DATA=( $( echo "$Lspci_Data" | gawk '
 	BEGIN {
 		IGNORECASE=1
+		counter=0 # required to handle cases of > 1 instance of the same chipset
 	}
 	/^[0-9a-f:.]+ (ethernet|network) (controller|bridge)/ || /^[0-9a-f:.]+ [^:]+: .*(ethernet|network).*$/ {
-		nic=gensub(/^[0-9a-f:.]+ [^:]+: (.+)$/,"\\1","g",$0)
+		nic=gensub(/^[0-9a-f:\.]+ [^:]+: (.+)$/,"\\1","g",$0)
 		gsub(/realtek semiconductor/, "Realtek", nic)
 		gsub(/davicom semiconductor/, "Davicom", nic)
 		# The doublequotes are necessary because of the pipes in the variable.
@@ -2810,16 +2812,20 @@ get_networking_data()
 		gsub(/,/, " ", nic)
 		gsub(/^ +| +$/, "", nic)
 		gsub(/ [ \t]+/, " ", nic)
-
-		eth[nic]++
-		while (getline && !/^$/) {
-			if (/I\/O/) {
+		# construct a unique string ending for each chipset detected, this allows for
+		# multiple instances of the same exact chipsets, ie, dual gigabit 
+		nic = nic "~~" counter++
+		aPciBusId[nic] = gensub(/(^[0-9a-f:\.]+) [^:]+: .+$/,"\\1","g",$0)
+		# I do not understand why incrementing a string index makes sense? 
+		eth[nic]++ 
+		while ( getline && !/^$/ ) {
+			if ( /I\/O/ ) {
 				ports[nic] = ports[nic] $4 " "
 			}
-			if (/driver in use/) {
+			if ( /driver in use/ ) {
 				drivers[nic] = drivers[nic] gensub(/(.*): (.*)/,"\\2","g",$0) ""
 			}
-			else if (/kernel modules/) {
+			else if ( /kernel modules/ ) {
 				modules[nic] = modules[nic] gensub(/(.*): (.*)/,"\\2","g",$0) ""
 			}
 		}
@@ -2831,33 +2837,30 @@ get_networking_data()
 			useDrivers=""
 			usePorts=""
 			useModules=""
-			if (eth[i]>1) {
-				a[j]=eth[i]"x "i
-				## note: this loses the plural ports case, is it needed anyway?
-				if (ports[i] != "") {
-					usePorts=ports[i]
-				}
-				if (drivers[i] != "") {
-					useDrivers=drivers[i]
-				}
-				if (modules[i] != "" ) {
-					useModules = modules[i]
-				}
+			usePciBusId=""
+			if ( eth[i] > 1 ) {
+				a[j] = eth[i] "x " i
 			}
 			else {
-				a[j]=i
-				if (ports[i] != "") {
-					usePorts=ports[i]
-				}
-				if (drivers[i] != "") {
-					useDrivers=drivers[i]
-				}
-				if (modules[i] != "" ) {
-					useModules = modules[i]
-				}
+				a[j] = i
+			}	
+			## note: this loses the plural ports case, is it needed anyway?
+			if ( ports[i] != "" ) {
+				usePorts = ports[i]
+			}
+			if ( drivers[i] != "" ) {
+				useDrivers = drivers[i]
+			}
+			if ( modules[i] != "" ) {
+				useModules = modules[i]
+			}
+			if ( aPciBusId[i] != "" ) {
+				usePciBusId = aPciBusId[i]
 			}
 			# create array primary item for master array
-			print a[j] "," useDrivers "," usePorts "," useModules
+			# and strip out the counter again, this handled dual cards with same chipset
+			sub( /~~[0-9]+$/, "", a[j] )
+			print a[j] "," useDrivers "," usePorts "," useModules, "," usePciBusId
 			j++
 		}
 	}') )
@@ -4004,7 +4007,7 @@ print_short_data()
 print_audio_data()
 {
 	eval $LOGFS
-	local i='' card_one='Card-1' audio_data='' a_audio_data='' port_data=''
+	local i='' card_one='Card-1' audio_data='' a_audio_data='' port_data='' pci_bus_id=''
 	local a_audio_working='' alsa_driver='' alsa_data='' port_plural='' module_version=''
 	# set A_AUDIO_DATA and get alsa data
 	get_audio_data
@@ -4035,7 +4038,10 @@ print_audio_data()
 			fi
 			port_data=" ${C1}at port$port_plural${C2} ${a_audio_working[2]}"
 		fi
-		audio_data="${C1}$card_one${C2} ${a_audio_working[0]}$alsa_driver$port_data"
+		if [[ -n ${a_audio_working[4]} && $B_EXTRA_DATA == 'true' ]];then
+			pci_bus_id="${C1}BusID:${C2} ${a_audio_working[4]}"
+		fi
+		audio_data="${C1}$card_one${C2} ${a_audio_working[0]}$alsa_driver$port_data$pci_bus_id"
 		audio_data=$( create_print_line "Audio:" "$audio_data" )
 		print_screen_output "$audio_data"
 		i=0 ## loop starts with 1 by auto-increment so it only shows cards > 1
@@ -4048,6 +4054,7 @@ print_audio_data()
 			alsa_driver=''
 			port_plural=''
 			module_version=''
+			pci_bus_id=''
 			if [[ -n ${a_audio_working[3]} && $B_EXTRA_DATA == 'true' ]];then
 				module_version=$( print_module_version "${a_audio_working[3]}" )
 			fi
@@ -4061,8 +4068,11 @@ print_audio_data()
 				fi
 				port_data=" ${C1}at port$port_plural${C2} ${a_audio_working[2]}"
 			fi
+			if [[ -n ${a_audio_working[4]} && $B_EXTRA_DATA == 'true' ]];then
+				pci_bus_id="${C1}BusID:${C2} ${a_audio_working[4]}"
+			fi
 			if [[ -n ${a_audio_working[0]} ]];then
-				audio_data="${C1}Card-$(( $i + 1 ))${C2} ${a_audio_working[0]}$alsa_driver$port_data"
+				audio_data="${C1}Card-$(( $i + 1 ))${C2} ${a_audio_working[0]}$alsa_driver$port_data$pci_bus_id"
 			fi
 			if [[ -n $audio_data ]];then
 				audio_data=$( create_print_line " " "$audio_data" )
@@ -4441,7 +4451,7 @@ print_networking_data()
 {
 	eval $LOGFS
 	local i='' card_one='Card-1' network_data='' a_network_working='' port_data='' driver_data=''
-	local card_string='' port_plural='' module_version=''
+	local card_string='' port_plural='' module_version='' pci_bus_id=''
 	# set A_NETWORK_DATA
 	get_networking_data
 
@@ -4467,8 +4477,12 @@ print_networking_data()
 			fi
 			port_data=" ${C1}at port$port_plural${C2} ${a_network_working[2]}"
 		fi
+		if [[ -n ${a_network_working[4]} && $B_EXTRA_DATA == 'true' ]];then
+			pci_bus_id="${C1}BusID:${C2} ${a_network_working[4]}"
+		fi
+		
 		card_string=''
-		network_data="${C1}$card_one${C2} ${a_network_working[0]}$driver_data$port_data"
+		network_data="${C1}$card_one${C2} ${a_network_working[0]}$driver_data$port_data$pci_bus_id"
 		network_data=$( create_print_line "Network:" "$network_data" )
 		print_screen_output "$network_data"
 		i=0 ## loop starts with 1 by auto-increment so it only shows cards > 1
@@ -4481,6 +4495,7 @@ print_networking_data()
 			driver_data=''
 			port_plural=''
 			module_version=''
+			pci_bus_id=''
 			if [[ -n ${a_network_working[1]} && $B_EXTRA_DATA == 'true' ]];then
 				module_version=$( print_module_version "${a_network_working[1]}" )
 			fi
@@ -4493,7 +4508,10 @@ print_networking_data()
 				fi
 				port_data=" ${C1}at port$port_plural${C2} ${a_network_working[2]}"
 			fi
-			network_data="${C1}Card-$(( $i + 1 ))${C2} ${a_network_working[0]}$driver_data$port_data"
+			if [[ -n ${a_network_working[4]} && $B_EXTRA_DATA == 'true' ]];then
+				pci_bus_id="${C1}BusID:${C2} ${a_network_working[4]}"
+			fi
+			network_data="${C1}Card-$(( $i + 1 ))${C2} ${a_network_working[0]}$driver_data$port_data$pci_bus_id"
 			network_data=$( create_print_line " " "$network_data" )
 			print_screen_output "$network_data"
 		done
