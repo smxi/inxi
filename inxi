@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.3.14
-####  Date: February 6 2010
+####  version: 1.4.0
+####  Date: February 12 2010
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -170,6 +170,7 @@ COLOR_SCHEME=''
 COLOR_SCHEME_SET=''
 IRC_CLIENT=''
 IRC_CLIENT_VERSION=''
+PS_COUNT=5
 REPO_DATA=''
 REPO_FILE_ID=''
 
@@ -186,6 +187,7 @@ A_HDD_DATA=''
 A_INTERFACES_DATA=''
 A_NETWORK_DATA=''
 A_PARTITION_DATA=''
+A_PS_DATA=''
 A_SENSORS_DATA=''
 A_UNMOUNTED_PARTITION_DATA=''
 A_X_DATA=''
@@ -227,6 +229,8 @@ B_SHOW_NETWORK='false'
 # either -v > 3 or -P will show partitions
 B_SHOW_PARTITIONS='false'
 B_SHOW_PARTITIONS_FULL='false'
+B_SHOW_PS_CPU_DATA='false'
+B_SHOW_PS_MEM_DATA='false'
 B_SHOW_REPOS='false'
 B_SHOW_SENSORS='false'
 # triggers only short inxi output
@@ -775,6 +779,9 @@ error_handler()
 		12)
 			error_message="the svn branch download url: $2\nappears to be empty currently. Make sure there is an actual svn branch version\nactive before you try this again. Check http://code.google.com/p/inxi\nto verify the branch status."
 			;;
+		13)
+			error_message="unsupported processes extra argument: $2\nMust be one of these: c m cm OR any of those + [1-20] "
+			;;
 		*)	error_message="error unknown: $@"
 			set -- 99
 			;;
@@ -1029,13 +1036,13 @@ get_parameters()
 	# the short form only runs if no args output args are used
 	# no need to run through these if there are no args
 	if [[ -n $1 ]];then
-		while getopts Ac:CdDfFGhHiIlNopPrsSuv:Vx%@:${update_flags} opt
+		while getopts Ac:CdDfFGhHiIlNopPrsSt:uv:Vx%@:${update_flags} opt
 		do
 			case $opt in
 			A)	B_SHOW_AUDIO='true'
 				use_short='false'
 				;;
-			c)	if [[ -n $( egrep '^[0-9][0-9]?$' <<< $OPTARG ) ]];then
+			c)	if [[ -n $( grep -E '^[0-9][0-9]?$' <<< $OPTARG ) ]];then
 					COLOR_SCHEME_SET='true'
 					## note: not sure about this, you'd think user values should be overridden, but
 					## we'll leave this for now
@@ -1096,17 +1103,33 @@ get_parameters()
 			r)	B_SHOW_REPOS='true'
 				use_short='false'
 				;;
+			
 			s)	B_SHOW_SENSORS='true'
 				use_short='false'
 				;;
 			S)	B_SHOW_SYSTEM='true'
 				use_short='false'
 				;;
+			t)	if [[ -n $( grep -E '^(c|m|cm|mc)([1-9]|1[0-9]|20)?$' <<< $OPTARG ) ]];then
+					use_short='false'
+					if [[ -n $( grep -E '[0-9]+' <<< $OPTARG ) ]];then
+						PS_COUNT=$( grep -Eo '[0-9]+' <<< $OPTARG )
+					fi
+					if [[ -n $( grep 'c' <<< $OPTARG ) ]];then
+						B_SHOW_PS_CPU_DATA='true'
+					fi
+					if [[ -n $( grep 'm' <<< $OPTARG ) ]];then
+						B_SHOW_PS_MEM_DATA='true'
+					fi
+				else
+					error_handler 13 "$OPTARG"
+				fi
+				;;
 			u)	B_SHOW_UUIDS='true'
 				B_SHOW_PARTITIONS='true'
 				use_short='false'
 				;;
-			v)	if [[ -n $( egrep "^[0-9][0-9]?$" <<< $OPTARG ) && $OPTARG -le $VERBOSITY_LEVELS ]];then
+			v)	if [[ -n $( grep -E "^[0-9][0-9]?$" <<< $OPTARG ) && $OPTARG -le $VERBOSITY_LEVELS ]];then
 					VERBOSITY_LEVEL="$OPTARG"
 					if [[ $OPTARG -gt 0 ]];then
 						use_short='false'
@@ -1131,7 +1154,7 @@ get_parameters()
 			## debuggers and testing tools
 			%)	B_HANDLE_CORRUPT_DATA='true'
 				;;
-			@)	if [[ -n $( egrep "^([1-9]|10)$" <<< $OPTARG ) ]];then
+			@)	if [[ -n $( grep -E "^([1-9]|10)$" <<< $OPTARG ) ]];then
 					DEBUG=$OPTARG
 					exec 2>&1
 					# switch on logging only for -@ 8-10
@@ -1240,6 +1263,9 @@ show_options()
 	print_screen_output "-s  Show sensors output (if sensors installed/configured): mobo/cpu/gpu temp; detected fan speeds."
 	print_screen_output "    Gpu temp only for Fglrx/Nvidia drivers. Nvidia shows screen number for > 1 screens."
 	print_screen_output "-S  Show System information: host name, kernel, distro"
+	print_screen_output "-t  Show processes. Requires extra options: c (cpu) m (memory) cm (cpu+memory). If followed"
+	print_screen_output "    by numbers 1-20, shows that number of top process for each selection (default: $PS_COUNT): -t cm10"
+	print_screen_output "    Make sure to have no space between letters and numbers (cm10 -right, cm 10 - wrong)."
 	print_screen_output "-u  Show partition UUIDs. Default: short partition -P. For full -p output, use: -pu (or -plu)."
 	print_screen_output "-v  Script verbosity levels. Verbosity level number is required."
 	print_screen_output "    Supported levels: 0-${VERBOSITY_LEVELS} Example: $SCRIPT_NAME -v 4"
@@ -3171,6 +3197,63 @@ get_partition_data_advanced()
 	eval $LOGFE
 }
 
+# args: $1 - type +vsz/%cpu
+get_ps_data()
+{
+	eval $LOGFS
+	local array_length='' reorder_temp='' i=0
+	IFS=$'\n'
+	# note that inxi can use a lot of cpu, and can actually show up here as the script runs
+	A_PS_DATA=( $( ps aux --sort $1 | grep -v 'inxi' | tail -n $PS_COUNT | gawk '
+	BEGIN {
+		IGNORECASE=1
+		appName=""
+		appPath=""
+		appStarterName=""
+		appStarterPath=""
+		cpu=""
+		mem=""
+		pid=""
+		user=""
+		vsz=""
+	}
+	{
+		cpu=$3
+		mem=$4
+		pid=$2
+		user=$1
+		vsz=sprintf( "%.2f", $6/1024 )
+		if ( $12 ~ /^\// ){
+			appStarterPath=$11
+			appPath=$12
+			appStarterName=gensub( /(\/.*\/)(.*)/, "\\2", "1", $11 )
+			appName=gensub( /(\/.*\/)(.*)/, "\\2", "1", $12 )
+		}
+		else {
+			appStarterPath=$11
+			appPath=$11
+			appStarterName=gensub( /(\/.*\/)(.*)/, "\\2", "1", $11 )
+			appName=gensub( /(\/.*\/)(.*)/, "\\2", "1", $11 )
+		}
+		print appName "," appPath "," appStarterName "," appStarterPath "," cpu "," mem "," pid "," vsz "," user
+	}
+	' ) )
+	# make the array ordered highest to lowest so output looks the way we expect it to
+	array_length=${#A_PS_DATA[@]}; 
+	while (( $i < $array_length/2 ))
+	do 
+		reorder_temp=${A_PS_DATA[i]}
+		A_PS_DATA[i]=${A_PS_DATA[$array_length-$i-1]}
+		A_PS_DATA[$array_length-$i-1]=$reorder_temp
+		(( i++ ))
+	done 
+
+	IFS="$ORIGINAL_IFS"
+	
+# 	echo ${A_PS_DATA[@]}
+	eval $LOGFE
+}
+
 # Repos will be added as we get distro package manager data to create the repo data. 
 # This method will output the file name also, which is useful to create output that's 
 # neat and readable.
@@ -3916,6 +3999,9 @@ print_it_out()
 		fi
 		if [[ $B_SHOW_REPOS == 'true' ]];then
 			print_repo_data
+		fi
+		if [[ $B_SHOW_PS_CPU_DATA == 'true' || $B_SHOW_PS_MEM_DATA == 'true' ]];then
+			print_ps_data
 		fi
 		if [[ $VERBOSITY_LEVEL -ge 1 || $B_SHOW_INFO == 'true' ]];then
 			print_info_data
@@ -4683,9 +4769,91 @@ print_partition_data()
 	eval $LOGFE
 }
 
+print_ps_data()
+{
+	eval $LOGFS
+	
+	local b_print_first='true' 
+
+	if [[ $B_SHOW_PS_CPU_DATA == 'true' ]];then
+		get_ps_data '%cpu'
+		print_ps_item 'cpu' "$b_print_first"
+		b_print_first='false' 
+	fi
+	if [[ $B_SHOW_PS_MEM_DATA == 'true' ]];then
+		get_ps_data '+rss'
+		print_ps_item 'mem' "$b_print_first"
+	fi
+	
+	eval $LOGFE
+}
+
+# args: $1 - cpu/mem; $2 true/false
+print_ps_item()
+{
+	eval $LOGFS
+	local a_ps_data='' ps_data='' line_starter='' line_start_data='' full_line=''
+	local app_name='' app_pid='' app_starter_name='' app_cpu='' app_vsz='' app_mem=''
+	local b_print_first=$2 line_counter=0 i=0 count_nu='' extra_data=''
+	
+	case $1 in
+		cpu)
+			line_start_data="${C1}CPU - top ${C2}$PS_COUNT${C1} in system (% used):${C2}"
+			;;
+		mem)
+			line_start_data="${C1}Memory - top ${C2}$PS_COUNT${C1} in system (MB / % used):${C2}"
+			;;
+	esac
+	
+	if [[ $b_print_first == 'true' ]];then
+		line_starter='Processes:'
+	else
+		line_starter=' '
+	fi
+	# print appName "," appPath "," appStarterName "," appStarterPath "," cpu "," mem "," pid "," vsz "," user
+	ps_data=$( create_print_line "$line_starter" "$line_start_data" )
+	print_screen_output "$ps_data"
+
+	for (( i=0; i < ${#A_PS_DATA[@]}; i++ ))
+	do
+		IFS=","
+		a_ps_data=(${A_PS_DATA[i]})
+		IFS="$ORIGINAL_IFS"
+		app_name=" ${C1}app:${C2} ${a_ps_data[0]}"
+		if [[ ${a_ps_data[0]} != ${a_ps_data[2]} ]];then
+			app_name="$app_name ${C1}(started by:${C2} ${a_ps_data[2]}${C1})${C2}"
+		fi
+		app_pid=" ${C1}pid:${C2} ${a_ps_data[6]}"
+		#  ${C1}user:${C2} ${a_ps_data[8]}
+		case $1 in
+			cpu)
+				app_cpu=" ${C1}cpu:${C2} ${a_ps_data[4]}%"
+				if [[ $B_EXTRA_DATA == 'true' ]];then
+					extra_data=" ${C1}mem:${C2} ${a_ps_data[7]}MB (${a_ps_data[5]}%)${C2}"
+				fi
+				;;
+			mem)
+				app_vsz=" ${C1}mem:${C2} ${a_ps_data[7]}MB (${a_ps_data[5]}%)${C2}"
+				if [[ $B_EXTRA_DATA == 'true' ]];then
+					extra_data=" ${C1}cpu:${C2} ${a_ps_data[4]}%"
+				fi
+				;;
+		esac
+		(( line_counter++ ))
+		count_nu="${C1}$line_counter -${C2}"
+		full_line="$count_nu$app_cpu$app_vsz$app_name$app_pid$extra_data"
+		ps_data=$( create_print_line " " "$full_line" )
+		print_screen_output "$ps_data"
+	done
+	
+	eval $LOGFE
+}
+
+
 # currently only apt using distros support this feature, but over time we can add others
 print_repo_data()
 {
+	eval $LOGFS
 	local repo_count=0 repo_line='' file_name='' file_content='' file_name_holder=''
 	local repo_full='' b_print_next_line='false' 
 	
@@ -4736,6 +4904,7 @@ print_repo_data()
 		repo_full=$( create_print_line "Repos:" "${C1}Error:${C2} $SCRIPT_NAME does not support this feature for your distro yet." )
 		print_screen_output "$repo_full"
 	fi
+	eval $LOGFE
 }
 
 print_sensors_data()
