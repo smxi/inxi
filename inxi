@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.4.2
-####  Date: February 13 2010
+####  version: 1.4.3
+####  Date: February 14 2010
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -171,6 +171,7 @@ COLOR_SCHEME_SET=''
 IRC_CLIENT=''
 IRC_CLIENT_VERSION=''
 PS_COUNT=5
+PS_THROTTLED=''
 REPO_DATA=''
 REPO_FILE_ID=''
 
@@ -3198,30 +3199,33 @@ get_partition_data_advanced()
 	eval $LOGFE
 }
 
-# args: $1 - type -rss/%cpu Note: +rss not supported on older systems, like Etch
+# args: $1 - type cpu/mem 
 get_ps_data()
 {
 	eval $LOGFS
-	local array_length='' reorder_temp='' i=0 head_tail=''
+	local array_length='' reorder_temp='' i=0 head_tail='' sort_type=''
 	
 	# bummer, have to make it more complex here because of reverse sort
 	# orders in output, pesky lack of support of +rss in old systems
 	case $1 in
-		-rss)
+		mem)
 			head_tail='head'
+			sort_type='-rss'
 			;;
-		%cpu)
+		cpu)
 			head_tail='tail'
+			sort_type='%cpu'
 			;;
 	esac
 	
 	# throttle potential irc abuse
 	if [[ $B_RUNNING_IN_SHELL != 'true' && $PS_COUNT -gt 5 ]];then
+		PS_THROTTLED=$PS_COUNT
 		PS_COUNT=5
 	fi
 	IFS=$'\n'
 	# note that inxi can use a lot of cpu, and can actually show up here as the script runs
-	A_PS_DATA=( $( ps aux --sort $1 | grep -Ev "($SCRIPT_NAME|%CPU)" | $head_tail -n $PS_COUNT | gawk '
+	A_PS_DATA=( $( ps aux --sort $sort_type | grep -Ev "($SCRIPT_NAME|%CPU)" | $head_tail -n $PS_COUNT | gawk '
 	BEGIN {
 		IGNORECASE=1
 		appName=""
@@ -3258,7 +3262,7 @@ get_ps_data()
 	# make the array ordered highest to lowest so output looks the way we expect it to
 	# this isn't necessary for -rss, and we can't make %cpu ordered the other way, so
 	# need to reverse it here. -rss is used because on older systems +rss is not supported
-	if [[ $1 == '%cpu' ]];then
+	if [[ $1 == 'cpu' ]];then
 		array_length=${#A_PS_DATA[@]}; 
 		while (( $i < $array_length/2 ))
 		do 
@@ -4797,12 +4801,12 @@ print_ps_data()
 	local b_print_first='true' 
 
 	if [[ $B_SHOW_PS_CPU_DATA == 'true' ]];then
-		get_ps_data '%cpu'
+		get_ps_data 'cpu'
 		print_ps_item 'cpu' "$b_print_first"
 		b_print_first='false' 
 	fi
 	if [[ $B_SHOW_PS_MEM_DATA == 'true' ]];then
-		get_ps_data '-rss'
+		get_ps_data 'mem'
 		print_ps_item 'mem' "$b_print_first"
 	fi
 	
@@ -4814,15 +4818,18 @@ print_ps_item()
 {
 	eval $LOGFS
 	local a_ps_data='' ps_data='' line_starter='' line_start_data='' full_line=''
-	local app_name='' app_pid='' app_cpu='' app_mem=''
+	local app_name='' app_pid='' app_cpu='' app_mem='' throttled=''
 	local b_print_first=$2 line_counter=0 i=0 count_nu='' extra_data=''
 	
+	if [[ -n $PS_THROTTLED ]];then
+		throttled=" ${C1} - throttled from${C2} $PS_THROTTLED"
+	fi
 	case $1 in
 		cpu)
-			line_start_data="${C1}CPU - top${C2} $PS_COUNT ${C1}in system (% used):${C2}"
+			line_start_data="${C1}CPU - % used - top ${C2} $PS_COUNT ${C1}active$throttled "
 			;;
 		mem)
-			line_start_data="${C1}Memory - top${C2} $PS_COUNT ${C1}in system (MB / % used):${C2}"
+			line_start_data="${C1}Memory - MB / % used - top ${C2} $PS_COUNT ${C1}active$throttled"
 			;;
 	esac
 	
@@ -4831,7 +4838,8 @@ print_ps_item()
 	else
 		line_starter=' '
 	fi
-	# print appName "," appPath "," appStarterName "," appStarterPath "," cpu "," mem "," pid "," vsz "," user
+	
+	# appName, appPath, appStarterName, appStarterPath, cpu, mem, pid, vsz, user
 	ps_data=$( create_print_line "$line_starter" "$line_start_data" )
 	print_screen_output "$ps_data"
 
