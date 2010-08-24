@@ -1,7 +1,7 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.4.13
+####  version: 1.4.14
 ####  Date: August 24 2010
 ########################################################################
 ####  SPECIAL THANKS
@@ -2523,8 +2523,13 @@ get_graphics_x_data()
 		/version:/ {
 			print $NF
 		}' )
+		# this gives better output than the failure last case, which would only show:
+		# for example: X.org: 1.9 instead of: X.org: 1.9.0
 		if [[ -z $x_version ]];then
-			x_version=$(xdpyinfo | gawk -F': +' '
+			x_version=$( get_x_version )
+		fi
+		if [[ -z $x_version ]];then
+			x_version=$( xdpyinfo | gawk -F': +' '
 			BEGIN {
 				IGNORECASE=1
 			}
@@ -2543,12 +2548,39 @@ get_graphics_x_data()
 		
 		A_X_DATA[0]="$x_vendor"
 		A_X_DATA[1]="$x_version"
-
-		#X -version 2>&1 | gawk '/^X Window System Version/ { print $5 }'
-		#This method could be used in the future to detect X when X is not running,
-		#however currently inxi ignores X checks when X is not found.
+	else
+		x_version=$( get_x_version )
+		if [[ -n $x_version ]];then
+			x_vendor='X.org'
+			A_X_DATA[0]="$x_vendor"
+			A_X_DATA[1]="$x_version"
+		fi
 	fi
 	log_function_data "A_X_DATA: ${A_X_DATA[@]}"
+	eval $LOGFE
+}
+# if other tests fail, try this one, this works for root, out of X also
+get_x_version()
+{
+	eval $LOGFS
+	local x_exists=$( type -p X )
+	local x_version=''
+	
+	if [[ -n $x_exists ]];then
+		# note: MUST be this syntax: X -version 2>&1
+		# otherwise X -version overrides everything and this comes out null.
+		# two knowns id strings: X.Org X Server 1.7.5 AND Window System Version 1.7.5
+		#X -version 2>&1 | gawk '/^X Window System Version/ { print $5 }'
+		x_version=$( X -version 2>&1 | gawk '
+		BEGIN {
+			IGNORECASE=1
+		}
+		/x.org x server|X Window System Version/ {
+			print $NF
+		}' )
+	fi
+	echo $x_version
+	log_function_data " x_version: $x_version"
 	eval $LOGFE
 }
 
@@ -4399,7 +4431,7 @@ print_cpu_flags_full()
 print_gfx_data()
 {
 	eval $LOGFS
-	local gfx_data='' i='' card_one='Card' root_alert=''
+	local gfx_data='' i='' card_one='Card' root_alert='' root_x_string=''
 	local screen_resolution="$( get_graphics_res_data )"
 	local b_is_mesa='false' display_full_string=''
 	# set A_GFX_CARD_DATA
@@ -4428,10 +4460,19 @@ print_gfx_data()
 		fi
 		display_full_string="${C1}$x_vendor${C2} $x_version ${C1}Res:${C2} ${screen_resolution} "
 	else
-		if [[ $B_X_RUNNING == 'true' && $B_ROOT == 'true' ]];then
-			root_alert="${C1}Gfx Data:${C2} N/A for root user"
+		root_x_string=''
+		if [[ $B_ROOT == 'true' ]];then
+			root_x_string='for root '
 		fi
-		display_full_string="${C1}tty res:${C2} ${screen_resolution} $root_alert"
+		if [[ $B_X_RUNNING != 'true' ]];then
+			root_x_string="${root_x_string}out of X"
+		fi
+		if [[ -n $x_vendor && -n $x_version ]];then
+			display_full_string="${C1}$x_vendor${C2} $x_version ${C1}Res:${C2} ${screen_resolution} ${C1}Gfx Data:${C2} N/A $root_x_string"
+		elif [[ $B_X_RUNNING == 'true' && $B_ROOT == 'true' ]];then
+			root_alert="${C1}Gfx Data:${C2} N/A for root user"
+			display_full_string="${C1}tty res:${C2} ${screen_resolution} $root_alert"
+		fi
 	fi
 
 	if [[ ${#A_GFX_CARD_DATA[@]} -gt 1 ]];then
