@@ -1,7 +1,7 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.4.19
+####  version: 1.4.20
 ####  Date: October 7 2010
 ########################################################################
 ####  SPECIAL THANKS
@@ -2465,30 +2465,45 @@ get_graphics_glx_data()
 get_graphics_res_data()
 {
 	eval $LOGFS
-	local screen_resolution='' 
+	local screen_resolution='' xdpy_data='' screens_count=0
 
 	if [[ $B_X_RUNNING == 'true' && $B_ROOT != 'true' ]];then
 		# Added the two ?'s , because the resolution is now reported without spaces around the 'x', as in
 		# 1400x1050 instead of 1400 x 1050. Change as of X.org version 1.3.0
-		screen_resolution=$( xrandr | gawk '
-		/\*/ {
-			res[++m] = gensub(/^.* ([0-9]+) ?x ?([0-9]+)[_ ].* ([0-9\.]+)\*.*$/,"\\1x\\2@\\3hz","g",$0)
-		}
-		END {
-			for (n in res) {
-				if (res[n] ~ /^[[:digit:]]+x[[:digit:]]+/) {
-					line = line ? line ", " res[n] : res[n]
+		xdpy_data="$( xdpyinfo )"
+		xdpy_count=$( grep -c 'dimensions' <<< "$xdpy_data" )
+		# we get a bit more info from xrandr than xdpyinfo, but xrandr fails to handle
+		# multiple screens from different video cards
+		if [[ $xdpy_count -eq 1 ]];then
+			screen_resolution=$( xrandr | gawk '
+			/\*/ {
+				res[++m] = gensub(/^.* ([0-9]+) ?x ?([0-9]+)[_ ].* ([0-9\.]+)\*.*$/,"\\1x\\2@\\3hz","g",$0)
+			}
+			END {
+				for (n in res) {
+					if (res[n] ~ /^[[:digit:]]+x[[:digit:]]+/) {
+						line = line ? line ", " res[n] : res[n]
+					}
 				}
-			}
-			if (line) {
-				print(line)
-			}
-		}' )
-		if [[ -z $screen_resolution ]];then
-			screen_resolution=$( xdpyinfo | gawk '
-			/dimensions/ {
-				print $2
+				if (line) {
+					print(line)
+				}
 			}' )
+		fi
+		if [[ -z $screen_resolution || $xdpy_count -gt 1 ]];then
+			screen_resolution=$( gawk '
+			BEGIN {
+				IGNORECASE=1
+				screens = ""
+				separator = ""
+			}
+			/dimensions/ {
+				screens = screens $2 separator
+				separator = ", "
+			}
+			END {
+				print screens
+			}' <<< "$xdpy_data" )
 		fi
 	else
 		screen_resolution=$( stty -F $( readlink /proc/$PPID/fd/0 ) size | gawk '{
