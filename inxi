@@ -1,7 +1,7 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.4.81
+####  version: 1.4.82
 ####  Date: April 25 2011
 ########################################################################
 ####  SPECIAL THANKS
@@ -2384,23 +2384,21 @@ get_graphics_card_data()
 	A_GFX_CARD_DATA=( $( echo "$Lspci_Data" | gawk -F': ' '
 	BEGIN {
 		IGNORECASE=1
+		nic=""
 	}
 	/vga compatible controller/ {
 		gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF)
 		gsub(/,/, " ", $NF)
 		gsub(/^ +| +$/, "", $NF)
 		gsub(/ [ \t]+/, " ", $NF)
-		print $NF
+		nic=gensub(/^([0-9a-f:\.]+) (.+)$/,"\\1","",$1)
+		print $NF "," nic
 	}' ) )
 	IFS="$ORIGINAL_IFS"
 # 	for (( i=0; i < ${#A_GFX_CARD_DATA[@]}; i++ ))
 # 	do
 # 		A_GFX_CARD_DATA[i]=$( sanitize_characters BAN_LIST_NORMAL "${A_GFX_CARD_DATA[i]}" )
 # 	done
-	# handle cases where card detection fails, like in PS3, where lspci gives no output, or headless boxes..
-	if [[ ${#A_GFX_CARD_DATA[@]} -eq 0 ]];then
-		A_GFX_CARD_DATA[0]='Failed to Detect Video Card!'
-	fi
 
 	# GFXMEM is UNUSED at the moment, because it shows AGP aperture size, which is not necessarily equal to GFX memory..
 	# GFXMEM="size=[$(echo "$Lspci_Data" | gawk '/VGA/{while (!/^$/) {getline;if (/size=[0-9][0-9]*M/) {size2=gensub(/.*\[size=([0-9]+)M\].*/,"\\1","g",$0);if (size<size2){size=size2}}}}END{print size2}')M]"
@@ -4382,7 +4380,7 @@ print_audio_data()
 		fi
 
 # 		if [[ -n ${a_audio_working[2]} ]];then
-# 			port_data=" ${C1}at port${C2} ${a_audio_working[2]}"
+# 			port_data=" ${C1}port${C2} ${a_audio_working[2]}"
 # 		fi
 		# this should only trigger if the $FILE_ASOUND_DEVICE data is used, not lspci -nn
 		if [[ -n ${a_audio_working[3]} && $B_EXTRA_DATA == 'true' ]];then
@@ -4399,10 +4397,10 @@ print_audio_data()
 			if [[ $( wc -w <<< ${a_audio_working[2]} ) -gt 1 ]];then
 				port_plural='s'
 			fi
-			port_data=" ${C1}at port$port_plural${C2} ${a_audio_working[2]}"
+			port_data=" ${C1}port$port_plural${C2} ${a_audio_working[2]}"
 		fi
 		if [[ -n ${a_audio_working[4]} && $B_EXTRA_DATA == 'true' ]];then
-			pci_bus_id=" ${C1}BusID:${C2} ${a_audio_working[4]}"
+			pci_bus_id=" ${C1}busID:${C2} ${a_audio_working[4]}"
 		fi
 		audio_data="${C1}$card_one${C2} ${a_audio_working[0]}$alsa_driver$port_data$pci_bus_id"
 		audio_data=$( create_print_line "Audio:" "$audio_data" )
@@ -4431,10 +4429,10 @@ print_audio_data()
 				if [[ $( wc -w <<< ${a_audio_working[2]} ) -gt 1 ]];then
 					port_plural='s'
 				fi
-				port_data=" ${C1}at port$port_plural${C2} ${a_audio_working[2]}"
+				port_data=" ${C1}port$port_plural${C2} ${a_audio_working[2]}"
 			fi
 			if [[ -n ${a_audio_working[4]} && $B_EXTRA_DATA == 'true' ]];then
-				pci_bus_id=" ${C1}BusID:${C2} ${a_audio_working[4]}"
+				pci_bus_id=" ${C1}busID:${C2} ${a_audio_working[4]}"
 			fi
 			if [[ -n ${a_audio_working[0]} ]];then
 				audio_data="${C1}Card-$(( $i + 1 ))${C2} ${a_audio_working[0]}$alsa_driver$port_data$pci_bus_id"
@@ -4598,9 +4596,9 @@ print_cpu_flags_full()
 print_gfx_data()
 {
 	eval $LOGFS
-	local gfx_data='' i='' card_one='Card' root_alert='' root_x_string=''
+	local gfx_data='' i='' card_id='' root_alert='' root_x_string='' a_gfx_working=''
 	local screen_resolution="$( get_graphics_res_data )"
-	local b_is_mesa='false' display_full_string=''
+	local b_is_mesa='false' display_full_string='' gfx_bus_id='' gfx_card_data=''
 	# set A_GFX_CARD_DATA
 	get_graphics_card_data
 	# set A_X_DATA
@@ -4620,7 +4618,6 @@ print_gfx_data()
 	if [[ -z $screen_resolution ]];then
 		screen_resolution='N/A'
 	fi
-
 	if [[ $B_X_RUNNING == 'true' && $B_ROOT != 'true' ]];then
 		if [[ -z $x_vendor || -z $x_version ]];then
 			x_vendor='X-Vendor: N/A'
@@ -4642,16 +4639,33 @@ print_gfx_data()
 		fi
 	fi
 
-	if [[ ${#A_GFX_CARD_DATA[@]} -gt 1 ]];then
-		i=1
-		while [[ -n ${A_GFX_CARD_DATA[i]} && $i -le 4 ]]
+	if [[ ${#A_GFX_CARD_DATA[@]} -gt 0 ]];then
+		for (( i=0; i < ${#A_GFX_CARD_DATA[@]}; i++ ))
 		do
-			gfx_data="$gfx_data ${C1}Card-$(($i+1))${C2} ${A_GFX_CARD_DATA[i]}"
-			((i++))
+			IFS=","
+			a_gfx_working=( ${A_GFX_CARD_DATA[i]} )
+			IFS="$ORIGINAL_IFS"
+			gfx_bus_id=''
+			gfx_card_data=${a_gfx_working[0]}
+			if [[ $B_EXTRA_DATA == 'true' ]];then
+				if [[ -n ${a_gfx_working[1]} ]];then
+					gfx_bus_id=" ${C1}busID:${C2} ${a_gfx_working[1]}"
+				else
+					gfx_bus_id=" ${C1}busID:${C2} N/A"
+				fi
+			fi
+			if [[ ${#A_GFX_CARD_DATA[@]} -gt 1 ]];then
+				card_id="Card-$(($i+1)):"
+			else
+				card_id='Card:'
+			fi
+			gfx_data="$gfx_data${C1}$card_id${C2} $gfx_card_data$gfx_bus_id "
 		done
-		card_one='Card-1'
+	# handle cases where card detection fails, like in PS3, where lspci gives no output, or headless boxes..
+	else
+		gfx_data="${C1}Card:${C2} Failed to Detect Video Card! "
 	fi
-	gfx_data=$( create_print_line "Graphics:" "${C1}$card_one${C2} ${A_GFX_CARD_DATA[0]}${gfx_data} $display_full_string" )
+	gfx_data=$( create_print_line "Graphics:" "${gfx_data}$display_full_string" )
 	print_screen_output "$gfx_data"
 
 # 	if [[ -z $glx_renderer || -z $glx_version ]];then
@@ -4854,7 +4868,7 @@ print_networking_data()
 			if [[ $( wc -w <<< ${a_network_working[2]} ) -gt 1 ]];then
 				port_plural='s'
 			fi
-			port_data=" ${C1}at port$port_plural${C2} ${a_network_working[2]}"
+			port_data=" ${C1}port$port_plural${C2} ${a_network_working[2]}"
 		fi
 		if [[ -n ${a_network_working[4]} && $B_EXTRA_DATA == 'true' ]];then
 			pci_bus_id=" ${C1}busID:${C2} ${a_network_working[4]}"
@@ -4886,7 +4900,7 @@ print_networking_data()
 				if [[ $( wc -w <<< ${a_network_working[2]} ) -gt 1 ]];then
 					port_plural='s'
 				fi
-				port_data=" ${C1}at port$port_plural${C2} ${a_network_working[2]}"
+				port_data=" ${C1}port$port_plural${C2} ${a_network_working[2]}"
 			fi
 			if [[ -n ${a_network_working[4]} && $B_EXTRA_DATA == 'true' ]];then
 				pci_bus_id=" ${C1}busID:${C2} ${a_network_working[4]}"
