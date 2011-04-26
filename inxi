@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.4.82
-####  Date: April 25 2011
+####  version: 1.4.83
+####  Date: April 26 2011
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -120,6 +120,8 @@
 ####
 ####  As with all 'rules' there are acceptions, these are noted where used.
 ####
+####  print_screen_output " " # requires space, not null, to avoid error in for example in irssi
+####
 ###################################################################################
 ####	KDE Konversation information.  Moving from dcop(qt3/KDE3) to dbus(qt4/KDE4)
 ###################################################################################
@@ -167,7 +169,6 @@ LANG=C
 ### Variable initializations: null values
 CMDL_MAX=''
 COLOR_SCHEME=''
-COLOR_SCHEME_SET=''
 # override in user config if desired, seems like less than .3 doesn't work as reliably
 CPU_SLEEP='0.3' 
 DEV_DISK_LABEL=''
@@ -201,6 +202,8 @@ A_X_DATA=''
 # flag to allow distro maintainers to turn off update features. If false, turns off
 # -U and -! testing/advanced update options, as well as removing the -U help menu item
 B_ALLOW_UPDATE='true'
+B_COLOR_SCHEME_SET='false'
+B_CONSOLE_IRC='false'
 # triggers full display of cpu flags
 B_CPU_FLAGS_FULL='false'
 # test for dbus irc client
@@ -219,6 +222,7 @@ B_LOG_FULL_DATA='false'
 # kde qdbus
 B_QDBUS='false'
 B_ROOT='false'
+B_RUN_COLOR_SELECTOR='false'
 # Running in a shell? Defaults to false, and is determined later.
 B_RUNNING_IN_SHELL='false'
 # this sets the debug buffer
@@ -300,9 +304,18 @@ DEBUG_BUFFER_INDEX=0
 ## note: the debugger rerouting to /dev/null has been moved to the end of the get_parameters function
 ## so -@[number] debug levels can be set if there is a failure, otherwise you can't even see the errors
 
-# Defaults to 2, make this 1 for normal, 0 for no colorcodes at all. Set to any other valid scheme you like.
+# Defaults to 2, make this 1 for normal, 0 for no colorcodes at all. Use following variables in config 
+# files to change defaults for each type, or global
 # Same as runtime parameter.
-DEFAULT_SCHEME=2
+DEFAULT_COLOR_SCHEME=2
+# Always leave these blank, these are only going to be set in inxi.conf files, that makes testing
+# for user changes easier after sourcing the files
+GLOBAL_COLOR_SCHEME=''
+IRC_COLOR_SCHEME=''
+IRC_CONS_COLOR_SCHEME=''
+IRC_X_TERM_COLOR_SCHEME=''
+CONSOLE_COLOR_SCHEME=''
+VIRT_TERM_COLOR_SCHEME=''
 
 # Default indentation level
 INDENT=10
@@ -322,7 +335,7 @@ KONVI=0
 # NO_CPU_COUNT=0	# Wether or not the string "dual" or similar is found in cpuinfo output. If so, avoid dups.
 # This is a variable that controls how many parameters inxi will parse in a /proc/<pid>/cmdline file before stopping.
 PARAMETER_LIMIT=30
-SCHEME=0 # set default scheme
+SCHEME=0 # set default scheme - do not change this, it's set dynamically
 # this is set in user prefs file, to override dynamic temp1/temp2 determination of sensors output in case
 # cpu runs colder than mobo
 SENSORS_CPU_NO=''
@@ -342,8 +355,8 @@ shopt -u nullglob
 ORIGINAL_IFS="$IFS"
 
 # These two determine separators in single line output, to force irc clients not to break off sections
-SEP1='-'
-SEP2='~'
+SEP1='~'
+SEP2=' '
 
 ### Script names/paths - must be non root writable
 SCRIPT_DATA_DIR="$HOME/.inxi"
@@ -369,17 +382,56 @@ export LC_ALL
 ### Output Colors
 # A more elegant way to have a scheme that doesn't print color codes (neither ANSI nor mIRC) at all. See below.
 unset EMPTY
-#              DGREY    BLACK    RED      DRED     GREEN    DGREEN   YELLOW   DYELLOW
+#             DGREY   BLACK   RED     DRED    GREEN   DGREEN  YELLOW  DYELLOW
 ANSI_COLORS="[1;30m [0;30m [1;31m [0;31m [1;32m [0;32m [1;33m [0;33m"
-IRC_COLORS="   \x0314   \x0301   \x0304   \x0305   \x0309   \x0303   \x0308   \x0307"
-#                            BLUE     DBLUE    MAGENTA  DMAGENTA CYAN     DCYAN    WHITE    GREY     NORMAL
+IRC_COLORS="  \x0314  \x0301  \x0304  \x0305  \x0309  \x0303  \x0308  \x0307"
+#                          BLUE    DBLUE   MAGENTA DMAGENTA CYAN   DCYAN   WHITE   GREY    NORMAL
 ANSI_COLORS="$ANSI_COLORS [1;34m [0;34m [1;35m [0;35m [1;36m [0;36m [1;37m [0;37m [0;37m"
-IRC_COLORS=" $IRC_COLORS    \x0312   \x0302   \x0313   \x0306   \x0311   \x0310   \x0300   \x0315   \x03"
+IRC_COLORS=" $IRC_COLORS    \x0312 \x0302  \x0313  \x0306  \x0311  \x0310  \x0300  \x0315  \x03"
 
 #ANSI_COLORS=($ANSI_COLORS); IRC_COLORS=($IRC_COLORS)
 A_COLORS_AVAILABLE=( DGREY BLACK RED DRED GREEN DGREEN YELLOW DYELLOW BLUE DBLUE MAGENTA DMAGENTA CYAN DCYAN WHITE GREY NORMAL )
+
 # See above for notes on EMPTY
-A_COLOR_SCHEMES=( EMPTY,EMPTY,EMPTY NORMAL,NORMAL,NORMAL BLUE,NORMAL,NORMAL GREEN,YELLOW,NORMAL DYELLOW,NORMAL,NORMAL CYAN,BLUE,NORMAL RED,NORMAL,NORMAL GREEN,NORMAL,NORMAL YELLOW,NORMAL,NORMAL GREEN,DGREEN,NORMAL BLUE,RED,NORMAL BLUE,NORMAL,RED YELLOW,WHITE,GREEN BLUE,NORMAL,GREEN DCYAN,NORMAL,DMAGENTA )
+## note: group 1: 0, 1 are null/normal
+## Following: group 2: generic, light/dark or dark/light; group 3: dark on light; group 4 light on dark; 
+A_COLOR_SCHEMES=( 
+EMPTY,EMPTY,EMPTY 
+NORMAL,NORMAL,NORMAL 
+
+BLUE,NORMAL,NORMAL
+DCYAN,NORMAL,NORMAL
+MAGENTA,NORMAL,NORMAL
+RED,NORMAL,NORMAL
+DGREEN,NORMAL,NORMAL 
+GREEN,DGREEN,NORMAL 
+DYELLOW,NORMAL,NORMAL 
+DCYAN,BLUE,NORMAL 
+DCYAN,RED,NORMAL 
+BLUE,NORMAL,NORMAL
+
+BLACK,DGREY,NORMAL
+DBLUE,DGREY,NORMAL 
+DBLUE,DMAGENTA,NORMAL
+DBLUE,DRED,NORMAL 
+DBLUE,BLACK,NORMAL
+DGREEN,DYELLOW,NORMAL 
+DYELLOW,BLACK,NORMAL
+DMAGENTA,BLACK,NORMAL
+DCYAN,DBLUE,NORMAL
+
+WHITE,GREY,NORMAL
+GREY,WHITE,NORMAL
+CYAN,GREY,NORMAL 
+GREEN,WHITE,NORMAL 
+GREEN,YELLOW,NORMAL 
+YELLOW,WHITE,NORMAL 
+MAGENTA,CYAN,NORMAL 
+MAGENTA,YELLOW,NORMAL
+RED,CYAN,NORMAL
+RED,WHITE,NORMAL 
+)
+
 ## Actual color variables
 C1=''
 C2=''
@@ -420,6 +472,8 @@ main()
 {
 	eval $LOGFS
 	
+	local color_scheme=''
+	
 	# This function just initializes variables
 	initialize_script_data
 
@@ -447,7 +501,7 @@ main()
 	if [[ -s /etc/$SCRIPT_NAME.conf ]];then
 		source /etc/$SCRIPT_NAME.conf
 	fi
-	# Source user config overrides, ~/.inxi/inxi.conf
+	# Source user config variables override /etc/inxi.conf variables
 	if [[ -s $HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf ]];then
 		source $HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf
 	fi
@@ -456,13 +510,11 @@ main()
 	## Konversation 1.2 apparently does not like the $PPID test in get_start_client
 	## So far there is no known way to detect if qt4_konvi is the parent process
 	## this method will infer qt4_konvi as parent
-	
 	get_start_client
 
 	# note: this only works if it's run from inside konversation as a script builtin or something
 	# only do this if inxi has been started as a konversation script, otherwise bypass this	
 #	KONVI=3 ## for testing puroses
-	## 
 	if [[ $KONVI -eq 1 || $KONVI -eq 3 ]];then
 		
 		if [[ $KONVI -eq 1 ]]; then ## dcop Konversation (ie 1.x < 1.2(qt3))	
@@ -499,8 +551,35 @@ main()
 	get_parameters "$@"
 
 	# If no colorscheme was set in the parameter handling routine, then set the default scheme
-	if [[ $COLOR_SCHEME_SET != 'true' ]];then
-		set_color_scheme "$DEFAULT_SCHEME"
+	if [[ $B_COLOR_SCHEME_SET != 'true' ]];then
+		# This let's user pick their color scheme. For IRC, only shows the color schemes, no interactive
+		# The override value only will be placed in user config files. /etc/inxi.conf can also override
+		if [[ $B_RUN_COLOR_SELECTOR == 'true' ]];then 
+			select_default_color_scheme
+		else
+			# set the default, then override as required
+			color_scheme=$DEFAULT_COLOR_SCHEME
+			if [[ -n $GLOBAL_COLOR_SCHEME ]];then
+				color_scheme=$GLOBAL_COLOR_SCHEME
+			else
+				if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
+					if [[ -n $CONSOLE_COLOR_SCHEME && -z $DISPLAY ]];then
+						color_scheme=$CONSOLE_COLOR_SCHEME
+					elif [[ -n $VIRT_TERM_COLOR_SCHEME ]];then
+						color_scheme=$VIRT_TERM_COLOR_SCHEME
+					fi
+				else
+					if [[ -n $IRC_X_TERM_COLOR_SCHEME && $B_CONSOLE_IRC == 'true' && -n $DISPLAY ]];then
+						color_scheme=$IRC_X_TERM_COLOR_SCHEME
+					elif [[ -n $IRC_CONS_COLOR_SCHEME && -z $DISPLAY ]];then
+						color_scheme=$IRC_CONS_COLOR_SCHEME
+					elif [[ -n $IRC_COLOR_SCHEME ]];then
+						color_scheme=$IRC_COLOR_SCHEME
+					fi
+				fi
+			fi
+			set_color_scheme $color_scheme
+		fi
 	fi
 
 	# all the pre-start stuff is in place now
@@ -729,7 +808,7 @@ make_ban_lists()
 set_color_scheme()
 {
 	eval $LOGFS
-	local i='' script_colors='' color_codes=''
+	local i='' a_script_colors='' a_color_codes=''
 
 	if [[ $1 -ge ${#A_COLOR_SCHEMES[@]} ]];then
 		set -- 1
@@ -737,22 +816,147 @@ set_color_scheme()
 	# Set a global variable to allow checking for chosen scheme later
 	SCHEME="$1"
 	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
-		color_codes=( $ANSI_COLORS )
+		a_color_codes=( $ANSI_COLORS )
 	else
-		color_codes=( $IRC_COLORS )
+		a_color_codes=( $IRC_COLORS )
 	fi
 	for (( i=0; i < ${#A_COLORS_AVAILABLE[@]}; i++ ))
 	do
-		eval "${A_COLORS_AVAILABLE[i]}=\"${color_codes[i]}\""
+		eval "${A_COLORS_AVAILABLE[i]}=\"${a_color_codes[i]}\""
 	done
 	IFS=","
-	script_colors=( ${A_COLOR_SCHEMES[$1]} )
+	a_script_colors=( ${A_COLOR_SCHEMES[$1]} )
 	IFS="$ORIGINAL_IFS"
 	# then assign the colors globally
-	C1="${!script_colors[0]}"
-	C2="${!script_colors[1]}"
-	CN="${!script_colors[2]}"
+	C1="${!a_script_colors[0]}"
+	C2="${!a_script_colors[1]}"
+	CN="${!a_script_colors[2]}"
 	# ((COLOR_SCHEME++)) ## note: why is this? ##
+	eval $LOGFE
+}
+
+select_default_color_scheme()
+{
+	eval $LOGFS
+	local spacer='  ' options='' user_selection='' config_variable=''
+	local config_file="$HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf"
+	local irc_clear="[0m"
+	
+	# don't want these printing in irc since they show literally
+	if [[ $B_RUNNING_IN_SHELL != 'true' ]];then
+		irc_clear=''
+	fi
+	# first make output neutral so it's just plain default for console client
+	set_color_scheme "0"
+	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
+		print_screen_output "Welcome to $SCRIPT_NAME! Please select the default $COLOR_SELECTION color scheme."
+		# print_screen_output "You will see this message only one time per user account, unless you set preferences in: /etc/$SCRIPT_NAME.conf"
+		print_screen_output " "
+	fi
+	print_screen_output "Because there is no way to know your $COLOR_SELECTION foreground/background colors, you can"
+	print_screen_output "set your color preferences from color scheme option list below. 0 is no colors, 1 neutral."
+	print_screen_output "After these, there are 3 sets: 1-dark or light backgrounds; 2-light backgrounds; 3-dark backgrounds."
+	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
+		print_screen_output "Please note that this will set the $COLOR_SELECTION preferences only for user: $(whoami)"
+	fi
+	print_screen_output "------------------------------------------------------------------------------"
+	for (( i=0; i < ${#A_COLOR_SCHEMES[@]}; i++ ))
+	do
+		if [[ $i -gt 9 ]];then
+			spacer=' '
+		fi
+		set_color_scheme $i
+		print_screen_output "$irc_clear $i)$spacer${C1}Card:${C2} nVidia G86 [GeForce 8400 GS] ${C1}X.Org${C2} 1.7.7"
+	done
+	set_color_scheme 0
+	
+	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
+		echo -n "[0m"
+		print_screen_output "$irc_clear $i)$spacer Remove all color settings. Restore $SCRIPT_NAME default."
+		print_screen_output "$irc_clear $(($i+1)))$spacer Continue, no changes or config file setting."
+		print_screen_output "$irc_clear $(($i+2)))$spacer Exit, use another terminal, or set manually."
+		print_screen_output "------------------------------------------------------------------------------"
+		print_screen_output "Simply type the number for the color scheme that looks best to your eyes for your $COLOR_SELECTION settings"
+		print_screen_output "and hit ENTER. NOTE: You can bring this option list up by starting $SCRIPT_NAME with option: -c plus one of these numbers:"
+		print_screen_output "94 (console, no X); 95 (terminal, X); 96 (irc, X); 97 (irc, X, in terminal); 98 (irc, no X); 99 (global)."
+		print_screen_output "Your selection(s) will be stored here: $config_file"
+		print_screen_output "Global overrides all individual color schemes. Individual schemes remove the global setting."
+		print_screen_output "------------------------------------------------------------------------------"
+		read user_selection
+		if [[ -n $( grep -Es '^([0-9]+)$' <<< "$user_selection" ) && $user_selection -lt $i ]];then
+			case $COLOR_SELECTION in
+				irc)
+					config_variable='IRC_COLOR_SCHEME'
+					;;
+				irc-console)
+					config_variable='IRC_CONS_COLOR_SCHEME'
+					;;
+				irc-virtual-terminal)
+					config_variable='IRC_X_TERM_COLOR_SCHEME'
+					;;
+				console)
+					config_variable='CONSOLE_COLOR_SCHEME'
+					;;
+				virtual-terminal)
+					config_variable='VIRT_TERM_COLOR_SCHEME'
+					;;
+				global)
+					config_variable='GLOBAL_COLOR_SCHEME'
+					;;
+			esac
+			set_color_scheme $user_selection
+			if [[ ! -f $config_file || -z $( grep -s "$config_variable=" $config_file ) ]];then
+				if [[ ! -d $HOME/.$SCRIPT_NAME ]];then
+					mkdir $HOME/.$SCRIPT_NAME
+				fi
+				touch $config_file
+				print_screen_output "Creating and updating config file for $COLOR_SELECTION color scheme now..."
+				echo "$config_variable=$user_selection" >> $config_file
+			else
+				print_screen_output "Updating config file for $COLOR_SELECTION color scheme now..."
+				sed -i "s/$config_variable=.*/$config_variable=$user_selection/" $config_file
+			fi
+			# file exists now so we can go on to cleanup
+			case $COLOR_SELECTION in
+				irc|irc-console|irc-virtual-terminal|console|virtual-terminal)
+					sed -i '/GLOBAL_COLOR_SCHEME=/d' $config_file
+					;;
+				global)
+					sed -i -e '/VIRT_TERM_COLOR_SCHEME=/d' -e '/CONSOLE_COLOR_SCHEME=/d' -e '/IRC_COLOR_SCHEME=/d' \
+					-e '/IRC_CONS_COLOR_SCHEME=/d' -e '/IRC_X_TERM_COLOR_SCHEME=/d' $config_file
+					;;
+			esac
+		elif [[ $user_selection == $i ]];then
+			print_screen_output "Removing all color settings from config file now..."
+			sed -i -e '/VIRT_TERM_COLOR_SCHEME=/d' -e '/GLOBAL_COLOR_SCHEME=/d' -e '/CONSOLE_COLOR_SCHEME=/d' \
+			-e '/IRC_COLOR_SCHEME=/d' -e '/IRC_CONS_COLOR_SCHEME=/d' -e '/IRC_X_TERM_COLOR_SCHEME=/d' $config_file
+			set_color_scheme $DEFAULT_COLOR_SCHEME
+		elif [[ $user_selection == $(( $i+1 )) ]];then
+			print_screen_output "Ok, continuing $SCRIPT_NAME unchanged. You can set the colors anytime by starting with: -c 95 to 99"
+			if [[ -n $CONSOLE_COLOR_SCHEME && -z $DISPLAY ]];then
+				set_color_scheme $CONSOLE_COLOR_SCHEME
+			elif [[ -n $VIRT_TERM_COLOR_SCHEME ]];then
+				set_color_scheme $VIRT_TERM_COLOR_SCHEME
+			else
+				set_color_scheme $DEFAULT_COLOR_SCHEME
+			fi
+		elif [[ $user_selection == $(( $i+2 )) ]];then
+			set_color_scheme $DEFAULT_COLOR_SCHEME
+			print_screen_output "Ok, exiting $SCRIPT_NAME now. You can set the colors later."
+			exit 0
+		else
+			print_screen_output "Error - Invalid Selection. You entered this: $user_selection"
+			print_screen_output " "
+			select_default_color_scheme
+		fi
+	else
+		print_screen_output "------------------------------------------------------------------------------"
+		print_screen_output "After finding the scheme number you like, simply run this again in a terminal to set the configuration"
+		print_screen_output "data file for your irc client. You can set color schemes for the following: start inxi with -c plus:"
+		print_screen_output "94 (console, no X); 95 (terminal, X); 96 (irc, X); 97 (irc, X, in terminal); 98 (irc, no X); 99 (global) - like: $SCRIPT_NAME -c 97"
+		exit 0
+	fi
+
 	eval $LOGFE
 }
 
@@ -1062,12 +1266,40 @@ get_parameters()
 				use_short='false'
 				;;
 			c)	if [[ -n $( grep -E '^[0-9][0-9]?$' <<< $OPTARG ) ]];then
-					COLOR_SCHEME_SET='true'
-					## note: not sure about this, you'd think user values should be overridden, but
-					## we'll leave this for now
-					if [[ -z $COLOR_SCHEME ]];then
-						set_color_scheme "$OPTARG"
-					fi
+					case $OPTARG in
+						99)
+							B_RUN_COLOR_SELECTOR='true'
+							COLOR_SELECTION='global'
+							;;
+						98)
+							B_RUN_COLOR_SELECTOR='true'
+							COLOR_SELECTION='irc-console'
+							;;
+						97)
+							B_RUN_COLOR_SELECTOR='true'
+							COLOR_SELECTION='irc-virtual-terminal'
+							;;
+						96)
+							B_RUN_COLOR_SELECTOR='true'
+							COLOR_SELECTION='irc'
+							;;
+						95)
+							B_RUN_COLOR_SELECTOR='true'
+							COLOR_SELECTION='virtual-terminal'
+							;;
+						94)
+							B_RUN_COLOR_SELECTOR='true'
+							COLOR_SELECTION='console'
+							;;
+						*)	
+							B_COLOR_SCHEME_SET='true'
+							## note: not sure about this, you'd think user values should be overridden, but
+							## we'll leave this for now
+							if [[ -z $COLOR_SCHEME ]];then
+								set_color_scheme "$OPTARG"
+							fi
+							;;
+					esac
 				else
 					error_handler 3 "$OPTARG"
 				fi
@@ -1251,11 +1483,11 @@ get_parameters()
 ## print out help menu, not including Testing or Debugger stuff because it's not needed
 show_options()
 {
-	local color_scheme_count=${#A_COLOR_SCHEMES[@]}
+	local color_scheme_count=$(( ${#A_COLOR_SCHEMES[@]} - 1 ))
 
 	print_screen_output "$SCRIPT_NAME supports the following options. You can combine them, or list them"
 	print_screen_output "one by one: Examples: $SCRIPT_NAME -v4 -c6 OR $SCRIPT_NAME -dDc 6"
-	print_screen_output ""
+	print_screen_output " "
 	print_screen_output "If you start $SCRIPT_NAME with no arguments, it will show the short form."
 	print_screen_output "The following options if used without -d or -v will show just that complete line:"
 	print_screen_output "A,C,D,G,I,N,P,S - you can use these together to show just the lines you want to see."
@@ -1264,8 +1496,11 @@ show_options()
 	print_screen_output "- - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
 	print_screen_output "Output Control Options:"
 	print_screen_output "-A  Show Audio/sound card information."
-	print_screen_output "-c  Available color schemes. Scheme number is required."
-	print_screen_output "    Supported schemes: 0-$color_scheme_count Example: $SCRIPT_NAME -c 11"
+	print_screen_output "-c  Available color schemes. Scheme number is required. Color selectors run a color selector option"
+	print_screen_output "    prior to $SCRIPT_NAME starting which lets you set the config file value for the selection."
+	print_screen_output "    Supported color schemes: 0-$color_scheme_count Example: $SCRIPT_NAME -c 11"
+	print_screen_output "    Supported color selectors: 94 (console, no X); 95 (terminal, X); 96 (irc, X);"
+	print_screen_output "    97 (irc, X, in terminal); 98 (irc, no X); 99 (global)."
 	print_screen_output "-C  Show full CPU output, including per CPU clockspeed."
 	print_screen_output "-d  Default output verbosity level, same as: $SCRIPT_NAME -v 1"
 	print_screen_output "-D  Show full hard Disk info, not only model, ie: /dev/sda ST380817AS 80.0GB."
@@ -1307,7 +1542,7 @@ show_options()
 	print_screen_output "    Shows hdd temp with disk data if you have hddtemp installed, if you are root OR if you have"
 	print_screen_output "    added to /etc/sudoers (sudo v. 1.7 or newer): <username> ALL = NOPASSWD: /usr/sbin/hddtemp (sample)"
 	print_screen_output "    For -t, adds memory use output to cpu (-tx c), and cpu use to memory (-tx m)."
-	print_screen_output ""
+	print_screen_output " "
 	print_screen_output "Additional Options:"
 	print_screen_output "-h - this help menu."
 	if [[ $B_ALLOW_UPDATE == 'true' ]];then
@@ -1319,7 +1554,7 @@ show_options()
 	print_screen_output "-@  Triggers debugger output. Requires debugging level 1-10 (8-10 - logging)."
 	print_screen_output "    8 - basic logging; 9 - full file/sys info logging; 10 - color logging."
 	if [[ $1 == 'full' ]];then
-		print_screen_output ""
+		print_screen_output " "
 		print_screen_output "Developer and Testing Options (Advanced):"
 		print_screen_output "-! 1 - Sets testing flag B_TESTING_1='true' to trigger testing condition 1."
 		print_screen_output "-! 2 - Sets testing flag B_TESTING_2='true' to trigger testing condition 2."
@@ -1330,9 +1565,9 @@ show_options()
 		print_screen_output "-! 13 - Triggers an update from svn branch three - if present, of course."
 		print_screen_output "-! 14 - Triggers an update from svn branch four - if present, of course."
 		print_screen_output "-! <http://......> - Triggers an update from whatever server you list."
-		print_screen_output ""
+		print_screen_output " "
 	fi
-	print_screen_output ""
+	print_screen_output " "
 }
 
 ## print out version information for -V/--version
@@ -1344,15 +1579,15 @@ print_version_info()
 	print_screen_output "Version: $SCRIPT_VERSION_NUMBER"
 	print_screen_output "Script Last Modified: $last_modified"
 	print_screen_output "Script Location: $SCRIPT_PATH"
-	print_screen_output ""
+	print_screen_output " "
 	print_screen_output "Tested with Irssi, Xchat, Konversation, BitchX, KSirc, ircII,"
 	print_screen_output "Gaim/Pidgin, Weechat, KVIrc and Kopete."
-	print_screen_output ""
+	print_screen_output " "
 	print_screen_output "This script is a fork of Infobash 3.02, which is:"
 	print_screen_output "Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif"
 	print_screen_output "Subsequent changes and modifications (after Infobash 3.02) are:"
 	print_screen_output "Copyright (C) 2008-10 Scott Rogers, Harald Hope, aka trash80 & h2"
-	print_screen_output ""
+	print_screen_output " "
 	print_screen_output "This program is free software; you can redistribute it and/or modify"
 	print_screen_output "it under the terms of the GNU General Public License as published by"
 	print_screen_output "the Free Software Foundation; either version 3 of the License, or"
@@ -1421,12 +1656,14 @@ get_start_client()
 					print a
 					exit
 				}' )"
+				B_CONSOLE_IRC='true'
 				IRC_CLIENT="BitchX"
 				;;
 			finch)
 				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 {
 					print $2
 				}' )"
+				B_CONSOLE_IRC='true'
 				IRC_CLIENT="Finch"
 				;;
 			gaim)
@@ -1439,12 +1676,14 @@ get_start_client()
 				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 {
 					print $3
 				}' )"
+				B_CONSOLE_IRC='true'
 				IRC_CLIENT="ircII"
 				;;
 			irssi-text|irssi)
 				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 {
 					print $2
 				}' )"
+				B_CONSOLE_IRC='true'
 				IRC_CLIENT="Irssi"
 				;;
 			konversation) ## konvi < 1.2 (qt4)
@@ -1558,6 +1797,7 @@ get_start_client()
 				;;
 			weechat-curses)
 				IRC_CLIENT_VERSION=" $( $irc_client_path -v ) "
+				B_CONSOLE_IRC='true'
 				IRC_CLIENT="Weechat"
 				;;
 			xchat-gnome)
@@ -1599,6 +1839,7 @@ get_start_client()
 						;;
 					esac
 				done
+				B_CONSOLE_IRC='true'
 				if [[ -z $IRC_CLIENT_VERSION ]];then
 					IRC_CLIENT="Unknown Perl client"
 				fi
@@ -4345,12 +4586,12 @@ print_short_data()
 			#C1="${C1},1"; C2="${C2},1"; CN="${CN},1"
 		fi
 	fi
-	short_data="${C1}CPU$cpc_plural${CN}[${C2}${SEP1}${cpu_data_string} ${cpu_model}$model_plural (${cpu_type}) clocked at ${min_max_clock}${SEP1}${CN}] ${C1}Kernel${CN}[${C2}${SEP1}${current_kernel}${SEP1}${CN}] ${C1}Up${CN}[${C2}${SEP1}${up_time}${SEP1}${CN}] ${C1}Mem${CN}[${C2}${SEP1}${memory}${SEP1}${CN}] ${C1}HDD${CN}[${C2}${SEP1}${hdd_capacity}($hdd_used)${SEP1}${CN}] ${C1}Procs${CN}[${C2}${SEP1}${processes}${SEP1}${CN}]"
+	short_data="${C1}CPU$cpc_plural${C2}${SEP1}${cpu_data_string} ${cpu_model}$model_plural (${cpu_type}) clocked at ${min_max_clock}${SEP2}${C1}Kernel${C2}${SEP1}${current_kernel}${SEP2}${C1}Up${C2}${SEP1}${up_time}${SEP2}${C1}Mem${C2}${SEP1}${memory}${SEP2}${C1}HDD${C2}${SEP1}${hdd_capacity}($hdd_used)${SEP2}${C1}Procs${C2}${SEP1}${processes}${SEP2}"
 
 	if [[ $SHOW_IRC -gt 0 ]];then
-		short_data="${short_data} ${C1}Client${CN}[${C2}${SEP1}${IRC_CLIENT}${IRC_CLIENT_VERSION}${SEP1}${CN}]"
+		short_data="${short_data}${C1}Client${C2}${SEP1}${IRC_CLIENT}${IRC_CLIENT_VERSION}${SEP2}"
 	fi
-	short_data="${short_data} ${C1}$SCRIPT_NAME${C2}${CN}[${C2}${SEP1}$SCRIPT_VERSION_NUMBER${SEP1}${CN}]"
+	short_data="${short_data}${C1}$SCRIPT_NAME${C2}${SEP1}$SCRIPT_VERSION_NUMBER${SEP2}${CN}"
 	if [[ $SCHEME -gt 0 ]];then
 		short_data="${short_data} $NORMAL"
 	fi
