@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.4.24-b3
-####  Date: April 20 2011
+####  version: 1.4.82-b1
+####  Date: April 25 2011
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -302,7 +302,10 @@ DEBUG_BUFFER_INDEX=0
 
 # Defaults to 2, make this 1 for normal, 0 for no colorcodes at all. Set to any other valid scheme you like.
 # Same as runtime parameter.
-DEFAULT_SCHEME=2
+DEFAULT_COLOR_SCHEME=2
+# Always leave this blank, this is only going to be set in inxi.conf files, that makes testing
+# for user changes easier after sourcing the files
+DEFAULT_COLOR_SCHEME_OVERRIDE=''
 
 # Default indentation level
 INDENT=10
@@ -322,7 +325,7 @@ KONVI=0
 # NO_CPU_COUNT=0	# Wether or not the string "dual" or similar is found in cpuinfo output. If so, avoid dups.
 # This is a variable that controls how many parameters inxi will parse in a /proc/<pid>/cmdline file before stopping.
 PARAMETER_LIMIT=30
-SCHEME=0 # set default scheme
+SCHEME=0 # set default scheme - do not change this, it's set dynamically
 # this is set in user prefs file, to override dynamic temp1/temp2 determination of sensors output in case
 # cpu runs colder than mobo
 SENSORS_CPU_NO=''
@@ -369,17 +372,43 @@ export LC_ALL
 ### Output Colors
 # A more elegant way to have a scheme that doesn't print color codes (neither ANSI nor mIRC) at all. See below.
 unset EMPTY
-#              DGREY    BLACK    RED      DRED     GREEN    DGREEN   YELLOW   DYELLOW
+#             DGREY   BLACK   RED     DRED    GREEN   DGREEN  YELLOW  DYELLOW
 ANSI_COLORS="[1;30m [0;30m [1;31m [0;31m [1;32m [0;32m [1;33m [0;33m"
-IRC_COLORS="   \x0314   \x0301   \x0304   \x0305   \x0309   \x0303   \x0308   \x0307"
-#                            BLUE     DBLUE    MAGENTA  DMAGENTA CYAN     DCYAN    WHITE    GREY     NORMAL
+IRC_COLORS="  \x0314  \x0301  \x0304  \x0305  \x0309  \x0303  \x0308  \x0307"
+#                          BLUE    DBLUE   MAGENTA DMAGENTA CYAN   DCYAN   WHITE   GREY    NORMAL
 ANSI_COLORS="$ANSI_COLORS [1;34m [0;34m [1;35m [0;35m [1;36m [0;36m [1;37m [0;37m [0;37m"
-IRC_COLORS=" $IRC_COLORS    \x0312   \x0302   \x0313   \x0306   \x0311   \x0310   \x0300   \x0315   \x03"
+IRC_COLORS=" $IRC_COLORS    \x0312 \x0302  \x0313  \x0306  \x0311  \x0310  \x0300  \x0315  \x03"
 
 #ANSI_COLORS=($ANSI_COLORS); IRC_COLORS=($IRC_COLORS)
 A_COLORS_AVAILABLE=( DGREY BLACK RED DRED GREEN DGREEN YELLOW DYELLOW BLUE DBLUE MAGENTA DMAGENTA CYAN DCYAN WHITE GREY NORMAL )
 # See above for notes on EMPTY
 A_COLOR_SCHEMES=( EMPTY,EMPTY,EMPTY NORMAL,NORMAL,NORMAL BLUE,NORMAL,NORMAL GREEN,YELLOW,NORMAL DYELLOW,NORMAL,NORMAL CYAN,BLUE,NORMAL RED,NORMAL,NORMAL GREEN,NORMAL,NORMAL YELLOW,NORMAL,NORMAL GREEN,DGREEN,NORMAL BLUE,RED,NORMAL BLUE,NORMAL,RED YELLOW,WHITE,GREEN BLUE,NORMAL,GREEN DCYAN,NORMAL,DMAGENTA )
+## note: group 1: 0, 1 are null/normal
+## after that, it's divided into: group 2: dark on light; group 3: light on dark
+A_COLOR_SCHEMES=( 
+EMPTY,EMPTY,EMPTY 
+NORMAL,NORMAL,NORMAL 
+
+DGREY,BLACK,NORMAL
+DBLUE,DGREY,NORMAL 
+DGREEN,DYELLOW,NORMAL 
+DYELLOW,BLACK,NORMAL
+DBLUE,DRED,NORMAL 
+DBLUE,BLACK,NORMAL
+DMAGENTA,BLACK,NORMAL
+DBLUE,DMAGENTA,NORMAL
+DCYAN,DBLUE,NORMAL
+
+GREY,WHITE,NORMAL
+CYAN,GREY,NORMAL 
+GREEN,YELLOW,NORMAL 
+YELLOW,WHITE,NORMAL 
+BLUE,CYAN,NORMAL 
+RED,WHITE,NORMAL 
+GREEN,WHITE,NORMAL 
+MAGENTA,YELLOW,NORMAL
+)
+
 ## Actual color variables
 C1=''
 C2=''
@@ -500,7 +529,13 @@ main()
 
 	# If no colorscheme was set in the parameter handling routine, then set the default scheme
 	if [[ $COLOR_SCHEME_SET != 'true' ]];then
-		set_color_scheme "$DEFAULT_SCHEME"
+		# This will only trigger on first run out of irc cases, let's user pick their color scheme
+		# The override value only will occur in user config files
+		if [[ -z $DEFAULT_COLOR_SCHEME_OVERRIDE && $B_RUNNING_IN_SHELL == 'true' ]];then
+			select_default_color_scheme
+		else
+			set_color_scheme "$DEFAULT_COLOR_SCHEME"
+		fi
 	fi
 
 	# all the pre-start stuff is in place now
@@ -729,7 +764,7 @@ make_ban_lists()
 set_color_scheme()
 {
 	eval $LOGFS
-	local i='' script_colors='' color_codes=''
+	local i='' a_script_colors='' a_color_codes=''
 
 	if [[ $1 -ge ${#A_COLOR_SCHEMES[@]} ]];then
 		set -- 1
@@ -737,22 +772,67 @@ set_color_scheme()
 	# Set a global variable to allow checking for chosen scheme later
 	SCHEME="$1"
 	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
-		color_codes=( $ANSI_COLORS )
+		a_color_codes=( $ANSI_COLORS )
 	else
-		color_codes=( $IRC_COLORS )
+		a_color_codes=( $IRC_COLORS )
 	fi
 	for (( i=0; i < ${#A_COLORS_AVAILABLE[@]}; i++ ))
 	do
-		eval "${A_COLORS_AVAILABLE[i]}=\"${color_codes[i]}\""
+		eval "${A_COLORS_AVAILABLE[i]}=\"${a_color_codes[i]}\""
 	done
 	IFS=","
-	script_colors=( ${A_COLOR_SCHEMES[$1]} )
+	a_script_colors=( ${A_COLOR_SCHEMES[$1]} )
 	IFS="$ORIGINAL_IFS"
 	# then assign the colors globally
-	C1="${!script_colors[0]}"
-	C2="${!script_colors[1]}"
-	CN="${!script_colors[2]}"
+	C1="${!a_script_colors[0]}"
+	C2="${!a_script_colors[1]}"
+	CN="${!a_script_colors[2]}"
 	# ((COLOR_SCHEME++)) ## note: why is this? ##
+	eval $LOGFE
+}
+
+select_default_color_scheme()
+{
+	eval $LOGFS
+	local spacer='  ' options='' user_selection=''
+	# first make output neutral so it's just plain default for console client
+	set_color_scheme "0"
+	print_screen_output "Welcome to $SCRIPT_NAME! Please select the default Terminal Client color scheme."
+	print_screen_output "You will see this message only one time per user account, unless you set preferences in: /etc/$SCRIPT_NAME.conf"
+	print_screen_output ""
+	print_screen_output "Because there is no way to know your terminal client's foreground/background colors, we need"
+	print_screen_output "to set your color preferences from color scheme option list below. 0 is no colors."
+	print_screen_output "Please note that this will set the preferences only for your user account: $(whoami)"
+	print_screen_output "------------------------------------------------------------------------------"
+	for (( i=0; i < ${#A_COLOR_SCHEMES[@]}; i++ ))
+	do
+		if [[ $i -gt 9 ]];then
+			spacer=' '
+		fi
+		set_color_scheme $i
+		print_screen_output "[0m $i)$spacer${C1} Item Name${C2} Item Data Values"
+		
+	done
+	set_color_scheme 0
+	print_screen_output "[0m $i)$spacer${C1} Exit, use another terminal, or set manually."
+	print_screen_output "------------------------------------------------------------------------------"
+	print_screen_output "Simply type the number for the color scheme that looks best to your eyes in the terminal client"
+	print_screen_output "you are using and hit enter. NOTE: You can bring this option list up by starting $SCRIPT_NAME with this option: "
+	print_screen_output "Your selection will be stored here: $HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf"
+	print_screen_output "------------------------------------------------------------------------------"
+	echo -n "[0m"
+	read user_selection
+	if [[ -n $( grep -Es '^([0-9]+)$' <<< "$user_selection" ) && $user_selection -lt $i ]];then
+		set_color_scheme $user_selection
+	elif [[ $user_selection == $i ]];then
+		print_screen_output "Ok, exiting $SCRIPT_NAME now. You can set the colors later."
+		exit 0
+	else
+		print_screen_output "Error - Invalid Selection. You entered this: $user_selection"
+		print_screen_output ""
+		select_default_color_scheme
+	fi
+
 	eval $LOGFE
 }
 
@@ -1251,7 +1331,7 @@ get_parameters()
 ## print out help menu, not including Testing or Debugger stuff because it's not needed
 show_options()
 {
-	local color_scheme_count=${#A_COLOR_SCHEMES[@]}
+	local color_scheme_count=$(( ${#A_COLOR_SCHEMES[@]} - 1 ))
 
 	print_screen_output "$SCRIPT_NAME supports the following options. You can combine them, or list them"
 	print_screen_output "one by one: Examples: $SCRIPT_NAME -v4 -c6 OR $SCRIPT_NAME -dDc 6"
@@ -1277,7 +1357,7 @@ show_options()
 	print_screen_output "-I  Show Information: processes, uptime, memory, irc client, inxi version."
 	print_screen_output "-l  Show partition labels. Default: short partition -P. For full -p output, use: -pl (or -plu)."
 	print_screen_output "-n  Show Advanced Network card information. Same as -Nnx. Shows interface, speed, mac id, state, etc."
-	print_screen_output "-N  Show Network card information."
+	print_screen_output "-N  Show Network card information. With -x, shows PCI BusID, Port number."
 	print_screen_output "-o  Show unmounted partition information (includes UUID and LABEL if available)."
 	print_screen_output "    Shows file system type if you have file installed, if you are root OR if you have"
 	print_screen_output "    added to /etc/sudoers (sudo v. 1.7 or newer): <username> ALL = NOPASSWD: /usr/bin/file (sample)"
@@ -2384,23 +2464,21 @@ get_graphics_card_data()
 	A_GFX_CARD_DATA=( $( echo "$Lspci_Data" | gawk -F': ' '
 	BEGIN {
 		IGNORECASE=1
+		nic=""
 	}
 	/vga compatible controller/ {
 		gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF)
 		gsub(/,/, " ", $NF)
 		gsub(/^ +| +$/, "", $NF)
 		gsub(/ [ \t]+/, " ", $NF)
-		print $NF
+		nic=gensub(/^([0-9a-f:\.]+) (.+)$/,"\\1","",$1)
+		print $NF "," nic
 	}' ) )
 	IFS="$ORIGINAL_IFS"
 # 	for (( i=0; i < ${#A_GFX_CARD_DATA[@]}; i++ ))
 # 	do
 # 		A_GFX_CARD_DATA[i]=$( sanitize_characters BAN_LIST_NORMAL "${A_GFX_CARD_DATA[i]}" )
 # 	done
-	# handle cases where card detection fails, like in PS3, where lspci gives no output, or headless boxes..
-	if [[ ${#A_GFX_CARD_DATA[@]} -eq 0 ]];then
-		A_GFX_CARD_DATA[0]='Failed to Detect Video Card!'
-	fi
 
 	# GFXMEM is UNUSED at the moment, because it shows AGP aperture size, which is not necessarily equal to GFX memory..
 	# GFXMEM="size=[$(echo "$Lspci_Data" | gawk '/VGA/{while (!/^$/) {getline;if (/size=[0-9][0-9]*M/) {size2=gensub(/.*\[size=([0-9]+)M\].*/,"\\1","g",$0);if (size<size2){size=size2}}}}END{print size2}')M]"
@@ -3035,8 +3113,8 @@ get_networking_data()
 get_network_advanced_data()
 {
 	eval $LOGFS
-	local a_network_adv_working='' card_port='' working_path='' 
-	local eth_id='' speed='' duplex='' mac_id='' oper_state=''
+	local a_network_adv_working='' if_path='' working_path='' 
+	local if_id='' speed='' duplex='' mac_id='' oper_state=''
 	
 	for (( i=0; i < ${#A_NETWORK_DATA[@]}; i++ ))
 	do
@@ -3044,17 +3122,17 @@ get_network_advanced_data()
 			a_network_adv_working=( ${A_NETWORK_DATA[i]} )
 			working_path="/sys/bus/pci/devices/0000:${a_network_adv_working[4]}"
 			if [[ -e $working_path/net ]];then
-				card_port=$( ls $working_path/net 2>/dev/null )
-				eth_id=$card_port
-				working_path=$working_path/net/$card_port
+				if_path=$( ls $working_path/net 2>/dev/null )
+				if_id=$if_path
+				working_path=$working_path/net/$if_path
 			# 2.6.32 debian lenny kernel shows not: /net/eth0 but /net:eth0
 			else
-				card_port=$( ls $working_path | grep 'net:' )
-				eth_id=$( cut -d ':' -f 2 <<< "$card_port" )
-				working_path=$working_path/$card_port
+				if_path=$( ls $working_path 2>/dev/null | grep 'net:' )
+				if_id=$( cut -d ':' -f 2 <<< "$if_path" )
+				working_path=$working_path/$if_path
 			fi
 			
-			if [[ -n $card_port ]];then
+			if [[ -n $if_path ]];then
 				if [[ -f $working_path/speed ]];then
 					speed=$( cat $working_path/speed )
 				fi
@@ -3069,7 +3147,7 @@ get_network_advanced_data()
 				fi
 			fi
 			
-			A_NETWORK_DATA[i]=${a_network_adv_working[0]}","${a_network_adv_working[1]}","${a_network_adv_working[2]}","${a_network_adv_working[3]}","${a_network_adv_working[4]}","$eth_id","$oper_state","$speed","$duplex","$mac_id
+			A_NETWORK_DATA[i]=${a_network_adv_working[0]}","${a_network_adv_working[1]}","${a_network_adv_working[2]}","${a_network_adv_working[3]}","${a_network_adv_working[4]}","$if_id","$oper_state","$speed","$duplex","$mac_id
 			IFS="$ORIGINAL_IFS"
 	done
 	
@@ -4382,7 +4460,7 @@ print_audio_data()
 		fi
 
 # 		if [[ -n ${a_audio_working[2]} ]];then
-# 			port_data=" ${C1}at port${C2} ${a_audio_working[2]}"
+# 			port_data=" ${C1}port${C2} ${a_audio_working[2]}"
 # 		fi
 		# this should only trigger if the $FILE_ASOUND_DEVICE data is used, not lspci -nn
 		if [[ -n ${a_audio_working[3]} && $B_EXTRA_DATA == 'true' ]];then
@@ -4399,10 +4477,10 @@ print_audio_data()
 			if [[ $( wc -w <<< ${a_audio_working[2]} ) -gt 1 ]];then
 				port_plural='s'
 			fi
-			port_data=" ${C1}at port$port_plural${C2} ${a_audio_working[2]}"
+			port_data=" ${C1}port$port_plural${C2} ${a_audio_working[2]}"
 		fi
 		if [[ -n ${a_audio_working[4]} && $B_EXTRA_DATA == 'true' ]];then
-			pci_bus_id=" ${C1}BusID:${C2} ${a_audio_working[4]}"
+			pci_bus_id=" ${C1}busID:${C2} ${a_audio_working[4]}"
 		fi
 		audio_data="${C1}$card_one${C2} ${a_audio_working[0]}$alsa_driver$port_data$pci_bus_id"
 		audio_data=$( create_print_line "Audio:" "$audio_data" )
@@ -4431,10 +4509,10 @@ print_audio_data()
 				if [[ $( wc -w <<< ${a_audio_working[2]} ) -gt 1 ]];then
 					port_plural='s'
 				fi
-				port_data=" ${C1}at port$port_plural${C2} ${a_audio_working[2]}"
+				port_data=" ${C1}port$port_plural${C2} ${a_audio_working[2]}"
 			fi
 			if [[ -n ${a_audio_working[4]} && $B_EXTRA_DATA == 'true' ]];then
-				pci_bus_id=" ${C1}BusID:${C2} ${a_audio_working[4]}"
+				pci_bus_id=" ${C1}busID:${C2} ${a_audio_working[4]}"
 			fi
 			if [[ -n ${a_audio_working[0]} ]];then
 				audio_data="${C1}Card-$(( $i + 1 ))${C2} ${a_audio_working[0]}$alsa_driver$port_data$pci_bus_id"
@@ -4598,9 +4676,9 @@ print_cpu_flags_full()
 print_gfx_data()
 {
 	eval $LOGFS
-	local gfx_data='' i='' card_one='Card' root_alert='' root_x_string=''
+	local gfx_data='' i='' card_id='' root_alert='' root_x_string='' a_gfx_working=''
 	local screen_resolution="$( get_graphics_res_data )"
-	local b_is_mesa='false' display_full_string=''
+	local b_is_mesa='false' display_full_string='' gfx_bus_id='' gfx_card_data=''
 	# set A_GFX_CARD_DATA
 	get_graphics_card_data
 	# set A_X_DATA
@@ -4620,7 +4698,6 @@ print_gfx_data()
 	if [[ -z $screen_resolution ]];then
 		screen_resolution='N/A'
 	fi
-
 	if [[ $B_X_RUNNING == 'true' && $B_ROOT != 'true' ]];then
 		if [[ -z $x_vendor || -z $x_version ]];then
 			x_vendor='X-Vendor: N/A'
@@ -4642,16 +4719,33 @@ print_gfx_data()
 		fi
 	fi
 
-	if [[ ${#A_GFX_CARD_DATA[@]} -gt 1 ]];then
-		i=1
-		while [[ -n ${A_GFX_CARD_DATA[i]} && $i -le 4 ]]
+	if [[ ${#A_GFX_CARD_DATA[@]} -gt 0 ]];then
+		for (( i=0; i < ${#A_GFX_CARD_DATA[@]}; i++ ))
 		do
-			gfx_data="$gfx_data ${C1}Card-$(($i+1))${C2} ${A_GFX_CARD_DATA[i]}"
-			((i++))
+			IFS=","
+			a_gfx_working=( ${A_GFX_CARD_DATA[i]} )
+			IFS="$ORIGINAL_IFS"
+			gfx_bus_id=''
+			gfx_card_data=${a_gfx_working[0]}
+			if [[ $B_EXTRA_DATA == 'true' ]];then
+				if [[ -n ${a_gfx_working[1]} ]];then
+					gfx_bus_id=" ${C1}busID:${C2} ${a_gfx_working[1]}"
+				else
+					gfx_bus_id=" ${C1}busID:${C2} N/A"
+				fi
+			fi
+			if [[ ${#A_GFX_CARD_DATA[@]} -gt 1 ]];then
+				card_id="Card-$(($i+1)):"
+			else
+				card_id='Card:'
+			fi
+			gfx_data="$gfx_data${C1}$card_id${C2} $gfx_card_data$gfx_bus_id "
 		done
-		card_one='Card-1'
+	# handle cases where card detection fails, like in PS3, where lspci gives no output, or headless boxes..
+	else
+		gfx_data="${C1}Card:${C2} Failed to Detect Video Card! "
 	fi
-	gfx_data=$( create_print_line "Graphics:" "${C1}$card_one${C2} ${A_GFX_CARD_DATA[0]}${gfx_data} $display_full_string" )
+	gfx_data=$( create_print_line "Graphics:" "${gfx_data}$display_full_string" )
 	print_screen_output "$gfx_data"
 
 # 	if [[ -z $glx_renderer || -z $glx_version ]];then
@@ -4854,17 +4948,17 @@ print_networking_data()
 			if [[ $( wc -w <<< ${a_network_working[2]} ) -gt 1 ]];then
 				port_plural='s'
 			fi
-			port_data=" ${C1}at port$port_plural${C2} ${a_network_working[2]}"
+			port_data=" ${C1}port$port_plural${C2} ${a_network_working[2]}"
 		fi
 		if [[ -n ${a_network_working[4]} && $B_EXTRA_DATA == 'true' ]];then
-			pci_bus_id=" ${C1}BusID:${C2} ${a_network_working[4]}"
+			pci_bus_id=" ${C1}busID:${C2} ${a_network_working[4]}"
 		fi
 		
 		card_string=''
 		network_data="${C1}$card_one${C2} ${a_network_working[0]}$driver_data$port_data$pci_bus_id"
 		network_data=$( create_print_line "Network:" "$network_data" )
 		print_screen_output "$network_data"
-		print_network_advanced_data "${a_network_working[4]}"
+		print_network_advanced_data
 		i=0 ## loop starts with 1 by auto-increment so it only shows cards > 1
 		while [[ -n ${A_NETWORK_DATA[++i]} ]]
 		do
@@ -4886,16 +4980,16 @@ print_networking_data()
 				if [[ $( wc -w <<< ${a_network_working[2]} ) -gt 1 ]];then
 					port_plural='s'
 				fi
-				port_data=" ${C1}at port$port_plural${C2} ${a_network_working[2]}"
+				port_data=" ${C1}port$port_plural${C2} ${a_network_working[2]}"
 			fi
 			if [[ -n ${a_network_working[4]} && $B_EXTRA_DATA == 'true' ]];then
-				pci_bus_id=" ${C1}BusID:${C2} ${a_network_working[4]}"
+				pci_bus_id=" ${C1}busID:${C2} ${a_network_working[4]}"
 			fi
 			network_data="${C1}Card-$(( $i + 1 ))${C2} ${a_network_working[0]}$driver_data$port_data$pci_bus_id"
 			network_data=$( create_print_line " " "$network_data" )
 			
 			print_screen_output "$network_data"
-			print_network_advanced_data "${a_network_working[4]}"
+			print_network_advanced_data
 		done
 	fi
 	if [[ $B_SHOW_IP == 'true' ]];then
@@ -4904,30 +4998,38 @@ print_networking_data()
 	eval $LOGFE
 }
 
-# args: $1 - pci bus id
 print_network_advanced_data()
 {
 	eval $LOGFS
-	local network_data='' eth_id='N/A' duplex='N/A' mac_id='N/A' speed='N/A' oper_state='N/A'
+	local network_data='' if_id='N/A' duplex='N/A' mac_id='N/A' speed='N/A' oper_state='N/A'
 	
 	if [[ $B_SHOW_ADVANCED_NETWORK == 'true' ]];then
 		if [[ -n ${a_network_working[5]} ]];then
-			eth_id=${a_network_working[5]}
+			if_id=${a_network_working[5]}
 		fi
 		if [[ -n ${a_network_working[6]} ]];then
 			oper_state=${a_network_working[6]}
 		fi
 		if [[ -n ${a_network_working[7]} ]];then
-			speed="${a_network_working[7]} Mbps"
+			# make sure the value is strictly numeric before appending Mbps
+			if [[ -n $( grep -E '^[0-9\.,]+$' <<< "${a_network_working[7]}" ) ]];then
+				speed="${a_network_working[7]} Mbps"
+			else
+				speed=${a_network_working[7]}
+			fi
 		fi
 		if [[ -n ${a_network_working[8]} ]];then
 			duplex=${a_network_working[8]}
 		fi
 		if [[ -n ${a_network_working[9]} ]];then
-			mac_id=${a_network_working[9]}
+			if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
+				mac_id=${a_network_working[9]}
+			else
+				mac_id='<irc-filter>'
+			fi
 		fi
-		network_data="${C1}IF:${C2} $eth_id ${C1}State:${C2} $oper_state ${C1}Speed:${C2} $speed"
-		network_data="$network_data ${C1}Duplex:${C2} $duplex ${C1}Mac:${C2} $mac_id"
+		network_data="${C1}IF:${C2} $if_id ${C1}state:${C2} $oper_state ${C1}speed:${C2} $speed"
+		network_data="$network_data ${C1}duplex:${C2} $duplex ${C1}mac:${C2} $mac_id"
 		network_data=$( create_print_line " " "$network_data" )
 		print_screen_output "$network_data"
 	fi
@@ -4940,29 +5042,40 @@ print_networking_ip_data()
 	eval $LOGFS
 	local ip=$( get_networking_wan_ip_data )
 	local ip_data='' a_interfaces_working='' interfaces='' interfaces_2='' i=''
+	local if_id='' if_ip=''
 
 	# set A_INTERFACES_DATA
 	get_networking_local_ip_data
 	# first print output for wan ip line. Null is handled in the get function
+	if [[ -z $ip ]];then
+		ip='N/A'
+	fi
 	ip_data=$( create_print_line " " "${C1}Wan IP:${C2} $ip" )
 
 	# then create the list of local interface/ip
-	interfaces=" ${C1}Interface:${C2}"
 	i=0 ## loop starts with 1 by auto-increment so it only shows cards > 1
 	while [[ -n ${A_INTERFACES_DATA[i]} ]]
 	do
 		IFS=","
 		a_interfaces_working=(${A_INTERFACES_DATA[i]})
 		IFS="$ORIGINAL_IFS"
+		if_id='N/A'
+		if_ip='N/A'
+		if [[ -n ${a_interfaces_working[1]} ]];then
+			if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
+				if_ip=${a_interfaces_working[1]}
+			else
+				if_ip='<irc-filter>'
+			fi
+		fi
+		if [[ -n ${a_interfaces_working[0]} ]];then
+			if_id=${a_interfaces_working[0]}
+		fi
 		if [[ $i -lt 3 ]];then
-			if [[ -n ${a_interfaces_working[0]} ]];then
-				interfaces="$interfaces ${a_interfaces_working[0]} ${C1}IP:${C2} ${a_interfaces_working[1]}"
-			fi
+			interfaces="$interfaces ${C1}IF IP:${C2} $if_id ${C1}-${C2} $if_ip"
 		else
-			if [[ -n ${a_interfaces_working[0]} ]];then
-				# space on end here for lining up with line starter
-				interfaces_2="$interfaces_2${a_interfaces_working[0]} ${C1}IP:${C2} ${a_interfaces_working[1]} "
-			fi
+			# space on end here for lining up with line starter
+			interfaces_2="$interfaces_2${C1}IF IP:${C2} $if_id ${C1}-${C2} $if_ip "
 		fi
 		((i++))
 	done
@@ -5051,7 +5164,11 @@ print_partition_data()
 					full_uuid=" ${C1}uuid:${C2} $part_uuid"
 				fi
 			fi
-			partitionIdClean=$( sed -r 's|/home/(.*)/(.*)|/home/##/\2|' <<< ${a_partition_working[0]} )
+			if [[ $B_RUNNING_IN_SHELL == 'false' ]];then
+				partitionIdClean=$( sed -r 's|/home/(.*)/(.*)|/home/##/\2|' <<< ${a_partition_working[0]} )
+			else
+				partitionIdClean=${a_partition_working[0]}
+			fi
 			# because these lines can vary widely, using dynamic length handling here
 			a_partition_data[$counter]="${a_partition_data[$counter]}${C1}ID:${C2}$partitionIdClean ${C1}size:${C2} ${a_partition_working[1]}$partition_used$full_fs$full_dev$full_label$full_uuid "
 
