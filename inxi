@@ -219,6 +219,7 @@ B_LOG_FULL_DATA='false'
 # kde qdbus
 B_QDBUS='false'
 B_ROOT='false'
+B_RUN_COLOR_SELECTOR='false'
 # Running in a shell? Defaults to false, and is determined later.
 B_RUNNING_IN_SHELL='false'
 # this sets the debug buffer
@@ -543,8 +544,12 @@ main()
 	if [[ $COLOR_SCHEME_SET != 'true' ]];then
 		# This will only trigger on first run out of irc cases, let's user pick their color scheme
 		# The override value only will occur in user config files
-		if [[ -z $DEFAULT_COLOR_SCHEME_OVERRIDE && $B_RUNNING_IN_SHELL == 'true' ]];then
-			select_default_color_scheme
+		if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
+			if [[ -z $DEFAULT_COLOR_SCHEME_OVERRIDE || $B_RUN_COLOR_SELECTOR == 'true' ]];then
+				select_default_color_scheme
+			elif [[ -n $DEFAULT_COLOR_SCHEME_OVERRIDE ]];then
+				set_color_scheme $DEFAULT_COLOR_SCHEME_OVERRIDE
+			fi
 		else
 			set_color_scheme "$DEFAULT_COLOR_SCHEME"
 		fi
@@ -825,7 +830,8 @@ select_default_color_scheme()
 		print_screen_output "[0m $i)$spacer${C1} Card:${C2} nVidia G86 [GeForce 8400 GS] ${C1}X.Org${C2} 1.7.7"
 	done
 	set_color_scheme 0
-	print_screen_output "[0m $i)$spacer${C1} Exit, use another terminal, or set manually."
+	print_screen_output "[0m $i)$spacer${C1} Continue, no changes or config file setting."
+	print_screen_output "[0m $(($i+1)))$spacer${C1} Exit, use another terminal, or set manually."
 	print_screen_output "------------------------------------------------------------------------------"
 	print_screen_output "Simply type the number for the color scheme that looks best to your eyes in the terminal client"
 	print_screen_output "you are using and hit enter. NOTE: You can bring this option list up by starting $SCRIPT_NAME with this option: "
@@ -835,9 +841,23 @@ select_default_color_scheme()
 	read user_selection
 	if [[ -n $( grep -Es '^([0-9]+)$' <<< "$user_selection" ) && $user_selection -lt $i ]];then
 		set_color_scheme $user_selection
+		if [[ ! -f $HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf || -z $( grep -s 'DEFAULT_COLOR_SCHEME_OVERRIDE=' $HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf ) ]];then
+			if [[ ! -d $HOME/.$SCRIPT_NAME ]];then
+				mkdir $HOME/.$SCRIPT_NAME
+			fi
+			touch $HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf
+			print_screen_output "Creating and updating config file now..."
+			echo "DEFAULT_COLOR_SCHEME_OVERRIDE=$user_selection" >> $HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf
+		else
+			print_screen_output "Updating config file now..."
+			sed -i "s/DEFAULT_COLOR_SCHEME_OVERRIDE=.*/DEFAULT_COLOR_SCHEME_OVERRIDE=$user_selection/" $HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf
+		fi
 	elif [[ $user_selection == $i ]];then
+		set_color_scheme $DEFAULT_COLOR_SCHEME
 		print_screen_output "Ok, exiting $SCRIPT_NAME now. You can set the colors later."
 		exit 0
+	elif [[ $user_selection == $(($i +1)) ]];then
+		print_screen_output "Ok, continuing $SCRIPT_NAME using defaults. You can set the colors anytime by starting with: -c 99"
 	else
 		print_screen_output "Error - Invalid Selection. You entered this: $user_selection"
 		print_screen_output ""
@@ -1153,11 +1173,15 @@ get_parameters()
 				use_short='false'
 				;;
 			c)	if [[ -n $( grep -E '^[0-9][0-9]?$' <<< $OPTARG ) ]];then
-					COLOR_SCHEME_SET='true'
-					## note: not sure about this, you'd think user values should be overridden, but
-					## we'll leave this for now
-					if [[ -z $COLOR_SCHEME ]];then
-						set_color_scheme "$OPTARG"
+					if [[ $OPTARG == '99' ]];then
+						B_RUN_COLOR_SELECTOR='true'
+					else
+						COLOR_SCHEME_SET='true'
+						## note: not sure about this, you'd think user values should be overridden, but
+						## we'll leave this for now
+						if [[ -z $COLOR_SCHEME ]];then
+							set_color_scheme "$OPTARG"
+						fi
 					fi
 				else
 					error_handler 3 "$OPTARG"
@@ -1355,7 +1379,7 @@ show_options()
 	print_screen_output "- - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
 	print_screen_output "Output Control Options:"
 	print_screen_output "-A  Show Audio/sound card information."
-	print_screen_output "-c  Available color schemes. Scheme number is required."
+	print_screen_output "-c  Available color schemes. Scheme number is required. Note: -c 99 will start the color selector in terminal."
 	print_screen_output "    Supported schemes: 0-$color_scheme_count Example: $SCRIPT_NAME -c 11"
 	print_screen_output "-C  Show full CPU output, including per CPU clockspeed."
 	print_screen_output "-d  Default output verbosity level, same as: $SCRIPT_NAME -v 1"
