@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.4.95
-####  Date: May 1 2011
+####  version: 1.4.96
+####  Date: May 4 2011
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -259,8 +259,9 @@ B_TESTING_2='false'
 # set to true here for debug logging from script start
 B_USE_LOGGING='false'
 B_UUID_SET='false'
-# Test for X running
-B_X_RUNNING='false'
+# Test for X running, X apps present
+B_SHOW_X_DATA='false'
+B_RUNNING_IN_X='false'
 
 ### Directory/file exist flags; test as [[ $(boolean) ]] not [[ $boolean ]]
 B_ASOUND_DEVICE_FILE='false'
@@ -681,7 +682,8 @@ initialize_script_data()
 	fi
 
 	if [[ -n $DISPLAY ]];then
-		B_X_RUNNING='true'
+		B_SHOW_X_DATA='true'
+		B_RUNNING_IN_X='true'
 	fi
 
 	if [[ -e $FILE_MODULES ]];then
@@ -739,13 +741,13 @@ check_script_depends()
 	local depends="df free gawk grep hostname lspci ps readlink tr uname uptime wc"
 	local x_apps="xrandr xdpyinfo glxinfo"
 
-	if [[ $B_X_RUNNING == 'true' ]];then
+	if [[ $B_RUNNING_IN_X == 'true' ]];then
 		for app_name in $x_apps
 		do
 			app_path=$( type -p $app_name )
 			if [[ -z $app_path ]];then
 				script_debugger "Resuming in non X mode: $app_name not found in path"
-				B_X_RUNNING='false'
+				B_SHOW_X_DATA='false'
 				break
 			fi
 		done
@@ -2722,7 +2724,7 @@ get_graphics_card_data()
 get_graphics_glx_data()
 {
 	eval $LOGFS
-	if [[ $B_X_RUNNING == 'true' && $B_ROOT != 'true' ]];then
+	if [[ $B_SHOW_X_DATA == 'true' && $B_ROOT != 'true' ]];then
 		IFS=$'\n'
 		A_GLX_DATA=( $( glxinfo | gawk -F ': ' '
 		# note: function declarations go before BEGIN? It appears so, confirm.
@@ -2784,7 +2786,7 @@ get_graphics_res_data()
 	eval $LOGFS
 	local screen_resolution='' xdpy_data='' screens_count=0
 
-	if [[ $B_X_RUNNING == 'true' && $B_ROOT != 'true' ]];then
+	if [[ $B_SHOW_X_DATA == 'true' && $B_ROOT != 'true' ]];then
 		# Added the two ?'s , because the resolution is now reported without spaces around the 'x', as in
 		# 1400x1050 instead of 1400 x 1050. Change as of X.org version 1.3.0
 		xdpy_data="$( xdpyinfo )"
@@ -2857,7 +2859,7 @@ get_graphics_x_data()
 	eval $LOGFS
 	local x_vendor='' x_version=''
 
-	if [[ $B_X_RUNNING == 'true' && $B_ROOT != 'true' ]];then
+	if [[ $B_SHOW_X_DATA == 'true' && $B_ROOT != 'true' ]];then
 		# X vendor and version detection.
 		x_vendor=$( xdpyinfo | gawk -F': +' '
 		BEGIN {
@@ -5033,6 +5035,7 @@ print_gfx_data()
 	local gfx_data='' i='' card_id='' root_alert='' root_x_string='' a_gfx_working=''
 	local screen_resolution="$( get_graphics_res_data )"
 	local b_is_mesa='false' display_full_string='' gfx_bus_id='' gfx_card_data=''
+	local res_tty='Res' xorg_data='' x_vendor_string=''
 	# set A_GFX_CARD_DATA
 	get_graphics_card_data
 	# set A_X_DATA
@@ -5045,33 +5048,33 @@ print_gfx_data()
 	local glx_version="${A_GLX_DATA[1]}"
 	# this can contain a long No case debugging message, so it's being sliced off
 	# note: using grep -ioE '(No|Yes)' <<< ${A_GLX_DATA[2]} did not work in Arch, no idea why
-	local glx_direct_render=$( gawk '{
-		print $1
-	}'  <<< "${A_GLX_DATA[2]}" )
+	local glx_direct_render=$( gawk '{print $1}' <<< "${A_GLX_DATA[2]}" )
+	
 	# some basic error handling:
 	if [[ -z $screen_resolution ]];then
 		screen_resolution='N/A'
 	fi
-	if [[ $B_X_RUNNING == 'true' && $B_ROOT != 'true' ]];then
-		if [[ -z $x_vendor || -z $x_version ]];then
-			x_vendor='X-Vendor: N/A'
-		fi
-		display_full_string="${C1}$x_vendor${C2} $x_version ${C1}Res:${C2} ${screen_resolution} "
+	if [[ -z $x_vendor || -z $x_version ]];then
+		x_vendor_string="${C1}X-Vendor:${C2} N/A "
 	else
-		root_x_string=''
-		if [[ $B_ROOT == 'true' ]];then
-			root_x_string='for root '
-		fi
-		if [[ $B_X_RUNNING != 'true' ]];then
-			root_x_string="${root_x_string}out of X"
-		fi
-		if [[ -n $x_vendor && -n $x_version ]];then
-			display_full_string="${C1}$x_vendor${C2} $x_version ${C1}Res:${C2} ${screen_resolution} ${C1}Gfx Data:${C2} N/A $root_x_string"
-		elif [[ $B_X_RUNNING == 'true' && $B_ROOT == 'true' ]];then
-			root_alert="${C1}Gfx Data:${C2} N/A for root user"
-			display_full_string="${C1}tty res:${C2} ${screen_resolution} $root_alert"
+		x_vendor_string="${C1}$x_vendor${C2} $x_version "
+	fi
+
+	if [[ $B_ROOT == 'true' ]];then
+		root_x_string='for root '
+		if [[ $B_RUNNING_IN_SHELL == 'true' || $B_CONSOLE_IRC == 'true' ]];then
+			res_tty='tty res'
 		fi
 	fi
+	if [[ $B_RUNNING_IN_X != 'true' ]];then
+		root_x_string="${root_x_string}out of X"
+		res_tty='tty res'
+	fi
+	if [[ -n $root_x_string ]];then
+		root_x_string="${C1}Gfx Data:${C2} N/A $root_x_string"
+	fi
+
+	display_full_string="$x_vendor_string${C1}${res_tty}:${C2} ${screen_resolution} $root_x_string"
 
 	if [[ ${#A_GFX_CARD_DATA[@]} -gt 0 ]];then
 		for (( i=0; i < ${#A_GFX_CARD_DATA[@]}; i++ ))
@@ -5107,8 +5110,8 @@ print_gfx_data()
 # 	fi
 
 	## note: if glx render or version have no content, then mesa is true
-	# if [[ $B_X_RUNNING == 'true' ]] && [[ $b_is_mesa != 'true' ]];then
-	if [[ $B_X_RUNNING == 'true' && $B_ROOT != 'true' ]];then
+	# if [[ $B_SHOW_X_DATA == 'true' ]] && [[ $b_is_mesa != 'true' ]];then
+	if [[ $B_SHOW_X_DATA == 'true' && $B_ROOT != 'true' ]];then
 		if [[ -z $glx_renderer ]];then
 			glx_renderer='N/A'
 		fi
@@ -5220,7 +5223,7 @@ print_info_data()
 	info_data=$( create_print_line "Info:" "${C1}Processes${C2} ${processes} ${C1}Uptime${C2} ${up_time} ${C1}Memory${C2} ${memory}${CN}" )
 
 	# this only triggers if no X data is present or if extra data switch is on
-	if [[ $B_X_RUNNING != 'true' || $B_EXTRA_DATA == 'true' ]];then
+	if [[ $B_SHOW_X_DATA != 'true' || $B_EXTRA_DATA == 'true' ]];then
 		runlvl="$( get_runlevel_data )"
 		if [[ -n $runlvl ]];then
 			info_data="${info_data} ${C1}Runlevel${C2} ${runlvl}${CN}"
