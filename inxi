@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.4.96
-####  Date: May 4 2011
+####  version: 1.4.97
+####  Date: May 6 2011
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -1062,6 +1062,15 @@ error_handler()
 		16)
 			error_message="$SCRIPT_NAME downloaded but the file data is corrupted. Purged data and using current version."
 			;;
+		17)
+			error_message="Failed to download required file: $2\nMaybe the remote site is down or your networking is broken?"
+			;;
+		18)
+			error_message="$2 downloaded but the file data is corrupted. Unable to continue."
+			;;
+		19)
+			error_message="$2 downloaded but reports error on execution. Unable to continue."
+			;;
 		*)	error_message="error unknown: $@"
 			set -- 99
 			;;
@@ -1217,6 +1226,65 @@ script_self_updater()
 		fi
 	fi
 	eval $LOGFS
+}
+
+debug_data_collector()
+{
+	local xiin_app='' xiin_data_dir="xiin-$(hostname)-$(date +%Y%m%d)" xiin_data_file=''
+	
+	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
+		echo "Starting debugging data collection."
+		echo -n "Checking/creating required directories... "
+		if [[ ! -d $SCRIPT_DATA_DIR ]];then
+			mkdir $SCRIPT_DATA_DIR
+		fi
+		echo 'completed'
+		cd $SCRIPT_DATA_DIR
+		if [[ -d $xiin_data_dir ]];then
+			echo 'Deleting previous xiin data directory...'
+			rm -rf $xiin_data_dir
+		fi
+		mkdir $xiin_data_dir
+		if [[ -f $xiin_data_dir.tar.gz ]];then
+			echo 'Deleting previous tar.gz file...'
+			rm -f $xiin_data_dir.tar.gz
+		fi
+	
+		xiin_data_file=$SCRIPT_DATA_DIR/$xiin_data_dir/xiin-sys.txt
+		
+		echo 'Downloading required tree traverse tool xiin...'
+		wget -q -O xiin http://inxi.googlecode.com/svn/branches/xiin/xiin || error_handler 17 'xiin'
+		if [[ -n $( grep 'checkPython' xiin ) ]];then
+			echo 'Running xiin tool now on /sys...'
+			python ./xiin -d /sys -f $xiin_data_file || error_handler 19 'xiin'
+		else
+			error_handler 18 'xiin'
+		fi
+		echo 'Collecting related system info now, lsusb, lspci, lscpci -vv, Xorg.log data'
+		lsusb > $xiin_data_dir/lsusb.txt
+		lspci > $xiin_data_dir/lspci.txt
+		lspci -vv > $xiin_data_dir/lspci-vv.txt
+		cat /var/log/Xorg.0.log 2>/dev/null | tail -n 200 > $xiin_data_dir/xorg-200.txt
+		
+		echo 'Creating tar.gz compressed file of this material now. Contents:'
+		echo '-------------------------'
+		tar -cvzf $xiin_data_dir.tar.gz $xiin_data_dir
+		echo '-------------------------'
+		echo 'Cleaning up leftovers...'
+		rm -rf $xiin_data_dir
+		echo 'Testing gzip file integrity...'
+		gzip -t $xiin_data_dir.tar.gz
+		if [[ $? -gt 0 ]];then
+			echo 'Data in gz is corrupted, removing gzip file, try running this again.'
+			rm -f $xiin_data_dir.tar.gz
+		else
+			echo 'All done, you can find your data gzipped directory here:'
+			echo $SCRIPT_DATA_DIR/$xiin_data_dir.tar.gz
+		fi
+	else
+		echo 'This feature only available in console or shell client! Exiting now.'
+	fi
+	exit 0
 }
 
 #### -------------------------------------------------------------------
@@ -1471,22 +1539,27 @@ get_parameters()
 			## debuggers and testing tools
 			%)	B_HANDLE_CORRUPT_DATA='true'
 				;;
-			@)	if [[ -n $( grep -E "^([1-9]|10)$" <<< $OPTARG ) ]];then
+			@)	if [[ -n $( grep -E "^([1-9]|1[0-1])$" <<< $OPTARG ) ]];then
 					DEBUG=$OPTARG
 					exec 2>&1
 					# switch on logging only for -@ 8-10
-					if [[ $OPTARG -ge 8 ]];then
-						if [[ $OPTARG -eq 10 ]];then
-							B_LOG_COLORS='true'
-						elif [[ $OPTARG -eq 9 ]];then		
-							B_LOG_FULL_DATA='true'
-						fi
-						B_USE_LOGGING='true'
-						# pack the logging data for evals function start/end
-						LOGFS=$LOGFS_STRING
-						LOGFE=$LOGFE_STRING
-						create_rotate_logfiles # create/rotate logfiles before we do anything else
-					fi
+					case $OPTARG in
+						8|9|10)
+							if [[ $OPTARG -eq 10 ]];then
+								B_LOG_COLORS='true'
+							elif [[ $OPTARG -eq 9 ]];then		
+								B_LOG_FULL_DATA='true'
+							fi
+							B_USE_LOGGING='true'
+							# pack the logging data for evals function start/end
+							LOGFS=$LOGFS_STRING
+							LOGFE=$LOGFE_STRING
+							create_rotate_logfiles # create/rotate logfiles before we do anything else
+							;;
+						11)
+							debug_data_collector
+							;;
+					esac
 				else
 					error_handler 9 "$OPTARG"
 				fi
@@ -1614,6 +1687,7 @@ show_options()
 	print_screen_output "-%  Overrides defective or corrupted data."
 	print_screen_output "-@  Triggers debugger output. Requires debugging level 1-10 (8-10 - logging)."
 	print_screen_output "    8 - basic logging; 9 - full file/sys info logging; 10 - color logging."
+	print_screen_output "    11 - No logging, creates tar.gz file of user data from lsusb/lspci/Xorg.0.log, and xiin read of /sys."
 	if [[ $1 == 'full' ]];then
 		print_screen_output " "
 		print_screen_output "Developer and Testing Options (Advanced):"
@@ -5377,24 +5451,34 @@ print_network_advanced_data()
 {
 	eval $LOGFS
 	local network_data='' if_id='N/A' duplex='N/A' mac_id='N/A' speed='N/A' oper_state='N/A'
+	local b_is_wifi='false' speed_string='' duplex_string=''
 	
 	if [[ $B_SHOW_ADVANCED_NETWORK == 'true' ]];then
+		# first check if it's a known wifi id'ed card, if so, no print of duplex/speed
+		if [[ -n $( grep -Esi '(wireless|wifi|wi-fi|wlan)' <<< ${a_network_working[0]} ) ]];then
+			b_is_wifi='true'
+		fi
 		if [[ -n ${a_network_working[5]} ]];then
 			if_id=${a_network_working[5]}
 		fi
 		if [[ -n ${a_network_working[6]} ]];then
 			oper_state=${a_network_working[6]}
 		fi
-		if [[ -n ${a_network_working[7]} ]];then
-			# make sure the value is strictly numeric before appending Mbps
-			if [[ -n $( grep -E '^[0-9\.,]+$' <<< "${a_network_working[7]}" ) ]];then
-				speed="${a_network_working[7]} Mbps"
-			else
-				speed=${a_network_working[7]}
+		# no print out for wifi since it doesn't have duplex/speed data availabe
+		if [[ $b_is_wifi != 'true' ]];then
+			if [[ -n ${a_network_working[7]} ]];then
+				# make sure the value is strictly numeric before appending Mbps
+				if [[ -n $( grep -E '^[0-9\.,]+$' <<< "${a_network_working[7]}" ) ]];then
+					speed="${a_network_working[7]} Mbps"
+				else
+					speed=${a_network_working[7]}
+				fi
 			fi
-		fi
-		if [[ -n ${a_network_working[8]} ]];then
-			duplex=${a_network_working[8]}
+			speed_string="${C1}speed:${C2} $speed "
+			if [[ -n ${a_network_working[8]} ]];then
+				duplex=${a_network_working[8]}
+			fi
+			duplex_string="${C1}duplex:${C2} $duplex "
 		fi
 		if [[ -n ${a_network_working[9]} ]];then
 			if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
@@ -5403,8 +5487,7 @@ print_network_advanced_data()
 				mac_id='<irc-filter>'
 			fi
 		fi
-		network_data="${C1}IF:${C2} $if_id ${C1}state:${C2} $oper_state ${C1}speed:${C2} $speed"
-		network_data="$network_data ${C1}duplex:${C2} $duplex ${C1}mac:${C2} $mac_id"
+		network_data="${C1}IF:${C2} $if_id ${C1}state:${C2} $oper_state $speed_string$duplex_string${C1}mac:${C2} $mac_id"
 		network_data=$( create_print_line " " "$network_data" )
 		print_screen_output "$network_data"
 	fi
