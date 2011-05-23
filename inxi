@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.5.0
-####  Date: May 21 2011
+####  version: 1.5.1
+####  Date: May 23 2011
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -248,21 +248,21 @@ B_SHOW_PARTITIONS_FULL='false'
 B_SHOW_PS_CPU_DATA='false'
 B_SHOW_PS_MEM_DATA='false'
 B_SHOW_REPOS='false'
+B_RUNNING_IN_X='false'
 B_SHOW_SENSORS='false'
 # triggers only short inxi output
 B_SHOW_SHORT_OUTPUT='false'
 B_SHOW_SYSTEM='false'
 B_SHOW_UNMOUNTED_PARTITIONS='false'
 B_SHOW_UUIDS='false'
+B_SHOW_X_DATA='false'
 # triggers various debugging and new option testing
 B_TESTING_1='false'
 B_TESTING_2='false'
 # set to true here for debug logging from script start
 B_USE_LOGGING='false'
 B_UUID_SET='false'
-# Test for X running, X apps present
-B_SHOW_X_DATA='false'
-B_RUNNING_IN_X='false'
+B_XORG_LOG='false'
 
 ### Directory/file exist flags; test as [[ $(boolean) ]] not [[ $boolean ]]
 B_ASOUND_DEVICE_FILE='false'
@@ -287,6 +287,7 @@ FILE_MODULES='/proc/modules'
 FILE_MOUNTS='/proc/mounts'
 FILE_PARTITIONS='/proc/partitions'
 FILE_SCSI='/proc/scsi/scsi'
+FILE_XORG_LOG='/var/log/Xorg.0.log' # if not found, search and replace with actual location
 
 ## app tested for and present, to avoid repeat tests
 B_FILE_TESTED='false'
@@ -303,6 +304,7 @@ DCOPOBJ="default"
 DEBUG=0 # Set debug levels from 1-10 (8-10 trigger logging levels)
 # Debug Buffer Index, index into a debug buffer storing debug messages until inxi is 'all up'
 DEBUG_BUFFER_INDEX=0
+DEBUG_DATA_TYPE=''
 ## note: the debugger rerouting to /dev/null has been moved to the end of the get_parameters function
 ## so -@[number] debug levels can be set if there is a failure, otherwise you can't even see the errors
 
@@ -698,6 +700,18 @@ initialize_script_data()
 
 	if [[ -e $FILE_PARTITIONS ]];then
 		B_PARTITIONS_FILE='true'
+	fi
+	# default to the normal location, then search for it
+	if [[ -e $FILE_XORG_LOG ]];then
+		B_XORG_LOG='true'
+	else
+		# Detect location of the Xorg log file
+		if [[ -n $( type -p xset ) ]]; then
+			FILE_XORG_LOG=$( xset q 2>/dev/null | grep -i 'Log file' | gawk '{print $3}')
+			if [[ -e $FILE_XORG_LOG ]];then
+				B_XORG_LOG='true'
+			fi
+		fi
 	fi
 	# gfx output will require this flag
 	if [[ $( whoami ) == 'root' ]];then
@@ -1234,10 +1248,10 @@ script_self_updater()
 debug_data_collector()
 {
 	local xiin_app='' xiin_data_file='' xiin_download=''
-	local xiin_data_dir="xiin-$(hostname | tr ' ' '-' | tr '[A-Z]' '[a-z]' )-$(date +%Y%m%d)" 
+	local xiin_data_dir="xiin-$(hostname | tr ' ' '-' | tr '[A-Z]' '[a-z]' )-$DEBUG_DATA_TYPE-$(date +%Y%m%d)" 
 	
 	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
-		echo "Starting debugging data collection."
+		echo "Starting debugging data collection type: $DEBUG_DATA_TYPE"
 		echo -n "Checking/creating required directories... "
 		if [[ ! -d $SCRIPT_DATA_DIR ]];then
 			mkdir $SCRIPT_DATA_DIR
@@ -1253,38 +1267,84 @@ debug_data_collector()
 			echo 'Deleting previous tar.gz file...'
 			rm -f $xiin_data_dir.tar.gz
 		fi
-	
-		xiin_data_file=$SCRIPT_DATA_DIR/$xiin_data_dir/xiin-sys.txt
-		
-		echo 'Downloading required tree traverse tool xiin...'
-		# -Nc is creating really weird download anomolies, so using -O instead
-		xiin_download="$( wget -q -O - http://inxi.googlecode.com/svn/branches/xiin/xiin )"
-		# if nothing got downloaded kick out error, otherwise we'll use an older version
-		if [[ $? -gt 0 && ! -f xiin ]];then
-			error_handler 17 'xiin'
-		elif [[ -n $( grep -s 'checkPython' <<< "$xiin_download" ) || -f xiin ]];then
-			if [[ -n $( grep -s 'checkPython' <<< "$xiin_download" ) ]];then
-				echo 'Updating xiin from remote location'
-				echo "$xiin_download" > xiin
+		if [[ $DEBUG_DATA_TYPE == 'sys' ]];then
+			xiin_data_file=$SCRIPT_DATA_DIR/$xiin_data_dir/xiin-sys.txt
+			echo 'Downloading required tree traverse tool xiin...'
+			# -Nc is creating really weird download anomolies, so using -O instead
+			xiin_download="$( wget -q -O - http://inxi.googlecode.com/svn/branches/xiin/xiin )"
+			# if nothing got downloaded kick out error, otherwise we'll use an older version
+			if [[ $? -gt 0 && ! -f xiin ]];then
+				error_handler 17 'xiin'
+			elif [[ -n $( grep -s 'checkPython' <<< "$xiin_download" ) || -f xiin ]];then
+				if [[ -n $( grep -s 'checkPython' <<< "$xiin_download" ) ]];then
+					echo 'Updating xiin from remote location'
+					echo "$xiin_download" > xiin
+				else
+					echo 'Using local xiin due to download failure'
+				fi
+				echo 'Running xiin tool now on /sys...'
+				python ./xiin -d /sys -f $xiin_data_file
+				if [[ $? -ne 0 ]];then
+					echo "xiin exited with error $? - removing data file before exiting."
+					rm -f $xiin_data_file
+					error_handler 19 'xiin'
+				fi
 			else
-				echo 'Using local xiin due to download failure'
+				error_handler 18 'xiin'
 			fi
-			echo 'Running xiin tool now on /sys...'
-			python ./xiin -d /sys -f $xiin_data_file
-			if [[ $? -ne 0 ]];then
-				echo "xiin exited with error $? - removing data file before exiting."
-				rm -f $xiin_data_file
-				error_handler 19 'xiin'
-			fi
-		else
-			error_handler 18 'xiin'
 		fi
-		echo 'Collecting related system info now, lsusb, lspci, lspci -v, Xorg.log data'
+		echo 'Collecting system info: lsusb, lspci, lspci -v data'
 		lsusb > $xiin_data_dir/lsusb.txt
 		lspci > $xiin_data_dir/lspci.txt
 		lspci -v > $xiin_data_dir/lspci-v.txt
-		cat /var/log/Xorg.0.log 2>/dev/null | tail -n 200 > $xiin_data_dir/xorg-200.txt
-		
+		if [[ $DEBUG_DATA_TYPE == 'xorg' ]];then
+			if [[ $B_RUNNING_IN_X != 'true' ]];then
+				echo 'Warning: only some of the data collection can occur if you are not in X'
+				touch $xiin_data_dir/warning-user-not-in-x
+			fi
+			if [[ $B_ROOT == 'true' ]];then
+				echo 'Warning: only some of the data collection can occur if you are running as Root user'
+				touch $xiin_data_dir/warning-root-user
+			fi
+			echo 'Collecting Xorg log and xorg.conf files'
+			if [[ -e $FILE_XORG_LOG ]];then
+				cp $FILE_XORG_LOG $xiin_data_dir
+			else
+				touch $xiin_data_dir/no-xorg-log-file
+			fi
+			if [[ -e /etc/X11/xorg.conf ]];then
+				cp /etc/X11/xorg.conf $xiin_data_dir
+			else
+				touch $xiin_data_dir/no-xorg-conf-file
+			fi
+			if [[ -n $( ls /etc/X11/xorg.conf.d/ 2>/dev/null ) ]];then
+				cp /etc/X11/xorg.conf.d $xiin_data_dir
+			else
+				touch $xiin_data_dir/no-xorg-conf-d-files
+			fi
+			echo 'Collecting X, xprop, glxinfo, xdpyinfo data...'
+			if [[ -n $( type -p xprop ) ]];then
+				xprop -root > $xiin_data_dir/xprop_root.txt
+			else
+				touch $xiin_data_dir/no-prop-app
+			fi
+			if [[ -n $( type -p glxinfo ) ]];then
+				glxinfo > $xiin_data_dir/glxinfo.txt
+			else
+				touch $xiin_data_dir/no-glxinfo-app
+			fi
+			if [[ -n $( type -p xdpyinfo ) ]];then
+				xdpyinfo > $xiin_data_dir/xdpyinfo.txt
+			else
+				touch $xiin_data_dir/no-xdpyinfo-app
+			fi
+			if [[ -n $( type -p X ) ]];then
+				# no idea why, but has to be this way to print out to file
+				X -version 2>&1 | awk '{print $0}' > $xiin_data_dir/x-version.txt
+			else
+				touch $xiin_data_dir/no-x-app
+			fi
+		fi
 		echo 'Creating tar.gz compressed file of this material now. Contents:'
 		echo '-------------------------'
 		tar -cvzf $xiin_data_dir.tar.gz $xiin_data_dir
@@ -1560,7 +1620,7 @@ get_parameters()
 			## debuggers and testing tools
 			%)	B_HANDLE_CORRUPT_DATA='true'
 				;;
-			@)	if [[ -n $( grep -E "^([1-9]|1[0-1])$" <<< $OPTARG ) ]];then
+			@)	if [[ -n $( grep -E "^([1-9]|1[0-2])$" <<< $OPTARG ) ]];then
 					DEBUG=$OPTARG
 					exec 2>&1
 					# switch on logging only for -@ 8-10
@@ -1577,7 +1637,16 @@ get_parameters()
 							LOGFE=$LOGFE_STRING
 							create_rotate_logfiles # create/rotate logfiles before we do anything else
 							;;
-						11)
+						11|12)
+							case $OPTARG in
+								11)
+									DEBUG_DATA_TYPE='sys'
+									;;
+								12)
+									DEBUG_DATA_TYPE='xorg'
+									;;
+							esac
+							initialize_script_data
 							debug_data_collector
 							;;
 					esac
@@ -1708,7 +1777,8 @@ show_options()
 	print_screen_output "-%  Overrides defective or corrupted data."
 	print_screen_output "-@  Triggers debugger output. Requires debugging level 1-10 (8-10 - logging)."
 	print_screen_output "    8 - basic logging; 9 - full file/sys info logging; 10 - color logging."
-	print_screen_output "    11 - No logging, creates tar.gz file of user data from lsusb/lspci/Xorg.0.log, and xiin read of /sys."
+	print_screen_output "    11 - No logging, creates tar.gz file of user data from lsusb/lspci, and xiin read of /sys."
+	print_screen_output "    12 - No logging, creates tar.gz file of user data from lsusb/lspci, plus xorg data, glxinfo etc."
 	if [[ $1 == 'full' ]];then
 		print_screen_output " "
 		print_screen_output "Developer and Testing Options (Advanced):"
@@ -2966,15 +3036,15 @@ get_graphics_card_data()
 	A_GFX_CARD_DATA=( $( echo "$Lspci_Data" | gawk -F': ' '
 	BEGIN {
 		IGNORECASE=1
-		nic=""
+		busId=""
 	}
 	/vga compatible controller/ {
 		gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF)
 		gsub(/,/, " ", $NF)
 		gsub(/^ +| +$/, "", $NF)
 		gsub(/ [ \t]+/, " ", $NF)
-		nic=gensub(/^([0-9a-f:\.]+) (.+)$/,"\\1","",$1)
-		print $NF "," nic
+		busId=gensub(/^([0-9a-f:\.]+) (.+)$/,"\\1","",$1)
+		print $NF "," busId
 	}' ) )
 	IFS="$ORIGINAL_IFS"
 # 	for (( i=0; i < ${#A_GFX_CARD_DATA[@]}; i++ ))
@@ -3118,6 +3188,27 @@ get_graphics_agp_data()
 		log_function_data 'cat' "$FILE_MODULES"
 	fi
 	log_function_data "agp_module: $agp_module"
+	eval $LOGFE
+}
+
+get_graphics_driver()
+{
+	eval $LOGFS
+	
+	local driver_list='apm ark ati chips cirrus cyrix fbdev fglrx glint i128 i740 intel i810 imstt mach64 mga neomagic nsc  nv nvidia openchrome nouveau radeon radeonhd rendition s3 s3virge savage siliconmotion sis sisusb tdfx tga trident tseng unichrome vesa vga via voodoo vmware v4l'
+	local driver='' driver_string='' spacer=''
+
+	if [[ $B_XORG_LOG == 'true' ]];then
+	 for driver in $driver_list
+	 do
+	 	if [[ -n $( grep -s "[[:space:]]Loading.*${driver}_drv.so" $FILE_XORG_LOG ) && -z $( grep -s "[[:space:]]Unloading.*${driver}_drv.so" $FILE_XORG_LOG  ) ]];then
+	 		driver_string="$driver_string$driver$spacer"
+	 		spacer=' '
+	 	fi
+	 done
+	fi
+	
+	echo $driver_string
 	eval $LOGFE
 }
 
@@ -5303,7 +5394,7 @@ print_gfx_data()
 	local gfx_data='' i='' card_id='' root_alert='' root_x_string='' a_gfx_working=''
 	local screen_resolution="$( get_graphics_res_data )"
 	local b_is_mesa='false' display_full_string='' gfx_bus_id='' gfx_card_data=''
-	local res_tty='Res' xorg_data='' x_vendor_string=''
+	local res_tty='Res' xorg_data='' x_vendor_string='' x_driver_string='' x_driver_plural=''
 	# set A_GFX_CARD_DATA
 	get_graphics_card_data
 	# set A_X_DATA
@@ -5317,6 +5408,14 @@ print_gfx_data()
 	# this can contain a long No case debugging message, so it's being sliced off
 	# note: using grep -ioE '(No|Yes)' <<< ${A_GLX_DATA[2]} did not work in Arch, no idea why
 	local glx_direct_render=$( gawk '{print $1}' <<< "${A_GLX_DATA[2]}" )
+	local x_driver=$( get_graphics_driver )
+	
+	if [[ -z $x_driver ]];then
+		x_driver='N/A'
+	elif [[ $( wc -w <<< $x_driver ) -gt 1 ]];then
+		x_driver_plural='s'
+	fi
+	x_driver_string="${C1}driver$x_driver_plural:${C2} $x_driver "
 	
 	# some basic error handling:
 	if [[ -z $screen_resolution ]];then
@@ -5342,7 +5441,7 @@ print_gfx_data()
 		root_x_string="${C1}Gfx Data:${C2} N/A $root_x_string"
 	fi
 
-	display_full_string="$x_vendor_string${C1}${res_tty}:${C2} ${screen_resolution} $root_x_string"
+	display_full_string="$x_vendor_string$x_driver_string${C1}${res_tty}:${C2} ${screen_resolution} $root_x_string"
 
 	if [[ ${#A_GFX_CARD_DATA[@]} -gt 0 ]];then
 		for (( i=0; i < ${#A_GFX_CARD_DATA[@]}; i++ ))
