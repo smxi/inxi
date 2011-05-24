@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.5.1
-####  Date: May 23 2011
+####  version: 1.5.2
+####  Date: May 24 2011
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -174,6 +174,7 @@ COLOR_SCHEME=''
 CPU_SLEEP='0.3' 
 DEV_DISK_LABEL=''
 DEV_DISK_UUID=''
+FILTER_STRING='<filter>'
 IRC_CLIENT=''
 IRC_CLIENT_VERSION=''
 PS_COUNT=5
@@ -220,6 +221,8 @@ B_HANDLE_CORRUPT_DATA='false'
 B_LABEL_SET='false'
 B_LOG_COLORS='false'
 B_LOG_FULL_DATA='false'
+B_OUTPUT_FILTER='false'
+B_OVERRIDE_FILTER='false'
 # kde qdbus
 B_QDBUS='false'
 B_ROOT='false'
@@ -1469,7 +1472,7 @@ get_parameters()
 	# the short form only runs if no args output args are used
 	# no need to run through these if there are no args
 	if [[ -n $1 ]];then
-		while getopts Ac:CdDfFGhHiIlnNopPrsSt:uv:Vx%@:${update_flags} opt
+		while getopts Ac:CdDfFGhHiIlnNopPrsSt:uv:VxzZ%@:${update_flags} opt
 		do
 			case $opt in
 			A)	B_SHOW_AUDIO='true'
@@ -1611,6 +1614,10 @@ get_parameters()
 				;;
 			x)	B_EXTRA_DATA='true'
 				;;
+			z) B_OUTPUT_FILTER='true'
+				;;
+			Z)	B_OVERRIDE_FILTER='true'
+				;;
 			h)	show_options
 				exit 0
 				;;
@@ -1701,6 +1708,10 @@ get_parameters()
 	if [[ $use_short == 'true' ]];then
 		B_SHOW_SHORT_OUTPUT='true'
 	fi
+	# just in case someone insists on using -zZ
+	if [[ $B_OVERRIDE_FILTER == 'true' ]];then
+		B_OUTPUT_FILTER='false'
+	fi
 	eval $LOGFE
 }
 
@@ -1766,6 +1777,8 @@ show_options()
 	print_screen_output "    Shows hdd temp with disk data if you have hddtemp installed, if you are root OR if you have"
 	print_screen_output "    added to /etc/sudoers (sudo v. 1.7 or newer): <username> ALL = NOPASSWD: /usr/sbin/hddtemp (sample)"
 	print_screen_output "    For -t, adds memory use output to cpu (-tx c), and cpu use to memory (-tx m)."
+	print_screen_output "-z  Adds security filters for IP addresses, Mac, and user home directory name. Default on for irc clients."
+	print_screen_output "-Z  Absolute override for output filters. Useful for debugging networking issues in irc for example."
 	print_screen_output " "
 	print_screen_output "Additional Options:"
 	print_screen_output "-h - this help menu."
@@ -1841,6 +1854,9 @@ get_start_client()
 		unset IRC_CLIENT_VERSION
 		B_RUNNING_IN_SHELL='true'
 	elif [[ -n $PPID && -f /proc/$PPID/exe ]];then
+		if [[ $B_OVERRIDE_FILTER != 'true' ]];then
+			B_OUTPUT_FILTER='true'
+		fi
 		irc_client_path=$( readlink /proc/$PPID/exe )
 		irc_client_path_lower=$( tr '[:upper:]' '[:lower:]' <<< $irc_client_path )
 		app_working_name=$( basename $irc_client_path_lower )
@@ -2089,6 +2105,9 @@ get_start_client()
 	else
 		## lets look to see if qt4_konvi is the parent.  There is no direct way to tell, so lets infer it.
 		## because $PPID does not work with qt4_konvi, the above case does not work
+		if [[ $B_OVERRIDE_FILTER != 'true' ]];then
+			B_OUTPUT_FILTER='true'
+		fi
 		b_qt4_konvi=$( is_this_qt4_konvi )
 		if [[ $b_qt4_konvi == 'true' ]];then
 			KONVI=3
@@ -2637,7 +2656,7 @@ detect_desktop_environment()
 				toolkit=$( pkg-config --modversion gtk+-2.0 2>/dev/null )
 			fi
 			if [[ -n $toolkit ]];then
-				version="$version (Gtk: $toolkit)"
+				version="$version (Gtk $toolkit)"
 			fi
 		fi
 		desktop_environment="Gnome"
@@ -2699,7 +2718,7 @@ detect_desktop_environment()
 				if [[ $B_EXTRA_DATA == 'true' ]];then
 					toolkit=$( get_de_version 'xfdesktop' 'Built[[:space:]]with[[:space:]]GTK' '4' )
 					if [[ -n $toolkit ]];then
-						version="$version (Gtk+ $toolkit)"
+						version="$version (Gtk $toolkit)"
 					fi
 				fi
 				desktop_environment="Xfce"
@@ -2712,7 +2731,7 @@ detect_desktop_environment()
 				if [[ $B_EXTRA_DATA == 'true' ]];then
 					toolkit=$( get_de_version 'xfdesktop' 'Built[[:space:]]with[[:space:]]GTK' '4' )
 					if [[ -n $toolkit ]];then
-						version="$version (Gtk+ $toolkit)"
+						version="$version (Gtk $toolkit)"
 					fi
 				fi
 				desktop_environment="Xfce"
@@ -2753,6 +2772,8 @@ detect_desktop_environment()
 			elif [[ -n $( grep -is 'awesome' <<< "$ps_aux" | grep -v 'grep' ) ]];then
 				version=$( get_de_version 'awesome' '^awesome' '2' )
 				desktop_environment='Awesome'
+			elif [[ -n $( grep -is 'twm' <<< "$ps_aux" | grep -v 'grep' ) ]];then
+				desktop_environment='TWM' # no --version for this one
 			fi
 		fi
 	fi
@@ -5777,10 +5798,10 @@ print_network_advanced_data()
 			duplex_string="${C1}duplex:${C2} $duplex "
 		fi
 		if [[ -n ${a_network_working[9]} ]];then
-			if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
-				mac_id=${a_network_working[9]}
+			if [[ $B_OUTPUT_FILTER == 'true' ]];then
+				mac_id=$FILTER_STRING
 			else
-				mac_id='<irc-filter>'
+				mac_id=${a_network_working[9]}
 			fi
 		fi
 		network_data="${C1}IF:${C2} $if_id ${C1}state:${C2} $oper_state $speed_string$duplex_string${C1}mac:${C2} $mac_id"
@@ -5803,6 +5824,10 @@ print_networking_ip_data()
 	# first print output for wan ip line. Null is handled in the get function
 	if [[ -z $ip ]];then
 		ip='N/A'
+	else
+		if [[ $B_OUTPUT_FILTER == 'true' ]];then
+			ip=$FILTER_STRING
+		fi
 	fi
 	ip_data=$( create_print_line " " "${C1}Wan IP:${C2} $ip" )
 
@@ -5816,10 +5841,10 @@ print_networking_ip_data()
 		if_id='N/A'
 		if_ip='N/A'
 		if [[ -n ${a_interfaces_working[1]} ]];then
-			if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
-				if_ip=${a_interfaces_working[1]}
+			if [[ $B_OUTPUT_FILTER == 'true' ]];then
+				if_ip=$FILTER_STRING
 			else
-				if_ip='<irc-filter>'
+				if_ip=${a_interfaces_working[1]}
 			fi
 		fi
 		if [[ -n ${a_interfaces_working[0]} ]];then
@@ -5918,8 +5943,8 @@ print_partition_data()
 					full_uuid=" ${C1}uuid:${C2} $part_uuid"
 				fi
 			fi
-			if [[ $B_RUNNING_IN_SHELL == 'false' ]];then
-				partitionIdClean=$( sed -r 's|/home/(.*)/(.*)|/home/##/\2|' <<< ${a_partition_working[0]} )
+			if [[ $B_OUTPUT_FILTER == 'true' ]];then
+				partitionIdClean=$( sed -r "s|/home/([^/]+)/(.*)|/home/$FILTER_STRING/\2|" <<< ${a_partition_working[0]} )
 			else
 				partitionIdClean=${a_partition_working[0]}
 			fi
