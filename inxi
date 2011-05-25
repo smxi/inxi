@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.5.3
-####  Date: May 24 2011
+####  version: 1.5.4
+####  Date: May 25 2011
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -5426,10 +5426,11 @@ print_gfx_data()
 {
 	eval $LOGFS
 	local gfx_data='' i='' card_id='' root_alert='' root_x_string='' a_gfx_working=''
-	local screen_resolution="$( get_graphics_res_data )"
 	local b_is_mesa='false' display_full_string='' gfx_bus_id='' gfx_card_data=''
-	local res_tty='Res' xorg_data='' x_vendor_string='' x_driver_string='' x_driver_plural=''
-	local spacer=''
+	local res_tty='Resolution' xorg_data='' x_vendor_string='' line_max='160'
+	local spacer='' x_driver='' x_driver_string='' x_driver_plural='' direct_render_string=''
+	local line_starter='Graphics:'
+	local screen_resolution="$( get_graphics_res_data )"
 	# set A_GFX_CARD_DATA
 	get_graphics_card_data
 	# set A_X_DATA
@@ -5446,7 +5447,15 @@ print_gfx_data()
 	
 	# set A_GRAPHIC_DRIVERS
 	get_graphics_driver
-	local x_driver=''
+	
+	# this handles the different, shorter, irc colors strings embedded in variable data
+	if [[ $B_RUNNING_IN_SHELL != 'true' ]];then
+		line_max=140
+	fi
+	# and no color string data at all
+	if [[ $SCHEME -eq 0 ]];then
+		line_max=100
+	fi
 	
 	if [[ ${#A_GRAPHIC_DRIVERS[@]} -eq 0 ]];then
 		x_driver='N/A'
@@ -5481,18 +5490,19 @@ print_gfx_data()
 	if [[ $B_ROOT == 'true' ]];then
 		root_x_string='for root '
 		if [[ $B_RUNNING_IN_SHELL == 'true' || $B_CONSOLE_IRC == 'true' ]];then
-			res_tty='tty res'
+			res_tty='tty size'
 		fi
 	fi
 	if [[ $B_RUNNING_IN_X != 'true' ]];then
 		root_x_string="${root_x_string}out of X"
-		res_tty='tty res'
+		res_tty='tty size'
 	fi
+	
 	if [[ -n $root_x_string ]];then
-		root_x_string="${C1}Gfx Data:${C2} N/A $root_x_string"
+		root_x_string="${C1}Advanced Graphics Data:${C2} N/A $root_x_string"
 	fi
 
-	display_full_string="$x_vendor_string$x_driver_string${C1}${res_tty}:${C2} ${screen_resolution} $root_x_string"
+	display_full_string="$x_vendor_string$x_driver_string${C1}${res_tty}${C2} ${screen_resolution} $root_x_string"
 
 	if [[ ${#A_GFX_CARD_DATA[@]} -gt 0 ]];then
 		for (( i=0; i < ${#A_GFX_CARD_DATA[@]}; i++ ))
@@ -5514,15 +5524,26 @@ print_gfx_data()
 			else
 				card_id='Card:'
 			fi
-			gfx_data="$gfx_data${C1}$card_id${C2} $gfx_card_data$gfx_bus_id "
+			gfx_data="${C1}$card_id${C2} $gfx_card_data$gfx_bus_id "
+			if [[ ${#A_GFX_CARD_DATA[@]} -gt 1 ]];then
+				gfx_data=$( create_print_line "$line_starter" "${gfx_data}" )
+				print_screen_output "$gfx_data"
+				line_starter=' '
+			fi
 		done
 	# handle cases where card detection fails, like in PS3, where lspci gives no output, or headless boxes..
 	else
 		gfx_data="${C1}Card:${C2} Failed to Detect Video Card! "
 	fi
-	gfx_data=$( create_print_line "Graphics:" "${gfx_data}$display_full_string" )
+	if [[ $( wc -c <<< ${gfx_data}$display_full_string ) -lt $line_max ]];then
+		gfx_data=$( create_print_line "$line_starter" "${gfx_data}$display_full_string" )
+	else
+		gfx_data=$( create_print_line "$line_starter" "$gfx_data" )
+		print_screen_output "$gfx_data"
+		line_starter=' '
+		gfx_data=$( create_print_line "$line_starter" "$display_full_string" )
+	fi
 	print_screen_output "$gfx_data"
-
 # 	if [[ -z $glx_renderer || -z $glx_version ]];then
 # 		b_is_mesa='true'
 # 	fi
@@ -5539,10 +5560,12 @@ print_gfx_data()
 		if [[ -z $glx_direct_render ]];then
 			glx_direct_render='N/A'
 		fi
-		gfx_data=$( create_print_line " " "${C1}GLX Renderer${C2} ${glx_renderer} ${C1}GLX Version${C2} ${glx_version}${CN}" )
 		if [[ $B_HANDLE_CORRUPT_DATA == 'true' || $B_EXTRA_DATA == 'true' ]];then
-			gfx_data="$gfx_data ${C1}Direct Rendering${C2} ${glx_direct_render}${CN}"
+			direct_render_string=" ${C1}Direct Rendering${C2} ${glx_direct_render}${CN}"
 		fi
+		gfx_data="${C1}GLX Renderer${C2} ${glx_renderer} ${C1}GLX Version${C2} ${glx_version}${CN}$direct_render_string"
+		gfx_data=$( create_print_line " " "$gfx_data" )
+		
 		print_screen_output "$gfx_data"
 	fi
 	eval $LOGFE
@@ -6290,10 +6313,21 @@ print_sensors_data()
 print_system_data()
 {
 	eval $LOGFS
-	local system_data='' bits='' desktop_environment=''
+	local system_data='' bits='' desktop_environment='' line_max=170
+	local host_kernel_string='' de_distro_string='' host_string='' desktop_type='Desktop'
 	local host_name=$( hostname )
 	local current_kernel=$( uname -rm ) # | gawk '{print $1,$3,$(NF-1)}' )
 	local distro="$( get_distro_data )"
+	local tty_session=$( basename $(tty) | sed 's/[^0-9]*//g' )
+	
+	# this handles the different, shorter, irc colors strings embedded in variable data
+	if [[ $B_RUNNING_IN_SHELL != 'true' ]];then
+		line_max=150
+	fi
+	# and no color string data at all
+	if [[ $SCHEME -eq 0 ]];then
+		line_max=110
+	fi
 	
 	# I think these will work, maybe, if logged in as root and in X
 	if [[ $B_RUNNING_IN_X == 'true' ]];then
@@ -6301,9 +6335,11 @@ print_system_data()
 		if [[ -z $desktop_environment ]];then
 			desktop_environment='N/A'
 		fi
-		desktop_environment="${C1}Desktop${C2} $desktop_environment "
+	else
+		desktop_environment="tty $tty_session"
+		desktop_type='Console'
 	fi
-
+	de_distro_string="${C1}$desktop_type${C2} $desktop_environment ${C1}Distro${C2} $distro"
 	# check for 64 bit first
 	if [[ -n $( uname -m | grep -o 'x86_64' ) ]];then
 		bits="(64 bit)"
@@ -6312,11 +6348,19 @@ print_system_data()
 	fi
 
 	if [[ $B_SHOW_HOST == 'true' ]];then
+		host_string="${C1}Host${C2} $host_name "
 		system_data=$( create_print_line "System:" "${C1}Host${C2} $host_name ${C1}Kernel${C2}" )
-	else
-		system_data=$( create_print_line "System:" "${C1}Kernel${C2}" )
 	fi
-	system_data="$system_data $current_kernel $bits $desktop_environment${C1}Distro${C2} $distro"
+	host_kernel_string="$host_string${C1}Kernel${C2} $current_kernel $bits "
+	
+	if [[ $( wc -c <<< "$host_kernel_string$de_distro_string" ) -lt $line_max ]];then
+		system_data="$host_kernel_string$de_distro_string"
+		system_data=$( create_print_line "System:" "$system_data" )
+	else
+		system_data=$( create_print_line "System:" "$host_kernel_string" )
+		print_screen_output "$system_data"
+		system_data=$( create_print_line " " "$de_distro_string" )
+	fi
 	print_screen_output "$system_data"
 	eval $LOGFE
 }
