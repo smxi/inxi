@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.5.6
-####  Date: May 25 2011
+####  version: 1.5.7
+####  Date: May 26 2011
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -308,7 +308,6 @@ DCOPOBJ="default"
 DEBUG=0 # Set debug levels from 1-10 (8-10 trigger logging levels)
 # Debug Buffer Index, index into a debug buffer storing debug messages until inxi is 'all up'
 DEBUG_BUFFER_INDEX=0
-DEBUG_DATA_TYPE=''
 ## note: the debugger rerouting to /dev/null has been moved to the end of the get_parameters function
 ## so -@[number] debug levels can be set if there is a failure, otherwise you can't even see the errors
 
@@ -1249,13 +1248,14 @@ script_self_updater()
 	eval $LOGFS
 }
 
+# args: $1 - debug data type: sys|xorg|disk
 debug_data_collector()
 {
 	local xiin_app='' xiin_data_file='' xiin_download=''
-	local xiin_data_dir="xiin-$(hostname | tr ' ' '-' | tr '[A-Z]' '[a-z]' )-$DEBUG_DATA_TYPE-$(date +%Y%m%d)" 
+	local xiin_data_dir="xiin-$(hostname | tr ' ' '-' | tr '[A-Z]' '[a-z]' )-$1-$(date +%Y%m%d)" 
 	
 	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
-		echo "Starting debugging data collection type: $DEBUG_DATA_TYPE"
+		echo "Starting debugging data collection type: $1"
 		echo -n "Checking/creating required directories... "
 		if [[ ! -d $SCRIPT_DATA_DIR ]];then
 			mkdir $SCRIPT_DATA_DIR
@@ -1271,89 +1271,98 @@ debug_data_collector()
 			echo 'Deleting previous tar.gz file...'
 			rm -f $xiin_data_dir.tar.gz
 		fi
-		if [[ $DEBUG_DATA_TYPE == 'sys' ]];then
-			xiin_data_file=$SCRIPT_DATA_DIR/$xiin_data_dir/xiin-sys.txt
-			echo 'Downloading required tree traverse tool xiin...'
-			# -Nc is creating really weird download anomolies, so using -O instead
-			xiin_download="$( wget -q -O - http://inxi.googlecode.com/svn/branches/xiin/xiin )"
-			# if nothing got downloaded kick out error, otherwise we'll use an older version
-			if [[ $? -gt 0 && ! -f xiin ]];then
-				error_handler 17 'xiin'
-			elif [[ -n $( grep -s 'checkPython' <<< "$xiin_download" ) || -f xiin ]];then
-				if [[ -n $( grep -s 'checkPython' <<< "$xiin_download" ) ]];then
-					echo 'Updating xiin from remote location'
-					echo "$xiin_download" > xiin
+		
+		echo 'Collecting system info: sensors, lsusb, lspci, lspci -v data, plus /proc data'
+		lsusb &> $xiin_data_dir/lsusb.txt
+		lspci &> $xiin_data_dir/lspci.txt
+		lspci -v &> $xiin_data_dir/lspci-v.txt
+		sensors &> $xiin_data_dir/sensors.txt
+		cat $FILE_LSB_RELEASE &> $xiin_data_dir/lsb-release.txt
+		cat $FILE_ASOUND_DEVICE &> $xiin_data_dir/proc-asound-device.txt
+		cat $FILE_ASOUND_VERSION &> $xiin_data_dir/proc-asound-version.txt
+		cat $FILE_CPUINFO &> $xiin_data_dir/proc-cpu-info.txt
+		cat $FILE_MEMINFO &> $xiin_data_dir/proc-meminfo.txt
+		cat $FILE_MODULES &> $xiin_data_dir/proc-modules.txt
+		
+		case $1 in
+			sys)
+				xiin_data_file=$SCRIPT_DATA_DIR/$xiin_data_dir/xiin-sys.txt
+				echo 'Collecting networking data...'
+				ifconfig &> $xiin_data_dir/ifconfig.txt
+				echo 'Downloading required tree traverse tool xiin...'
+				# -Nc is creating really weird download anomolies, so using -O instead
+				xiin_download="$( wget -q -O - http://inxi.googlecode.com/svn/branches/xiin/xiin )"
+				# if nothing got downloaded kick out error, otherwise we'll use an older version
+				if [[ $? -gt 0 && ! -f xiin ]];then
+					error_handler 17 'xiin'
+				elif [[ -n $( grep -s 'checkPython' <<< "$xiin_download" ) || -f xiin ]];then
+					if [[ -n $( grep -s 'checkPython' <<< "$xiin_download" ) ]];then
+						echo 'Updating xiin from remote location'
+						echo "$xiin_download" > xiin
+					else
+						echo 'Using local xiin due to download failure'
+					fi
+					echo 'Running xiin tool now on /sys...'
+					python ./xiin -d /sys -f $xiin_data_file
+					if [[ $? -ne 0 ]];then
+						echo "xiin exited with error $? - removing data file before exiting."
+						rm -f $xiin_data_file
+						error_handler 19 'xiin'
+					fi
 				else
-					echo 'Using local xiin due to download failure'
+					error_handler 18 'xiin'
 				fi
-				echo 'Running xiin tool now on /sys...'
-				python ./xiin -d /sys -f $xiin_data_file
-				if [[ $? -ne 0 ]];then
-					echo "xiin exited with error $? - removing data file before exiting."
-					rm -f $xiin_data_file
-					error_handler 19 'xiin'
+				;;
+			xorg)
+				if [[ $B_RUNNING_IN_X != 'true' ]];then
+					echo 'Warning: only some of the data collection can occur if you are not in X'
+					touch $xiin_data_dir/warning-user-not-in-x
 				fi
-			else
-				error_handler 18 'xiin'
-			fi
-		fi
-		echo 'Collecting system info: lsusb, lspci, lspci -v data'
-		lsusb > $xiin_data_dir/lsusb.txt
-		lspci > $xiin_data_dir/lspci.txt
-		lspci -v > $xiin_data_dir/lspci-v.txt
-		if [[ $DEBUG_DATA_TYPE == 'xorg' ]];then
-			if [[ $B_RUNNING_IN_X != 'true' ]];then
-				echo 'Warning: only some of the data collection can occur if you are not in X'
-				touch $xiin_data_dir/warning-user-not-in-x
-			fi
-			if [[ $B_ROOT == 'true' ]];then
-				echo 'Warning: only some of the data collection can occur if you are running as Root user'
-				touch $xiin_data_dir/warning-root-user
-			fi
-			echo 'Collecting Xorg log and xorg.conf files'
-			if [[ -e $FILE_XORG_LOG ]];then
-				cp $FILE_XORG_LOG $xiin_data_dir
-			else
-				touch $xiin_data_dir/no-xorg-log-file
-			fi
-			if [[ -e /etc/X11/xorg.conf ]];then
-				cp /etc/X11/xorg.conf $xiin_data_dir
-			else
-				touch $xiin_data_dir/no-xorg-conf-file
-			fi
-			if [[ -n $( ls /etc/X11/xorg.conf.d/ 2>/dev/null ) ]];then
-				cp /etc/X11/xorg.conf.d $xiin_data_dir
-			else
-				touch $xiin_data_dir/no-xorg-conf-d-files
-			fi
-			echo 'Collecting X, xprop, glxinfo, xranr, xdpyinfo data...'
-			if [[ -n $( type -p xprop ) ]];then
-				xprop -root > $xiin_data_dir/xprop_root.txt
-			else
-				touch $xiin_data_dir/no-prop-app
-			fi
-			if [[ -n $( type -p glxinfo ) ]];then
-				glxinfo > $xiin_data_dir/glxinfo.txt
-			else
-				touch $xiin_data_dir/no-glxinfo-app
-			fi
-			if [[ -n $( type -p xdpyinfo ) ]];then
-				xdpyinfo > $xiin_data_dir/xdpyinfo.txt
-			else
-				touch $xiin_data_dir/no-xdpyinfo-app
-			fi
-			if [[ -n $( type -p xrandr ) ]];then
-				xrandr > $xiin_data_dir/xrandr.txt
-			else
-				touch $xiin_data_dir/no-xrandr-app
-			fi
-			if [[ -n $( type -p X ) ]];then
-				# no idea why, but has to be this way to print out to file
-				X -version 2>&1 | awk '{print $0}' > $xiin_data_dir/x-version.txt
-			else
-				touch $xiin_data_dir/no-x-app
-			fi
-		fi
+				if [[ $B_ROOT == 'true' ]];then
+					echo 'Warning: only some of the data collection can occur if you are running as Root user'
+					touch $xiin_data_dir/warning-root-user
+				fi
+				echo 'Collecting Xorg log and xorg.conf files'
+				if [[ -e $FILE_XORG_LOG ]];then
+					cat $FILE_XORG_LOG &> $xiin_data_dir/xorg-log-file.txt
+				else
+					touch $xiin_data_dir/no-xorg-log-file
+				fi
+				if [[ -e /etc/X11/xorg.conf ]];then
+					cp /etc/X11/xorg.conf $xiin_data_dir
+				else
+					touch $xiin_data_dir/no-xorg-conf-file
+				fi
+				if [[ -n $( ls /etc/X11/xorg.conf.d/ 2>/dev/null ) ]];then
+					cp /etc/X11/xorg.conf.d $xiin_data_dir
+				else
+					touch $xiin_data_dir/no-xorg-conf-d-files
+				fi
+				echo 'Collecting X, xprop, glxinfo, xrandr, xdpyinfo data...'
+				xprop -root &> $xiin_data_dir/xprop_root.txt
+				glxinfo &> $xiin_data_dir/glxinfo.txt
+				xdpyinfo &> $xiin_data_dir/xdpyinfo.txt
+				xrandr &> $xiin_data_dir/xrandr.txt
+				X -version &> $xiin_data_dir/x-version.txt
+				;;
+			disk)
+				echo 'Collecting dev, label, disk, uuid data, df...'
+				ls -l /dev &> $xiin_data_dir/dev-data.txt
+				ls -l /dev/disk &> $xiin_data_dir/dev-disk-data.txt
+				ls -l /dev/disk/by-id &> $xiin_data_dir/dev-disk-id-data.txt
+				ls -l /dev/disk/by-label &> $xiin_data_dir/dev-disk-label-data.txt
+				ls -l /dev/disk/by-uuid &> $xiin_data_dir/dev-disk-uuid-data.txt
+				ls -l /dev/disk/by-path &> $xiin_data_dir/dev-disk-path-data.txt
+				readlink /dev/root &> $xiin_data_dir/dev-root.txt
+				df -h -T --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs &> $xiin_data_dir/df-h-T-excludes.txt
+				swapon -s &> $xiin_data_dir/swapon-s.txt
+				df --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 &> $xiin_data_dir/df-excludes.txt
+				cat $FILE_PARTITIONS &> $xiin_data_dir/proc-partitions.txt
+				cat $FILE_SCSI &> $xiin_data_dir/proc-scsi.txt
+				cat $FILE_MOUNTS &> $xiin_data_dir/proc-mounts.txt
+				;;
+		esac
+
 		echo 'Creating tar.gz compressed file of this material now. Contents:'
 		echo '-------------------------'
 		tar -cvzf $xiin_data_dir.tar.gz $xiin_data_dir
@@ -1467,17 +1476,22 @@ remove_erroneous_chars()
 get_parameters()
 {
 	eval $LOGFS
-	local opt='' wget_test='' update_flags='U!:'
+	local opt='' wget_test='' update_flags='U!:' debug_data_type=''
 	local use_short='true' # this is needed to trigger short output, every v/d/F/line trigger sets this false
 
 	# If distro maintainers want to not allow updates, turn off that option for users
 	if [[ $B_ALLOW_UPDATE == 'false' ]];then
 		update_flags=''
 	fi
-
+	if [[ $1 == '--version' ]];then
+		print_version_info
+		exit 0
+	elif [[ $1 == '--help' ]];then
+		show_options
+		exit 0
 	# the short form only runs if no args output args are used
 	# no need to run through these if there are no args
-	if [[ -n $1 ]];then
+	elif [[ -n $1 ]];then
 		while getopts Ac:CdDfFGhHiIlnNopPrsSt:uv:VxzZ%@:${update_flags} opt
 		do
 			case $opt in
@@ -1634,7 +1648,7 @@ get_parameters()
 			## debuggers and testing tools
 			%)	B_HANDLE_CORRUPT_DATA='true'
 				;;
-			@)	if [[ -n $( grep -E "^([1-9]|1[0-2])$" <<< $OPTARG ) ]];then
+			@)	if [[ -n $( grep -E "^([1-9]|1[0-3])$" <<< $OPTARG ) ]];then
 					DEBUG=$OPTARG
 					exec 2>&1
 					# switch on logging only for -@ 8-10
@@ -1651,17 +1665,20 @@ get_parameters()
 							LOGFE=$LOGFE_STRING
 							create_rotate_logfiles # create/rotate logfiles before we do anything else
 							;;
-						11|12)
+						11|12|13)
 							case $OPTARG in
 								11)
-									DEBUG_DATA_TYPE='sys'
+									debug_data_type='sys'
 									;;
 								12)
-									DEBUG_DATA_TYPE='xorg'
+									debug_data_type='xorg'
+									;;
+								13)
+									debug_data_type='disk'
 									;;
 							esac
 							initialize_script_data
-							debug_data_collector
+							debug_data_collector $debug_data_type
 							;;
 					esac
 				else
@@ -1726,7 +1743,11 @@ get_parameters()
 show_options()
 {
 	local color_scheme_count=$(( ${#A_COLOR_SCHEMES[@]} - 1 ))
-
+	
+	if ! tty >/dev/null;then
+		print_screen_output "Sorry, you can't run the help option in an IRC client."
+		exit 1
+	fi
 	print_screen_output "$SCRIPT_NAME supports the following options. You can combine them, or list them"
 	print_screen_output "one by one: Examples: $SCRIPT_NAME -v4 -c6 OR $SCRIPT_NAME -dDc 6"
 	print_screen_output " "
@@ -1747,7 +1768,7 @@ show_options()
 	print_screen_output "-d  Default output verbosity level, same as: $SCRIPT_NAME -v 1"
 	print_screen_output "-D  Show full hard Disk info, not only model, ie: /dev/sda ST380817AS 80.0GB."
 	print_screen_output "-f  Show all cpu flags used, not just the short list. Not shown with -F to avoid spamming."
-	print_screen_output "-F  Show Full output for $SCRIPT_NAME. Does not show extra verbose options like -f -u -l -o -p or -t"
+	print_screen_output "-F  Show Full output for $SCRIPT_NAME. Does not show extra verbose options like -f -u -l -o -p -t"
 	print_screen_output "-G  Show Graphic card information (card, x type, resolution, glx renderer, version)."
 	print_screen_output "-i  Show Wan IP address, and shows local interfaces (requires ifconfig network tool). Same as -Nni"
 	print_screen_output "    Not shown with -F for user security reasons, you shouldn't paste your local/wan IP."
@@ -1788,17 +1809,21 @@ show_options()
 	print_screen_output "-Z  Absolute override for output filters. Useful for debugging networking issues in irc for example."
 	print_screen_output " "
 	print_screen_output "Additional Options:"
-	print_screen_output "-h - this help menu."
+	print_screen_output "-h --help      This help menu."
+	print_screen_output "-H             This help menu, plus developer options. Do not use dev options in normal operation!"
 	if [[ $B_ALLOW_UPDATE == 'true' ]];then
-		print_screen_output "-U  Auto-update script. Note: if you installed as root, you"
-		print_screen_output "    must be root to update, otherwise user is fine."
+		print_screen_output "-U             Auto-update script. Note: if you installed as root, you"
+		print_screen_output "               must be root to update, otherwise user is fine."
 	fi
-	print_screen_output "-V  $SCRIPT_NAME version information. Prints information then exits."
+	print_screen_output "-V --version   $SCRIPT_NAME version information. Prints information then exits."
+	print_screen_output " "
+	print_screen_output "Debugging Options:"
 	print_screen_output "-%  Overrides defective or corrupted data."
 	print_screen_output "-@  Triggers debugger output. Requires debugging level 1-10 (8-10 - logging)."
 	print_screen_output "    8 - basic logging; 9 - full file/sys info logging; 10 - color logging."
-	print_screen_output "    11 - No logging, creates tar.gz file of user data from lsusb/lspci, and xiin read of /sys."
-	print_screen_output "    12 - No logging, creates tar.gz file of user data from lsusb/lspci, plus xorg data, glxinfo etc."
+	print_screen_output "    11 - No logging, creates tar.gz file of user data from lsusb/lspci/sensors, xiin read of /sys."
+	print_screen_output "    12 - No logging, creates tar.gz file of user data from lsusb/lspci/sensors, xorg data, glxinfo etc."
+	print_screen_output "    13 - No logging, creates tar.gz file of user data from lsusb/lspci/sensors, dev, disks, partitions etc."
 	if [[ $1 == 'full' ]];then
 		print_screen_output " "
 		print_screen_output "Developer and Testing Options (Advanced):"
@@ -1821,13 +1846,13 @@ print_version_info()
 {
 	local last_modified=$( grep -im 1 'date:' $SCRIPT_PATH/$SCRIPT_NAME | gawk '{print $3,$4,$5}' )
 
-	print_screen_output "$SCRIPT_NAME - the universal, portable, system info script for irc."
+	print_screen_output "$SCRIPT_NAME - the universal, portable, system info script for console and irc."
 	print_screen_output "Version: $SCRIPT_VERSION_NUMBER"
 	print_screen_output "Script Last Modified: $last_modified"
 	print_screen_output "Script Location: $SCRIPT_PATH"
 	print_screen_output " "
-	print_screen_output "Tested with Irssi, Xchat, Konversation, BitchX, KSirc, ircII,"
-	print_screen_output "Gaim/Pidgin, Weechat, KVIrc and Kopete."
+	print_screen_output "Tested in Irssi, Xchat, Konversation, BitchX, KSirc, ircII,"
+	print_screen_output "Gaim/Pidgin, Weechat, KVIrc, Quassel, Kopete, and others."
 	print_screen_output " "
 	print_screen_output "This script is a fork of Infobash 3.02, which is:"
 	print_screen_output "Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif"
@@ -2798,7 +2823,13 @@ get_desktop_environment()
 				version=$( get_de_version 'awesome' '^awesome' '2' )
 				desktop_environment='Awesome'
 			elif [[ -n $( grep -is 'twm' <<< "$ps_aux" | grep -v 'grep' ) ]];then
-				desktop_environment='TWM' # no --version for this one
+				desktop_environment='Twm' # no --version for this one
+			elif [[ -n $( grep -is 'dwm' <<< "$ps_aux" | grep -v 'grep' ) ]];then
+				version=$( get_de_version 'dwm' '^dwm' '1' )
+				desktop_environment='dwm'
+			elif [[ -n $( grep -is 'wmii' <<< "$ps_aux" | grep -v 'grep' ) ]];then
+				version=$( get_de_version 'wmii' '^wmii' '1' )
+				desktop_environment='wmii'
 			fi
 		fi
 	fi
@@ -2815,18 +2846,19 @@ get_de_version()
 {
 	local version=''
 	
-	version=$( $1 --version 2>/dev/null | gawk '
+ 	version=$( $1 --version 2>/dev/null | gawk '
 	BEGIN {
 		IGNORECASE=1
 	}
 	/'$2'/ {
-		gsub(",","",$0) # xfce output has , in it, so dump all commas
+		sub(/(dwm-|wmii-)/, "",$'$3') # sample: dwm-5.8.2, ©.. etc, why no space? who knows.
+		gsub(",","",$0) # xfce, and other, output has , in it, so dump all commas
 		print $'$3'
 		exit # quit after first match prints
 	}' )
-
 	echo $version
 }
+
 # for more on distro id, please reference this python thread: http://bugs.python.org/issue1322
 ## return distro name/id if found
 get_distro_data()
@@ -3072,6 +3104,24 @@ get_gpu_temp_data()
 	fi
 }
 
+## for possible future data, not currently used
+get_graphics_agp_data()
+{
+	eval $LOGFS
+	local agp_module=''
+
+	if [[ $B_MODULES_FILE == 'true' ]];then
+		## not used currently
+		agp_module=$( gawk '
+		/agp/ && !/agpgart/ && $3 > 0 {
+			print(gensub(/(.*)_agp.*/,"\\1","g",$1))
+		}' $FILE_MODULES )
+		log_function_data 'cat' "$FILE_MODULES"
+	fi
+	log_function_data "agp_module: $agp_module"
+	eval $LOGFE
+}
+
 ## create array of gfx cards installed on system
 get_graphics_card_data()
 {
@@ -3101,6 +3151,39 @@ get_graphics_card_data()
 	# GFXMEM is UNUSED at the moment, because it shows AGP aperture size, which is not necessarily equal to GFX memory..
 	# GFXMEM="size=[$(echo "$Lspci_Data" | gawk '/VGA/{while (!/^$/) {getline;if (/size=[0-9][0-9]*M/) {size2=gensub(/.*\[size=([0-9]+)M\].*/,"\\1","g",$0);if (size<size2){size=size2}}}}END{print size2}')M]"
 	log_function_data "A_GFX_CARD_DATA: ${A_GFX_CARD_DATA[@]}"
+	eval $LOGFE
+}
+
+get_graphics_driver()
+{
+	eval $LOGFS
+	
+	# list is from sgfxi plus non-free drivers
+	local driver_list='apm ark ati chips cirrus cyrix fbdev fglrx glint i128 i740 intel i810 imstt mach64 mga neomagic nsc  nv nvidia openchrome nouveau radeon radeonhd rendition s3 s3virge savage siliconmotion sis sisusb tdfx tga trident tseng unichrome vesa vga via voodoo vmware v4l'
+	local driver='' driver_string='' xorg_log_data='' status=''
+
+	if [[ $B_XORG_LOG == 'true' ]];then
+		xorg_log_data="$( cat $FILE_XORG_LOG )"
+		A_GRAPHIC_DRIVERS=( $(
+		for driver in $driver_list
+		do
+			# note there appears to be different unload/failed syntax, so using simple conservative one
+			# I was not able to find a case where xorg.log shows unload and not fail
+			if [[ -n $( grep -s "[[:space:]]Loading.*${driver}_drv.so" <<< "$xorg_log_data" ) ]];then
+				if [[ -z $( grep -si "Failed.*${driver}_drv.so" <<< "$xorg_log_data" ) ]];then
+					status='loaded'
+				else
+					status='failed'
+				fi
+				driver_string="$driver,$status"
+				echo $driver_string
+			fi
+		done
+		) )
+		xorg_log_data='' # dump from ram, does it matter?
+	fi
+	log_function_data "A_GRAPHIC_DRIVERS: ${A_GRAPHIC_DRIVERS[@]}"
+	
 	eval $LOGFE
 }
 
@@ -3222,57 +3305,6 @@ get_graphics_res_data()
 	eval $LOGFE
 }
 
-## for possible future data, not currently used
-get_graphics_agp_data()
-{
-	eval $LOGFS
-	local agp_module=''
-
-	if [[ $B_MODULES_FILE == 'true' ]];then
-		## not used currently
-		agp_module=$( gawk '
-		/agp/ && !/agpgart/ && $3 > 0 {
-			print(gensub(/(.*)_agp.*/,"\\1","g",$1))
-		}' $FILE_MODULES )
-		log_function_data 'cat' "$FILE_MODULES"
-	fi
-	log_function_data "agp_module: $agp_module"
-	eval $LOGFE
-}
-
-get_graphics_driver()
-{
-	eval $LOGFS
-	
-	# list is from sgfxi plus non-free drivers
-	local driver_list='apm ark ati chips cirrus cyrix fbdev fglrx glint i128 i740 intel i810 imstt mach64 mga neomagic nsc  nv nvidia openchrome nouveau radeon radeonhd rendition s3 s3virge savage siliconmotion sis sisusb tdfx tga trident tseng unichrome vesa vga via voodoo vmware v4l'
-	local driver='' driver_string='' xorg_log_data='' status=''
-
-	if [[ $B_XORG_LOG == 'true' ]];then
-		xorg_log_data="$( cat $FILE_XORG_LOG )"
-		A_GRAPHIC_DRIVERS=( $(
-		for driver in $driver_list
-		do
-			# note there appears to be different unload/failed syntax, so using simple conservative one
-			# I was not able to find a case where xorg.log shows unload and not fail
-			if [[ -n $( grep -s "[[:space:]]Loading.*${driver}_drv.so" <<< "$xorg_log_data" ) ]];then
-				if [[ -z $( grep -si "Failed.*${driver}_drv.so" <<< "$xorg_log_data" ) ]];then
-					status='loaded'
-				else
-					status='failed'
-				fi
-				driver_string="$driver,$status"
-				echo $driver_string
-			fi
-		done
-		) )
-		xorg_log_data='' # dump from ram, does it matter?
-	fi
-	log_function_data "A_GRAPHIC_DRIVERS: ${A_GRAPHIC_DRIVERS[@]}"
-	
-	eval $LOGFE
-}
-
 ## create array of x vendor/version data
 get_graphics_x_data()
 {
@@ -3303,7 +3335,7 @@ get_graphics_x_data()
 		# this gives better output than the failure last case, which would only show:
 		# for example: X.org: 1.9 instead of: X.org: 1.9.0
 		if [[ -z $x_version ]];then
-			x_version=$( get_x_version )
+			x_version=$( get_graphics_x_version )
 		fi
 		if [[ -z $x_version ]];then
 			x_version=$( xdpyinfo | gawk -F': +' '
@@ -3326,7 +3358,7 @@ get_graphics_x_data()
 		A_X_DATA[0]="$x_vendor"
 		A_X_DATA[1]="$x_version"
 	else
-		x_version=$( get_x_version )
+		x_version=$( get_graphics_x_version )
 		if [[ -n $x_version ]];then
 			x_vendor='X.org'
 			A_X_DATA[0]="$x_vendor"
@@ -3337,7 +3369,7 @@ get_graphics_x_data()
 	eval $LOGFE
 }
 # if other tests fail, try this one, this works for root, out of X also
-get_x_version()
+get_graphics_x_version()
 {
 	eval $LOGFS
 	local x_exists=$( type -p X )
@@ -5475,7 +5507,7 @@ print_gfx_data()
 	# set A_GRAPHIC_DRIVERS
 	get_graphics_driver
 	
-	# this handles the different, shorter, irc colors strings embedded in variable data
+	# this handles the different, longer, irc colors strings embedded in variable data
 	if [[ $B_RUNNING_IN_SHELL != 'true' ]];then
 		line_max=140
 	fi
@@ -5955,7 +5987,7 @@ print_partition_data()
 	local partitionIdClean='' part_dev='' full_dev='' part_label='' full_label=''
 	local part_uuid='' full_uuid='' dev_remote='' full_fs=''
 
-	# this handles the different, shorter, irc colors strings embedded in variable data
+	# this handles the different, longer, irc colors strings embedded in variable data
 	if [[ $B_RUNNING_IN_SHELL != 'true' ]];then
 		line_max=130
 	fi
@@ -6343,14 +6375,14 @@ print_sensors_data()
 print_system_data()
 {
 	eval $LOGFS
-	local system_data='' bits='' desktop_environment='' line_max=170
+	local system_data='' bits='' desktop_environment='' line_max=165
 	local host_kernel_string='' de_distro_string='' host_string='' desktop_type='Desktop'
 	local host_name=$( hostname )
 	local current_kernel=$( uname -rm ) # | gawk '{print $1,$3,$(NF-1)}' )
 	local distro="$( get_distro_data )"
 	local tty_session=$( basename "$( tty 2>/dev/null )" | sed 's/[^0-9]*//g' )
 	
-	# this handles the different, shorter, irc colors strings embedded in variable data
+	# this handles the different, longer, irc colors strings embedded in variable data
 	if [[ $B_RUNNING_IN_SHELL != 'true' ]];then
 		line_max=150
 	fi
