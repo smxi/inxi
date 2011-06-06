@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.5.13
-####  Date: June 5 2011
+####  version: 1.5.14
+####  Date: June 6 2011
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -122,6 +122,7 @@
 ####  As with all 'rules' there are acceptions, these are noted where used.
 ####
 ####  print_screen_output " " # requires space, not null, to avoid error in for example in irssi
+####  For logging of array data, array must be placed into the temp_array, otherwise only the first key logs
 ####
 ###################################################################################
 ####	KDE Konversation information.  Moving from dcop(qt3/KDE3) to dbus(qt4/KDE4)
@@ -476,7 +477,7 @@ BAN_LIST_CPU=''
 ### USB networking search string data, because some brands can have other products than
 ### wifi/nic cards, they need further identifiers, with wildcards.
 ### putting the most common and likely first, then the less common, then some specifics
-USB_NETWORK_SEARCH="Wi-Fi.*Adapter Wireless.*Adapter WLAN.*Adapter Network.*Adapter Atheros Atmel D-Link.*Adapter D-Link.*Wireless Linksys Netgear Ralink Realtek.*Network Realtek.*Wireless Realtek.*WLAN Belkin.*Wireless Belkin.*WLAN Belkin.*Network"
+USB_NETWORK_SEARCH="Wi-Fi.*Adapter Wireless.*Adapter WLAN.*Adapter Network.*Adapter 802\.11 Atheros Atmel D-Link.*Adapter D-Link.*Wireless Linksys Netgear Ralink Realtek.*Network Realtek.*Wireless Realtek.*WLAN Belkin.*Wireless Belkin.*WLAN Belkin.*Network"
 USB_NETWORK_SEARCH="$USB_NETWORK_SEARCH Actiontec.*Wireless Actiontec.*Network AirLink.*Wireless Asus.*Network Asus.*Wireless  Buffalo.*Wireless  Davicom DWA-.*RangeBooster DWA-.*Wireless ENUWI-.*Wireless LG.*Wi-Fi  Rosewill.*Wireless RNX-.*Wireless Samsung.*LinkStick Samsung.*Wireless Sony.*Wireless TEW-.*Wireless TP-Link.*Wireless WG[0-9]{3}.*Wireless WNA[0-9]{3} WNDA[0-9]{3} Zonet.*ZEW.*Wireless " 
 # then a few known hard to ID ones added 
 # belkin=050d; d-link=07d1; netgear=0846; ralink=148f; realtek=0bda; 
@@ -1286,85 +1287,84 @@ debug_data_collector()
 		cat $FILE_MEMINFO &> $xiin_data_dir/proc-meminfo.txt
 		cat $FILE_MODULES &> $xiin_data_dir/proc-modules.txt
 		
-		case $1 in
-			sys)
-				xiin_data_file=$SCRIPT_DATA_DIR/$xiin_data_dir/xiin-sys.txt
-				echo 'Collecting networking data...'
-				ifconfig &> $xiin_data_dir/ifconfig.txt
-				echo 'Downloading required tree traverse tool xiin...'
-				# -Nc is creating really weird download anomolies, so using -O instead
-				xiin_download="$( wget -q -O - http://inxi.googlecode.com/svn/branches/xiin/xiin )"
-				# if nothing got downloaded kick out error, otherwise we'll use an older version
-				if [[ $? -gt 0 && ! -f xiin ]];then
-					error_handler 17 'xiin'
-				elif [[ -n $( grep -s 'checkPython' <<< "$xiin_download" ) || -f xiin ]];then
-					if [[ -n $( grep -s 'checkPython' <<< "$xiin_download" ) ]];then
-						echo 'Updating xiin from remote location'
-						echo "$xiin_download" > xiin
-					else
-						echo 'Using local xiin due to download failure'
-					fi
-					echo 'Running xiin tool now on /sys...'
-					python ./xiin -d /sys -f $xiin_data_file
-					if [[ $? -ne 0 ]];then
-						echo "xiin exited with error $? - removing data file before exiting."
-						rm -f $xiin_data_file
-						error_handler 19 'xiin'
-					fi
+		# note, only bash 4> supports ;;& for case, so using if/then here
+		if [[ $1 == 'sys' || $1 == 'all' ]];then
+			xiin_data_file=$SCRIPT_DATA_DIR/$xiin_data_dir/xiin-sys.txt
+			echo 'Collecting networking data...'
+			ifconfig &> $xiin_data_dir/ifconfig.txt
+			echo 'Downloading required tree traverse tool xiin...'
+			# -Nc is creating really weird download anomolies, so using -O instead
+			xiin_download="$( wget -q -O - http://inxi.googlecode.com/svn/branches/xiin/xiin )"
+			# if nothing got downloaded kick out error, otherwise we'll use an older version
+			if [[ $? -gt 0 && ! -f xiin ]];then
+				error_handler 17 'xiin'
+			elif [[ -n $( grep -s 'checkPython' <<< "$xiin_download" ) || -f xiin ]];then
+				if [[ -n $( grep -s 'checkPython' <<< "$xiin_download" ) ]];then
+					echo 'Updating xiin from remote location'
+					echo "$xiin_download" > xiin
 				else
-					error_handler 18 'xiin'
+					echo 'Using local xiin due to download failure'
 				fi
-				;;
-			xorg)
-				if [[ $B_RUNNING_IN_X != 'true' ]];then
-					echo 'Warning: only some of the data collection can occur if you are not in X'
-					touch $xiin_data_dir/warning-user-not-in-x
+				echo 'Running xiin tool now on /sys...'
+				python ./xiin -d /sys -f $xiin_data_file
+				if [[ $? -ne 0 ]];then
+					echo "xiin exited with error $? - removing data file before exiting."
+					rm -f $xiin_data_file
+					error_handler 19 'xiin'
 				fi
-				if [[ $B_ROOT == 'true' ]];then
-					echo 'Warning: only some of the data collection can occur if you are running as Root user'
-					touch $xiin_data_dir/warning-root-user
-				fi
-				echo 'Collecting Xorg log and xorg.conf files'
-				if [[ -e $FILE_XORG_LOG ]];then
-					cat $FILE_XORG_LOG &> $xiin_data_dir/xorg-log-file.txt
-				else
-					touch $xiin_data_dir/no-xorg-log-file
-				fi
-				if [[ -e /etc/X11/xorg.conf ]];then
-					cp /etc/X11/xorg.conf $xiin_data_dir
-				else
-					touch $xiin_data_dir/no-xorg-conf-file
-				fi
-				if [[ -n $( ls /etc/X11/xorg.conf.d/ 2>/dev/null ) ]];then
-					cp /etc/X11/xorg.conf.d $xiin_data_dir
-				else
-					touch $xiin_data_dir/no-xorg-conf-d-files
-				fi
-				echo 'Collecting X, xprop, glxinfo, xrandr, xdpyinfo data...'
-				xprop -root &> $xiin_data_dir/xprop_root.txt
-				glxinfo &> $xiin_data_dir/glxinfo.txt
-				xdpyinfo &> $xiin_data_dir/xdpyinfo.txt
-				xrandr &> $xiin_data_dir/xrandr.txt
-				X -version &> $xiin_data_dir/x-version.txt
-				;;
-			disk)
-				echo 'Collecting dev, label, disk, uuid data, df...'
-				ls -l /dev &> $xiin_data_dir/dev-data.txt
-				ls -l /dev/disk &> $xiin_data_dir/dev-disk-data.txt
-				ls -l /dev/disk/by-id &> $xiin_data_dir/dev-disk-id-data.txt
-				ls -l /dev/disk/by-label &> $xiin_data_dir/dev-disk-label-data.txt
-				ls -l /dev/disk/by-uuid &> $xiin_data_dir/dev-disk-uuid-data.txt
-				ls -l /dev/disk/by-path &> $xiin_data_dir/dev-disk-path-data.txt
-				readlink /dev/root &> $xiin_data_dir/dev-root.txt
-				df -h -T --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs &> $xiin_data_dir/df-h-T-excludes.txt
-				swapon -s &> $xiin_data_dir/swapon-s.txt
-				df --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 &> $xiin_data_dir/df-excludes.txt
-				cat $FILE_PARTITIONS &> $xiin_data_dir/proc-partitions.txt
-				cat $FILE_SCSI &> $xiin_data_dir/proc-scsi.txt
-				cat $FILE_MOUNTS &> $xiin_data_dir/proc-mounts.txt
-				inxi_args='pluo'
-				;;
-		esac
+			else
+				error_handler 18 'xiin'
+			fi
+		fi
+		if [[ $1 == 'xorg' || $1 == 'all' ]];then
+			if [[ $B_RUNNING_IN_X != 'true' ]];then
+				echo 'Warning: only some of the data collection can occur if you are not in X'
+				touch $xiin_data_dir/warning-user-not-in-x
+			fi
+			if [[ $B_ROOT == 'true' ]];then
+				echo 'Warning: only some of the data collection can occur if you are running as Root user'
+				touch $xiin_data_dir/warning-root-user
+			fi
+			echo 'Collecting Xorg log and xorg.conf files'
+			if [[ -e $FILE_XORG_LOG ]];then
+				cat $FILE_XORG_LOG &> $xiin_data_dir/xorg-log-file.txt
+			else
+				touch $xiin_data_dir/no-xorg-log-file
+			fi
+			if [[ -e /etc/X11/xorg.conf ]];then
+				cp /etc/X11/xorg.conf $xiin_data_dir
+			else
+				touch $xiin_data_dir/no-xorg-conf-file
+			fi
+			if [[ -n $( ls /etc/X11/xorg.conf.d/ 2>/dev/null ) ]];then
+				cp /etc/X11/xorg.conf.d $xiin_data_dir
+			else
+				touch $xiin_data_dir/no-xorg-conf-d-files
+			fi
+			echo 'Collecting X, xprop, glxinfo, xrandr, xdpyinfo data...'
+			xprop -root &> $xiin_data_dir/xprop_root.txt
+			glxinfo &> $xiin_data_dir/glxinfo.txt
+			xdpyinfo &> $xiin_data_dir/xdpyinfo.txt
+			xrandr &> $xiin_data_dir/xrandr.txt
+			X -version &> $xiin_data_dir/x-version.txt
+		fi
+		if [[ $1 == 'disk' || $1 == 'all' ]];then
+			echo 'Collecting dev, label, disk, uuid data, df...'
+			ls -l /dev &> $xiin_data_dir/dev-data.txt
+			ls -l /dev/disk &> $xiin_data_dir/dev-disk-data.txt
+			ls -l /dev/disk/by-id &> $xiin_data_dir/dev-disk-id-data.txt
+			ls -l /dev/disk/by-label &> $xiin_data_dir/dev-disk-label-data.txt
+			ls -l /dev/disk/by-uuid &> $xiin_data_dir/dev-disk-uuid-data.txt
+			ls -l /dev/disk/by-path &> $xiin_data_dir/dev-disk-path-data.txt
+			readlink /dev/root &> $xiin_data_dir/dev-root.txt
+			df -h -T --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs &> $xiin_data_dir/df-h-T-excludes.txt
+			swapon -s &> $xiin_data_dir/swapon-s.txt
+			df --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 &> $xiin_data_dir/df-excludes.txt
+			cat $FILE_PARTITIONS &> $xiin_data_dir/proc-partitions.txt
+			cat $FILE_SCSI &> $xiin_data_dir/proc-scsi.txt
+			cat $FILE_MOUNTS &> $xiin_data_dir/proc-mounts.txt
+			inxi_args='pluo'
+		fi
 		echo 'Creating inxi output file now. This can take a few seconds...'
 		$SCRIPT_NAME -F$inxi_args -c 0 -@ 8 > $xiin_data_dir/inxi-F${inxi_args}.txt
 		cp $LOG_FILE $SCRIPT_DATA_DIR/$xiin_data_dir
@@ -1654,7 +1654,7 @@ get_parameters()
 			## debuggers and testing tools
 			%)	B_HANDLE_CORRUPT_DATA='true'
 				;;
-			@)	if [[ -n $( grep -E "^([1-9]|1[0-3])$" <<< $OPTARG ) ]];then
+			@)	if [[ -n $( grep -E "^([1-9]|1[0-4])$" <<< $OPTARG ) ]];then
 					DEBUG=$OPTARG
 					exec 2>&1
 					# switch on logging only for -@ 8-10
@@ -1671,7 +1671,7 @@ get_parameters()
 							LOGFE=$LOGFE_STRING
 							create_rotate_logfiles # create/rotate logfiles before we do anything else
 							;;
-						11|12|13)
+						11|12|13|14)
 							case $OPTARG in
 								11)
 									debug_data_type='sys'
@@ -1681,6 +1681,9 @@ get_parameters()
 									;;
 								13)
 									debug_data_type='disk'
+									;;
+								14)
+									debug_data_type='all'
 									;;
 							esac
 							initialize_script_data
@@ -1810,13 +1813,16 @@ show_options()
 	print_screen_output "    3 - Also show hard disk names as detected."
 	print_screen_output "    4 - Also show partition size/filled data for (if present):/, /home, /var/, /boot"
 	print_screen_output "    5 - For multicore systems, also shows: per core clock speeds; audio card; full disk data."
-	print_screen_output "-x  Show extra data: bogomips on Cpu; driver version/port(s) (if available) for Network/Audio;"
-	print_screen_output "    for network, audio cards, shows PCI Bus ID number also; for System, shows Desktop toolkit if avaliable"
-	print_screen_output "    direct rendering status for Graphics (in X). Only works with verbose or line output;"
-	print_screen_output "    shows (for single gpu, nvidia driver) screen number gpu is running on."
-	print_screen_output "    Shows hdd temp with disk data if you have hddtemp installed, if you are root OR if you have"
+	print_screen_output "-x  Show extra data (only works with verbose or line output, not short form): "
+	print_screen_output "    -C - bogomips on Cpu;"
+	print_screen_output "    -N -A - adds version/port(s)/driver version (if available) for Network/Audio;"
+	print_screen_output "    -N -A -G - network, audio, graphics, shows PCI Bus ID/Usb ID number of card;"
+	print_screen_output "    -S - Desktop toolkit if avaliable (GNOME/XFCE/KDE only)"
+	print_screen_output "    -G - Direct rendering status for Graphics (in X)."
+	print_screen_output "    -G - (for single gpu, nvidia driver) screen number gpu is running on."
+	print_screen_output "    -D - hdd temp with disk data if you have hddtemp installed, if you are root OR if you have"
 	print_screen_output "    added to /etc/sudoers (sudo v. 1.7 or newer): <username> ALL = NOPASSWD: /usr/sbin/hddtemp (sample)"
-	print_screen_output "    For -t, adds memory use output to cpu (-tx c), and cpu use to memory (-tx m)."
+	print_screen_output "    -t - adds memory use output to cpu (-xt c), and cpu use to memory (-xt m)."
 	print_screen_output "-z  Adds security filters for IP addresses, Mac, and user home directory name. Default on for irc clients."
 	print_screen_output "-Z  Absolute override for output filters. Useful for debugging networking issues in irc for example."
 	print_screen_output " "
@@ -1831,16 +1837,17 @@ show_options()
 	print_screen_output " "
 	print_screen_output "Debugging Options:"
 	print_screen_output "-%  Overrides defective or corrupted data."
-	print_screen_output "-@  Triggers debugger output. Requires debugging level 1-13 (8-10 - logging)."
+	print_screen_output "-@  Triggers debugger output. Requires debugging level 1-14 (8-10 - logging of data)."
 	print_screen_output "    Less than 8 just triggers $SCRIPT_NAME debugger output on screen."
 	print_screen_output "    1-7  - On screen debugger output"
 	print_screen_output "    8    - Basic logging"
 	print_screen_output "    9    - Full file/sys info logging"
 	print_screen_output "    10   - Color logging."
 	print_screen_output "    The following create a tar.gz file of system data, plus collecting the inxi output to file:"
-	print_screen_output "    11   - With data file of xiin read of /sys."
-	print_screen_output "    12   - With xorg conf and log data, xrandr, xprop, xdpyinfo, glxinfo etc."
-	print_screen_output "    13   - With data from dev, disks, partitions etc."
+	print_screen_output "    11 - With data file of xiin read of /sys."
+	print_screen_output "    12 - With xorg conf and log data, xrandr, xprop, xdpyinfo, glxinfo etc."
+	print_screen_output "    13 - With data from dev, disks, partitions etc."
+	print_screen_output "    14 - Everything, full data collection."
 	if [[ $1 == 'full' ]];then
 		print_screen_output " "
 		print_screen_output "Developer and Testing Options (Advanced):"
@@ -2261,7 +2268,7 @@ get_audio_data()
 {
 	eval $LOGFS
 	local i='' alsa_data='' alsa_driver='' device_count='' lsusb_path=''
-	local usb_proc_file='' array_count='' usb_id='' usb_data=''
+	local usb_proc_file='' array_count='' usb_id='' usb_data='' temp_array=''
 
 	IFS=$'\n'
 	# this first step handles the drivers for cases where the second step fails to find one
@@ -2420,7 +2427,9 @@ get_audio_data()
 	if [[ ${#A_AUDIO_DATA[@]} -eq 0 ]];then
 		A_AUDIO_DATA[0]='Failed to Detect Sound Card!'
 	fi
-	log_function_data "A_AUDIO_DATA: ${A_AUDIO_DATA[@]}"
+	temp_array=${A_AUDIO_DATA[@]}
+	log_function_data "A_AUDIO_DATA: $temp_array"
+
 	eval $LOGFE
 }
 
@@ -2504,7 +2513,8 @@ get_cpu_core_count()
 		# A_CPU_CORE_DATA=( "$cpu_core_count" "$cpu_alpha_count Core$cpu_type" )
 		A_CPU_CORE_DATA=( "$cpu_physical_count" "$cpu_alpha_count" "$cpu_type" "$cpu_core_count" )
 	fi
-	log_function_data "A_CPU_CORE_DATA: ${A_CPU_CORE_DATA[@]}"
+	temp_array=${A_CPU_CORE_DATA[@]}
+	log_function_data "A_CPU_CORE_DATA: $temp_array"
 	eval $LOGFE
 }
 
@@ -2512,7 +2522,7 @@ get_cpu_core_count()
 get_cpu_data()
 {
 	eval $LOGFS
-	local i='' j='' cpu_array_nu='' a_cpu_working='' multi_cpu='' bits=''
+	local i='' j='' cpu_array_nu='' a_cpu_working='' multi_cpu='' bits='' temp_array=''
 
 	if [[ $B_CPUINFO_FILE == 'true' ]];then
 		# stop script for a bit to let cpu slow down before parsing cpu /proc file
@@ -2591,9 +2601,10 @@ get_cpu_data()
 		}' $FILE_CPUINFO ) )
 		log_function_data 'cat' "$FILE_CPUINFO"
 	fi
-
 	IFS="$ORIGINAL_IFS"
-	log_function_data "A_CPU_DATA: ${A_CPU_DATA[@]}"
+	temp_array=${A_CPU_DATA[@]}
+	log_function_data "A_CPU_DATA: $temp_array"
+	
 	eval $LOGFE
 # 	echo getMainCpu: ${[@]}
 }
@@ -2603,7 +2614,7 @@ get_cpu_ht_multicore_smp_data()
 {
 	eval $LOGFS
 	# in /proc/cpuinfo
-	
+	local temp_array=''
 
 	if [[ $B_CPUINFO_FILE == 'true' ]]; then
 		A_CPU_TYPE_PCNT_CCNT=( $(
@@ -2699,7 +2710,8 @@ get_cpu_ht_multicore_smp_data()
 		' $FILE_CPUINFO 
 		) )
 	fi
-	log_function_data "A_CPU_TYPE_PCNT_CCNT: ${A_CPU_TYPE_PCNT_CCNT[@]}"
+	temp_array=${A_CPU_TYPE_PCNT_CCNT[@]}
+	log_function_data "A_CPU_TYPE_PCNT_CCNT: $temp_array"
 	eval $LOGFE
 }
 
@@ -3165,7 +3177,7 @@ get_graphics_agp_data()
 get_graphics_card_data()
 {
 	eval $LOGFS
-	local i=''
+	local i='' temp_array=''
 
 	IFS=$'\n'
 	A_GFX_CARD_DATA=( $( echo "$Lspci_Data" | gawk -F': ' '
@@ -3189,7 +3201,8 @@ get_graphics_card_data()
 
 	# GFXMEM is UNUSED at the moment, because it shows AGP aperture size, which is not necessarily equal to GFX memory..
 	# GFXMEM="size=[$(echo "$Lspci_Data" | gawk '/VGA/{while (!/^$/) {getline;if (/size=[0-9][0-9]*M/) {size2=gensub(/.*\[size=([0-9]+)M\].*/,"\\1","g",$0);if (size<size2){size=size2}}}}END{print size2}')M]"
-	log_function_data "A_GFX_CARD_DATA: ${A_GFX_CARD_DATA[@]}"
+	temp_array=${A_GFX_CARD_DATA[@]}
+	log_function_data "A_GFX_CARD_DATA: $temp_array"
 	eval $LOGFE
 }
 
@@ -3199,7 +3212,7 @@ get_graphics_driver()
 	
 	# list is from sgfxi plus non-free drivers
 	local driver_list='apm ark ati chips cirrus cyrix fbdev fglrx glint i128 i740 intel i810 imstt mach64 mga neomagic nsc  nv nvidia openchrome nouveau radeon radeonhd rendition s3 s3virge savage siliconmotion sis sisusb tdfx tga trident tseng unichrome vesa vga via voodoo vmware v4l'
-	local driver='' driver_string='' xorg_log_data='' status=''
+	local driver='' driver_string='' xorg_log_data='' status='' temp_array=''
 
 	if [[ $B_XORG_LOG == 'true' ]];then
 		xorg_log_data="$( cat $FILE_XORG_LOG )"
@@ -3223,7 +3236,8 @@ get_graphics_driver()
 		) )
 		xorg_log_data='' # dump from ram, does it matter?
 	fi
-	log_function_data "A_GRAPHIC_DRIVERS: ${A_GRAPHIC_DRIVERS[@]}"
+	temp_array=${A_GRAPHIC_DRIVERS[@]}
+	log_function_data "A_GRAPHIC_DRIVERS: $temp_array"
 	
 	eval $LOGFE
 }
@@ -3232,6 +3246,7 @@ get_graphics_driver()
 get_graphics_glx_data()
 {
 	eval $LOGFS
+	local temp_array=''
 	if [[ $B_SHOW_X_DATA == 'true' && $B_ROOT != 'true' ]];then
 		IFS=$'\n'
 		A_GLX_DATA=( $( glxinfo | gawk -F ': ' '
@@ -3291,7 +3306,8 @@ get_graphics_glx_data()
 		# GLXR=$(glxinfo | gawk -F ': ' 'BEGIN {IGNORECASE=1} /opengl renderer/ && $2 !~ /mesa/ {seen[$2]++} END {for (i in seen) {printf("%s ",i)}}')
 		#    GLXV=$(glxinfo | gawk -F ': ' 'BEGIN {IGNORECASE=1} /opengl version/ && $2 !~ /mesa/ {seen[$2]++} END {for (i in seen) {printf("%s ",i)}}')
 	fi
-	log_function_data "A_GLX_DATA: ${A_GLX_DATA[@]}"
+	temp_array=${A_GLX_DATA[@]}
+	log_function_data "A_GLX_DATA: $temp_array"
 	eval $LOGFE
 }
 
@@ -3354,7 +3370,7 @@ get_graphics_res_data()
 get_graphics_x_data()
 {
 	eval $LOGFS
-	local x_vendor='' x_version=''
+	local x_vendor='' x_version='' temp_array=''
 
 	if [[ $B_SHOW_X_DATA == 'true' && $B_ROOT != 'true' ]];then
 		# X vendor and version detection.
@@ -3410,7 +3426,8 @@ get_graphics_x_data()
 			A_X_DATA[1]="$x_version"
 		fi
 	fi
-	log_function_data "A_X_DATA: ${A_X_DATA[@]}"
+	temp_array=${A_X_DATA[@]}
+	log_function_data "A_X_DATA: $temp_array"
 	eval $LOGFE
 }
 # if other tests fail, try this one, this works for root, out of X also
@@ -3442,7 +3459,7 @@ get_graphics_x_version()
 get_hdd_data_basic()
 {
 	eval $LOGFS
-	local hdd_used=''
+	local hdd_used='' temp_array=''
 	local hdd_data="$( df --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 )"
 	log_function_data 'raw' "hdd_data:\n$hdd_data"
 	
@@ -3523,7 +3540,8 @@ get_hdd_data_basic()
  		log_function_data 'cat' "$FILE_PARTITIONS"
 	fi
 	IFS="$ORIGINAL_IFS"
-	log_function_data "A_HDD_DATA: ${A_HDD_DATA[@]}"
+	temp_array=${A_HDD_DATA[@]}
+	log_function_data "A_HDD_DATA: $temp_array"
 	eval $LOGFE
 }
 
@@ -3532,7 +3550,7 @@ get_hard_drive_data_advanced()
 {
 	eval $LOGFS
 	local a_temp_working='' a_temp_scsi='' temp_holder='' temp_name='' i='' j=''
-	local sd_ls_by_id='' ls_disk_by_id='' usb_exists=''
+	local sd_ls_by_id='' ls_disk_by_id='' usb_exists='' temp_array=''
 
 	## check for all ide type drives, non libata, only do it if hdx is in array
 	## this is now being updated for new /sys type paths, this may handle that ok too
@@ -3655,7 +3673,8 @@ get_hard_drive_data_advanced()
 		done
 		unset ls_disk_by_id # and then let's dump the data we don't need
 	fi
-	log_function_data "A_HDD_DATA: ${A_HDD_DATA[@]}"
+	temp_array=${A_HDD_DATA[@]}
+	log_function_data "A_HDD_DATA: $temp_array"
 	eval $LOGFE
 }
 
@@ -3763,7 +3782,7 @@ get_networking_data()
 {
 	eval $LOGFS
 	
-	local b_usb_networking='false' id_string=''
+	local b_usb_networking='false' id_string='' temp_array=''
 	
 	IFS=$'\n'
 	A_NETWORK_DATA=( $( echo "$Lspci_Data" | gawk '
@@ -3895,7 +3914,8 @@ get_networking_data()
 	if [[ $B_SHOW_ADVANCED_NETWORK == 'true' || $b_usb_networking == 'true' ]];then
 		get_network_advanced_data
 	fi
-	log_function_data "A_NETWORK_DATA: ${A_NETWORK_DATA[@]}"
+	temp_array=${A_NETWORK_DATA[@]}
+	log_function_data "A_NETWORK_DATA: $temp_array"
 	
 	eval $LOGFE
 }
@@ -4027,7 +4047,8 @@ get_networking_local_ip_data()
 {
 	eval $LOGFS
 	
-	local ifconfig_path=$( type -p ifconfig )
+	local ifconfig_path=$( type -p ifconfig ) 
+	local temp_array=''
 	
 	# lack of ifconfig will throw an error only upon it's usage
 	if [[ -n $ifconfig_path ]];then
@@ -4073,7 +4094,8 @@ get_networking_local_ip_data()
 	else
 		A_INTERFACES_DATA=( "Interfaces tool requires missing app: ifconfig" )
 	fi
-	log_function_data "A_INTERFACES_DATA: ${A_INTERFACES_DATA[@]}"
+	temp_array=${A_INTERFACES_DATA[@]}
+	log_function_data "A_INTERFACES_DATA: $temp_array"
 	eval $LOGFE
 }
 
@@ -4081,7 +4103,7 @@ get_partition_data()
 {
 	eval $LOGFS
 	
-	local a_partition_working='' dev_item=''
+	local a_partition_working='' dev_item='' temp_array=''
 	#local excluded_file_types='--exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660'
 	# df doesn't seem to work in script with variables like at the command line
 	# added devfs linprocfs sysfs fdescfs which show on debian kfreebsd kernel output
@@ -4197,7 +4219,8 @@ get_partition_data()
 	if [[ $B_SHOW_LABELS == 'true' || $B_SHOW_UUIDS == 'true' ]];then
 		get_partition_data_advanced
 	fi
-	log_function_data "A_PARTITION_DATA: ${A_PARTITION_DATA[@]}"
+	temp_array=${A_PARTITION_DATA[@]}
+	log_function_data "A_PARTITION_DATA: $temp_array"
 	eval $LOGFE
 }
 
@@ -4206,7 +4229,7 @@ get_partition_data_advanced()
 {
 	eval $LOGFS
 	local a_partition_working='' dev_partition_data=''
-	local dev_item='' dev_label='' dev_uuid=''
+	local dev_item='' dev_label='' dev_uuid='' temp_array=''
 	local mount_point=''
 	# set dev disk label/uuid data globals
 	get_partition_uuid_label_data 'label'
@@ -4328,7 +4351,8 @@ get_partition_data_advanced()
 		done
 		log_function_data 'cat' "$FILE_MOUNTS"
 	fi
-	log_function_data "A_PARTITION_DATA: ${A_PARTITION_DATA[@]}"
+	temp_array=${A_PARTITION_DATA[@]}
+	log_function_data "A_PARTITION_DATA: $temp_array"
 	eval $LOGFE
 }
 
@@ -4617,6 +4641,7 @@ get_sensors_data()
 	eval $LOGFS
 	
 	local sensors_path=$( type -p sensors )
+	local temp_array=''
 		
 	IFS=$'\n'
 	if [[ -n $sensors_path ]];then
@@ -4942,7 +4967,8 @@ get_sensors_data()
 	fi
 	
 	IFS="$ORIGINAL_IFS"
-	log_function_data "A_SENSORS_DATA: ${A_SENSORS_DATA[@]}"
+	temp_array=${A_SENSORS_DATA[@]}
+	log_function_data "A_SENSORS_DATA: $temp_array"
 # 	echo "A_SENSORS_DATA: ${A_SENSORS_DATA[@]}"
 	eval $LOGFE
 }
