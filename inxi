@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.5.14
-####  Date: June 6 2011
+####  version: 1.5.97
+####  Date: June 7 2011
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -195,6 +195,7 @@ A_GLX_DATA=''
 A_GRAPHIC_DRIVERS=''
 A_HDD_DATA=''
 A_INTERFACES_DATA=''
+A_MACHINE_DATA=''
 A_NETWORK_DATA=''
 A_PARTITION_DATA=''
 A_PS_DATA=''
@@ -218,6 +219,8 @@ B_DCOP='false'
 B_DEBUG_FLOOD='false'
 # show extra output data
 B_EXTRA_DATA='false'
+# triggered by -xx
+B_EXTRA_EXTRA_DATA='false'
 # override certain errors due to currupted data
 B_HANDLE_CORRUPT_DATA='false'
 B_LABEL_SET='false'
@@ -247,6 +250,7 @@ B_SHOW_HOST='true'
 B_SHOW_INFO='false'
 B_SHOW_IP='false'
 B_SHOW_LABELS='false'
+B_SHOW_MACHINE_DATA='false'
 B_SHOW_NETWORK='false'
 # either -v > 3 or -P will show partitions
 B_SHOW_PARTITIONS='false'
@@ -468,7 +472,7 @@ DISTROS_LSB_GOOD="mandrake-release mandriva-release mandrakelinux-release"
 # $'\1' gets weird results :
 # user@host $ ARR=($'\x01'"one two" three four); echo ${ARR[0]} | hd -v
 # 00000000  01 01 6f 6e 65 20 74 77  6f 0a                    |..one two.|
-A_NORMAL_BANS=( corporation communications gmbh technologies technology group $'\2'"\<ltd\>" ltd. $'\2'"\<inc\>" inc. $'\2'\<co\> co. corp. "(tm)" "(r)" "®" $'\2'"\(rev ..\)" )
+A_NORMAL_BANS=( corporation communications gmbh technologies technology group $'\2'"\<ltd\>" ltd. ltd $'\2'"\<inc\>" inc. $'\2'\<co\> co. corp. "(tm)" "(r)" "®" $'\2'"\(rev ..\)" )
 A_CPU_BANS=( @ cpu deca 'dual core' dual-core 'tri core' tri-core 'quad core' quad-core ennea genuine hepta hexa multi octa penta 'processor' processor single triple $'\2'"[0-9.]+ *[MmGg][Hh][Zz]" )
 # after processing, the ban arrays will be put into these:
 BAN_LIST_NORMAL=''
@@ -1255,7 +1259,7 @@ script_self_updater()
 debug_data_collector()
 {
 	local xiin_app='' xiin_data_file='' xiin_download='' inxi_args=''
-	local xiin_data_dir="xiin-$(hostname | tr ' ' '-' | tr '[A-Z]' '[a-z]' )-$1-$(date +%Y%m%d)" 
+	local xiin_data_dir="inxi-$(hostname | tr ' ' '-' | tr '[A-Z]' '[a-z]' )-$1-$(date +%Y%m%d)" 
 	
 	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
 		echo "Starting debugging data collection type: $1"
@@ -1337,6 +1341,7 @@ debug_data_collector()
 				touch $xiin_data_dir/no-xorg-conf-file
 			fi
 			if [[ -n $( ls /etc/X11/xorg.conf.d/ 2>/dev/null ) ]];then
+				ls /etc/X11/xorg.conf.d &> $xiin_data_dir/ls-etc-x11-xorg-conf-d.txt
 				cp /etc/X11/xorg.conf.d $xiin_data_dir
 			else
 				touch $xiin_data_dir/no-xorg-conf-d-files
@@ -1485,7 +1490,7 @@ remove_erroneous_chars()
 get_parameters()
 {
 	eval $LOGFS
-	local opt='' wget_test='' update_flags='U!:' debug_data_type=''
+	local opt='' wget_test='' update_flags='U!:' debug_data_type='' b_extra_extra='false'
 	local use_short='true' # this is needed to trigger short output, every v/d/F/line trigger sets this false
 
 	# If distro maintainers want to not allow updates, turn off that option for users
@@ -1501,7 +1506,7 @@ get_parameters()
 	# the short form only runs if no args output args are used
 	# no need to run through these if there are no args
 	elif [[ -n $1 ]];then
-		while getopts Ac:CdDfFGhHiIlnNopPrsSt:uv:VxzZ%@:${update_flags} opt
+		while getopts Ac:CdDfFGhHiIlmnNopPrsSt:uv:VxzZ%@:${update_flags} opt
 		do
 			case $opt in
 			A)	B_SHOW_AUDIO='true'
@@ -1560,11 +1565,12 @@ get_parameters()
 				use_short='false'
 				;;
 			F)	VERBOSITY_LEVEL=$VERBOSITY_LEVELS
-				B_SHOW_ADVANCED_NETWORK='true'
 				B_EXTRA_DATA='true'
-				B_SHOW_DISK='true'
-				B_SHOW_PARTITIONS='true'
+				B_SHOW_ADVANCED_NETWORK='true'
 				B_SHOW_AUDIO='true'
+				B_SHOW_DISK='true'
+				B_SHOW_MACHINE_DATA='true'
+				B_SHOW_PARTITIONS='true'
 				use_short='false'
 				;;
 			G)	B_SHOW_GRAPHICS='true'
@@ -1580,6 +1586,9 @@ get_parameters()
 				;;
 			l)	B_SHOW_LABELS='true'
 				B_SHOW_PARTITIONS='true'
+				use_short='false'
+				;;
+			m)	B_SHOW_MACHINE_DATA='true'
 				use_short='false'
 				;;
 			n)	B_SHOW_ADVANCED_NETWORK='true'
@@ -1643,6 +1652,10 @@ get_parameters()
 				exit 0
 				;;
 			x)	B_EXTRA_DATA='true'
+				if [[ $b_extra_extra == 'true' ]];then
+					B_EXTRA_EXTRA_DATA='true'
+				fi
+				b_extra_extra='true'
 				;;
 			z) B_OUTPUT_FILTER='true'
 				;;
@@ -1792,6 +1805,7 @@ show_options()
 	print_screen_output "    Not shown with -F for user security reasons, you shouldn't paste your local/wan IP."
 	print_screen_output "-I  Show Information: processes, uptime, memory, irc client, inxi version."
 	print_screen_output "-l  Show partition labels. Default: short partition -P. For full -p output, use: -pl (or -plu)."
+	print_screen_output "-m  Show machine data. Motherboard, Bios, and if present, System Builder (Like Lenovo)."
 	print_screen_output "-n  Show Advanced Network card information. Same as -Nn. Shows interface, speed, mac id, state, etc."
 	print_screen_output "-N  Show Network card information. With -x, shows PCI BusID, Port number."
 	print_screen_output "-o  Show unmounted partition information (includes UUID and LABEL if available)."
@@ -1823,9 +1837,11 @@ show_options()
 	print_screen_output "    -S - Desktop toolkit if avaliable (GNOME/XFCE/KDE only)"
 	print_screen_output "    -G - Direct rendering status for Graphics (in X)."
 	print_screen_output "    -G - (for single gpu, nvidia driver) screen number gpu is running on."
-	print_screen_output "    -D - hdd temp with disk data if you have hddtemp installed, if you are root OR if you have"
+	print_screen_output "    -D - Hdd temp with disk data if you have hddtemp installed, if you are root OR if you have"
 	print_screen_output "    added to /etc/sudoers (sudo v. 1.7 or newer): <username> ALL = NOPASSWD: /usr/sbin/hddtemp (sample)"
-	print_screen_output "    -t - adds memory use output to cpu (-xt c), and cpu use to memory (-xt m)."
+	print_screen_output "    -t - Adds memory use output to cpu (-xt c), and cpu use to memory (-xt m)."
+	print_screen_output "-xx Show extra, extra data (only works with verbose or line output, not short form): "
+	print_screen_output "    -m - Adds chassis type, if any data for that is available."
 	print_screen_output "-z  Adds security filters for IP addresses, Mac, and user home directory name. Default on for irc clients."
 	print_screen_output "-Z  Absolute override for output filters. Useful for debugging networking issues in irc for example."
 	print_screen_output " "
@@ -2718,7 +2734,7 @@ get_cpu_ht_multicore_smp_data()
 	eval $LOGFE
 }
 
-# Detect desktop environment in use, logic from: compiz-check
+# Detect desktop environment in use, initial rough logic from: compiz-check
 # http://forlong.blogage.de/entries/pages/Compiz-Check
 get_desktop_environment()
 {
@@ -2838,6 +2854,11 @@ get_desktop_environment()
 			elif [[ -n $( grep -is 'ICEWM' <<< "$xprop_root" ) ]];then
 				version=$( get_de_version 'icewm' '^icewm' '2' )
 				desktop_environment='IceWM'
+			elif [[ -n $( grep -is 'ENLIGHTENMENT' <<< "$xprop_root" ) ]];then
+				# no -v or --version but version is in xprop -root
+				# ENLIGHTENMENT_VERSION(STRING) = "Enlightenment 0.16.999.49898"
+				version=$( grep -is 'ENLIGHTENMENT_VERSION' <<< "$xprop_root" | cut -d '"' -f 2 | gawk '{print $2}' )
+				desktop_environment='Enlightenment'
 			fi
 		fi
 		# a few manual hacks for things that don't id with xprop, these are just good guesses
@@ -3730,6 +3751,52 @@ get_lspci_data()
 	
 	echo "$lspci_data"
 	log_function_data 'raw' "lspci_data:\n$lspci_data"
+	eval $LOGFE
+}
+
+get_machine_data()
+{
+	eval $LOGFS
+	local temp_array='' separator='' id_file='' file_data='' array_string=''
+	local id_dir='/sys/class/dmi/id/'
+	local machine_files="
+	sys_vendor product_name product_version product_serial product_uuid 
+	board_vendor board_name board_version board_serial 
+	bios_vendor bios_version bios_date 
+	"
+	if [[ -d $id_dir ]];then
+		if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+			machine_files="$machine_files
+			chassis_vendor chassis_type chassis_version chassis_serial
+			"
+		fi
+
+		for id_file in $machine_files
+		do
+			file_data=''
+			if [[ -r $id_dir$id_file ]];then
+				file_data=$( gawk '
+				BEGIN {
+					IGNORECASE=1
+				}
+				{
+					gsub(/'"$BAN_LIST_NORMAL"'/, "", $0)
+					gsub(/,|To Be Filled By O.E.M./, " ", $0)
+					gsub(/^ +| +$/, "", $0)
+					gsub(/ [ \t]+/, " ", $0)
+					print $0
+				}' < $id_dir$id_file
+				)
+			fi
+			array_string="$array_string$separator$file_data"
+			separator=','
+		done
+		IFS=','
+		A_MACHINE_DATA=( $array_string )
+		IFS="$ORIGINAL_IFS"
+	fi
+	temp_array=${A_MACHINE_DATA[@]}
+	log_function_data "A_MACHINE_DATA: $temp_array"
 	eval $LOGFE
 }
 
@@ -5203,6 +5270,9 @@ print_it_out()
 		if [[ $VERBOSITY_LEVEL -ge 1 || $B_SHOW_CPU == 'true' ]];then
 			print_cpu_data
 		fi
+		if [[ $B_SHOW_MACHINE_DATA == 'true' ]];then
+			print_machine_data
+		fi
 		if [[ $VERBOSITY_LEVEL -ge 1 || $B_SHOW_GRAPHICS == 'true' ]];then
 			print_gfx_data
 		fi
@@ -5858,6 +5928,129 @@ print_info_data()
 		info_data="${info_data} ${NORMAL}"
 	fi
 	print_screen_output "$info_data"
+	eval $LOGFE
+}
+
+print_machine_data()
+{
+	eval $LOGFS
+	
+	local line_max='160' system_line='' mobo_line='' bios_line='' chassis_line=''
+	local mobo_vendor='' mobo_model='' mobo_version='' mobo_serial=''
+	local bios_vendor='' bios_version='' bios_date=''
+	local system_vendor='' product_name='' product_version='' product_serial='' product_uuid=''
+	local chassis_vendor='' chassis_type='' chassis_version='' chassis_serial=''
+	local b_skip_system='false' 
+	# set A_MACHINE_DATA
+	get_machine_data
+	
+	# this handles the different, longer, irc colors strings embedded in variable data
+	if [[ $B_RUNNING_IN_SHELL != 'true' ]];then
+		line_max=140
+	fi
+	# and no color string data at all
+	if [[ $SCHEME -eq 0 ]];then
+		line_max=100
+	fi
+	IFS=','
+	## keys for machine data are:
+	# 0-sys_vendor 1-product_name 2-product_version 3-product_serial 4-product_uuid 
+	# 5-board_vendor 6-board_name 7-board_version 8-board_serial 
+	# 9-bios_vendor 10-bios_version 11-bios_date 
+	## with extra data: 
+	# 12-chassis_vendor 13-chassis_type 14-chassis_version 15-chassis_serial
+	
+	if [[ ${#A_MACHINE_DATA[@]} -gt 0 ]];then
+		# note: in some case a mobo/version will match a product name/version, do not print those
+		if [[ -n ${A_MACHINE_DATA[1]} && -n ${A_MACHINE_DATA[5]} && ${A_MACHINE_DATA[1]} == ${A_MACHINE_DATA[5]} ]] || \
+		   [[ -z ${A_MACHINE_DATA[0]} ]];then
+			b_skip_system='true'
+		fi
+		if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+			if [[ -n ${A_MACHINE_DATA[5]} && -n ${A_MACHINE_DATA[14]} && ${A_MACHINE_DATA[14]} == ${A_MACHINE_DATA[5]} ]];then
+				:
+			else
+				if [[ -n ${A_MACHINE_DATA[12]} ]];then
+					chassis_vendor="${C1}Chassis${C2} ${A_MACHINE_DATA[12]}"
+					if [[ -n ${A_MACHINE_DATA[13]} ]];then
+						chassis_type=${A_MACHINE_DATA[13]}
+					else
+						chassis_type='N/A'
+					fi
+					if [[ -n ${A_MACHINE_DATA[14]} ]];then
+						chassis_version=${A_MACHINE_DATA[14]}
+					else
+						chassis_version='N/A'
+					fi
+					if [[ -n ${A_MACHINE_DATA[15]} && $B_OUTPUT_FILTER != 'true' ]];then
+						chassis_serial=" ${C1}serial${C2} ${A_MACHINE_DATA[15]}"
+					fi
+					chassis_line="$chassis_vendor ${C1}type${C2} $chassis_type ${C1}version${C2} $chassis_version$chassis_serial"
+				fi
+			fi
+		fi
+		if [[ -n ${A_MACHINE_DATA[5]} ]];then
+			mobo_vendor=${A_MACHINE_DATA[5]}
+		else
+			mobo_vendor='N/A'
+		fi
+		if [[ -n ${A_MACHINE_DATA[6]} ]];then
+			mobo_model=${A_MACHINE_DATA[6]}
+		else
+			mobo_model='N/A'
+		fi
+		if [[ -n ${A_MACHINE_DATA[7]} ]];then
+			mobo_version=" ${C1}version${C2} ${A_MACHINE_DATA[7]}"
+		fi
+		if [[ -n ${A_MACHINE_DATA[8]} && $B_OUTPUT_FILTER != 'true' ]];then
+			mobo_serial=" ${C1}serial${C2} ${A_MACHINE_DATA[8]}"
+		fi
+		if [[ -n ${A_MACHINE_DATA[9]} ]];then
+			bios_vendor=${A_MACHINE_DATA[9]}
+		else
+			bios_vendor='N/A'
+		fi
+		if [[ -n ${A_MACHINE_DATA[10]} ]];then
+			bios_version=${A_MACHINE_DATA[10]}
+		else
+			bios_version='N/A'
+		fi
+		if [[ -n ${A_MACHINE_DATA[11]} ]];then
+			bios_date=${A_MACHINE_DATA[11]}
+		else
+			bios_date='N/A'
+		fi
+		mobo_line="${C1}Mobo${C2} $mobo_vendor ${C1}model${C2} $mobo_model$mobo_version$mobo_serial"
+		bios_line="${C1}Bios${C2} $bios_vendor ${C1}version${C2} $bios_version ${C1}date${C2} $bios_date"
+		if [[ $( wc -c <<< "$mobo_line $bios_line" ) -lt $line_max ]];then
+			mobo_line="$mobo_line $bios_line"
+			bios_line=''
+		fi
+		if [[ $b_skip_system == 'true' ]];then
+			system_line=$mobo_line
+			mobo_line=''
+		else
+			system_line=
+		fi
+		IFS="$ORIGINAL_IFS"
+	else
+		system_line="${RED}Error:${C2} No machine data found. Only newer kernels support this feature.${CN}"
+	fi
+	system_line=$( create_print_line "Machine:" "$system_line" )
+	print_screen_output "$system_line"
+	if [[ -n $mobo_line ]];then
+		mobo_line=$( create_print_line " " "$mobo_line" )
+		print_screen_output "$mobo_line"
+	fi
+	if [[ -n $bios_line ]];then
+		bios_line=$( create_print_line " " "$bios_line" )
+		print_screen_output "$bios_line"
+	fi
+	if [[ -n $chassis_line ]];then
+		chassis_line=$( create_print_line " " "$chassis_line" )
+		print_screen_output "$chassis_line"
+	fi
+	
 	eval $LOGFE
 }
 
