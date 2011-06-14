@@ -1,7 +1,7 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.6.8
+####  version: 1.6.9
 ####  Date: June 13 2011
 ####  Patch Number: 00
 ########################################################################
@@ -4146,7 +4146,7 @@ get_networking_data()
 {
 	eval $LOGFS
 	
-	local b_usb_networking='false' id_string='' temp_array=''
+	local b_usb_networking='false' id_string='' temp_array='' lsusb_path='' lsusb_data='' a_usb='' 
 	
 	IFS=$'\n'
 	A_NETWORK_DATA=( $( echo "$Lspci_Data" | gawk '
@@ -4226,27 +4226,23 @@ get_networking_data()
 	# if lsusb exists, the file is a symlink, and contains an important usb exclusive file: continue
 	if [[ -n $lsusb_path ]]; then
 		# send error messages of lsusb to /dev/null as it will display a bunch if not a super user
+		lsusb_data="$( $lsusb_path 2>/dev/null )"
+
+		# set spaces to |
+		USB_NETWORK_SEARCH=$( sed 's/[[:space:]]\+/|/g' <<< $USB_NETWORK_SEARCH )
 		# also, find the contents of usbid in lsusb and print everything after the 7th word on the
 		# corresponding line. Finally, strip out commas as they will change the driver :)
-		lsusb_data="$( $lsusb_path 2>/dev/null )"
-		for needle in $USB_NETWORK_SEARCH
-		do
-			id_string=$( grep -isE "$needle" <<< "$lsusb_data" | grep -Eisv '(bluetooth| hub|keyboard|mouse|printer| ps2|reader|scan|storage)' )
-			if [[ -n $id_string ]];then
-				card_data=$id_string
-				break
-			fi
-		done
-		log_function_data 'raw' "lsusb_data:\n$lsusb_data\ncard_data:$card_data"
-		
-		if [[ -n $card_data ]];then
-			array_string=$( gawk '
+		if [[ -n $lsusb_data ]];then
+			IFS=$'\n'
+			a_usb=( $( 
+			gawk '
 			BEGIN {
 				IGNORECASE=1
 				string=""
 				separator=""
 			}
-			{
+			/'"$USB_NETWORK_SEARCH"'/ && !/bluetooth| hub|keyboard|mouse|printer| ps2|reader|scan|storage/ {
+				string=""
 				gsub( /,/, " ", $0 )
 				gsub(/'"$BAN_LIST_NORMAL"'/, "", $0)
 				gsub(/ [ \t]+/, " ", $0)
@@ -4260,18 +4256,20 @@ get_networking_data()
 				if ( $6 != "" ){
 					print string ",,,,usb-" $6
 				}
-			}' <<< "$card_data" )
-			
-			if [[ -n $array_string ]];then
+			}' <<< "$lsusb_data" 
+			) )
+			IFS="$ORIGINAL_IFS"
+			if [[ ${#a_usb[@]} -gt 0 ]];then
 				array_count=${#A_NETWORK_DATA[@]}
-				IFS=","
-				A_NETWORK_DATA[$array_count]="$array_string"
-				IFS="$ORIGINAL_IFS"
+				for (( i=0; i < ${#a_usb[@]}; i++ ))
+				do
+					A_NETWORK_DATA[$array_count]=${a_usb[i]}
+					((array_count++))
+				done
 				# need this to get the driver data for -N regular output, but no need
 				# to run the advanced stuff unless required
 				b_usb_networking='true'
 			fi
-			
 		fi
 	fi
 	
