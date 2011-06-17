@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.6.9
-####  Date: June 13 2011
+####  version: 1.6.10
+####  Date: June 16 2011
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -2556,8 +2556,7 @@ get_cmdline()
 get_audio_data()
 {
 	eval $LOGFS
-	local i='' alsa_data='' alsa_driver='' device_count='' lsusb_path=''
-	local usb_proc_file='' array_count='' usb_id='' usb_data='' temp_array=''
+	local i='' alsa_data='' alsa_driver='' device_count='' temp_array=''
 
 	IFS=$'\n'
 	# this first step handles the drivers for cases where the second step fails to find one
@@ -2669,49 +2668,8 @@ get_audio_data()
 			}
 		}' $FILE_ASOUND_DEVICE ) )
 	fi
-
-	# alsa usb detection by damentz
-	# for every sound card symlink in /proc/asound - display information about it
-	lsusb_path=$( type -p lsusb )
-	for usb_proc_file in /proc/asound/*
-	do
-		# if lsusb exists, the file is a symlink, and contains an important usb exclusive file: continue
-		if [[ -n $lsusb_path && -L $usb_proc_file && -e $usb_proc_file/usbid  ]]; then
-			# send error messages of lsusb to /dev/null as it will display a bunch if not a super user
-			# also, find the contents of usbid in lsusb and print everything after the 7th word on the
-			# corresponding line. Finally, strip out commas as they will change the driver :)
-			usb_id=$( cat $usb_proc_file/usbid )
-			usb_data=$( $lsusb_path -v 2>/dev/null | grep "$usb_id" )
-			log_function_data 'raw' "usb_data:\n$usb_data"
-			usb_data=$( gawk '
-			BEGIN {
-				IGNORECASE=1
-				string=""
-				separator=""
-			}
-			{
-				gsub( /,/, " ", $0 )
-				gsub(/'"$BAN_LIST_NORMAL"'/, "", $0)
-				gsub(/ [ \t]+/, " ", $0)
-				for ( i=7; i<= NF; i++ ) {
-					string = string separator $i
-					separator = " "
-				}
-				if ( $6 != "" ){
-					print string ",snd-usb-audio,,," $6
-				}
-			}' <<< "$usb_data" )
-			# this method is interesting, it shouldn't work but it does
-			#A_AUDIO_DATA=( "${A_AUDIO_DATA[@]}" "$usb_data,snd-usb-audio,," )
-			# but until we learn why the above worked, I'm using this one, which is safer
-			if [[ -n $usb_data ]];then
-				array_count=${#A_AUDIO_DATA[@]}
-				A_AUDIO_DATA[$array_count]="$usb_data"
-			fi
-		fi
-	done
 	IFS="$ORIGINAL_IFS"
-
+	get_audio_usb_data
 	# handle cases where card detection fails, like in PS3, where lspci gives no output, or headless boxes..
 	if [[ ${#A_AUDIO_DATA[@]} -eq 0 ]];then
 		A_AUDIO_DATA[0]='Failed to Detect Sound Card!'
@@ -2719,6 +2677,60 @@ get_audio_data()
 	temp_array=${A_AUDIO_DATA[@]}
 	log_function_data "A_AUDIO_DATA: $temp_array"
 
+	eval $LOGFE
+}
+# alsa usb detection by damentz
+
+get_audio_usb_data()
+{
+	eval $LOGFS
+	local usb_proc_file='' array_count='' usb_data='' usb_id='' lsusb_path='' lsusb_data=''
+	IFS=$'\n'
+	
+	lsusb_path=$( type -p lsusb )
+	lsusb_data=$( $lsusb_path -v 2>/dev/null )
+	log_function_data 'raw' "usb_data:\n$lsusb_data"
+	if [[ -n $lsusb_data ]];then
+		# for every sound card symlink in /proc/asound - display information about it
+		for usb_proc_file in /proc/asound/*
+		do
+			# If the file is a symlink, and contains an important usb exclusive file: continue
+			if [[ -L $usb_proc_file && -e $usb_proc_file/usbid  ]]; then
+				# find the contents of usbid in lsusb and print everything after the 7th word on the
+				# corresponding line. Finally, strip out commas as they will change the driver :)
+				usb_id=$( cat $usb_proc_file/usbid )
+				usb_data=$( grep "$usb_id" <<< "$lsusb_data" )
+				if [[ -n $usb_data && -n $usb_id ]];then
+					usb_data=$( gawk '
+					BEGIN {
+						IGNORECASE=1
+						string=""
+						separator=""
+					}
+					{
+						gsub( /,/, " ", $0 )
+						gsub(/'"$BAN_LIST_NORMAL"'/, "", $0)
+						gsub(/ [ \t]+/, " ", $0)
+						for ( i=7; i<= NF; i++ ) {
+							string = string separator $i
+							separator = " "
+						}
+						if ( $6 != "" ){
+							print string ",snd-usb-audio,,," $6
+						}
+					}' <<< "$usb_data" )
+				fi
+				# this method is interesting, it shouldn't work but it does
+				#A_AUDIO_DATA=( "${A_AUDIO_DATA[@]}" "$usb_data,snd-usb-audio,," )
+				# but until we learn why the above worked, I'm using this one, which is safer
+				if [[ -n $usb_data ]];then
+					array_count=${#A_AUDIO_DATA[@]}
+					A_AUDIO_DATA[$array_count]="$usb_data"
+				fi
+			fi
+		done
+	fi
+	IFS="$ORIGINAL_IFS"
 	eval $LOGFE
 }
 
@@ -4145,7 +4157,7 @@ get_networking_data()
 {
 	eval $LOGFS
 	
-	local b_usb_networking='false' id_string='' temp_array='' lsusb_path='' lsusb_data='' a_usb='' 
+	local b_usb_networking='false' temp_array=''
 	
 	IFS=$'\n'
 	A_NETWORK_DATA=( $( echo "$Lspci_Data" | gawk '
@@ -4217,60 +4229,7 @@ get_networking_data()
 		}
 	}') )
 	IFS="$ORIGINAL_IFS"
-	# now we'll check for usb wifi, a work in progress
-	# USB_NETWORK_SEARCH
-	# alsa usb detection by damentz
-	# for every sound card symlink in /proc/asound - display information about it
-	lsusb_path=$( type -p lsusb )
-	# if lsusb exists, the file is a symlink, and contains an important usb exclusive file: continue
-	if [[ -n $lsusb_path ]]; then
-		# send error messages of lsusb to /dev/null as it will display a bunch if not a super user
-		lsusb_data="$( $lsusb_path 2>/dev/null )"
-
-		# set spaces to |
-		USB_NETWORK_SEARCH=$( sed 's/[[:space:]]\+/|/g' <<< $USB_NETWORK_SEARCH )
-		# also, find the contents of usbid in lsusb and print everything after the 7th word on the
-		# corresponding line. Finally, strip out commas as they will change the driver :)
-		if [[ -n $lsusb_data ]];then
-			IFS=$'\n'
-			a_usb=( $( 
-			gawk '
-			BEGIN {
-				IGNORECASE=1
-				string=""
-				separator=""
-			}
-			/'"$USB_NETWORK_SEARCH"'/ && !/bluetooth| hub|keyboard|mouse|printer| ps2|reader|scan|storage/ {
-				string=""
-				gsub( /,/, " ", $0 )
-				gsub(/'"$BAN_LIST_NORMAL"'/, "", $0)
-				gsub(/ [ \t]+/, " ", $0)
-				sub(/realtek semiconductor/, "Realtek", $0)
-				sub(/davicom semiconductor/, "Davicom", $0)
-				sub(/Belkin Components/, "Belkin", $0)
-				for ( i=7; i<= NF; i++ ) {
-					string = string separator $i
-					separator = " "
-				}
-				if ( $6 != "" ){
-					print string ",,,,usb-" $6
-				}
-			}' <<< "$lsusb_data" 
-			) )
-			IFS="$ORIGINAL_IFS"
-			if [[ ${#a_usb[@]} -gt 0 ]];then
-				array_count=${#A_NETWORK_DATA[@]}
-				for (( i=0; i < ${#a_usb[@]}; i++ ))
-				do
-					A_NETWORK_DATA[$array_count]=${a_usb[i]}
-					((array_count++))
-				done
-				# need this to get the driver data for -N regular output, but no need
-				# to run the advanced stuff unless required
-				b_usb_networking='true'
-			fi
-		fi
-	fi
+	b_usb_networking=$( get_networking_usb_data )
 	
 	if [[ $B_SHOW_ADVANCED_NETWORK == 'true' || $b_usb_networking == 'true' ]];then
 		get_network_advanced_data
@@ -4382,6 +4341,70 @@ get_network_advanced_data()
 		IFS="$ORIGINAL_IFS"
 	done
 
+	eval $LOGFE
+}
+
+get_networking_usb_data()
+{
+	eval $LOGFS
+	local lsusb_path='' lsusb_data='' a_usb='' array_count='' b_usb_networking='false'
+	
+	# now we'll check for usb wifi, a work in progress
+	# USB_NETWORK_SEARCH
+	# alsa usb detection by damentz
+	# for every sound card symlink in /proc/asound - display information about it
+	lsusb_path=$( type -p lsusb )
+	# if lsusb exists, the file is a symlink, and contains an important usb exclusive file: continue
+	if [[ -n $lsusb_path ]]; then
+		# send error messages of lsusb to /dev/null as it will display a bunch if not a super user
+		lsusb_data="$( $lsusb_path 2>/dev/null )"
+
+		# set spaces to |
+		USB_NETWORK_SEARCH=$( sed 's/[[:space:]]\+/|/g' <<< $USB_NETWORK_SEARCH )
+		# also, find the contents of usbid in lsusb and print everything after the 7th word on the
+		# corresponding line. Finally, strip out commas as they will change the driver :)
+		if [[ -n $lsusb_data ]];then
+			IFS=$'\n'
+			a_usb=( $( 
+			gawk '
+			BEGIN {
+				IGNORECASE=1
+				string=""
+				separator=""
+			}
+			/'"$USB_NETWORK_SEARCH"'/ && !/bluetooth| hub|keyboard|mouse|printer| ps2|reader|scan|storage/ {
+				string=""
+				gsub( /,/, " ", $0 )
+				gsub(/'"$BAN_LIST_NORMAL"'/, "", $0)
+				gsub(/ [ \t]+/, " ", $0)
+				sub(/realtek semiconductor/, "Realtek", $0)
+				sub(/davicom semiconductor/, "Davicom", $0)
+				sub(/Belkin Components/, "Belkin", $0)
+				for ( i=7; i<= NF; i++ ) {
+					string = string separator $i
+					separator = " "
+				}
+				if ( $6 != "" ){
+					print string ",,,,usb-" $6
+				}
+			}' <<< "$lsusb_data" 
+			) )
+			IFS="$ORIGINAL_IFS"
+			if [[ ${#a_usb[@]} -gt 0 ]];then
+				array_count=${#A_NETWORK_DATA[@]}
+				for (( i=0; i < ${#a_usb[@]}; i++ ))
+				do
+					A_NETWORK_DATA[$array_count]=${a_usb[i]}
+					((array_count++))
+				done
+				# need this to get the driver data for -N regular output, but no need
+				# to run the advanced stuff unless required
+				b_usb_networking='true'
+			fi
+		fi
+	fi
+	echo $b_usb_networking
+	
 	eval $LOGFE
 }
 
@@ -5696,67 +5719,31 @@ print_short_data()
 print_audio_data()
 {
 	eval $LOGFS
-	local i='' card_one='Card-1' audio_data='' a_audio_data='' port_data='' pci_bus_id=''
+	local i='' card_id='' audio_data='' a_audio_data='' port_data='' pci_bus_id=''
 	local a_audio_working='' alsa_driver='' alsa_data='' port_plural='' module_version=''
-	local bus_usb_text='' bus_usb_id=''
+	local bus_usb_text='' bus_usb_id='' line_starter='Audio:'
 	# set A_AUDIO_DATA and get alsa data
 	get_audio_data
 	alsa_data=$( get_audio_alsa_data )
-	IFS=","
-	a_audio_working=(${A_AUDIO_DATA[0]})
-	IFS="$ORIGINAL_IFS"
-
+	# note, error handling is done in the get function, so this will never be null, but
+	# leaving the test just in case it's changed.
 	if [[ -n ${A_AUDIO_DATA[@]} ]];then
-		# slightly complicated because 2nd array item could be the alsa data
-		if [[ ${#A_AUDIO_DATA[@]} -le 1 ]];then
-			card_one='Card'
-		fi
-
-# 		if [[ -n ${a_audio_working[2]} ]];then
-# 			port_data=" ${C1}port${C2} ${a_audio_working[2]}"
-# 		fi
-		# this should only trigger if the $FILE_ASOUND_DEVICE data is used, not lspci -nn
-		if [[ -n ${a_audio_working[3]} && $B_EXTRA_DATA == 'true' ]];then
-			# note that for some reason, the module name is not the same as the module
-			# loaded to kernel name for audio drivers, and you'll need to change the -
-			module_version=$( print_module_version "${a_audio_working[3]}" 'audio' )
-		elif [[ -n ${a_audio_working[1]} && $B_EXTRA_DATA == 'true' ]];then
-			module_version=$( print_module_version "${a_audio_working[1]}" 'audio' )
-		fi
-		if [[ -n ${a_audio_working[1]} ]];then
-			alsa_driver=" ${C1}driver${C2} ${a_audio_working[1]}$module_version"
-		fi
-		if [[ -n ${a_audio_working[2]} && $B_EXTRA_DATA == 'true' ]];then
-			if [[ $( wc -w <<< ${a_audio_working[2]} ) -gt 1 ]];then
-				port_plural='s'
-			fi
-			port_data=" ${C1}port$port_plural${C2} ${a_audio_working[2]}"
-		fi
-		if [[ -n ${a_audio_working[4]} && $B_EXTRA_DATA == 'true' ]];then
-			if [[ ${a_audio_working[1]} != 'snd-usb-audio' ]];then
-				bus_usb_text='bus-ID'
-			else
-				bus_usb_text='usb-ID'
-			fi
-			bus_usb_id=${a_audio_working[4]}
-			pci_bus_id=" ${C1}$bus_usb_text:${C2} $bus_usb_id"
-		fi
-		audio_data="${C1}$card_one${C2} ${a_audio_working[0]}$alsa_driver$port_data$pci_bus_id"
-		audio_data=$( create_print_line "Audio:" "$audio_data" )
-		print_screen_output "$audio_data"
-		i=0 ## loop starts with 1 by auto-increment so it only shows cards > 1
-		while [[ -n ${A_AUDIO_DATA[++i]} ]]
+		for (( i=0; i< ${#A_AUDIO_DATA[@]}; i++ ))
 		do
 			IFS=","
 			a_audio_working=( ${A_AUDIO_DATA[i]} )
 			IFS="$ORIGINAL_IFS"
 			port_data=''
 			alsa_driver=''
+			audio_data=''
 			port_plural=''
 			module_version=''
 			pci_bus_id=''
 			bus_usb_text=''
 			bus_usb_id=''
+			if [[ ${#A_AUDIO_DATA[@]} -gt 1 ]];then
+				card_id="-$(( $i + 1 ))"
+			fi
 			if [[ -n ${a_audio_working[3]} && $B_EXTRA_DATA == 'true' ]];then
 				module_version=$( print_module_version "${a_audio_working[3]}" 'audio' )
 			elif [[ -n ${a_audio_working[1]} && $B_EXTRA_DATA == 'true' ]];then
@@ -5782,19 +5769,21 @@ print_audio_data()
 				pci_bus_id=" ${C1}$bus_usb_text:${C2} $bus_usb_id"
 			fi
 			if [[ -n ${a_audio_working[0]} ]];then
-				audio_data="${C1}Card-$(( $i + 1 ))${C2} ${a_audio_working[0]}$alsa_driver$port_data$pci_bus_id"
+				audio_data="${C1}Card$card_id${C2} ${a_audio_working[0]}$alsa_driver$port_data$pci_bus_id"
 			fi
 			if [[ -n $audio_data ]];then
-				audio_data=$( create_print_line " " "$audio_data" )
+				audio_data=$( create_print_line "$line_starter" "$audio_data" )
 				print_screen_output "$audio_data"
+				line_starter=' '
 			fi
 		done
-		# alsa driver data only prints out if sound card data is found
-		if [[ -n $alsa_data ]];then
-			audio_data="${C1}Sound:${C2} $alsa_data"
-			audio_data=$( create_print_line " " "$audio_data" )
-			print_screen_output "$audio_data"
-		fi
+		
+	fi
+	# alsa driver data now prints out no matter what
+	if [[ -n $alsa_data ]];then
+		audio_data="${C1}Sound:${C2} $alsa_data"
+		audio_data=$( create_print_line "$line_starter" "$audio_data" )
+		print_screen_output "$audio_data"
 	fi
 	eval $LOGFE
 }
@@ -6420,64 +6409,32 @@ print_module_version()
 print_networking_data()
 {
 	eval $LOGFS
-	local i='' card_one='Card-1' network_data='' a_network_working='' port_data='' driver_data=''
+	local i='' card_id='' network_data='' a_network_working='' port_data='' driver_data=''
 	local card_string='' port_plural='' module_version='' pci_bus_id='' bus_usb_text=''
-	local bus_usb_id=''
+	local bus_usb_id='' line_starter='Network:'
 	# set A_NETWORK_DATA
 	get_networking_data
-
-	IFS=","
-	a_network_working=(${A_NETWORK_DATA[0]})
-	IFS="$ORIGINAL_IFS"
 
 	# will never be null because null is handled in get_network_data, but in case we change
 	# that leaving this test in place.
 	if [[ -n ${A_NETWORK_DATA[@]} ]];then
-		if [[ ${#A_NETWORK_DATA[@]} -le 1 ]];then
-			card_one='Card'
-		fi
-		if [[ -n ${a_network_working[1]} && $B_EXTRA_DATA == 'true' ]];then
-			module_version=$( print_module_version "${a_network_working[1]}" )
-		fi
-		if [[ -n ${a_network_working[1]} ]];then
-			driver_data=" ${C1}driver${C2} ${a_network_working[1]}$module_version"
-		fi
-		if [[ -n ${a_network_working[2]} && $B_EXTRA_DATA == 'true' ]];then
-			if [[ $( wc -w <<< ${a_network_working[2]} ) -gt 1 ]];then
-				port_plural='s'
-			fi
-			port_data=" ${C1}port$port_plural${C2} ${a_network_working[2]}"
-		fi
-		
-		if [[ -n ${a_network_working[4]} && $B_EXTRA_DATA == 'true' ]];then
-			if [[ -z $( grep '^usb-' <<< ${a_network_working[4]} ) ]];then
-				bus_usb_text='bus-ID'
-				bus_usb_id=${a_network_working[4]}
-			else
-				bus_usb_text='usb-ID'
-				bus_usb_id=$( cut -d '-' -f '2-4' <<< ${a_network_working[4]} )
-			fi
-			pci_bus_id=" ${C1}$bus_usb_text:${C2} $bus_usb_id"
-		fi
-		
-		card_string=''
-		network_data="${C1}$card_one${C2} ${a_network_working[0]}$driver_data$port_data$pci_bus_id"
-		network_data=$( create_print_line "Network:" "$network_data" )
-		print_screen_output "$network_data"
-		print_network_advanced_data
-		i=0 ## loop starts with 1 by auto-increment so it only shows cards > 1
-		while [[ -n ${A_NETWORK_DATA[++i]} ]]
+		for (( i=0; i < ${#A_NETWORK_DATA[@]}; i++ ))
 		do
 			IFS=","
 			a_network_working=( ${A_NETWORK_DATA[i]} )
 			IFS="$ORIGINAL_IFS"
-			port_data=''
-			driver_data=''
-			port_plural=''
-			module_version=''
-			pci_bus_id=''
-			bus_usb_text=''
 			bus_usb_id=''
+			bus_usb_text=''
+			driver_data=''
+			module_version=''
+			network_data=''
+			pci_bus_id=''
+			port_data=''
+			port_plural=''
+
+			if [[ ${#A_NETWORK_DATA[@]} -gt 1 ]];then
+				card_id="-$(( $i + 1 ))"
+			fi
 			if [[ -n ${a_network_working[1]} && $B_EXTRA_DATA == 'true' ]];then
 				module_version=$( print_module_version "${a_network_working[1]}" )
 			fi
@@ -6500,9 +6457,9 @@ print_networking_data()
 				fi
 				pci_bus_id=" ${C1}$bus_usb_text:${C2} $bus_usb_id"
 			fi
-			network_data="${C1}Card-$(( $i + 1 ))${C2} ${a_network_working[0]}$driver_data$port_data$pci_bus_id"
-			network_data=$( create_print_line " " "$network_data" )
-			
+			network_data="${C1}Card$card_id${C2} ${a_network_working[0]}$driver_data$port_data$pci_bus_id"
+			network_data=$( create_print_line "$line_starter=" "$network_data" )
+			line_starter=' '
 			print_screen_output "$network_data"
 			print_network_advanced_data
 		done
