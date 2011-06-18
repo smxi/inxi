@@ -3,7 +3,7 @@
 ####  Script Name: inxi
 ####  version: 1.7.0
 ####  Date: June 17 2011
-####  Patch Number: 01
+####  Patch Number: 02
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -3503,7 +3503,7 @@ get_graphics_card_data()
 	local i='' temp_array=''
 
 	IFS=$'\n'
-	A_GFX_CARD_DATA=( $( echo "$Lspci_Data" | gawk -F': ' '
+	A_GFX_CARD_DATA=( $( gawk -F': ' '
 	BEGIN {
 		IGNORECASE=1
 		busId=""
@@ -3515,7 +3515,7 @@ get_graphics_card_data()
 		gsub(/ [ \t]+/, " ", $NF)
 		busId=gensub(/^([0-9a-f:\.]+) (.+)$/,"\\1","",$1)
 		print $NF "," busId
-	}' ) )
+	}' <<< "$Lspci_Data" ) )
 	IFS="$ORIGINAL_IFS"
 # 	for (( i=0; i < ${#A_GFX_CARD_DATA[@]}; i++ ))
 # 	do
@@ -3704,11 +3704,12 @@ get_graphics_res_data()
 get_graphics_x_data()
 {
 	eval $LOGFS
-	local x_vendor='' x_version='' temp_array=''
+	local x_vendor='' x_version='' temp_array='' xdpy_info=''
 
 	if [[ $B_SHOW_X_DATA == 'true' && $B_ROOT != 'true' ]];then
 		# X vendor and version detection.
-		x_vendor=$( xdpyinfo | gawk -F': +' '
+		xdpy_info="$( xdpyinfo )"
+		x_vendor=$( gawk -F': +' '
 		BEGIN {
 			IGNORECASE=1
 		}
@@ -3718,22 +3719,22 @@ get_graphics_x_data()
 			gsub(/^ +| +$/, "", $2)
 			gsub(/ [ \t]+/, " ", $2)
 			print $2
-		}' )
+		}' <<< "$xdpy_info" )
 
 		# new method added since radeon and X.org and the disappearance of <X server name> version : ...etc
 		# Later on, the normal textual version string returned, e.g. like: X.Org version: 6.8.2
 		# A failover mechanism is in place. (if $x_version is empty, the release number is parsed instead)
-		x_version=$( xdpyinfo | gawk '
+		x_version=$( gawk '
 		/version:/ {
 			print $NF
-		}' )
+		}' <<< "$xdpy_info" )
 		# this gives better output than the failure last case, which would only show:
 		# for example: X.org: 1.9 instead of: X.org: 1.9.0
 		if [[ -z $x_version ]];then
 			x_version=$( get_graphics_x_version )
 		fi
 		if [[ -z $x_version ]];then
-			x_version=$( xdpyinfo | gawk -F': +' '
+			x_version=$( gawk -F': +' '
 			BEGIN {
 				IGNORECASE=1
 			}
@@ -3741,7 +3742,7 @@ get_graphics_x_data()
 				gsub(/0+$/, "", $2)
 				gsub(/0+/, ".", $2)
 				print $2
-			}' )
+			}' <<< "$xdpy_info" )
 		fi
 		
 		# some distros, like fedora, report themselves as the xorg vendor, so quick check
@@ -4544,6 +4545,7 @@ get_optical_drive_data()
 			done
 			item_string="$disk,$link_list"
 			link_list=''
+			linked=''
 			separator=''
 			vendor=''
 			model=''
@@ -4556,13 +4558,13 @@ get_optical_drive_data()
 				sys_path=$( ls /sys/devices/pci*/*/host*/target*/*/block/$disk/uevent 2>/dev/null | sed "s|/block/$disk/uevent||" )
 				# no need to test for errors yet, probably other user systems will require some alternate paths though
 				if [[ -n $sys_path ]];then
-					vendor=$( cat $sys_path/vendor 2>/dev/null |	sed -e 's/^[[:space:]]*//;s/[[:space:]]*$//;s/,//g' )
+					vendor=$( cat $sys_path/vendor 2>/dev/null )
 					model=$( cat $sys_path/model 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/,//g' )
 					state=$( cat $sys_path/state 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/,//g' )
 					rev_number=$( cat $sys_path/rev 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/,//g' )
 				fi
 			elif [[ -e /proc/ide/$disk/model ]];then
-				vendor=$( cat /proc/ide/$disk/model 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/,//g' )
+				vendor=$( cat /proc/ide/$disk/model 2>/dev/null )
 			fi
 			if [[ -n $vendor ]];then
 				vendor=$( gawk '
@@ -4572,9 +4574,11 @@ get_optical_drive_data()
 				{
 					gsub(/'"$BAN_LIST_NORMAL"'/, "", $0)
 					sub(/TSSTcorp/, "TSST ", $0) # seen more than one of these weird ones
+					gsub(/,/, " ", $0)
+					gsub(/^[[:space:]]*|[[:space:]]*$/, "", $0)
+					gsub(/ [[:space:]]+/, " ", $0)
 					print $0
-				}
-				'	<<< $vendor
+				}'	<<< $vendor
 				)
 			fi
 			# this needs to run no matter if there's proc data or not to create the array comma list
@@ -6631,7 +6635,9 @@ print_networking_data()
 			network_data=$( create_print_line "$line_starter" "$network_data" )
 			line_starter=' '
 			print_screen_output "$network_data"
-			print_network_advanced_data
+			if [[ $B_SHOW_ADVANCED_NETWORK == 'true' ]];then
+				print_network_advanced_data
+			fi
 		done
 	fi
 	if [[ $B_SHOW_IP == 'true' ]];then
@@ -6646,44 +6652,42 @@ print_network_advanced_data()
 	local network_data='' if_id='N/A' duplex='N/A' mac_id='N/A' speed='N/A' oper_state='N/A'
 	local b_is_wifi='false' speed_string='' duplex_string=''
 	
-	if [[ $B_SHOW_ADVANCED_NETWORK == 'true' ]];then
 		# first check if it's a known wifi id'ed card, if so, no print of duplex/speed
-		if [[ -n $( grep -Esi '(wireless|wifi|wi-fi|wlan|802\.11|centrino)' <<< ${a_network_working[0]} ) ]];then
-			b_is_wifi='true'
-		fi
-		if [[ -n ${a_network_working[5]} ]];then
-			if_id=${a_network_working[5]}
-		fi
-		if [[ -n ${a_network_working[6]} ]];then
-			oper_state=${a_network_working[6]}
-		fi
-		# no print out for wifi since it doesn't have duplex/speed data availabe
-		if [[ $b_is_wifi != 'true' ]];then
-			if [[ -n ${a_network_working[7]} ]];then
-				# make sure the value is strictly numeric before appending Mbps
-				if [[ -n $( grep -E '^[0-9\.,]+$' <<< "${a_network_working[7]}" ) ]];then
-					speed="${a_network_working[7]} Mbps"
-				else
-					speed=${a_network_working[7]}
-				fi
-			fi
-			speed_string="${C1}speed:${C2} $speed "
-			if [[ -n ${a_network_working[8]} ]];then
-				duplex=${a_network_working[8]}
-			fi
-			duplex_string="${C1}duplex:${C2} $duplex "
-		fi
-		if [[ -n ${a_network_working[9]} ]];then
-			if [[ $B_OUTPUT_FILTER == 'true' ]];then
-				mac_id=$FILTER_STRING
-			else
-				mac_id=${a_network_working[9]}
-			fi
-		fi
-		network_data="${C1}IF:${C2} $if_id ${C1}state:${C2} $oper_state $speed_string$duplex_string${C1}mac:${C2} $mac_id"
-		network_data=$( create_print_line " " "$network_data" )
-		print_screen_output "$network_data"
+	if [[ -n $( grep -Esi '(wireless|wifi|wi-fi|wlan|802\.11|centrino)' <<< ${a_network_working[0]} ) ]];then
+		b_is_wifi='true'
 	fi
+	if [[ -n ${a_network_working[5]} ]];then
+		if_id=${a_network_working[5]}
+	fi
+	if [[ -n ${a_network_working[6]} ]];then
+		oper_state=${a_network_working[6]}
+	fi
+	# no print out for wifi since it doesn't have duplex/speed data availabe
+	if [[ $b_is_wifi != 'true' ]];then
+		if [[ -n ${a_network_working[7]} ]];then
+			# make sure the value is strictly numeric before appending Mbps
+			if [[ -n $( grep -E '^[0-9\.,]+$' <<< "${a_network_working[7]}" ) ]];then
+				speed="${a_network_working[7]} Mbps"
+			else
+				speed=${a_network_working[7]}
+			fi
+		fi
+		speed_string="${C1}speed:${C2} $speed "
+		if [[ -n ${a_network_working[8]} ]];then
+			duplex=${a_network_working[8]}
+		fi
+		duplex_string="${C1}duplex:${C2} $duplex "
+	fi
+	if [[ -n ${a_network_working[9]} ]];then
+		if [[ $B_OUTPUT_FILTER == 'true' ]];then
+			mac_id=$FILTER_STRING
+		else
+			mac_id=${a_network_working[9]}
+		fi
+	fi
+	network_data="${C1}IF:${C2} $if_id ${C1}state:${C2} $oper_state $speed_string$duplex_string${C1}mac:${C2} $mac_id"
+	network_data=$( create_print_line " " "$network_data" )
+	print_screen_output "$network_data"
 	
 	eval $LOGFE
 }
