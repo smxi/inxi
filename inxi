@@ -3,7 +3,7 @@
 ####  Script Name: inxi
 ####  version: 1.6.10
 ####  Date: June 17 2011
-####  Patch Number: 06
+####  Patch Number: 07
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -4497,7 +4497,8 @@ get_optical_drive_data()
 	# get the actual disk dev location:
 	local dev_disks_real=$( ls /dev/dvd* /dev/cd* /dev/scd* 2>/dev/null | xargs -l readlink | sort -u )
 	local temp_array='' dev_disks_links='' sys_uevent_path='' proc_cdrom='' link_list=''
-	local separator='' linked='' disk='' item_string=''
+	local separator='' linked='' disk='' item_string='' cpuinfo_string=''
+	
 	# A_OPTICAL_DRIVE_DATA indexes: not going to use all these, but it's just as easy to build the full
 	# data array and use what we need from it as to update it later to add features or items
 	# 0 - true dev path, ie, sr0, hdc
@@ -4513,12 +4514,15 @@ get_optical_drive_data()
 	# 10 - cdrw
 	# 11 - dvd read
 	# 12 - dvdr
-	# 13 - drdrw
-	# 14 - dvdram
-	# 15 - state
+	# 13 - dvdram
+	# 14 - state
 
 	if [[ -n $dev_disks_real ]];then
 		dev_disks_links=$( ls /dev/dvd* /dev/cd* /dev/scd* 2>/dev/null  )
+# 		B_EXTRA_DATA='true'
+		if [[ $B_EXTRA_DATA == 'true' ]];then
+			proc_cdrom="$( cat /proc/sys/dev/cdrom/info 2>/dev/null )"
+		fi
 		IFS=$'\n'
 		A_OPTICAL_DRIVE_DATA=( $(
 		for disk in $dev_disks_real
@@ -4537,6 +4541,7 @@ get_optical_drive_data()
 			vendor=''
 			model=''
 			rev_number=''
+			state=""
 			sys_path=''
 			# this is only for new sd type paths in /sys, otherwise we'll use /proc/ide
 			if [[ -z $( grep '^hd' <<< $disk ) ]];then
@@ -4546,15 +4551,71 @@ get_optical_drive_data()
 					vendor=$( cat $sys_path/vendor 2>/dev/null | \
 					sed -E -e 's/^[[:space:]]*//;s/[[:space:]]*$//;s/,//g' -e 's/('"$BAN_LIST_NORMAL"')//g' )
 					model=$( cat $sys_path/model 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/,//g' )
+					state=$( cat $sys_path/state 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/,//g' )
 					rev_number=$( cat $sys_path/rev 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/,//g' )
 				fi
 			elif [[ -e /proc/ide/$disk/model ]];then
 				vendor=$( cat /proc/ide/$disk/model 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/,//g' )
 			fi
-			if [[ $B_EXTRA_DATA == 'true' ]];then
-				proc_cdrom="$( cat /proc/sys/dev/cdrom/info 2>/dev/null )"
+			
+			if [[ $B_EXTRA_DATA == 'true' && -n $proc_cdrom ]];then
+				cpuinfo_string=$( gawk -v diskId=$disk '
+				BEGIN {
+					IGNORECASE=1
+					position=""
+					speed=""
+					multisession=""
+					mcn=""
+					audio=""
+					cdr=""
+					cdrw=""
+					dvd=""
+					dvdr=""
+					dvdram=""
+				}
+				# first get the position of the device name from top field
+				# we will use this to get all the other data for that column
+				/drive name:/ {
+					for ( position=3; position <= NF; position++ ) {
+						if ( $position == diskId ) {
+							break
+						}
+					}
+				}
+				/drive speed:/ {
+					speed = $position
+				}
+				/Can read multisession:/ {
+					multisession=$( position + 1 )
+				}
+				/Can read MCN:/ {
+					mcn=$( position + 1 )
+				}
+				/Can play audio:/ {
+					audio=$( position + 1 )
+				}
+				/Can write CD-R:/ {
+					cdr=$( position + 1 )
+				}
+				/Can write CD-RW:/ {
+					cdrw=$( position + 1 )
+				}
+				/Can read DVD:/ {
+					dvd=$( position + 1 )
+				}
+				/Can write DVD-R:/ {
+					dvdr=$( position + 1 )
+				}
+				/Can write DVD-RAM:/ {
+					dvdram=$( position + 1 )
+				}
+				END {
+					print speed "," multisession "," mcn "," audio "," cdr "," cdrw "," dvd "," dvdr "," dvdram
+				}
+				' <<< "$proc_cdrom"
+				)
 			fi
-			item_string="$item_string,$vendor,$model,$rev_number"
+			item_string="$item_string,$vendor,$model,$rev_number,$cpuinfo_string,$state"
 			echo $item_string
 		done
 		) )
@@ -6668,6 +6729,8 @@ print_optical_drive_data()
 {
 	eval $LOGFS
 	local a_drives='' drive_data='' counter='' 
+	local drive_id='' drive_links='' vendor='' speed='' multisession='' mcn='' audio=''
+	local dvd='' state='' rw_support='' rev='' separator=''
 	get_optical_drive_data
 	# 0 - true dev path, ie, sr0, hdc
 	# 1 - dev links to true path
@@ -6680,10 +6743,20 @@ print_optical_drive_data()
 			IFS=","
 			a_drives=(${A_OPTICAL_DRIVE_DATA[i]})
 			IFS="$ORIGINAL_IFS"
+			audio=''
+			drive_data=''
 			drive_id=''
 			drive_links=''
+			dvd='' 
+			mcn='' 
+			multisession='' 
+			rev='' 
+			rw_support='' 
+			separator=''
+			speed='' 
+			state='' 
 			vendor=''
-			drive_data=''
+			
 			if [[ ${#A_OPTICAL_DRIVE_DATA[@]} -gt 1 ]];then
 				counter="-$(( i + 1 ))"
 			fi
@@ -6709,12 +6782,86 @@ print_optical_drive_data()
 					vendor='N/A'
 				fi
 			fi
-			drive_data="${C1}Optical${counter}:${C2} $drive_id ${C1}model:${C2} $vendor ${C1}dev-links:${C2} $drive_links"
+			if [[ $B_EXTRA_DATA == 'true' ]];then
+				if [[ -n ${a_drives[4]} ]];then
+					rev=${a_drives[4]}
+				else
+					rev='N/A'
+				fi
+				rev=" ${C1}rev:${C2} $rev"
+			fi
+			drive_data="${C1}Optical${counter}:${C2} $drive_id ${C1}model:${C2} $vendor$rev ${C1}dev-links:${C2} $drive_links"
 			drive_data=$( create_print_line "$Line_Starter" "$drive_data" )
 			print_screen_output "$drive_data"
 			Line_Starter=' '
+			# 5 - speed
+			# 6 - multisession support
+			# 7 - MCN support
+			# 8 - audio read
+			# 9 - cdr
+			# 10 - cdrw
+			# 11 - dvd read
+			# 12 - dvdr
+			# 13 - dvdram
+			# 14 - state
 			if [[ $B_EXTRA_DATA == 'true' ]];then
-				drive_data="${C1}Features:${C2} "
+				if [[ -z ${a_drives[5]} ]];then
+					speed='N/A'
+				else
+					speed="${a_drives[5]}x"
+				fi
+				if [[ -z ${a_drives[8]} ]];then
+					audio='N/A'
+				elif [[ ${a_drives[8]} == 1 ]];then
+					audio='yes'
+				else
+					audio='no'
+				fi
+				audio=" ${C1}audio:${C2} $audio"
+				if [[ -z ${a_drives[6]} ]];then
+					multisession='N/A'
+				elif [[ ${a_drives[6]} == 1 ]];then
+					multisession='yes'
+				else
+					multisession='no'
+				fi
+				multisession=" ${C1}multisession:${C2} $multisession"
+				if [[ -z ${a_drives[11]} ]];then
+					dvd='N/A'
+				elif [[ ${a_drives[11]} == 1 ]];then
+					dvd='yes'
+				else
+					dvd='no'
+				fi
+				if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+					if [[ -z ${a_drives[14]} ]];then
+						state='N/A'
+					else
+						state="${a_drives[14]}"
+					fi
+					state=" ${C1}state:${C2} $state"
+				fi
+				if [[ -n ${a_drives[9]} && ${a_drives[9]} == 1 ]];then
+					rw_support='cd-r'
+					separator=','
+				fi
+				if [[ -n ${a_drives[10]} && ${a_drives[10]} == 1 ]];then
+					rw_support="${rw_support}${separator}cd-rw"
+					separator=','
+				fi
+				if [[ -n ${a_drives[12]} && ${a_drives[12]} == 1 ]];then
+					rw_support="${rw_support}${separator}dvd-r"
+					separator=','
+				fi
+				if [[ -n ${a_drives[13]} && ${a_drives[13]} == 1 ]];then
+					rw_support="${rw_support}${separator}dvd-ram"
+					separator=','
+				fi
+				if [[ -z $rw_support ]];then
+					rw_support='none'
+				fi
+				
+				drive_data="${C1}Features: speed:${C2} $speed$multisession$audio ${C1}dvd:${C2} $dvd ${C1}rw:${C2} $rw_support$state"
 				drive_data=$( create_print_line "$Line_Starter" "$drive_data" )
 				print_screen_output "$drive_data"
 			fi
