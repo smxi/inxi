@@ -3,7 +3,7 @@
 ####  Script Name: inxi
 ####  version: 1.6.10
 ####  Date: June 17 2011
-####  Patch Number: 01
+####  Patch Number: 02
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -198,6 +198,7 @@ A_HDD_DATA=''
 A_INTERFACES_DATA=''
 A_MACHINE_DATA=''
 A_NETWORK_DATA=''
+A_OPTICAL_DRIVE_DATA=''
 A_PARTITION_DATA=''
 A_PS_DATA=''
 A_SENSORS_DATA=''
@@ -257,6 +258,7 @@ B_SHOW_IP='false'
 B_SHOW_LABELS='false'
 B_SHOW_MACHINE='false'
 B_SHOW_NETWORK='false'
+B_SHOW_OPTICAL_DRIVES='false'
 # either -v > 3 or -P will show partitions
 B_SHOW_PARTITIONS='false'
 B_SHOW_PARTITIONS_FULL='false'
@@ -1789,7 +1791,10 @@ get_parameters()
 			C)	B_SHOW_CPU='true'
 				use_short='false'
 				;;
-			d)	error_handler 20 "-d has been replaced by -b"
+			d)	B_SHOW_DISK='true'
+				B_SHOW_OPTICAL_DRIVES='true'
+				use_short='false'
+				# error_handler 20 "-d has been replaced by -b"
 				;;
 			D)	B_SHOW_DISK='true'
 				use_short='false'
@@ -4484,6 +4489,80 @@ get_networking_local_ip_data()
 	eval $LOGFE
 }
 
+get_optical_drive_data()
+{
+	eval $LOGFS
+	# get the actual disk dev location:
+	local dev_disks_real=$( ls /dev/dvd* /dev/cd* /dev/scd* 2>/dev/null | xargs -l readlink | sort -u )
+	local temp_array='' dev_disks_links='' sys_uevent_path='' proc_cdrom='' link_list=''
+	local separator='' linked='' disk='' item_string=''
+	# A_OPTICAL_DRIVE_DATA indexes: not going to use all these, but it's just as easy to build the full
+	# data array and use what we need from it as to update it later to add features or items
+	# 0 - true dev path, ie, sr0, hdc
+	# 1 - dev links to true path
+	# 2 - device vendor - for hdx drives, vendor model are one string from proc
+	# 3 - device model
+	# 4 - device rev version
+	# 5 - speed
+	# 6 - multisession support
+	# 7 - MCN support
+	# 8 - audio read
+	# 9 - cdr
+	# 10 - cdrw
+	# 11 - dvd read
+	# 12 - dvdr
+	# 13 - drdrw
+	# 14 - dvdram
+	# 15 - state
+
+	if [[ -n $dev_disks_real ]];then
+		dev_disks_links=$( ls /dev/dvd* /dev/cd* /dev/scd* 2>/dev/null  )
+		IFS=$'\n'
+		A_OPTICAL_DRIVE_DATA=( $(
+		for disk in $dev_disks_real
+		do
+			for linked in $dev_disks_links 
+			do
+				if [[ -n $( readlink $linked | grep $disk ) ]];then
+					linked=$( basename $linked )
+					link_list="$link_list$separator$linked"
+					separator='~'
+				fi
+			done
+			item_string="$disk,$link_list"
+			link_list=''
+			separator=''
+			vendor=''
+			model=''
+			rev_number=''
+			sys_path=''
+			# this is only for new sd type paths in /sys, otherwise we'll use /proc/ide
+			if [[ -z $( grep '^hd' <<< $disk ) ]];then
+				sys_path=$( ls /sys/devices/pci*/*/host*/target*/*/block/$disk/uevent 2>/dev/null | sed "s|/block/$disk/uevent||" )
+				# no need to test for errors yet, probably other user systems will require some alternate paths though
+				if [[ -n $sys_path ]];then
+					vendor=$( cat $sys_path/vendor 2>/dev/null | sed 's/^[[:space:]]\+//;s/[[:space:]]\+$//' )
+					model=$( cat $sys_path/model 2>/dev/null | sed 's/^[[:space:]]\+//;s/[[:space:]]\+$//' )
+					rev_number=$( cat $sys_path/rev 2>/dev/null | sed 's/^[[:space:]]\+//;s/[[:space:]]\+$//' )
+				fi
+			elif [[ -e /proc/ide/$disk/model ]];then
+				vendor=$( cat /proc/ide/$disk/model 2>/dev/null | sed 's/^[[:space:]]\+//;s/[[:space:]]\+$//' )
+			fi
+			proc_cdrom="$( cat /proc/sys/dev/cdrom/info 2>/dev/null )"
+
+			item_string="$item_string,$vendor,$model,$rev_number"
+			echo $item_string
+		done
+		) )
+		IFS="$ORIGINAL_IFS"
+	fi
+# 	echo ${#A_OPTICAL_DRIVE_DATA[@]}
+	temp_array=${A_OPTICAL_DRIVE_DATA[@]}
+# 	echo $temp_array
+	log_function_data "A_OPTICAL_DRIVE_DATA: $temp_array"
+	eval $LOGFE
+}
+# get_optical_drive_data;exit
 get_partition_data()
 {
 	eval $LOGFS
@@ -6108,6 +6187,7 @@ print_hard_disk_data()
 	eval $LOGFS
 	local hdd_data='' hdd_data_2='' a_hdd_working='' hdd_temp_data='' hdd_string=''
 	local dev_data='' size_data='' hdd_model='' usb_data='' hdd_name='' divisor=5
+	local Line_Starter='Drives:' # inherited by print_optical_drives
 
 	# load A_HDD_DATA
 	get_hdd_data_basic
@@ -6154,28 +6234,34 @@ print_hard_disk_data()
 			# printing line one, then new lines according to $divisor setting, and after, if leftovers, print that line.
 			case $i in 
 				0)
-					hdd_data=$( create_print_line "Disks:" "${C1}HDD${C2} ${C1}Total Size:${C2} ${hdd_capacity} (${hdd_used}) ${hdd_model}" )
+					hdd_data=$( create_print_line "$Line_Starter" "${C1}HDD${C2} ${C1}Total Size:${C2} ${hdd_capacity} (${hdd_used}) ${hdd_model}" )
 					print_screen_output "$hdd_data"
 					hdd_model=''
+					Line_Starter=' '
 					;;
 				*)
 					# using modulus here, if divisible by $divisor, print line, otherwise skip
 					if [[ $(( $i % $divisor )) -eq 0 ]];then
-						hdd_data=$( create_print_line " " "${hdd_model}${CN}" )
+						hdd_data=$( create_print_line "$Line_Starter" "${hdd_model}${CN}" )
 						print_screen_output "$hdd_data"
 						hdd_model=''
+						Line_Starter=' '
 					fi
 					;;
 			esac
 		done
 		# then print any leftover items
 		if [[ -n $hdd_model ]];then
-			hdd_data=$( create_print_line " " "${hdd_model}${CN}" )
+			hdd_data=$( create_print_line "$Line_Starter" "${hdd_model}${CN}" )
 			print_screen_output "$hdd_data"
 		fi
 	else
-		hdd_data=$( create_print_line "Disks:" "${C1}HDD Total Size:${C2} ${hdd_capacity} (${hdd_used})${CN}" )
+		hdd_data=$( create_print_line "$Line_Starter" "${C1}HDD Total Size:${C2} ${hdd_capacity} (${hdd_used})${CN}" )
 		print_screen_output "$hdd_data"
+		Line_Starter=' '
+	fi
+	if [[ $B_SHOW_OPTICAL_DRIVES == 'true' ]];then
+		print_optical_drive_data
 	fi
 
 	eval $LOGFE
@@ -6570,6 +6656,60 @@ print_networking_ip_data()
 	if [[ -n $interfaces_2 ]];then
 		interfaces_2=$( create_print_line " " "$interfaces_2" )
 		print_screen_output "$interfaces_2"
+	fi
+	eval $LOGFE
+}
+
+print_optical_drive_data()
+{
+	eval $LOGFS
+	local a_drives='' drive_data='' counter='' 
+	get_optical_drive_data
+	# 0 - true dev path, ie, sr0, hdc
+	# 1 - dev links to true path
+	# 2 - device vendor - for hdx drives, vendor model are one string from proc
+	# 3 - device model
+	# 4 - device rev version
+	if [[ ${#A_OPTICAL_DRIVE_DATA[@]} -gt 0 ]];then
+		for (( i=0; i < ${#A_OPTICAL_DRIVE_DATA[@]}; i++ ))
+		do
+			IFS=","
+			a_drives=(${A_OPTICAL_DRIVE_DATA[i]})
+			IFS="$ORIGINAL_IFS"
+			drive_id=''
+			drive_links=''
+			vendor=''
+			drive_data=''
+			if [[ ${#A_OPTICAL_DRIVE_DATA[@]} -gt 1 ]];then
+				counter="-$(( i + 1 ))"
+			fi
+			
+			drive_id=${a_drives[0]}
+			if [[ -z $drive_id ]];then
+				drive_id='N/A'
+			fi
+			drive_links=$( sed 's/~/,/g' <<< ${a_drives[1]} )
+			if [[ -z $drive_links ]];then
+				drive_links='N/A'
+			fi
+			
+			
+			if [[ -n ${a_drives[2]} ]];then
+				vendor=${a_drives[2]}
+				if [[ -n ${a_drives[3]} ]];then
+					vendor="$vendor ${a_drives[3]}"
+				fi
+			fi
+			if [[ -z $vendor ]];then
+				vendor='N/A'
+			fi
+			drive_data="${C1}Optical${counter}:${C2} $drive_id ${C1}model:${C2} $vendor ${C1}dev-links:${C2} $drive_links"
+			drive_data=$( create_print_line "$Line_Starter" "$drive_data" )
+			print_screen_output "$drive_data"
+			Line_Starter=' '
+		done
+	else
+		:
 	fi
 	eval $LOGFE
 }
