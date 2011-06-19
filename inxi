@@ -3,7 +3,7 @@
 ####  Script Name: inxi
 ####  version: 1.7.2
 ####  Date: June 17 2011
-####  Patch Number: 01
+####  Patch Number: 02
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -3417,7 +3417,8 @@ get_distro_lsb_data()
 
 get_gcc_version()
 {
-	local gccVersion=$( grep -Eio 'gcc[[:space:]]*version[[:space:]]*([0-9\.]+)' /proc/version 2>/dev/null | grep -Eo '([0-9\.]+)' )
+	# note that we use gawk to get the last part because beta, alpha, git versions can be non-numeric
+	local gccVersion=$( grep -Eio 'gcc[[:space:]]*version[[:space:]]*([^ \t]*)' /proc/version 2>/dev/null | gawk '{print $3}' )
 	echo $gccVersion
 }
 
@@ -4894,33 +4895,38 @@ get_partition_data_advanced()
 			# it's more likely we'll get a uuid than a label. But this should get the
 			# dev item set no matter what, so then we can get the rest of any missing data
 			# first we'll get the dev_item if it's missing
-			if [[ -n $DEV_DISK_UUID ]] && [[ -z $dev_item && -n $dev_uuid ]];then
-				dev_item=$( echo "$DEV_DISK_UUID" | gawk '
-					/'$dev_uuid'/ {
-						item=gensub( /..\/..\/(.+)/, "\\1", 1, $NF )
-						print item
-					}' )
-			elif [[ -n $DEV_DISK_LABEL ]] && [[ -z $dev_item && -n $dev_label ]];then
-				dev_item=$( echo "$DEV_DISK_LABEL" | gawk '
-					# first we need to change space x20 in by-label back to a real space
-					#gsub( /x20/, " ", $0 )
-					# then we can see if the string is there
-					/'$dev_label'/ {
-						item=gensub( /..\/..\/(.+)/, "\\1", 1, $NF )
-						print item
-					}' )
+			if [[ -z $dev_item ]];then
+				if [[ -n $DEV_DISK_UUID && -n $dev_uuid ]];then
+					dev_item=$( echo "$DEV_DISK_UUID" | gawk '
+						/'$dev_uuid'/ {
+							item=gensub( /..\/..\/(.+)/, "\\1", 1, $NF )
+							print item
+						}' )
+				elif [[ -n $DEV_DISK_LABEL && -n $dev_label ]];then
+					dev_item=$( echo "$DEV_DISK_LABEL" | gawk '
+						# first we need to change space x20 in by-label back to a real space
+						#gsub( /x20/, " ", $0 )
+						# then we can see if the string is there
+						/'$dev_label'/ {
+							item=gensub( /..\/..\/(.+)/, "\\1", 1, $NF )
+							print item
+						}' )
+				fi
 			fi
-			if [[ -n $DEV_DISK_UUID ]] && [[ -n $dev_item && -z $dev_uuid ]];then
-				dev_uuid=$( echo "$DEV_DISK_UUID" | gawk '
-				/'$dev_item'$/ {
-					print $(NF - 2)
-				}' )
-			fi
-			if [[ -n $DEV_DISK_LABEL ]] && [[ -n $dev_item && -z $dev_label ]];then
-				dev_label=$( echo "$DEV_DISK_LABEL" | gawk '
-				/'$dev_item'$/ {
-					print $(NF - 2)
-				}' )
+			# this can trigger all kinds of weird errors if it is a non /dev path, like: remote:/machine/name
+			if [[ -n $dev_item && -z $( grep -E '(^//|:/)' <<< $dev_item ) ]];then
+				if [[ -n $DEV_DISK_UUID && -z $dev_uuid ]];then
+					dev_uuid=$( echo "$DEV_DISK_UUID" | gawk  '
+					/'$dev_item'$/ {
+						print $(NF - 2)
+					}' )
+				fi
+				if [[ -n $DEV_DISK_LABEL && -z $dev_label ]];then
+					dev_label=$( echo "$DEV_DISK_LABEL" | gawk '
+					/'$dev_item'$/ {
+						print $(NF - 2)
+					}' )
+				fi
 			fi
 
 			# assemble everything we could get for dev/h/dx, label, and uuid
@@ -4935,7 +4941,6 @@ get_partition_data_advanced()
 	eval $LOGFE
 }
 
-	
 # args: $1 - uuid/label
 get_partition_uuid_label_data()
 {
@@ -5674,6 +5679,17 @@ get_uptime()
 #### special data handling for specific options and conditions
 #### -------------------------------------------------------------------
 
+# args: $1 - string to strip color code characters out of
+# returns count of string length minus colors
+calculate_line_length()
+{
+	local string="$1"
+	# ansi: [1;34m irc: \x0312
+	string=$( sed -e "s/\x1b\[[0-9]\{1,2\}\(;[0-9]\{1,2\}\)\{0,2\}m//g" -e "s/\\\x0[0-9]\{1,3\}//g" <<< $string )
+	count=$( wc -c <<< $string )
+	echo $count
+}
+
 ## multiply the core count by the data to be calculated, bmips, cache
 # args: $1 - string to handle; $2 - cpu count
 calculate_multicore_data()
@@ -6257,6 +6273,7 @@ print_gfx_data()
 	else
 		gfx_data="${C1}Card:${C2} Failed to Detect Video Card! "
 	fi
+	# calculate_line_length "${gfx_data}$display_full_string"
 	if [[ -n $gfx_data && $( wc -c <<< ${gfx_data}$display_full_string ) -lt $line_max ]];then
 		gfx_data=$( create_print_line "$line_starter" "${gfx_data}$display_full_string" )
 	else
