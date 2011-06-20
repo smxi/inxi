@@ -1,9 +1,9 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.7.2
-####  Date: June 17 2011
-####  Patch Number: 02
+####  version: 1.7.3
+####  Date: June 19 2011
+####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -179,12 +179,16 @@ DEV_DISK_UUID=''
 FILTER_STRING='<filter>'
 IRC_CLIENT=''
 IRC_CLIENT_VERSION=''
+LINE_MAX=''
+LINE_MAX_CONSOLE='115'
+LINE_MAX_IRC='105'
 PS_COUNT=5
 PS_THROTTLED=''
 REPO_DATA=''
 REPO_FILE_ID=''
 
 ### primary data array holders	## usage: 'A_<var>'
+A_ALSA_DATA=''
 A_AUDIO_DATA=''
 A_CMDL=''
 A_CPU_CORE_DATA=''
@@ -1808,10 +1812,10 @@ get_parameters()
 				B_CPU_FLAGS_FULL='true'
 				use_short='false'
 				;;
-			F)	B_EXTRA_DATA='true'
+			F)	# B_EXTRA_DATA='true'
 				B_SHOW_ADVANCED_NETWORK='true'
 				B_SHOW_AUDIO='true'
-				B_SHOW_BASIC_OPTICAL='true'
+				# B_SHOW_BASIC_OPTICAL='true'
 				B_SHOW_CPU='true'
 				B_SHOW_DISK='true'
 				B_SHOW_GRAPHICS='true'
@@ -2491,6 +2495,12 @@ get_start_client()
 			unset IRC_CLIENT_VERSION
 		fi
 	fi
+	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
+		LINE_MAX=$LINE_MAX_CONSOLE
+	else
+		LINE_MAX=$LINE_MAX_IRC
+	fi
+
 	log_function_data "IRC_CLIENT: $IRC_CLIENT :: IRC_CLIENT_VERSION: $IRC_CLIENT_VERSION :: PPID: $PPID"
 	eval $LOGFE
 }
@@ -2702,8 +2712,9 @@ get_audio_usb_data()
 {
 	eval $LOGFS
 	local usb_proc_file='' array_count='' usb_data='' usb_id='' lsusb_path='' lsusb_data=''
-	IFS=$'\n'
+	local temp_array=''
 	
+	IFS=$'\n'
 	lsusb_path=$( type -p lsusb )
 	lsusb_data=$( $lsusb_path -v 2>/dev/null )
 	log_function_data 'raw' "usb_data:\n$lsusb_data"
@@ -2748,19 +2759,26 @@ get_audio_usb_data()
 		done
 	fi
 	IFS="$ORIGINAL_IFS"
+	temp_array=${A_AUDIO_DATA[@]}
+	log_function_data "A_AUDIO_DATA: $temp_array"
+	
 	eval $LOGFE
 }
 
 get_audio_alsa_data()
 {
 	eval $LOGFS
-	local alsa_data=''
+	local alsa_data='' temp_array=''
 
 	# now we'll get the alsa data if the file exists
 	if [[ $B_ASOUND_VERSION_FILE == 'true' ]];then
-		alsa_data=$( gawk '
+		IFS=","
+		A_ALSA_DATA=( $( 
+		gawk '
 			BEGIN {
 				IGNORECASE=1
+				alsa=""
+				version=""
 			}
 			# some alsa strings have the build date in (...)
 			# remove trailing . and remove possible second line if compiled by user
@@ -2769,14 +2787,19 @@ get_audio_alsa_data()
 				gsub(/,/, " ", $0)
 				gsub(/^ +| +$/, "", $0)
 				gsub(/ [ \t]+/, " ", $0)
-				if ( $0 != "" ){
-					print $0
+				sub(/Advanced Linux Sound Architecture/, "ALSA", $0)
+				if ( $1 == "ALSA" ){
+					alsa=$1
 				}
-		}' $FILE_ASOUND_VERSION )
+				version=$NF
+				print alsa "," version
+			}' $FILE_ASOUND_VERSION 
+		) )
+		IFS="$ORIGINAL_IFS"
 		log_function_data 'cat' "$FILE_ASOUND_VERSION"
 	fi
-	echo "$alsa_data"
-	log_function_data "alsa_data: $alsa_data"
+	temp_array=${A_ALSA_DATA[@]}
+	log_function_data "A_ALSA_DATA: $temp_array"
 	eval $LOGFE
 }
 
@@ -5930,10 +5953,26 @@ print_audio_data()
 	eval $LOGFS
 	local i='' card_id='' audio_data='' a_audio_data='' port_data='' pci_bus_id=''
 	local a_audio_working='' alsa_driver='' alsa_data='' port_plural='' module_version=''
-	local bus_usb_text='' bus_usb_id='' line_starter='Audio:'
+	local bus_usb_text='' bus_usb_id='' line_starter='Audio:' alsa='' alsa_version=''
 	# set A_AUDIO_DATA and get alsa data
 	get_audio_data
-	alsa_data=$( get_audio_alsa_data )
+	get_audio_alsa_data
+	# alsa driver data now prints out no matter what
+	if [[ -n $A_ALSA_DATA ]];then
+		IFS=","
+		if [[ -n ${A_ALSA_DATA[0]} ]];then
+			alsa=${A_ALSA_DATA[0]}
+		else
+			alsa='N/A'
+		fi
+		if [[ -n ${A_ALSA_DATA[1]} ]];then
+			alsa_version=${A_ALSA_DATA[1]}
+		else
+			alsa_version='N/A'
+		fi
+		alsa_data="${C1}Sound:${C2} $alsa ${C1}v:${C2} $alsa_version"
+		IFS="$ORIGINAL_IFS"
+	fi
 	# note, error handling is done in the get function, so this will never be null, but
 	# leaving the test just in case it's changed.
 	if [[ -n ${A_AUDIO_DATA[@]} ]];then
@@ -5980,19 +6019,24 @@ print_audio_data()
 			if [[ -n ${a_audio_working[0]} ]];then
 				audio_data="${C1}Card$card_id${C2} ${a_audio_working[0]}$alsa_driver$port_data$pci_bus_id"
 			fi
+			# only print alsa on last line if short enough, otherwise print on its own line
+			if [[ $i -eq 0 ]];then
+				if [[ -n $alsa_data && $( calculate_line_length "${audio_data}$alsa_data" ) -lt $LINE_MAX ]];then
+					audio_data="$audio_data $alsa_data"
+					alsa_data=''
+				fi
+			fi
 			if [[ -n $audio_data ]];then
 				audio_data=$( create_print_line "$line_starter" "$audio_data" )
 				print_screen_output "$audio_data"
 				line_starter=' '
 			fi
 		done
-		
 	fi
-	# alsa driver data now prints out no matter what
 	if [[ -n $alsa_data ]];then
-		audio_data="${C1}Sound:${C2} $alsa_data"
-		audio_data=$( create_print_line "$line_starter" "$audio_data" )
-		print_screen_output "$audio_data"
+		alsa_data=$( sed 's/ALSA/Advanced Linux Sound Architecture/' <<< $alsa_data )
+		alsa_data=$( create_print_line "$line_starter" "$alsa_data" )
+		print_screen_output "$alsa_data"
 	fi
 	eval $LOGFE
 }
@@ -6143,7 +6187,7 @@ print_gfx_data()
 	eval $LOGFS
 	local gfx_data='' i='' card_id='' root_alert='' root_x_string='' a_gfx_working=''
 	local b_is_mesa='false' display_full_string='' gfx_bus_id='' gfx_card_data=''
-	local res_tty='Resolution' xorg_data='' x_vendor_string='' line_max='160'
+	local res_tty='Resolution' xorg_data='' x_vendor_string='' 
 	local spacer='' x_driver='' x_driver_string='' x_driver_plural='' direct_render_string=''
 	local separator_loaded='' separator_unloaded='' separator_failed=''
 	local loaded='' unloaded='' failed=''
@@ -6165,15 +6209,6 @@ print_gfx_data()
 	
 	# set A_GRAPHIC_DRIVERS
 	get_graphics_driver
-	
-	# this handles the different, longer, irc colors strings embedded in variable data
-	if [[ $B_RUNNING_IN_SHELL != 'true' ]];then
-		line_max=140
-	fi
-	# and no color string data at all
-	if [[ $SCHEME -eq 0 ]];then
-		line_max=100
-	fi
 	
 	if [[ ${#A_GRAPHIC_DRIVERS[@]} -eq 0 ]];then
 		x_driver=' N/A'
@@ -6200,7 +6235,7 @@ print_gfx_data()
 		done
 	fi
 	if [[ -n $loaded ]];then
-		x_driver="${x_driver} loaded: $loaded"
+		x_driver="${x_driver} $loaded"
 	fi
 	if [[ -n $unloaded ]];then
 		x_driver="${x_driver} unloaded: $unloaded"
@@ -6273,8 +6308,7 @@ print_gfx_data()
 	else
 		gfx_data="${C1}Card:${C2} Failed to Detect Video Card! "
 	fi
-	# calculate_line_length "${gfx_data}$display_full_string"
-	if [[ -n $gfx_data && $( wc -c <<< ${gfx_data}$display_full_string ) -lt $line_max ]];then
+	if [[ -n $gfx_data && $( calculate_line_length "${gfx_data}$display_full_string" ) -lt $LINE_MAX ]];then
 		gfx_data=$( create_print_line "$line_starter" "${gfx_data}$display_full_string" )
 	else
 		if [[ -n $gfx_data ]];then
@@ -6435,7 +6469,7 @@ print_machine_data()
 {
 	eval $LOGFS
 	
-	local line_max='170' system_line='' mobo_line='' bios_line='' chassis_line=''
+	local system_line='' mobo_line='' bios_line='' chassis_line=''
 	local mobo_vendor='' mobo_model='' mobo_version='' mobo_serial=''
 	local bios_vendor='' bios_version='' bios_date=''
 	local system_vendor='' product_name='' product_version='' product_serial='' product_uuid=''
@@ -6443,15 +6477,7 @@ print_machine_data()
 	local b_skip_system='false' b_skip_chassis='false'
 	# set A_MACHINE_DATA
 	get_machine_data
-	
-	# this handles the different, longer, irc colors strings embedded in variable data
-	if [[ $B_RUNNING_IN_SHELL != 'true' ]];then
-		line_max=140
-	fi
-	# and no color string data at all
-	if [[ $SCHEME -eq 0 ]];then
-		line_max=100
-	fi
+
 	IFS=','
 	## keys for machine data are:
 	# 0-sys_vendor 1-product_name 2-product_version 3-product_serial 4-product_uuid 
@@ -6536,7 +6562,7 @@ print_machine_data()
 		fi
 		mobo_line="${C1}Mobo${C2} $mobo_vendor ${C1}model${C2} $mobo_model$mobo_version$mobo_serial"
 		bios_line="${C1}Bios${C2} $bios_vendor ${C1}version${C2} $bios_version ${C1}date${C2} $bios_date"
-		if [[ $( wc -c <<< "$mobo_line$bios_line" ) -lt $line_max ]];then
+		if [[ $( calculate_line_length "$mobo_line$bios_line" ) -lt $LINE_MAX ]];then
 			mobo_line="$mobo_line $bios_line"
 			bios_line=''
 		fi
@@ -6561,7 +6587,7 @@ print_machine_data()
 				product_serial=" ${C1}serial${C2} ${A_MACHINE_DATA[3]} "
 			fi
 			system_line="${C1}System${C2} $system_vendor ${C1}product${C2} $product_name$product_version$product_serial"
-			if [[ -n $chassis_line && $( wc -c <<< "$system_line$chassis_line" ) -lt $line_max ]];then
+			if [[ -n $chassis_line && $( calculate_line_length "$system_line$chassis_line" ) -lt $LINE_MAX ]];then
 				system_line="$system_line $chassis_line"
 				chassis_line=''
 			fi
@@ -6628,7 +6654,7 @@ print_networking_data()
 	eval $LOGFS
 	local i='' card_id='' network_data='' a_network_working='' port_data='' driver_data=''
 	local card_string='' port_plural='' module_version='' pci_bus_id='' bus_usb_text=''
-	local bus_usb_id='' line_starter='Network:'
+	local bus_usb_id='' line_starter='Network:' card_string='' card_data=''
 	# set A_NETWORK_DATA
 	get_networking_data
 
@@ -6642,6 +6668,8 @@ print_networking_data()
 			IFS="$ORIGINAL_IFS"
 			bus_usb_id=''
 			bus_usb_text=''
+			card_data=''
+			card_string=''
 			driver_data=''
 			module_version=''
 			network_data=''
@@ -6656,13 +6684,13 @@ print_networking_data()
 				module_version=$( print_module_version "${a_network_working[1]}" )
 			fi
 			if [[ -n ${a_network_working[1]} ]];then
-				driver_data=" ${C1}driver${C2} ${a_network_working[1]}$module_version"
+				driver_data="${C1}driver${C2} ${a_network_working[1]}$module_version "
 			fi
 			if [[ -n ${a_network_working[2]} && $B_EXTRA_DATA == 'true' ]];then
 				if [[ $( wc -w <<< ${a_network_working[2]} ) -gt 1 ]];then
 					port_plural='s'
 				fi
-				port_data=" ${C1}port$port_plural${C2} ${a_network_working[2]}"
+				port_data="${C1}port$port_plural${C2} ${a_network_working[2]} "
 			fi
 			if [[ -n ${a_network_working[4]} && $B_EXTRA_DATA == 'true' ]];then
 				if [[ -z $( grep '^usb-' <<< ${a_network_working[4]} ) ]];then
@@ -6672,10 +6700,17 @@ print_networking_data()
 					bus_usb_text='usb-ID'
 					bus_usb_id=$( cut -d '-' -f '2-4' <<< ${a_network_working[4]} )
 				fi
-				pci_bus_id=" ${C1}$bus_usb_text:${C2} $bus_usb_id"
+				pci_bus_id="${C1}$bus_usb_text:${C2} $bus_usb_id"
 			fi
-			network_data="${C1}Card$card_id${C2} ${a_network_working[0]}$driver_data$port_data$pci_bus_id"
-			network_data=$( create_print_line "$line_starter" "$network_data" )
+			card_string="${C1}Card$card_id${C2} ${a_network_working[0]} "
+			card_data="$driver_data$port_data$pci_bus_id"
+			if [[ $( calculate_line_length "$card_string$card_data" ) -gt $LINE_MAX ]];then
+				network_data=$( create_print_line "$line_starter" "$card_string" )
+				line_starter=' '
+				card_string=''
+				print_screen_output "$network_data"
+			fi
+			network_data=$( create_print_line "$line_starter" "$card_string$card_data" )
 			line_starter=' '
 			print_screen_output "$network_data"
 			if [[ $B_SHOW_ADVANCED_NETWORK == 'true' ]];then
@@ -6941,21 +6976,9 @@ print_partition_data()
 {
 	eval $LOGFS
 	local a_partition_working='' partition_used='' partition_data=''
-	local counter=0 line_max=160  i=0 a_partition_data='' line_starter=''
+	local counter=0 i=0 a_partition_data='' line_starter='' line_max=$(( $LINE_MAX - 35 ))
 	local partitionIdClean='' part_dev='' full_dev='' part_label='' full_label=''
 	local part_uuid='' full_uuid='' dev_remote='' full_fs=''
-
-	# this handles the different, longer, irc colors strings embedded in variable data
-	if [[ $B_RUNNING_IN_SHELL != 'true' ]];then
-		line_max=130
-	fi
-	# and no color string data at all
-	if [[ $SCHEME -eq 0 ]];then
-		line_max=75
-	fi
-	if [[ $B_SHOW_LABELS == 'true' || $B_SHOW_UUIDS == 'true' ]];then
-		line_max=20
-	fi
 
 	# set A_PARTITION_DATA
 	get_partition_data
@@ -7020,8 +7043,7 @@ print_partition_data()
 			fi
 			# because these lines can vary widely, using dynamic length handling here
 			a_partition_data[$counter]="${a_partition_data[$counter]}${C1}ID:${C2}$partitionIdClean ${C1}size:${C2} ${a_partition_working[1]}$partition_used$full_fs$full_dev$full_label$full_uuid "
-
-			if [[ $( wc -c <<< ${a_partition_data[$counter]} ) -gt $line_max ]];then
+			if [[ $B_SHOW_LABELS == 'true' || $B_SHOW_UUIDS == 'true' ]] || [[ $( calculate_line_length "${a_partition_data[$counter]}" ) -gt $line_max ]];then
 				((counter++))
 			fi
 		fi
@@ -7191,6 +7213,20 @@ print_repo_data()
 	eval $LOGFE
 }
 
+print_script_version()
+{
+	local script_patch_number=$( get_patch_version_string )
+	local script_version="${C1}$SCRIPT_NAME${C2} $SCRIPT_VERSION_NUMBER$script_patch_number${CN}"
+	# great trick from: http://ideatrash.net/2011/01/bash-string-padding-with-sed.html
+	# left pad: sed -e :a -e 's/^.\{1,80\}$/& /;ta'
+	# right pad: sed -e :a -e 's/^.\{1,80\}$/ &/;ta'
+	# center pad: sed -e :a -e 's/^.\{1,80\}$/ & /;ta'
+	#local line_max=$(( $LINE_MAX - 10 ))
+	#script_version="$( sed -e :a -e "s/^.\{1,$line_max\}$/ &/;ta" <<< $script_version )" # use to create padding if needed
+	# script_version=$( create_print_line "Version:" "$script_version" )
+	print_screen_output "$script_version"
+}
+
 print_sensors_data()
 {
 	eval $LOGFS
@@ -7333,21 +7369,12 @@ print_sensors_data()
 print_system_data()
 {
 	eval $LOGFS
-	local system_data='' bits='' desktop_environment='' line_max=165
+	local system_data='' bits='' desktop_environment='' 
 	local host_kernel_string='' de_distro_string='' host_string='' desktop_type='Desktop'
 	local host_name=$( hostname )
 	local current_kernel=$( uname -rm ) # | gawk '{print $1,$3,$(NF-1)}' )
 	local distro="$( get_distro_data )"
 	local tty_session=$( basename "$( tty 2>/dev/null )" | sed 's/[^0-9]*//g' )
-	
-	# this handles the different, longer, irc colors strings embedded in variable data
-	if [[ $B_RUNNING_IN_SHELL != 'true' ]];then
-		line_max=150
-	fi
-	# and no color string data at all
-	if [[ $SCHEME -eq 0 ]];then
-		line_max=110
-	fi
 	
 	# I think these will work, maybe, if logged in as root and in X
 	if [[ $B_RUNNING_IN_X == 'true' ]];then
@@ -7386,7 +7413,7 @@ print_system_data()
 	
 	host_kernel_string="$host_string${C1}Kernel${C2} $current_kernel $bits "
 	
-	if [[ $( wc -c <<< "$host_kernel_string$de_distro_string" ) -lt $line_max ]];then
+	if [[ $( calculate_line_length "$host_kernel_string$de_distro_string" ) -lt $LINE_MAX ]];then
 		system_data="$host_kernel_string$de_distro_string"
 		system_data=$( create_print_line "System:" "$system_data" )
 	else
