@@ -3,7 +3,7 @@
 ####  Script Name: inxi
 ####  version: 1.7.5
 ####  Date: June 20 2011
-####  Patch Number: 00
+####  Patch Number: 01
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -483,7 +483,7 @@ DISTROS_LSB_GOOD="mandrake-release mandriva-release mandrakelinux-release"
 
 ### Bans Data
 # Note that \<ltd\> bans only words, not parts of strings; in \<corp\> you can't use punctuation characters like . or ,
-# we're saving about 10% of the exec time by hand building the ban lists here, using hard quotes. 
+# we're saving about 10+% of the total script exec time by hand building the ban lists here, using hard quotes.
 BAN_LIST_NORMAL='computing|computer|corporation|communications|electronics|electrical|electric|gmbh|group|industrial|international|revision|software|technologies|technology|\<ltd\>|ltd\.|\<inc\>|inc\.|intl\.|\<co\>|co\.|corp\.|\(tm\)|\(r\)|®|\(rev ..\)'
 BAN_LIST_CPU='@|cpu deca|dual core|dual-core|tri core|tri-core|quad core|quad-core|ennea|genuine|hepta|hexa|multi|octa|penta|processor|single|triple|[0-9\.]+ *[MmGg][Hh][Zz]'
 
@@ -3697,45 +3697,50 @@ get_graphics_res_data()
 get_graphics_x_data()
 {
 	eval $LOGFS
-	local x_vendor='' x_version='' temp_array='' xdpy_info=''
-
+	local x_vendor='' x_version='' temp_array='' xdpy_info='' a_x_working=''
+B_SHOW_X_DATA=true
 	if [[ $B_SHOW_X_DATA == 'true' && $B_ROOT != 'true' ]];then
 		# X vendor and version detection.
-		xdpy_info="$( xdpyinfo )"
-		x_vendor=$( gawk -F': +' '
+		# new method added since radeon and X.org and the disappearance of <X server name> version : ...etc
+		# Later on, the normal textual version string returned, e.g. like: X.Org version: 6.8.2
+		# A failover mechanism is in place. (if $x_version is empty, the release number is parsed instead)
+		# xdpy_info="$( xdpyinfo )"
+		IFS=","
+		a_x_working=( $( xdpyinfo | gawk -F': +' '
 		BEGIN {
 			IGNORECASE=1
+			vendorString=""
+			version=""
+			vendorRelease=""
 		}
 		/vendor string/ {
 			gsub(/the|inc|foundation|project|corporation/, "", $2)
 			gsub(/,/, " ", $2)
 			gsub(/^ +| +$/, "", $2)
 			gsub(/ [ \t]+/, " ", $2)
-			print $2
-		}' <<< "$xdpy_info" )
-
-		# new method added since radeon and X.org and the disappearance of <X server name> version : ...etc
-		# Later on, the normal textual version string returned, e.g. like: X.Org version: 6.8.2
-		# A failover mechanism is in place. (if $x_version is empty, the release number is parsed instead)
-		x_version=$( gawk '
+			vendorString = $2
+		}
 		/version:/ {
-			print $NF
-		}' <<< "$xdpy_info" )
+			version = $NF
+		}
+		/vendor release number/ {
+			gsub(/0+$/, "", $2)
+			gsub(/0+/, ".", $2)
+			vendorRelease = $2
+		}
+		END {
+			print vendorString "," version "," vendorRelease
+		}' ) )
+		x_vendor=${a_x_working[0]}
+		x_version=${a_x_working[1]}
+
 		# this gives better output than the failure last case, which would only show:
 		# for example: X.org: 1.9 instead of: X.org: 1.9.0
 		if [[ -z $x_version ]];then
 			x_version=$( get_graphics_x_version )
 		fi
 		if [[ -z $x_version ]];then
-			x_version=$( gawk -F': +' '
-			BEGIN {
-				IGNORECASE=1
-			}
-			/vendor release number/ {
-				gsub(/0+$/, "", $2)
-				gsub(/0+/, ".", $2)
-				print $2
-			}' <<< "$xdpy_info" )
+			x_version=${a_x_working[2]}
 		fi
 		
 		# some distros, like fedora, report themselves as the xorg vendor, so quick check
@@ -3743,7 +3748,7 @@ get_graphics_x_data()
 		if [[ -z $( grep -E '(X|xorg|x\.org)' <<< $x_vendor ) ]];then
 			x_vendor="$x_vendor X.org"
 		fi
-		
+		IFS="$ORIGINAL_IFS"
 		A_X_DATA[0]="$x_vendor"
 		A_X_DATA[1]="$x_version"
 	else
@@ -3758,6 +3763,7 @@ get_graphics_x_data()
 	log_function_data "A_X_DATA: $temp_array"
 	eval $LOGFE
 }
+
 # if other tests fail, try this one, this works for root, out of X also
 get_graphics_x_version()
 {
@@ -7233,7 +7239,7 @@ print_sensors_data()
 					if [[ -n ${a_sensors_working[2]} ]];then
 						psu_temp="${C1}psu:${C2} ${a_sensors_working[2]} "
 					fi
-					gpu_temp=$( get_gpu_temp_data )
+					gpu_temp=$( time get_gpu_temp_data )
 					# dump the unneeded screen data for single gpu systems 
 					if [[ $( wc -w <<< $gpu_temp ) -eq 1 && $B_EXTRA_DATA != 'true' ]];then
 						gpu_temp=$( cut -d ':' -f 2 <<< $gpu_temp )
