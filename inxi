@@ -3,7 +3,7 @@
 ####  Script Name: inxi
 ####  version: 1.7.6
 ####  Date: June 21 2011
-####  Patch Number: 00
+####  Patch Number: 01
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -280,6 +280,7 @@ B_SHOW_X_DATA='false'
 # triggers various debugging and new option testing
 B_TESTING_1='false'
 B_TESTING_2='false'
+B_UPLOAD_DEBUG_DATA='false'
 # set to true here for debug logging from script start
 B_USE_LOGGING='false'
 B_UUID_SET='false'
@@ -1239,8 +1240,9 @@ script_self_updater()
 # args: $1 - debug data type: sys|xorg|disk
 debug_data_collector()
 {
-	local xiin_app='' xiin_data_file='' xiin_download='' inxi_args='' error=''
+	local xiin_app='' xiin_data_file='' xiin_download='' error='' b_run_xiin='false'
 	local debug_data_dir="inxi-$(tr ' ' '-' <<< $HOSTNAME | tr '[A-Z]' '[a-z]' )-$1-$(date +%Y%m%d)" 
+	local completed_gz_file='' xiin_file='xiin.py'
 	
 	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
 		echo "Starting debugging data collection type: $1"
@@ -1273,39 +1275,48 @@ debug_data_collector()
 		cat $FILE_MEMINFO &> $debug_data_dir/proc-meminfo.txt
 		cat $FILE_MODULES &> $debug_data_dir/proc-modules.txt
 		check_recommends &> $debug_data_dir/check-recommends.txt
+		# first download and verify xiin
+		if [[ $B_UPLOAD_DEBUG_DATA == 'true' || $1 == 'disk' || $1 == 'sys' || $1 == 'all' ]];then
+			touch $debug_data_dir/xiin-error.txt
+			echo 'Downloading required tree traverse tool xiin...'
+			if [[ -f xiin && ! -f $xiin_file ]];then
+				mv -f xiin $xiin_file
+			fi
+			# -Nc is creating really weird download anomolies, so using -O instead
+			xiin_download="$( wget -q -O - http://inxi.googlecode.com/svn/branches/xiin/$xiin_file )"
+			# if nothing got downloaded kick out error, otherwise we'll use an older version
+			if [[ $? -gt 0 && ! -f $xiin_file ]];then
+				echo -e "ERROR: Failed to download required file: $xiin_file\nMaybe the remote site is down or your networking is broken?"
+				echo "Continuing with incomplete data collection."
+				echo "$xiin_file download failed and no existing $xiin_file" >> $debug_data_dir/xiin-error.txt
+			elif [[ -n $( grep -s 'checkPython' <<< "$xiin_download" ) || -f $xiin_file ]];then
+				if [[ -n $( grep -s 'checkPython' <<< "$xiin_download" ) ]];then
+					echo "Updating $xiin_file from remote location"
+					echo "$xiin_download" > $xiin_file
+				else
+					echo "Using local $xiin_file due to download failure"
+				fi
+				b_run_xiin='true'
+			else
+				echo -e "ERROR: $xiin_file downloaded but the program file data is corrupted.\nContinuing with incomplete data collection."
+				echo "$xiin_file downloaded but the program file data is corrupted." >> $debug_data_dir/xiin-error.txt
+			fi
+		fi
 		# note, only bash 4> supports ;;& for case, so using if/then here
 		if [[ $1 == 'disk' || $1 == 'sys' || $1 == 'all' ]];then
 			xiin_data_file=$SCRIPT_DATA_DIR/$debug_data_dir/xiin-sys.txt
 			echo 'Collecting networking data...'
 			ifconfig &> $debug_data_dir/ifconfig.txt
-			echo 'Downloading required tree traverse tool xiin...'
-			# -Nc is creating really weird download anomolies, so using -O instead
-			xiin_download="$( wget -q -O - http://inxi.googlecode.com/svn/branches/xiin/xiin )"
-			# if nothing got downloaded kick out error, otherwise we'll use an older version
-			if [[ $? -gt 0 && ! -f xiin ]];then
-				echo -e "ERROR: Failed to download required file: xiin\nMaybe the remote site is down or your networking is broken?"
-				echo "Continuing with incomplete data collection."
-				echo 'xiin download failed and no existing xiin' >> $debug_data_dir/xiin-error.txt
-			elif [[ -n $( grep -s 'checkPython' <<< "$xiin_download" ) || -f xiin ]];then
-				if [[ -n $( grep -s 'checkPython' <<< "$xiin_download" ) ]];then
-					echo 'Updating xiin from remote location'
-					echo "$xiin_download" > xiin
-				else
-					echo 'Using local xiin due to download failure'
-				fi
-				echo 'Running xiin tool now on /sys...'
-				python ./xiin -d /sys -f $xiin_data_file
-				
+			if [[ $b_run_xiin == 'true' ]];then
+				echo "Running $xiin_file tool now on /sys..."
+				python ./$xiin_file -d /sys -f $xiin_data_file
 				if [[ $? -ne 0 ]];then
 					error=$?
-					echo -e "ERROR: xiin exited with error $error - removing data file.\nContinuing with incomplete data collection."
+					echo -e "ERROR: $xiin_file exited with error $error - removing data file.\nContinuing with incomplete data collection."
 					echo "Continuing with incomplete data collection."
 					rm -f $xiin_data_file
-					echo "xiin data generation failed with python error $error" >> $debug_data_dir/xiin-error.txt
+					echo "$xiin_file data generation failed with python error $error" >> $debug_data_dir/xiin-error.txt
 				fi
-			else
-				echo -e "ERROR: xiin downloaded but the program file data is corrupted.\nContinuing with incomplete data collection."
-				echo "xiin downloaded but the program file data is corrupted." >> $debug_data_dir/xiin-error.txt
 			fi
 		fi
 		if [[ $1 == 'xorg' || $1 == 'all' ]];then
@@ -1362,12 +1373,14 @@ debug_data_collector()
 			cat /proc/ide/*/* &> $debug_data_dir/proc-ide-hdx-cat.txt
 			cat /etc/fstab &> $debug_data_dir/etc-fstab.txt
 			cat /etc/mtab &> $debug_data_dir/etc-mtab.txt
-			inxi_args='pluo'
 		fi
 		echo 'Creating inxi output file now. This can take a few seconds...'
-		$SCRIPT_NAME -F$inxi_args -c 0 -@ 8 > $debug_data_dir/inxi-F${inxi_args}.txt
+		$SCRIPT_NAME -Fploudx -c 0 -@ 8 > $debug_data_dir/inxi-F${inxi_args}.txt
 		cp $LOG_FILE $SCRIPT_DATA_DIR/$debug_data_dir
-
+		if [[ -f $debug_data_dir.tar.gz ]];then
+			echo "Found and removing previous tar.gz data file: $debug_data_dir.tar.gz"
+			rm -f $debug_data_dir.tar.gz
+		fi
 		echo 'Creating tar.gz compressed file of this material now. Contents:'
 		echo '-------------------------'
 		tar -cvzf $debug_data_dir.tar.gz $debug_data_dir
@@ -1382,9 +1395,24 @@ debug_data_collector()
 			echo "Data in gz is corrupted, removed gzip file" >> $debug_data_dir/gzip-error.txt
 		else
 			echo 'All done, you can find your data gzipped directory here:'
-			echo $SCRIPT_DATA_DIR/$debug_data_dir.tar.gz
-			echo 'You can upload this here using most file managers: ftp.techpatterns.com/incoming'
-			echo 'then let a maintainer know it is uploaded.'
+			completed_gz_file=$SCRIPT_DATA_DIR/$debug_data_dir.tar.gz
+			echo $completed_gz_file
+			if [[ $B_UPLOAD_DEBUG_DATA == 'true' ]];then
+				if [[ $b_run_xiin == 'true' ]];then
+					echo 'Running automatic upload of data to remote server ftp.techpatterns.com/incoming now...'
+					python ./$xiin_file -u $completed_gz_file ftp.techpatterns.com/incoming anon anon
+					if [[ $? -gt 0 ]];then
+						echo "Error: looks like the ftp upload failed. Error number: $?"
+						echo "The ftp upload failed. Error number: $?" >> $debug_data_dir/xiin-error.txt
+					fi
+				else
+					echo 'Unable to run the automoatic ftp upload because of an error with the xiin download.'
+					echo "Unable to run the automoatic ftp upload because of an error with the xiin download" >> $debug_data_dir/xiin-error.txt
+				fi
+			else
+				echo 'You can upload this here using most file managers: ftp.techpatterns.com/incoming'
+				echo 'then let a maintainer know it is uploaded.'
+			fi
 		fi
 	else
 		echo 'This feature only available in console or shell client! Exiting now.'
@@ -1915,6 +1943,9 @@ get_parameters()
 				;;
 			@)	if [[ -n $( grep -E "^([1-9]|1[0-4])$" <<< $OPTARG ) ]];then
 					DEBUG=$OPTARG
+					if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+						B_UPLOAD_DEBUG_DATA='true'
+					fi
 					exec 2>&1
 					# switch on logging only for -@ 8-10
 					case $OPTARG in
