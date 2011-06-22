@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.7.7
-####  Date: June 21 2011
+####  version: 1.7.8
+####  Date: June 22 2011
 ####  Patch Number: 01
 ########################################################################
 ####  SPECIAL THANKS
@@ -71,7 +71,7 @@
 ####       Note: requires user action for this feature to run as user (edit /etc/sudoers file)
 ####  -G - full graphics output requires:  glxinfo (mesa-utils); xdpyinfo (X11-utils);
 ####       xrandr (x11-xserver-utils)
-####  -i - IP information, local/wan - ifconfig (net-tools)
+####  -i - IP information, local/wan - ip (iproute) legacy, not used if ip present: ifconfig (net-tools)
 ####  -Ix - view current runlevel while not in X window system (or with -x): runlevel (sysvinit)
 ####  -o - for unmounted file system information in unmounted drives (root only default): file (file)
 ####       Note: requires user action for this feature to run as user (edit /etc/sudoers file)
@@ -513,9 +513,12 @@ main()
 	initialize_script_data
 
 	# Check for dependencies BEFORE running ANYTHING else except above functions
-	# Not all distro's have these depends installed by default
-	check_script_depends
-	check_script_suggested_apps
+	# Not all distro's have these depends installed by default. Don't want to run
+	# this if the user is requesting to see this information in the first place
+	if [[ $1 != '--recommends' ]];then
+		check_script_depends
+		check_script_suggested_apps
+	fi
 
 	### Only continue if depends ok
 	SCRIPT_PATH=$( dirname $0 )
@@ -1500,6 +1503,7 @@ check_recommends_items()
 	file:file~file~file~:-o_unmounted_file_system
 	hddtemp:hddtemp~hddtemp~hddtemp~:-Dx_show_hdd_temp 
 	ifconfig:net-tools~net-tools~net-tools~:-i_ip_lan
+	ip:iproute~iproute2~iproute~:-i_ip_lan
 	sensors:lm-sensors~lm_sensors~lm-sensors~:-s_sensors_output
 	lsusb:usbutils~usbutils~usbutils~:-A_usb_audio;-N_usb_networking 
 	modinfo:module-init-tools~module-init-tools~module-init-tools~:-Ax,-Nx_module_version 
@@ -2112,13 +2116,14 @@ show_options()
 	print_screen_output "-x  Show extra data (only works with verbose or line output, not short form): "
 	print_screen_output "    -C - bogomips on Cpu;"
 	print_screen_output "    -d - Adds items to features line of optical drive; adds rev version to optical drive."
+	print_screen_output "    -D - Hdd temp with disk data if you have hddtemp installed, if you are root OR if you have added to"
+	print_screen_output "         /etc/sudoers (sudo v. 1.7 or newer): <username> ALL = NOPASSWD: /usr/sbin/hddtemp (sample)"
+	print_screen_output "    -G - Direct rendering status for Graphics (in X)."
+	print_screen_output "    -G - (for single gpu, nvidia driver) screen number gpu is running on."
+	print_screen_output "    -i - Show IPv6 as well for LAN interface (IF) devices."
 	print_screen_output "    -N -A - Adds version/port(s)/driver version (if available) for Network/Audio;"
 	print_screen_output "    -N -A -G - Network, audio, graphics, shows PCI Bus ID/Usb ID number of card;"
 	print_screen_output "    -S - Desktop toolkit if avaliable (GNOME/XFCE/KDE only); Kernel gcc version"
-	print_screen_output "    -G - Direct rendering status for Graphics (in X)."
-	print_screen_output "    -G - (for single gpu, nvidia driver) screen number gpu is running on."
-	print_screen_output "    -D - Hdd temp with disk data if you have hddtemp installed, if you are root OR if you have added to"
-	print_screen_output "         /etc/sudoers (sudo v. 1.7 or newer): <username> ALL = NOPASSWD: /usr/sbin/hddtemp (sample)"
 	print_screen_output "    -t - Adds memory use output to cpu (-xt c), and cpu use to memory (-xt m)."
 	print_screen_output "-xx Show extra, extra data (only works with verbose or line output, not short form): "
 	print_screen_output "    -M - Adds chassis information, if any data for that is available."
@@ -4480,58 +4485,108 @@ get_networking_local_ip_data()
 {
 	eval $LOGFS
 	
-	local ifconfig_path=$( type -p ifconfig ) 
-	local temp_array=''
-	
-	# lack of ifconfig will throw an error only upon it's usage
-	if [[ -n $ifconfig_path ]];then
-		IFS=$'\n'
-		A_INTERFACES_DATA=( $( $ifconfig_path | gawk '
+	local ip_tool_command=$( type -p ip )
+	local temp_array='' ip_tool='ip'
+	# the chances for all new systems to have ip by default are far higher than
+	# the deprecated ifconfig. Only try for ifconfig if ip is not present in system
+	if [[ -z $ip_tool_command ]];then
+		ip_tool_command=$( type -p ifconfig )
+		ip_tool='ifconfig'
+	else
+		ip_tool_command="$ip_tool_command addr"
+	fi
+	# lack of ip tool will throw an error only upon it's usage
+	if [[ -n "$ip_tool_command" ]];then
+		IFS=$'\n' # $ip_tool_command
+		A_INTERFACES_DATA=( $( 
+		# important, because this can be 'ip addr' it MUST use eval ${...}
+		eval ${ip_tool_command} | gawk -v ipTool=$ip_tool '
 		BEGIN {
 			IGNORECASE=1
+			interface=""
+			ifIp=""
+			ifIpV6=""
+			ifMask=""
 		}
-		$0 !~ /^lo/ {
-			# not clear on why inet is coming through, but this gets rid of it
-			# as first line item.
-			interface = $1
-			gsub(/,/, " ", interface)
-			gsub(/^ +| +$/, "", interface)
-			gsub(/ [ \t]+/, " ", interface)
-
-			aInterfaces[interface]++
-			while (getline && !/^$/) {
-				if (/inet addr:/) {
-					ipAddresses[interface] = gensub( /addr:([0-9\.]+)/, "\\1", "g", $2 )
-				}
+		# skip past the lo item
+		/^lo/ || /^[0-9]+: lo:/ {
+			while (getline && ( !/^$/ && !/valid(.*)lft/ ) ) {
+				# do nothing, just get past this entry item
 			}
 		}
+		/^[a-zA-Z]+[0-9]/ || /^[0-9]+: [a-zA-Z]+[0-9]+:/ {
+			# not clear on why inet is coming through, but this gets rid of it
+			# as first line item.
+			gsub(/,/, " ", $0)
+			gsub(/^ +| +$/, "", $0)
+			gsub(/ [ \t]+/, " ", $0)
+			if ( ipTool == "ifconfig" ) {
+				interface = $1
+			}
+			# prep this this: 2: eth0: 
+			else if ( ipTool == "ip" ) {
+				interface = $2
+				sub(/:/, "", interface)
+			}
+			ifIp=""
+			ifIpV6=""
+			ifMask=""
+			aInterfaces[interface]++
 
+			while (getline && ( !/^$/ && !/valid(.*)lft/ )) {
+				if ( ipTool == "ifconfig" ) {
+					if (/inet addr:/) {
+						ifIp = gensub( /addr:([0-9\.]+)/, "\\1", "g", $2 )
+						if (/mask:/) {
+							ifMask = gensub( /mask:([0-9\.]+)/, "\\1", "g", $NF )
+						}
+					}
+					if (/inet6 addr:/) {
+						ifIpV6 = $3
+					}
+				}
+				else if ( ipTool == "ip" ) {
+					if ( $1 == "inet" ) {
+						ifIp = $2
+					}
+					if ( $1 == "inet6" ) {
+						ifIpV6 = $2
+					}
+				}
+			}
+			# slice off the digits that are sometimes tacked to the end of the address, 
+			# like: /64 or /24
+			sub(/\/[0-9]+/, "", ifIp)
+			sub(/\/[0-9]+/, "", ifIpV6)
+			ipAddresses[interface] = ifIp "," ifMask "," ifIpV6
+		}
 		END {
 			j=0
 			for (i in aInterfaces) {
-				useInterfaceIp = ""
+				ifData = ""
 				a[j] = i
 				if (ipAddresses[i] != "") {
-					useInterfaceIp = ipAddresses[i]
+					ifData = ipAddresses[i]
 				}
 				# create array primary item for master array
 				# tested needed to avoid bad data from above, if null it is garbage
 				# this is the easiest way to handle junk I found, improve if you want
-				if ( useInterfaceIp != "" ) {
-					print a[j] "," useInterfaceIp
+				if ( ifData != "" ) {
+					print a[j] "," ifData
 				}
 				j++
 			}
-		}') )
+		}'
+		) )
 		IFS="$ORIGINAL_IFS"
 	else
-		A_INTERFACES_DATA=( "Interfaces tool requires missing app: ifconfig" )
+		A_INTERFACES_DATA=( "Interfaces program 'ip' missing. Please check: $SCRIPT_NAME --recommends" )
 	fi
 	temp_array=${A_INTERFACES_DATA[@]}
 	log_function_data "A_INTERFACES_DATA: $temp_array"
 	eval $LOGFE
 }
-
+# get_networking_local_ip_data;exit
 get_optical_drive_data()
 {
 	eval $LOGFS
@@ -6706,7 +6761,7 @@ print_networking_data()
 			fi
 			card_string="${C1}Card$card_id${C2} ${a_network_working[0]} "
 			card_data="$driver_data$port_data$pci_bus_id"
-			if [[ $( calculate_line_length "$card_string$card_data" ) -gt $LINE_MAX ]];then
+			if [[ $( calculate_line_length "$card_string$card_data" ) -lt $LINE_MAX ]];then
 				network_data=$( create_print_line "$line_starter" "$card_string" )
 				line_starter=' '
 				card_string=''
@@ -6776,8 +6831,10 @@ print_networking_ip_data()
 {
 	eval $LOGFS
 	local ip=$( get_networking_wan_ip_data )
-	local ip_data='' a_interfaces_working='' interfaces='' interfaces_2='' i=''
-	local if_id='' if_ip=''
+	local wan_ip_data='' a_interfaces_working='' interfaces='' i=''
+	local if_id='' if_ip='' if_ipv6='' if_ipv6_string='' full_string='' if_string=''
+	local if_id_string='' if_ip_string=''
+	local line_max=$(( $LINE_MAX - 50 ))
 
 	# set A_INTERFACES_DATA
 	get_networking_local_ip_data
@@ -6789,8 +6846,7 @@ print_networking_ip_data()
 			ip=$FILTER_STRING
 		fi
 	fi
-	ip_data=$( create_print_line " " "${C1}Wan IP:${C2} $ip" )
-
+	wan_ip_data="${C1}WAN IP:${C2} $ip "
 	# then create the list of local interface/ip
 	i=0 ## loop starts with 1 by auto-increment so it only shows cards > 1
 	while [[ -n ${A_INTERFACES_DATA[i]} ]]
@@ -6800,29 +6856,45 @@ print_networking_ip_data()
 		IFS="$ORIGINAL_IFS"
 		if_id='N/A'
 		if_ip='N/A'
-		if [[ -n ${a_interfaces_working[1]} ]];then
-			if [[ $B_OUTPUT_FILTER == 'true' ]];then
-				if_ip=$FILTER_STRING
-			else
-				if_ip=${a_interfaces_working[1]}
+		if_ipv6='N/A'
+		if_ipv6_string=''
+		if [[ -z $( grep '^Interface' <<< ${a_interfaces_working[0]} ) ]];then
+			if [[ -n ${a_interfaces_working[1]} ]];then
+				if [[ $B_OUTPUT_FILTER == 'true' ]];then
+					if_ip=$FILTER_STRING
+				else
+					if_ip=${a_interfaces_working[1]}
+				fi
+			fi
+			if_ip_string=" ${C1}ip${C2} $if_ip"
+			if [[ $B_EXTRA_DATA == 'true' ]];then
+				if [[ -n ${a_interfaces_working[3]} ]];then
+					if [[ $B_OUTPUT_FILTER == 'true' ]];then
+						if_ipv6=$FILTER_STRING
+					else
+						if_ipv6=${a_interfaces_working[3]}
+					fi
+				fi
+				if_ipv6_string=" ${C1}ip-v6${C2} $if_ipv6"
 			fi
 		fi
 		if [[ -n ${a_interfaces_working[0]} ]];then
 			if_id=${a_interfaces_working[0]}
 		fi
-		if [[ $i -lt 3 ]];then
-			interfaces="$interfaces ${C1}IF IP:${C2} $if_id ${C1}-${C2} $if_ip"
-		else
-			# space on end here for lining up with line starter
-			interfaces_2="$interfaces_2${C1}IF IP:${C2} $if_id ${C1}-${C2} $if_ip "
+		if_string="$wan_ip_data$if_string${C1}IF${C2} $if_id$if_ip_string$if_ipv6_string "
+		wan_ip_data=''
+		if [[ $( calculate_line_length "$if_string" ) -gt $line_max ]];then
+			full_string=$( create_print_line " " "$if_string" )
+			print_screen_output "$full_string"
+			if_string=''
 		fi
 		((i++))
 	done
-	print_screen_output "$ip_data$interfaces"
-	# then wrap it if needed
-	if [[ -n $interfaces_2 ]];then
-		interfaces_2=$( create_print_line " " "$interfaces_2" )
-		print_screen_output "$interfaces_2"
+	
+	# then print out anything not printed already
+	if [[ -n $if_string ]];then
+		full_string=$( create_print_line " " "$if_string" )
+		print_screen_output "$full_string"
 	fi
 	eval $LOGFE
 }
