@@ -1,9 +1,9 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.7.8
+####  version: 1.7.9
 ####  Date: June 22 2011
-####  Patch Number: 08-debug
+####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -2713,18 +2713,14 @@ get_audio_usb_data()
 	local temp_array=''
 	
 	IFS=$'\n'
-	echo "get usb path: $( date +%H:%M:%S )"
 	lsusb_path=$( type -p lsusb )
 	if [[ -n $lsusb_path ]];then
-		echo "get usb data: $( date +%H:%M:%S )"
 		lsusb_data=$( $lsusb_path 2>/dev/null )
-		echo "gotten usb data: $( date +%H:%M:%S )"
 	fi
 	log_function_data 'raw' "usb_data:\n$lsusb_data"
 	if [[ -n $lsusb_data ]];then
 		# for every sound card symlink in /proc/asound - display information about it
-		echo "start loop: $( date +%H:%M:%S )"
-		time for usb_proc_file in /proc/asound/*
+		for usb_proc_file in /proc/asound/*
 		do
 			# If the file is a symlink, and contains an important usb exclusive file: continue
 			if [[ -L $usb_proc_file && -e $usb_proc_file/usbid  ]]; then
@@ -2733,10 +2729,7 @@ get_audio_usb_data()
 				usb_id=$( cat $usb_proc_file/usbid )
 				usb_data=$( grep "$usb_id" <<< "$lsusb_data" )
 				if [[ -n $usb_data && -n $usb_id ]];then
-# 					usb_data=$( 
-					echo "pre gawk when found: $( date +%H:%M:%S )"
-					echo $usb_data
-					time gawk '
+					usb_data=$( gawk '
 					BEGIN {
 						IGNORECASE=1
 						string=""
@@ -2751,13 +2744,12 @@ get_audio_usb_data()
 							separator = " "
 						}
 						if ( $6 != "" ){
-							print string ",snd-usb-audio,,," $6
+							print string ",USB Audio,,," $6
 						}
-					}' <<< "$usb_data" 
-# 					)
+					}' <<< "$usb_data" )
 				fi
 				# this method is interesting, it shouldn't work but it does
-				#A_AUDIO_DATA=( "${A_AUDIO_DATA[@]}" "$usb_data,snd-usb-audio,," )
+				#A_AUDIO_DATA=( "${A_AUDIO_DATA[@]}" "$usb_data,USB Audio,," )
 				# but until we learn why the above worked, I'm using this one, which is safer
 				if [[ -n $usb_data ]];then
 					array_count=${#A_AUDIO_DATA[@]}
@@ -2772,9 +2764,7 @@ get_audio_usb_data()
 	
 	eval $LOGFE
 }
-echo "start: $( date +%H:%M:%S )"
-time get_audio_usb_data
-echo "finish: $( date +%H:%M:%S )"
+
 get_audio_alsa_data()
 {
 	eval $LOGFS
@@ -4326,7 +4316,17 @@ get_network_advanced_data()
 		oper_state=''
 		usb_data=''
 		if [[ -z $( grep '^usb-' <<< ${a_network_adv_working[4]} ) ]];then
+			# note although this may exist technically don't use it, it's a virtual path
+			# and causes weird cat errors when there's a missing file as well as a virtual path
+			# /sys/bus/pci/devices/0000:02:02.0/net/eth1
+			# real paths are: /sys/devices/pci0000:00/0000:00:1e/0/0000:02:02.0/net/eth1/uevent
+			# and on older debian kernels: /sys/devices/pci0000:00/0000:02:02.0/net:eth1/uevent
 			working_path="/sys/bus/pci/devices/0000:${a_network_adv_working[4]}"
+			# now we want the real one, that xiin also displays, without symbolic links.
+			if [[ -e $working_path ]];then
+				working_path=$( readlink -f $working_path 2>/dev/null )
+			fi
+			# working_path=$( ls /sys/devices/pci*/*/0000:${a_network_adv_working[4]}/net/*/uevent  )
 		else
 			# slice off the usb- part
 			usb_data=$( cut -d '-' -f 2-4 <<< ${a_network_adv_working[4]} )
@@ -4389,17 +4389,17 @@ get_network_advanced_data()
 		log_function_data "POST: working_path: $working_path\nif_path: $if_path - if_id: $if_id"
 		
 		if [[ -n $if_path ]];then
-			if [[ -f $working_path/speed ]];then
-				speed=$( cat $working_path/speed )
+			if [[ -r $working_path/speed ]];then
+				speed=$( cat $working_path/speed 2>/dev/null )
 			fi
-			if [[ -f $working_path/duplex ]];then
-				duplex=$( cat $working_path/duplex )
+			if [[ -r $working_path/duplex ]];then
+				duplex=$( cat $working_path/duplex 2>/dev/null )
 			fi
-			if [[ -f $working_path/address ]];then
-				mac_id=$( cat $working_path/address )
+			if [[ -r $working_path/address ]];then
+				mac_id=$( cat $working_path/address 2>/dev/null )
 			fi
-			if [[ -f $working_path/operstate ]];then
-				oper_state=$( cat $working_path/operstate )
+			if [[ -r $working_path/operstate ]];then
+				oper_state=$( cat $working_path/operstate 2>/dev/null )
 			fi
 		fi
 		
@@ -4424,7 +4424,6 @@ get_networking_usb_data()
 	if [[ -n $lsusb_path ]]; then
 		# send error messages of lsusb to /dev/null as it will display a bunch if not a super user
 		lsusb_data="$( $lsusb_path 2>/dev/null )"
-
 		# set spaces to |
 		USB_NETWORK_SEARCH=$( sed 's/[[:space:]]\+/|/g' <<< $USB_NETWORK_SEARCH )
 		# also, find the contents of usbid in lsusb and print everything after the 7th word on the
@@ -6077,7 +6076,7 @@ print_audio_data()
 				port_data=" ${C1}port$port_plural${C2} ${a_audio_working[2]}"
 			fi
 			if [[ -n ${a_audio_working[4]} && $B_EXTRA_DATA == 'true' ]];then
-				if [[ ${a_audio_working[1]} != 'snd-usb-audio' ]];then
+				if [[ ${a_audio_working[1]} != 'USB Audio' ]];then
 					bus_usb_text='bus-ID'
 				else
 					bus_usb_text='usb-ID'
@@ -6773,7 +6772,7 @@ print_networking_data()
 			fi
 			card_string="${C1}Card$card_id${C2} ${a_network_working[0]} "
 			card_data="$driver_data$port_data$pci_bus_id"
-			if [[ $( calculate_line_length "$card_string$card_data" ) -lt $LINE_MAX ]];then
+			if [[ $( calculate_line_length "$card_string$card_data" ) -gt $LINE_MAX ]];then
 				network_data=$( create_print_line "$line_starter" "$card_string" )
 				line_starter=' '
 				card_string=''
