@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.7.10
-####  Date: June 22 2011
+####  version: 1.7.11
+####  Date: June 24 2011
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -3504,6 +3504,30 @@ get_gpu_temp_data()
 			print gpuTemp
 		}'
 		)
+	# this handles some newer cases of free driver temp readouts, will require modifications as
+	# more user data appears.
+	elif [[ -n $Sensors_Data ]];then
+		gpu_temp=$( 
+		gawk '
+		BEGIN {
+			IGNORECASE=1
+			gpuTemp=""
+			separator=""
+		}
+		/^radeon-/ {
+			while ( getline && !/^$/  ) {
+				if ( /^temp/ ) {
+					sub(/^[[:alnum:]]*.*:/, "", $0 ) # clear out everything to the :
+					gsub(/[\+ \t°]/, "", $1) # ° is a special case, like a space for gawk
+					gpuTemp=gpuTemp separator $1
+					separator=","
+				}	
+			}
+		}
+		END {
+			print gpuTemp
+		}' <<< "$Sensors_Data"
+		)
 	fi
 	
 	if [[ -n $gpu_temp ]];then
@@ -5327,15 +5351,15 @@ get_sensors_data()
 {
 	eval $LOGFS
 	
-	local sensors_path=$( type -p sensors )
+	
 	local temp_array=''
 		
 	IFS=$'\n'
-	if [[ -n $sensors_path ]];then
+	if [[ -n $Sensors_Data ]];then
 		# note: non-configured sensors gives error message, which we need to redirect to stdout
 		# also, -F ':' no space, since some cases have the data starting right after,like - :1287
 		A_SENSORS_DATA=( $( 
-  		$sensors_path | gawk -F ':' -v userCpuNo="$SENSORS_CPU_NO" '
+  		gawk -F ':' -v userCpuNo="$SENSORS_CPU_NO" '
 		BEGIN {
 			IGNORECASE=1
 			core0Temp="" # only if all else fails...
@@ -5645,8 +5669,7 @@ get_sensors_data()
 				print fanMainString
 				print fanDefaultString
 			}
-		}
-		'
+		}' <<< "$Sensors_Data"
 		) )
 	# the error case needs to go here because we are setting special array delimiter ','
 	else
@@ -5658,6 +5681,14 @@ get_sensors_data()
 	log_function_data "A_SENSORS_DATA: $temp_array"
 # 	echo "A_SENSORS_DATA: ${A_SENSORS_DATA[@]}"
 	eval $LOGFE
+}
+
+get_sensors_output()
+{
+	local sensors_path=$( type -p sensors )
+	if [[ $sensors_path ]];then
+		$sensors_path 2>/dev/null
+	fi
 }
 
 get_unmounted_partition_data()
@@ -7321,6 +7352,7 @@ print_sensors_data()
 	local mobo_temp='' cpu_temp='' psu_temp='' cpu_fan='' mobo_fan='' ps_fan='' sys_fans='' sys_fans2='' 
 	local temp_data='' fan_data='' fan_data2='' b_is_error='false' fan_count=0 gpu_temp=''
 	local a_sensors_working=''
+	local Sensors_Data="$( get_sensors_output )"
 	get_sensors_data
 	
 	IFS=","
