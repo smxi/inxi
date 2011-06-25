@@ -1,7 +1,7 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.7.11
+####  version: 1.7.12
 ####  Date: June 24 2011
 ####  Patch Number: 00
 ########################################################################
@@ -1310,6 +1310,7 @@ debug_data_collector()
 			xiin_data_file=$SCRIPT_DATA_DIR/$debug_data_dir/xiin-sys.txt
 			echo 'Collecting networking data...'
 			ifconfig &> $debug_data_dir/ifconfig.txt
+			ip addr &> $debug_data_dir/ip-addr.txt
 			if [[ $b_run_xiin == 'true' ]];then
 				echo "Running $xiin_file tool now on /sys..."
 				python ./$xiin_file -d /sys -f $xiin_data_file
@@ -4524,7 +4525,7 @@ get_networking_local_ip_data()
 	eval $LOGFS
 	
 	local ip_tool_command=$( type -p ip )
-	local temp_array='' ip_tool='ip'
+	local temp_array='' ip_tool='ip' ip_tool_data=''
 	# the chances for all new systems to have ip by default are far higher than
 	# the deprecated ifconfig. Only try for ifconfig if ip is not present in system
 	if [[ -z $ip_tool_command ]];then
@@ -4533,12 +4534,22 @@ get_networking_local_ip_data()
 	else
 		ip_tool_command="$ip_tool_command addr"
 	fi
-	# lack of ip tool will throw an error only upon it's usage
 	if [[ -n "$ip_tool_command" ]];then
+		if [[ $ip_tool == 'ifconfig' ]];then
+			ip_tool_data="$( ifconfig )"
+		# note, ip addr does not have proper record separation, so creating new lines explicitly here at start
+		# of each IF record item. Also getting rid of the unneeded numeric line starters, now it can be parsed 
+		# like ifconfig more or less
+		elif [[ $ip_tool == 'ip' ]];then
+			ip_tool_data="$( eval ${ip_tool_command} | sed 's/^[0-9]\+:[[:space:]]\+/\n/' )"
+		fi
+	fi
+	if [[ -z $ip_tool_command ]];then
+		A_INTERFACES_DATA=( "Interfaces program 'ip' missing. Please check: $SCRIPT_NAME --recommends" )
+	elif [[ -n "$ip_tool_data" ]];then
 		IFS=$'\n' # $ip_tool_command
 		A_INTERFACES_DATA=( $( 
-		# important, because this can be 'ip addr' it MUST use eval ${...}
-		eval ${ip_tool_command} | gawk -v ipTool=$ip_tool '
+		gawk -v ipTool=$ip_tool '
 		BEGIN {
 			IGNORECASE=1
 			interface=""
@@ -4547,31 +4558,26 @@ get_networking_local_ip_data()
 			ifMask=""
 		}
 		# skip past the lo item
-		/^lo/ || /^[0-9]+: lo:/ {
-			while (getline && ( !/^$/ && !/valid(.*)lft/ ) ) {
+		/^lo/ {
+			while (getline && !/^$/ ) {
 				# do nothing, just get past this entry item
 			}
 		}
-		/^[a-zA-Z]+[0-9]/ || /^[0-9]+: [a-zA-Z]+[0-9]+:/ {
+		/^[a-zA-Z]+[0-9]/ {
 			# not clear on why inet is coming through, but this gets rid of it
 			# as first line item.
 			gsub(/,/, " ", $0)
 			gsub(/^ +| +$/, "", $0)
 			gsub(/ [ \t]+/, " ", $0)
-			if ( ipTool == "ifconfig" ) {
-				interface = $1
-			}
-			# prep this this: 2: eth0: 
-			else if ( ipTool == "ip" ) {
-				interface = $2
-				sub(/:/, "", interface)
-			}
+			interface = $1
+			# prep this this for ip addr: eth0: 
+			sub(/:/, "", interface)
 			ifIp=""
 			ifIpV6=""
 			ifMask=""
 			aInterfaces[interface]++
 
-			while (getline && ( !/^$/ && !/valid(.*)lft/ )) {
+			while (getline && !/^$/ ) {
 				if ( ipTool == "ifconfig" ) {
 					if (/inet addr:/) {
 						ifIp = gensub( /addr:([0-9\.]+)/, "\\1", "g", $2 )
@@ -4614,16 +4620,18 @@ get_networking_local_ip_data()
 				}
 				j++
 			}
-		}'
+		}' <<< "$ip_tool_data"
 		) )
 		IFS="$ORIGINAL_IFS"
 	else
-		A_INTERFACES_DATA=( "Interfaces program 'ip' missing. Please check: $SCRIPT_NAME --recommends" )
+		A_INTERFACES_DATA=( "Interfaces program $ip_tool present but created no data. " )
 	fi
 	temp_array=${A_INTERFACES_DATA[@]}
 	log_function_data "A_INTERFACES_DATA: $temp_array"
 	eval $LOGFE
 }
+# get_networking_local_ip_data;exit
+
 # get_networking_local_ip_data;exit
 get_optical_drive_data()
 {
