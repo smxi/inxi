@@ -3,7 +3,7 @@
 ####  Script Name: inxi
 ####  version: 1.7.13
 ####  Date: July 5 2011
-####  Patch Number: 01
+####  Patch Number: 02
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -194,6 +194,7 @@ A_CPU_CORE_DATA=''
 A_CPU_DATA=''
 A_CPU_TYPE_PCNT_CCNT=''
 A_DEBUG_BUFFER=''
+A_GCC_VERSIONS=''
 A_GFX_CARD_DATA=''
 A_GLX_DATA=''
 A_GRAPHIC_DRIVERS=''
@@ -1935,6 +1936,7 @@ get_parameters()
 						B_SHOW_UUIDS='true'
 					fi
 					if [[ $OPTARG -ge 6 ]];then
+						B_SHOW_EXTRA_EXTRA_DATA='true'
 						B_SHOW_FULL_OPTICAL='true'
 						B_SHOW_PARTITIONS_FULL='true'
 						B_SHOW_UNMOUNTED_PARTITIONS='true'
@@ -2146,11 +2148,13 @@ show_options()
 	print_screen_output "    -G - Direct rendering status for Graphics (in X)."
 	print_screen_output "    -G - (for single gpu, nvidia driver) screen number gpu is running on."
 	print_screen_output "    -i - Show IPv6 as well for LAN interface (IF) devices."
+	print_screen_output "    -I - Show system GCC, default. With -xx, also show other installed GCC versions."
 	print_screen_output "    -N -A - Adds version/port(s)/driver version (if available) for Network/Audio;"
 	print_screen_output "    -N -A -G - Network, audio, graphics, shows PCI Bus ID/Usb ID number of card;"
 	print_screen_output "    -S - Desktop toolkit if avaliable (GNOME/XFCE/KDE only); Kernel gcc version"
 	print_screen_output "    -t - Adds memory use output to cpu (-xt c), and cpu use to memory (-xt m)."
 	print_screen_output "-xx Show extra, extra data (only works with verbose or line output, not short form): "
+	print_screen_output "    -I - Adds other detected installed gcc versions to primary gcc output."
 	print_screen_output "    -M - Adds chassis information, if any data for that is available."
 	print_screen_output "    -xx -@ <11-14> - Automatically uploads debugger data tar.gz file to ftp.techpatterns.com."
 	print_screen_output "-z  Adds security filters for IP addresses, Mac, and user home directory name. Default on for irc clients."
@@ -3470,13 +3474,42 @@ get_distro_lsb_data()
 	eval $LOGFE
 }
 
-get_gcc_version()
+get_gcc_kernel_version()
 {
 	# note that we use gawk to get the last part because beta, alpha, git versions can be non-numeric
 	local gccVersion=$( grep -Eio 'gcc[[:space:]]*version[[:space:]]*([^ \t]*)' /proc/version 2>/dev/null | gawk '{print $3}' )
 	echo $gccVersion
 }
 
+get_gcc_system_version()
+{
+	local gcc_version=$( 
+	gcc --version 2>/dev/null | sed -E 's/\([^\)]*\)//g' | gawk '
+	BEGIN {
+		IGNORECASE=1
+	}
+	/^gcc/ {
+		print $2
+		exit
+	}'
+	)
+	local gcc_others=$( ls /usr/bin/gcc-* )
+	local separator='' gcc_installed='' gcc_list=''
+	# can't use xargs -l basename because not all systems support thats
+	if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+		for item in $gcc_others
+		do
+			gcc_installed=$( basename $item | gawk -F '-' '{print $2}' )
+			if [[ -n $gcc_installed && -z $( grep "^$gcc_installed" <<< $gcc_version ) ]];then
+				gcc_list=$gcc_list$separator$gcc_installed
+				separator=','
+			fi
+		done
+	fi
+	if [[ -n $gcc_version ]];then
+		A_GCC_VERSIONS=( "$gcc_version" $gcc_list )
+	fi
+}
 get_gpu_temp_data()
 {
 	local gpu_temp='' gpu_fan='' screens='' screen_nu='' gpu_temp_looper=''
@@ -6582,16 +6615,30 @@ print_info_data()
 {
 	eval $LOGFS
 
-	local info_data=''
+	local info_data='' line_starter='Info:'
 	local runlvl=''
 	local memory="$( get_memory_data )"
 	local processes="$(( $( ps aux | wc -l ) - 1 ))"
 	local up_time="$( get_uptime )"
 	local script_patch_number=$( get_patch_version_string )
+	local gcc_string='' gcc_installed='N/A' gcc_others='' closing_data=''
+	
+	if [[ $B_EXTRA_DATA == 'true' ]];then
+		get_gcc_system_version
+		if [[ ${#A_GCC_VERSIONS[@]} -gt 0 ]];then
+			if [[ -n ${A_GCC_VERSIONS[0]} ]];then
+				gcc_installed=${A_GCC_VERSIONS[0]}
+			fi
+			if [[ $B_EXTRA_EXTRA_DATA == 'true' && -n ${A_GCC_VERSIONS[1]} ]];then
+				gcc_others=" ${C1}alt:${C2} $( tr ',' ' ' <<< ${A_GCC_VERSIONS[1]} )"
+			fi
+			gcc_installed="${C1}Gcc sys:${C2} $gcc_installed$gcc_others "
+		fi
+	fi
 
 	# Some code could look superfluous but BitchX doesn't like lines not ending in a newline. F*&k that bitch!
 	# long_last=$( echo -ne "${C1}Processes${C2} ${processes}${CN} | ${C1}Uptime${C2} ${up_time}${CN} | ${C1}Memory${C2} ${MEM}${CN}" )
-	info_data=$( create_print_line "Info:" "${C1}Processes${C2} ${processes} ${C1}Uptime${C2} ${up_time} ${C1}Memory${C2} ${memory}${CN}" )
+	info_data="${C1}Processes${C2} ${processes} ${C1}Uptime${C2} ${up_time} ${C1}Memory${C2} ${memory}${CN}"
 
 	# this only triggers if no X data is present or if extra data switch is on
 	if [[ $B_SHOW_X_DATA != 'true' || $B_EXTRA_DATA == 'true' ]];then
@@ -6603,8 +6650,16 @@ print_info_data()
 	if [[ $SHOW_IRC -gt 0 ]];then
 		info_data="${info_data} ${C1}Client${C2} ${IRC_CLIENT}${IRC_CLIENT_VERSION}${CN}"
 	fi
-	info_data="${info_data} ${C1}$SCRIPT_NAME${C2} $SCRIPT_VERSION_NUMBER$script_patch_number${CN}"
-
+	closing_data="$gcc_installed${C1}$SCRIPT_NAME${C2} $SCRIPT_VERSION_NUMBER$script_patch_number${CN}"
+	if [[ -n $info_data && $( calculate_line_length "$info_data $closing_data" ) -gt $LINE_MAX ]];then
+		info_data=$( create_print_line "$line_starter" "$info_data" )
+		print_screen_output "$info_data"
+		info_data="$closing_data"
+		line_starter=' '
+	else
+		info_data="${info_data} $closing_data"
+	fi
+	info_data=$( create_print_line "$line_starter" "$info_data" )
 	if [[ $SCHEME -gt 0 ]];then
 		info_data="${info_data} ${NORMAL}"
 	fi
@@ -7559,7 +7614,7 @@ print_system_data()
 	fi
 	de_distro_string="${C1}$desktop_type${C2} $desktop_environment ${C1}Distro${C2} $distro"
 	if [[ $B_EXTRA_DATA == 'true' ]];then
-		gcc_string=$( get_gcc_version )
+		gcc_string=$( get_gcc_kernel_version )
 		if [[ -n $gcc_string ]];then
 			gcc_string=", ${C1}gcc${C2} $gcc_string"
 		fi
