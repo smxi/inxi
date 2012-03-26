@@ -1,9 +1,9 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.7.30
+####  version: 1.7.31
 ####  Date: March 26 2012
-####  Patch Number: 01
+####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -23,6 +23,7 @@
 ####  inxi version: Copyright (C) 2008-12 Scott Rogers & Harald Hope
 ####  Further fixes (listed as known): Horst Tritremmel <hjt at sidux.com>
 ####  Steven Barrett (aka: damentz) - usb audio patch; swap percent used patch
+####  Jarett.Stevens - dmidecde -M patch for older systems with the /sys 
 ####
 ####  Current script home page: http://techpatterns.com/forums/about1131.html
 ####  Script svn: http://code.google.com/p/inxi
@@ -73,6 +74,7 @@
 ####       xrandr (x11-xserver-utils)
 ####  -i - IP information, local/wan - ip (iproute) legacy, not used if ip present: ifconfig (net-tools)
 ####  -Ix - view current runlevel while not in X window system (or with -x): runlevel (sysvinit)
+####  -M - for older systems whose kernel does not have /sys data for machine, dmidecode (dmidecode)
 ####  -o - for unmounted file system information in unmounted drives (root only default): file (file)
 ####       Note: requires user action for this feature to run as user (edit /etc/sudoers file)
 ####       For user level unmounted file system type output: sudo (sudo)
@@ -2139,6 +2141,7 @@ show_options()
 	print_screen_output "-I  Show Information: processes, uptime, memory, irc client, inxi version."
 	print_screen_output "-l  Show partition labels. Default: short partition -P. For full -p output, use: -pl (or -plu)."
 	print_screen_output "-M  Show machine data. Motherboard, Bios, and if present, System Builder (Like Lenovo)."
+	print_screen_output "    Older systems/kernels without the required /sys data can use dmidecode instead, run as root."
 	print_screen_output "-n  Show Advanced Network card information. Same as -Nn. Shows interface, speed, mac id, state, etc."
 	print_screen_output "-N  Show Network card information. With -x, shows PCI BusID, Port number."
 	print_screen_output "-o  Show unmounted partition information (includes UUID and LABEL if available)."
@@ -4264,19 +4267,26 @@ get_machine_data()
 {
 	eval $LOGFS
 	local temp_array='' separator='' id_file='' file_data='' array_string=''
-	local id_dir='/sys/class/dmi/id/'
+	local id_dir='/sys/class/dmi/id/' dmi_name='' dmi_data='' 
 	local machine_files="
 	sys_vendor product_name product_version product_serial product_uuid 
 	board_vendor board_name board_version board_serial 
 	bios_vendor bios_version bios_date 
 	"
+	local dmi_names="
+	system-manufacturer system-product-name system-version system-serial-number system-uuid 
+	baseboard-manufacturer baseboard-product-name baseboard-version baseboard-serial-number 
+	bios-vendor bios-version bios-release-date 
+	"
+	if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+		machine_files="$machine_files
+		chassis_vendor chassis_type chassis_version chassis_serial
+		"
+		dmi_names="$dmi_names
+		chassis-manufacturer chassis-type chassis-version chassis-serial-number
+		"
+	fi
 	if [[ -d $id_dir ]];then
-		if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
-			machine_files="$machine_files
-			chassis_vendor chassis_type chassis_version chassis_serial
-			"
-		fi
-
 		for id_file in $machine_files
 		do
 			file_data=''
@@ -4305,6 +4315,39 @@ get_machine_data()
 			array_string="$array_string$separator$file_data"
 			separator=','
 		done
+	else
+		if [[ -n $( type -p dmidecode 2>/dev/null ) ]];then
+			if [[ $B_ROOT == 'true' ]];then
+				for dmi_name in $dmi_names
+				do
+		# 			echo "$dmi_name" >&2
+					dmi_data=''
+					dmi_data=$( dmidecode -s $dmi_name | gawk '
+						BEGIN {
+							IGNORECASE=1
+						}
+						{
+							gsub(/'"$BAN_LIST_NORMAL"'/, "", $0)
+							gsub(/,/, " ", $0)
+							# yes, there is a typo in a user data set, unknow
+							# Base Board Version|Base Board Serial Number
+							# Chassis Manufacturer|Chassis Version|Chassis Serial Number
+							# System manufacturer|System Product Name|System Version
+							# To Be Filled By O.E.M.
+							sub(/^Base Board .*|^Chassis .*|.*O\.E\.M\..*|.*OEM.*|^Not .*|^System .*|.*unknow.*|.*N\/A.*|none|^To be filled.*/, "", $0) 
+							gsub(/bios|acpi/, "", $0)
+							sub(/http:\/\/www.abit.com.tw\//, "Abit", $0)
+							gsub(/^ +| +$/, "", $0)
+							gsub(/ [ \t]+/, " ", $0)
+							print $0
+						}' )
+					array_string="$array_string$separator$dmi_data"
+					separator=','
+				done
+			else
+				array_string='dmidecode-non-root-user'
+			fi
+		fi
 	fi
 	IFS=','
 	A_MACHINE_DATA=( $array_string )
@@ -6889,7 +6932,14 @@ print_machine_data()
 		fi
 		IFS="$ORIGINAL_IFS"
 	else
-		system_line="${C2}No machine data found. Your kernel does not support this feature.${CN}"
+		system_line="${C2}No /sys machine data. Try newer kernel, or install dmidecode.${CN}"
+	fi
+	# patch to dump all of above if dmidecode was data source and non root user
+	if [[ ${A_MACHINE_DATA[0]} == 'dmidecode-non-root-user' ]];then
+		system_line="${C2}You must be root to use dmidecode. Fallback mode from non-present /sys data.${CN}"
+		mobo_line=''
+		bios_line=''
+		chassis_line=''
 	fi
 	system_line=$( create_print_line "Machine:" "$system_line" )
 	print_screen_output "$system_line"
