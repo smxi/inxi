@@ -1,7 +1,7 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.7.35
+####  version: 1.7.36
 ####  Date: April 26 2012
 ####  Patch Number: 00
 ########################################################################
@@ -175,6 +175,7 @@ CMDL_MAX=''
 COLOR_SCHEME=''
 # override in user config if desired, seems like less than .3 doesn't work as reliably
 CPU_SLEEP='0.3' 
+DEV_DISK_ID=''
 DEV_DISK_LABEL=''
 DEV_DISK_UUID=''
 FILTER_STRING='<filter>'
@@ -229,6 +230,7 @@ B_DEBUG_FLOOD='false'
 B_EXTRA_DATA='false'
 # triggered by -xx
 B_EXTRA_EXTRA_DATA='false'
+B_ID_SET='false'
 # override certain errors due to currupted data
 B_HANDLE_CORRUPT_DATA='false'
 B_LABEL_SET='false'
@@ -2135,7 +2137,7 @@ show_options()
 	print_screen_output "    99 - Global - Overrides/removes all settings. Setting specific removes global."
 	print_screen_output "-C  Show full CPU output, including per CPU clockspeed."
 	print_screen_output "-d  Shows optical drive data. Same as -Dd. With -x, adds features line to output. -xx adds a few more features."
-	print_screen_output "-D  Show full hard Disk info, not only model, ie: /dev/sda ST380817AS 80.0GB."
+	print_screen_output "-D  Show full hard Disk info, not only model, ie: /dev/sda ST380817AS 80.0GB. See also -x and -xx."
 	print_screen_output "-f  Show all cpu flags used, not just the short list. Not shown with -F to avoid spamming."
 	print_screen_output "-F  Show Full output for $SCRIPT_NAME. Includes all Upper Case line letters, plus -s and -n."
 	print_screen_output "    Does not show extra verbose options like -x -d -f -u -l -o -p -t -r unless you use that argument."
@@ -2188,6 +2190,7 @@ show_options()
 	print_screen_output "    -S - Desktop toolkit if avaliable (GNOME/XFCE/KDE only); Kernel gcc version"
 	print_screen_output "    -t - Adds memory use output to cpu (-xt c), and cpu use to memory (-xt m)."
 	print_screen_output "-xx Show extra, extra data (only works with verbose or line output, not short form): "
+	print_screen_output "    -D - Adds disk serial number."
 	print_screen_output "    -I - Adds other detected installed gcc versions to primary gcc output (if present)."
 	print_screen_output "    -M - Adds chassis information, if any data for that is available."
 	print_screen_output "    -xx -@ <11-14> - Automatically uploads debugger data tar.gz file to ftp.techpatterns.com."
@@ -4221,6 +4224,30 @@ get_hard_drive_data_advanced()
 	eval $LOGFE
 }
 
+# args: $1 - which drive to get serial number of
+get_hdd_serial_number()
+{
+	eval $LOGFS
+	
+	local hdd_serial=''
+	
+	get_partition_dev_data 'id'
+	
+	# lrwxrwxrwx 1 root root  9 Apr 26 09:32 scsi-SATA_ST3160827AS_5MT2HMH6 -> ../../sdc
+	# exit on the first instance
+	hdd_serial=$( gawk '
+	/'$1'$/ {
+		serial=gensub( /^(.+)_([^_]+)$/, "\\2", 1, $9 )
+		print serial
+		exit
+	}' <<< "$DEV_DISK_ID"
+	)
+	
+	echo $hdd_serial
+	log_function_data "hdd serial: $hdd_serial"
+	eval $LOGFE
+}
+
 # a few notes, normally hddtemp requires root, but you can set user rights in /etc/sudoers.
 # args: $1 - /dev/<disk> to be tested for
 get_hdd_temp_data()
@@ -5014,8 +5041,8 @@ get_partition_data()
 	local main_partition_data="$( df -h -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs )"
 	local swap_data="$( swapon -s )"
 	# set dev disk label/uuid data globals
-	get_partition_uuid_label_data 'label'
-	get_partition_uuid_label_data 'uuid'
+	get_partition_dev_data 'label'
+	get_partition_dev_data 'uuid'
 	
 	log_function_data 'raw' "main_partition_data:\n$main_partition_data\n\nswap_data:\n$swap_data"
 	
@@ -5146,8 +5173,8 @@ get_partition_data_advanced()
 	local dev_item='' dev_label='' dev_uuid='' temp_array=''
 	local mount_point=''
 	# set dev disk label/uuid data globals
-	get_partition_uuid_label_data 'label'
-	get_partition_uuid_label_data 'uuid'
+	get_partition_dev_data 'label'
+	get_partition_dev_data 'uuid'
 
 	if [[ $B_MOUNTS_FILE == 'true' ]];then
 		for (( i=0; i < ${#A_PARTITION_DATA[@]}; i++ ))
@@ -5275,8 +5302,8 @@ get_partition_data_advanced()
 	eval $LOGFE
 }
 
-# args: $1 - uuid/label
-get_partition_uuid_label_data()
+# args: $1 - uuid/label/id
+get_partition_dev_data()
 {
 	eval $LOGFS
 	
@@ -5298,8 +5325,16 @@ get_partition_uuid_label_data()
 				B_UUID_SET='true'
 			fi
 			;;
+		id)
+			if [[ $B_ID_SET != 'true' ]];then
+				if [[ -d /dev/disk/by-uuid ]];then
+					DEV_DISK_ID="$( ls -l /dev/disk/by-id )"
+				fi
+				B_ID_SET='true'
+			fi
+			;;
 	esac
-	log_function_data 'raw' "DEV_DISK_LABEL:\n$DEV_DISK_LABEL\n\nDEV_DISK_UUID:\n$DEV_DISK_UUID"
+	log_function_data 'raw' "DEV_DISK_LABEL:\n$DEV_DISK_LABEL\n\nDEV_DISK_UUID:\n$DEV_DISK_UUID$DEV_DISK_LABEL\n\nDEV_DISK_ID:\n$DEV_DISK_ID"
 	# debugging section, uncomment to insert user data
 # 	DEV_DISK_LABEL='
 #
@@ -5928,8 +5963,8 @@ get_unmounted_partition_data()
 	
 	if [[ $B_PARTITIONS_FILE == 'true' ]];then
 		# set dev disk label/uuid data globals
-		get_partition_uuid_label_data 'label'
-		get_partition_uuid_label_data 'uuid'
+		get_partition_dev_data 'label'
+		get_partition_dev_data 'uuid'
 		
 		# create list for slicing out the mounted partitions
 		for (( i=0; i < ${#A_PARTITION_DATA[@]}; i++ ))
@@ -6681,6 +6716,7 @@ print_hard_disk_data()
 {
 	eval $LOGFS
 	local hdd_data='' hdd_data_2='' a_hdd_working='' hdd_temp_data='' hdd_string=''
+	local hdd_serial=''
 	local dev_data='' size_data='' hdd_model='' usb_data='' hdd_name='' divisor=5
 	local Line_Starter='Drives:' # inherited by print_optical_drives
 
@@ -6692,7 +6728,7 @@ print_hard_disk_data()
 	IFS=","
 	local a_hdd_basic_working=( ${A_HDD_DATA[$a_hdd_data_count]} )
 	IFS="$ORIGINAL_IFS"
-	local hdd_capacity=${a_hdd_basic_working[0]}
+	local hdd_capacity="${a_hdd_basic_working[0]}"
 	local hdd_used=${a_hdd_basic_working[1]}
 
 	if [[ $B_SHOW_BASIC_DISK == 'true' || $B_SHOW_DISK == 'true' ]];then
@@ -6711,20 +6747,30 @@ print_hard_disk_data()
 					usb_data=''
 				fi
 				dev_data="/dev/${a_hdd_working[0]} "
-				size_data=" ${a_hdd_working[1]}"
+				size_data=" ${C1}size$SEP3${C2} ${a_hdd_working[1]}"
 				if [[ $B_EXTRA_DATA == 'true' && -n $dev_data ]];then
 					hdd_temp_data=$( get_hdd_temp_data "$dev_data" )
 					# error handling is done in get data function
 					if [[ -n $hdd_temp_data ]];then
-						hdd_temp_data=" ${hdd_temp_data}C"
+						hdd_temp_data=" ${C1}temp$SEP3${C2} ${hdd_temp_data}C"
 					else
 						hdd_temp_data=''
 					fi
 				fi
-				divisor=2 # for modulus line print out, either 2 items for full, or default for short
+				if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+					hdd_serial=$( get_hdd_serial_number "${a_hdd_working[0]}" )
+					if [[ -z $hdd_serial ]];then
+						hdd_serial='N/A'
+					fi
+					hdd_serial=" ${C1}serial$SEP3${C2} $hdd_serial"
+					divisor=1 # print every line
+				else
+					divisor=2 # for modulus line print out, either 2 items for full, or default for short
+				fi
+				dev_data="${C1}id$SEP3${C2} /dev/${a_hdd_working[0]} "
 			fi
-			hdd_name="${a_hdd_working[2]}"
-			hdd_string="$usb_data$dev_data$hdd_name$size_data$hdd_temp_data"
+			hdd_name="${C1}model$SEP3${C2} ${a_hdd_working[2]}"
+			hdd_string="$usb_data$dev_data$hdd_name$size_data$hdd_serial$hdd_temp_data"
 			hdd_model="${hdd_model}${C1}$(($i+1)):${C2} $hdd_string "
 			# printing line one, then new lines according to $divisor setting, and after, if leftovers, print that line.
 			case $i in 
