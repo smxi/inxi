@@ -146,6 +146,8 @@
 ########################################################################
 ####  Valuable Resources
 ####  gawk arrays: http://www.math.utah.edu/docs/info/gawk_12.html
+####  raid mdstat: http://www-01.ibm.com/support/docview.wss?uid=isg3T1011259
+####               http://www.howtoforge.com/replacing_hard_disks_in_a_raid1_array
 ########################################################################
 ####  TESTING FLAGS
 ####  inxi supports advanced testing triggers to do various things, using -! <arg>
@@ -208,6 +210,7 @@ A_NETWORK_DATA=''
 A_OPTICAL_DRIVE_DATA=''
 A_PARTITION_DATA=''
 A_PS_DATA=''
+A_RAID_DATA=''
 A_SENSORS_DATA=''
 A_UNMOUNTED_PARTITION_DATA=''
 A_X_DATA=''
@@ -276,6 +279,7 @@ B_SHOW_PARTITIONS='false'
 B_SHOW_PARTITIONS_FULL='false'
 B_SHOW_PS_CPU_DATA='false'
 B_SHOW_PS_MEM_DATA='false'
+B_SHOW_RAID='false'
 B_SHOW_REPOS='false'
 B_RUNNING_IN_X='false'
 B_SHOW_SENSORS='false'
@@ -301,6 +305,7 @@ B_ASOUND_VERSION_FILE='false'
 B_BASH_ARRAY='false'
 B_CPUINFO_FILE='false'
 B_LSB_FILE='false'
+B_MDSTAT_FILE='false'
 B_MEMINFO_FILE='false'
 B_MODULES_FILE='false' #
 B_MOUNTS_FILE='false'
@@ -314,6 +319,7 @@ FILE_ASOUND_MODULES='/proc/asound/modules' # not used but maybe for -A?
 FILE_ASOUND_VERSION='/proc/asound/version'
 FILE_CPUINFO='/proc/cpuinfo'
 FILE_LSB_RELEASE='/etc/lsb-release'
+FILE_MDSTAT='/proc/mdstat'
 FILE_MEMINFO='/proc/meminfo'
 FILE_MODULES='/proc/modules'
 FILE_MOUNTS='/proc/mounts'
@@ -716,6 +722,10 @@ initialize_script_data()
 	if [[ -n $DISPLAY ]];then
 		B_SHOW_X_DATA='true'
 		B_RUNNING_IN_X='true'
+	fi
+	
+	if [[ -e $FILE_MDSTAT ]];then
+		B_MDSTAT_FILE='true'
 	fi
 
 	if [[ -e $FILE_MODULES ]];then
@@ -1789,7 +1799,7 @@ get_parameters()
 	# no need to run through these if there are no args
 	# reserved for future use: -g for extra Graphics; -m for extra Machine; -d for extra Disk
 	elif [[ -n $1 ]];then
-		while getopts Abc:CdDfFGhHiIlMnNopPrsSt:uv:VxzZ%@:${update_flags} opt
+		while getopts Abc:CdDfFGhHiIlMnNopPrRsSt:uv:VxzZ%@:${update_flags} opt
 		do
 			case $opt in
 			A)	B_SHOW_AUDIO='true'
@@ -1911,6 +1921,9 @@ get_parameters()
 			r)	B_SHOW_REPOS='true'
 				use_short='false'
 				;;
+			R)	B_SHOW_RAID='true'
+				use_short='false'
+				;;
 			s)	B_SHOW_SENSORS='true'
 				use_short='false'
 				;;
@@ -1965,6 +1978,7 @@ get_parameters()
 						B_SHOW_SENSORS='true'
 						B_SHOW_LABELS='true'
 						B_SHOW_UUIDS='true'
+						B_SHOW_RAID='true'
 					fi
 					if [[ $OPTARG -ge 6 ]];then
 						B_SHOW_FULL_OPTICAL='true'
@@ -2157,6 +2171,7 @@ show_options()
 	print_screen_output "-P  Show Partition information (shows what -v 4 would show, but without extra data)."
 	print_screen_output "    Shows, if detected: / /boot /home /tmp /usr /var. Use -p to see all mounted partitions."
 	print_screen_output "-r  Show distro repository data. Currently supported repo types: APT; PACMAN; PISI; YUM."
+	print_screen_output "-R  (COMING - NEW FEATURE) Show RAID data. Shows RAID devices and components, and extra data with -x/-xx"
 	print_screen_output "-s  Show sensors output (if sensors installed/configured): mobo/cpu/gpu temp; detected fan speeds."
 	print_screen_output "    Gpu temp only for Fglrx/Nvidia drivers. Nvidia shows screen number for > 1 screens."
 	print_screen_output "-S  Show System information: host name, kernel, desktop environment (if in X), distro"
@@ -2187,12 +2202,14 @@ show_options()
 	print_screen_output "    -I - Show system GCC, default. With -xx, also show other installed GCC versions."
 	print_screen_output "    -N -A - Adds version/port(s)/driver version (if available) for Network/Audio;"
 	print_screen_output "    -N -A -G - Network, audio, graphics, shows PCI Bus ID/Usb ID number of card;"
+	print_screen_output "    -R - Show RAID chunk size"
 	print_screen_output "    -S - Desktop toolkit if avaliable (GNOME/XFCE/KDE only); Kernel gcc version"
 	print_screen_output "    -t - Adds memory use output to cpu (-xt c), and cpu use to memory (-xt m)."
 	print_screen_output "-xx Show extra, extra data (only works with verbose or line output, not short form): "
 	print_screen_output "    -D - Adds disk serial number."
 	print_screen_output "    -I - Adds other detected installed gcc versions to primary gcc output (if present)."
 	print_screen_output "    -M - Adds chassis information, if any data for that is available."
+	print_screen_output "    -R - Adds block count and algorythm used to RAID."
 	print_screen_output "    -xx -@ <11-14> - Automatically uploads debugger data tar.gz file to ftp.techpatterns.com."
 	print_screen_output "-z  Adds security filters for IP addresses, Mac, and user home directory name. Default on for irc clients."
 	print_screen_output "-Z  Absolute override for output filters. Useful for debugging networking issues in irc for example."
@@ -5432,6 +5449,27 @@ get_ps_data()
 	IFS="$ORIGINAL_IFS"
 	
 # 	echo ${A_PS_DATA[@]}
+	eval $LOGFE
+}
+
+# mdstat syntax information: http://www-01.ibm.com/support/docview.wss?uid=isg3T1011259
+# note that this does NOT use either Disk or Partition information for now, ie, there
+# is no connection between the data types, but the output should still be consistent
+get_raid_data()
+{
+	eval $LOGFS
+	
+	local mdstat=''
+		
+	if [[ $B_MDSTAT_FILE ]];then
+		# dump the first line, which is not data
+	 	mdstat="$( grep -vi '^Personalities' $FILE_MDSTAT )"
+	fi
+	
+	if [[ -n $mdstat ]];then
+		:
+	fi
+	
 	eval $LOGFE
 }
 
