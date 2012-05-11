@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.7.22
-####  Date: July 25 2011
+####  version: 1.8.0
+####  Date: May 10 2012
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -20,9 +20,10 @@
 ####  Gaim/Pidgin, Weechat, KVIrc and Kopete.
 ####  Original infobash author and copyright holder:
 ####  Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif
-####  inxi version: Copyright (C) 2008-11 Scott Rogers & Harald Hope
+####  inxi version: Copyright (C) 2008-12 Scott Rogers & Harald Hope
 ####  Further fixes (listed as known): Horst Tritremmel <hjt at sidux.com>
 ####  Steven Barrett (aka: damentz) - usb audio patch; swap percent used patch
+####  Jarett.Stevens - dmidecde -M patch for older systems with the /sys 
 ####
 ####  Current script home page: http://techpatterns.com/forums/about1131.html
 ####  Script svn: http://code.google.com/p/inxi
@@ -51,7 +52,7 @@
 ####  DEPENDENCIES
 ####  * bash >=3.0 (bash); df, readlink, stty, tr, uname, wc (coreutils);
 ####    gawk (gawk); grep (grep); lspci (pciutils);
-####    free, ps, uptime (procps); 
+####    free, ps, uptime (procps); find (findutils)
 ####  * Also the proc filesystem should be present and mounted
 ####  * Some features, like -M and -d will not work, or will work incompletely,
 ####    if /sys is missing
@@ -73,6 +74,7 @@
 ####       xrandr (x11-xserver-utils)
 ####  -i - IP information, local/wan - ip (iproute) legacy, not used if ip present: ifconfig (net-tools)
 ####  -Ix - view current runlevel while not in X window system (or with -x): runlevel (sysvinit)
+####  -M - for older systems whose kernel does not have /sys data for machine, dmidecode (dmidecode)
 ####  -o - for unmounted file system information in unmounted drives (root only default): file (file)
 ####       Note: requires user action for this feature to run as user (edit /etc/sudoers file)
 ####       For user level unmounted file system type output: sudo (sudo)
@@ -144,6 +146,8 @@
 ########################################################################
 ####  Valuable Resources
 ####  gawk arrays: http://www.math.utah.edu/docs/info/gawk_12.html
+####  raid mdstat: http://www-01.ibm.com/support/docview.wss?uid=isg3T1011259
+####               http://www.howtoforge.com/replacing_hard_disks_in_a_raid1_array
 ########################################################################
 ####  TESTING FLAGS
 ####  inxi supports advanced testing triggers to do various things, using -! <arg>
@@ -173,6 +177,7 @@ CMDL_MAX=''
 COLOR_SCHEME=''
 # override in user config if desired, seems like less than .3 doesn't work as reliably
 CPU_SLEEP='0.3' 
+DEV_DISK_ID=''
 DEV_DISK_LABEL=''
 DEV_DISK_UUID=''
 FILTER_STRING='<filter>'
@@ -205,6 +210,7 @@ A_NETWORK_DATA=''
 A_OPTICAL_DRIVE_DATA=''
 A_PARTITION_DATA=''
 A_PS_DATA=''
+A_RAID_DATA=''
 A_SENSORS_DATA=''
 A_UNMOUNTED_PARTITION_DATA=''
 A_X_DATA=''
@@ -227,6 +233,7 @@ B_DEBUG_FLOOD='false'
 B_EXTRA_DATA='false'
 # triggered by -xx
 B_EXTRA_EXTRA_DATA='false'
+B_ID_SET='false'
 # override certain errors due to currupted data
 B_HANDLE_CORRUPT_DATA='false'
 B_LABEL_SET='false'
@@ -249,6 +256,7 @@ B_SCRIPT_UP='false'
 B_SHOW_ADVANCED_NETWORK='false'
 # Show sound card data
 B_SHOW_AUDIO='false'
+B_SHOW_BASIC_RAID='false'
 B_SHOW_BASIC_CPU='false'
 B_SHOW_BASIC_DISK='false'
 B_SHOW_BASIC_OPTICAL='false'
@@ -272,6 +280,7 @@ B_SHOW_PARTITIONS='false'
 B_SHOW_PARTITIONS_FULL='false'
 B_SHOW_PS_CPU_DATA='false'
 B_SHOW_PS_MEM_DATA='false'
+B_SHOW_RAID='false'
 B_SHOW_REPOS='false'
 B_RUNNING_IN_X='false'
 B_SHOW_SENSORS='false'
@@ -285,6 +294,7 @@ B_SHOW_X_DATA='false'
 B_TESTING_1='false'
 B_TESTING_2='false'
 B_UPLOAD_DEBUG_DATA='false'
+B_USB_NETWORKING='false'
 # set to true here for debug logging from script start
 B_USE_LOGGING='false'
 B_UUID_SET='false'
@@ -296,6 +306,7 @@ B_ASOUND_VERSION_FILE='false'
 B_BASH_ARRAY='false'
 B_CPUINFO_FILE='false'
 B_LSB_FILE='false'
+B_MDSTAT_FILE='false'
 B_MEMINFO_FILE='false'
 B_MODULES_FILE='false' #
 B_MOUNTS_FILE='false'
@@ -309,6 +320,7 @@ FILE_ASOUND_MODULES='/proc/asound/modules' # not used but maybe for -A?
 FILE_ASOUND_VERSION='/proc/asound/version'
 FILE_CPUINFO='/proc/cpuinfo'
 FILE_LSB_RELEASE='/etc/lsb-release'
+FILE_MDSTAT='/proc/mdstat'
 FILE_MEMINFO='/proc/meminfo'
 FILE_MODULES='/proc/modules'
 FILE_MOUNTS='/proc/mounts'
@@ -409,6 +421,9 @@ SCRIPT_DOWNLOAD_BRANCH_2='http://inxi.googlecode.com/svn/branches/two/'
 SCRIPT_DOWNLOAD_BRANCH_3='http://inxi.googlecode.com/svn/branches/three/'
 SCRIPT_DOWNLOAD_BRANCH_4='http://inxi.googlecode.com/svn/branches/four/'
 SCRIPT_DOWNLOAD_DEV='http://smxi.org/test/'
+# note, you can use any ip url here as long as it's the only line on the output page.
+# Also the ip address must be the last thing on that line.
+WAN_IP_URL='http://smxi.org/opt/ip.php'
 KONVI_CFG="konversation/scripts/$SCRIPT_NAME.conf" # relative path to $(kde-config --path data)
 
 ### Script Localization
@@ -481,7 +496,7 @@ CN=''
 ### Distro Data
 # In cases of derived distros where the version file of the base distro can also be found under /etc,
 # the derived distro's version file should go first. (Such as with Sabayon / Gentoo)
-DISTROS_DERIVED="antix-version kanotix-version knoppix-version mandrake-release pardus-release sabayon-release sidux-version turbolinux-release zenwalk-version"
+DISTROS_DERIVED="antix-version aptosid-version kanotix-version knoppix-version mandrake-release pardus-release sabayon-release siduction-version sidux-version turbolinux-release zenwalk-version"
 # debian_version excluded from DISTROS_PRIMARY so Debian can fall through to /etc/issue detection. Same goes for Ubuntu.
 DISTROS_EXCLUDE_LIST="debian_version ubuntu_version"
 DISTROS_PRIMARY="gentoo-release redhat-release slackware-version SuSE-release"
@@ -502,7 +517,7 @@ SENSORS_GPU_SEARCH='intel|radeon|nouveau'
 ### wifi/nic cards, they need further identifiers, with wildcards.
 ### putting the most common and likely first, then the less common, then some specifics
 USB_NETWORK_SEARCH="Wi-Fi.*Adapter|Wireless.*Adapter|WLAN.*Adapter|Network.*Adapter|802\.11|Atheros|Atmel|D-Link.*Adapter|D-Link.*Wireless|Linksys|Netgea|Ralink|Realtek.*Network|Realtek.*Wireless|Realtek.*WLAN|Belkin.*Wireless|Belkin.*WLAN|Belkin.*Network"
-USB_NETWORK_SEARCH="$USB_NETWORK_SEARCH|Actiontec.*Wireless|Actiontec.*Network|AirLink.*Wireless|Asus.*Network|Asus.*Wireless|Buffalo.*Wireless|Davicom|DWA-.*RangeBooster|DWA-.*Wireless|ENUWI-.*Wireless|LG.*Wi-Fi|Rosewill.*Wireless|RNX-.*Wireless|Samsung.*LinkStick|Samsung.*Wireless|Sony.*Wireless|TEW-.*Wireless|TP-Link.*Wireless|WG[0-9][0-9][0-9].*Wireless|WNA[0-9][0-9][0-9]|WNDA[0-9][0-9][0-9]|Zonet.*ZEW.*Wireless" 
+USB_NETWORK_SEARCH="$USB_NETWORK_SEARCH|Actiontec.*Wireless|Actiontec.*Network|AirLink.*Wireless|Asus.*Network|Asus.*Wireless|Buffalo.*Wireless|Davicom|DWA-.*RangeBooster|DWA-.*Wireless|ENUWI-.*Wireless|LG.*Wi-Fi|Rosewill.*Wireless|RNX-.*Wireless|Samsung.*LinkStick|Samsung.*Wireless|Sony.*Wireless|TEW-.*Wireless|TP-Link.*Wireless|WG[0-9][0-9][0-9].*Wireless|WNA[0-9][0-9][0-9]|WNDA[0-9][0-9][0-9]|Zonet.*ZEW.*Wireless|54 Mbps" 
 # then a few known hard to ID ones added 
 # belkin=050d; d-link=07d1; netgear=0846; ralink=148f; realtek=0bda; 
 USB_NETWORK_SEARCH="$USB_NETWORK_SEARCH|050d:935b|0bda:8189|0bda:8197"
@@ -708,6 +723,10 @@ initialize_script_data()
 	if [[ -n $DISPLAY ]];then
 		B_SHOW_X_DATA='true'
 		B_RUNNING_IN_X='true'
+	fi
+	
+	if [[ -e $FILE_MDSTAT ]];then
+		B_MDSTAT_FILE='true'
 	fi
 
 	if [[ -e $FILE_MODULES ]];then
@@ -1401,6 +1420,7 @@ debug_data_collector()
 			df -h -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs &> $debug_data_dir/df-h-T-excludes.txt
 			swapon -s &> $debug_data_dir/swapon-s.txt
 			df -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 &> $debug_data_dir/df-excludes.txt
+			cat /proc/mdstat &> $debug_data_dir/proc-mdstat.txt
 			cat $FILE_PARTITIONS &> $debug_data_dir/proc-partitions.txt
 			cat $FILE_SCSI &> $debug_data_dir/proc-scsi.txt
 			cat $FILE_MOUNTS &> $debug_data_dir/proc-mounts.txt
@@ -1541,7 +1561,7 @@ check_recommends_items()
 	local x_recommends='
 	glxinfo:mesa-utils~mesa-demos~glx-utils~:-G_glx_info 
 	xdpyinfo:X11-utils~xorg-xdpyinfo~xorg-x11-utils~:-G_multi_screen_resolution 
-	xprop:X11-utils~xprop~x11-utils~:-S_desktop_data 
+	xprop:X11-utils~xorg-xprop~x11-utils~:-S_desktop_data 
 	xrandr:x11-xserver-utils~xrandr~x11-server-utils~:-G_single_screen_resolution
 	'
 	local recommended_apps='
@@ -1780,7 +1800,7 @@ get_parameters()
 	# no need to run through these if there are no args
 	# reserved for future use: -g for extra Graphics; -m for extra Machine; -d for extra Disk
 	elif [[ -n $1 ]];then
-		while getopts Abc:CdDfFGhHiIlMnNopPrsSt:uv:VxzZ%@:${update_flags} opt
+		while getopts Abc:CdDfFGhHiIlMnNopPrRsSt:uv:VxzZ%@:${update_flags} opt
 		do
 			case $opt in
 			A)	B_SHOW_AUDIO='true'
@@ -1788,6 +1808,7 @@ get_parameters()
 				;;
 			b)	use_short='false'
 				B_SHOW_BASIC_CPU='true'
+				B_SHOW_BASIC_RAID='true'
 				B_SHOW_DISK_TOTAL='true'
 				B_SHOW_GRAPHICS='true'
 				B_SHOW_INFO='true'
@@ -1860,6 +1881,7 @@ get_parameters()
 				B_SHOW_MACHINE='true'
 				B_SHOW_NETWORK='true'
 				B_SHOW_PARTITIONS='true'
+				B_SHOW_RAID='true'
 				B_SHOW_SENSORS='true'
 				B_SHOW_SYSTEM='true'
 				use_short='false'
@@ -1889,7 +1911,7 @@ get_parameters()
 			N)	B_SHOW_NETWORK='true'
 				use_short='false'
 				;;
-			o) B_SHOW_UNMOUNTED_PARTITIONS='true'
+			o)	B_SHOW_UNMOUNTED_PARTITIONS='true'
 				use_short='false'
 				;;
 			p)	B_SHOW_PARTITIONS_FULL='true'
@@ -1900,6 +1922,9 @@ get_parameters()
 				use_short='false'
 				;;
 			r)	B_SHOW_REPOS='true'
+				use_short='false'
+				;;
+			R)	B_SHOW_RAID='true'
 				use_short='false'
 				;;
 			s)	B_SHOW_SENSORS='true'
@@ -1938,6 +1963,7 @@ get_parameters()
 					fi
 					if [[ $OPTARG -ge 2 ]];then
 						B_SHOW_BASIC_DISK='true'
+						B_SHOW_BASIC_RAID='true'
 						B_SHOW_MACHINE='true'
 						B_SHOW_NETWORK='true'
 					fi
@@ -1956,6 +1982,7 @@ get_parameters()
 						B_SHOW_SENSORS='true'
 						B_SHOW_LABELS='true'
 						B_SHOW_UUIDS='true'
+						B_SHOW_RAID='true'
 					fi
 					if [[ $OPTARG -ge 6 ]];then
 						B_SHOW_FULL_OPTICAL='true'
@@ -1981,7 +2008,7 @@ get_parameters()
 				fi
 				B_EXTRA_DATA='true'
 				;;
-			z) B_OUTPUT_FILTER='true'
+			z)	B_OUTPUT_FILTER='true'
 				;;
 			Z)	B_OVERRIDE_FILTER='true'
 				;;
@@ -2091,6 +2118,12 @@ get_parameters()
 	if [[ $B_OVERRIDE_FILTER == 'true' ]];then
 		B_OUTPUT_FILTER='false'
 	fi
+	# change basic to full if user requested it or if arg overrides it
+	if [[ $B_SHOW_RAID == 'true' && $B_SHOW_BASIC_RAID == 'true' ]];then
+		B_SHOW_BASIC_RAID='false'
+	fi
+	
+	
 	eval $LOGFE
 }
 
@@ -2128,7 +2161,7 @@ show_options()
 	print_screen_output "    99 - Global - Overrides/removes all settings. Setting specific removes global."
 	print_screen_output "-C  Show full CPU output, including per CPU clockspeed."
 	print_screen_output "-d  Shows optical drive data. Same as -Dd. With -x, adds features line to output. -xx adds a few more features."
-	print_screen_output "-D  Show full hard Disk info, not only model, ie: /dev/sda ST380817AS 80.0GB."
+	print_screen_output "-D  Show full hard Disk info, not only model, ie: /dev/sda ST380817AS 80.0GB. See also -x and -xx."
 	print_screen_output "-f  Show all cpu flags used, not just the short list. Not shown with -F to avoid spamming."
 	print_screen_output "-F  Show Full output for $SCRIPT_NAME. Includes all Upper Case line letters, plus -s and -n."
 	print_screen_output "    Does not show extra verbose options like -x -d -f -u -l -o -p -t -r unless you use that argument."
@@ -2138,6 +2171,7 @@ show_options()
 	print_screen_output "-I  Show Information: processes, uptime, memory, irc client, inxi version."
 	print_screen_output "-l  Show partition labels. Default: short partition -P. For full -p output, use: -pl (or -plu)."
 	print_screen_output "-M  Show machine data. Motherboard, Bios, and if present, System Builder (Like Lenovo)."
+	print_screen_output "    Older systems/kernels without the required /sys data can use dmidecode instead, run as root."
 	print_screen_output "-n  Show Advanced Network card information. Same as -Nn. Shows interface, speed, mac id, state, etc."
 	print_screen_output "-N  Show Network card information. With -x, shows PCI BusID, Port number."
 	print_screen_output "-o  Show unmounted partition information (includes UUID and LABEL if available)."
@@ -2147,6 +2181,8 @@ show_options()
 	print_screen_output "-P  Show Partition information (shows what -v 4 would show, but without extra data)."
 	print_screen_output "    Shows, if detected: / /boot /home /tmp /usr /var. Use -p to see all mounted partitions."
 	print_screen_output "-r  Show distro repository data. Currently supported repo types: APT; PACMAN; PISI; YUM."
+	print_screen_output "-R  Show RAID data. Shows RAID devices, states, levels, and components, and extra data with -x/-xx"
+	print_screen_output "    If device is resyncing, shows resync progress line as well."
 	print_screen_output "-s  Show sensors output (if sensors installed/configured): mobo/cpu/gpu temp; detected fan speeds."
 	print_screen_output "    Gpu temp only for Fglrx/Nvidia drivers. Nvidia shows screen number for > 1 screens."
 	print_screen_output "-S  Show System information: host name, kernel, desktop environment (if in X), distro"
@@ -2158,13 +2194,14 @@ show_options()
 	print_screen_output "    Supported levels: 0-${VERBOSITY_LEVELS} Example: $SCRIPT_NAME -v 4"
 	print_screen_output "    0 - Short output, same as: $SCRIPT_NAME"
 	print_screen_output "    1 - Basic verbose, -S + basic CPU + -G + basic Disk + -I."
-	print_screen_output "    2 - Adds networking card (-N), Machine (-M) data, and shows basic hard disk data (names only)."
-	print_screen_output "        Same as: $SCRIPT_NAME -b"
+	print_screen_output "    2 - Adds networking card (-N), Machine (-M) data, shows basic hard disk data (names only),"
+	print_screen_output "        and basic raid (devices only, and if inactive, notes that). Same as: $SCRIPT_NAME -b"
 	print_screen_output "    3 - Adds advanced CPU (-C), network (-n) data, and switches on -x advanced data option."
 	print_screen_output "    4 - Adds partition size/filled data (-P) for (if present):/, /home, /var/, /boot"
-	print_screen_output "        Shows full disk data (-D)"
-	print_screen_output "    5 - Adds audio card (-A); sensors (-s), partion label (-l) and UUID (-u), short form of optical drives."
-	print_screen_output "    6 - Adds full partition data (-p), unmounted partition data (-o), optical drive data (-d)."
+	print_screen_output "        Shows full disk data (-D)."
+	print_screen_output "    5 - Adds audio card (-A); sensors (-s), partition label (-l) and UUID (-u), short form of optical drives,"
+	print_screen_output "        standard raid data (-R)."
+	print_screen_output "    6 - Adds full partition data (-p), unmounted partition data (-o), optical drive data (-d), full raid."
 	print_screen_output "    7 - Adds network IP data (-i); triggers -xx."
 	print_screen_output "-x  Show extra data (only works with verbose or line output, not short form): "
 	print_screen_output "    -C - bogomips on Cpu;"
@@ -2177,11 +2214,16 @@ show_options()
 	print_screen_output "    -I - Show system GCC, default. With -xx, also show other installed GCC versions."
 	print_screen_output "    -N -A - Adds version/port(s)/driver version (if available) for Network/Audio;"
 	print_screen_output "    -N -A -G - Network, audio, graphics, shows PCI Bus ID/Usb ID number of card;"
+	print_screen_output "    -R - Shows component raid id. Adds second RAID Info line: raid level; report on drives (like 5/5);"
+	print_screen_output "         blocks; chunk size; bitmap (if present). Resync line, shows blocks synced/total blocks."
 	print_screen_output "    -S - Desktop toolkit if avaliable (GNOME/XFCE/KDE only); Kernel gcc version"
 	print_screen_output "    -t - Adds memory use output to cpu (-xt c), and cpu use to memory (-xt m)."
 	print_screen_output "-xx Show extra, extra data (only works with verbose or line output, not short form): "
+	print_screen_output "    -D - Adds disk serial number."
 	print_screen_output "    -I - Adds other detected installed gcc versions to primary gcc output (if present)."
 	print_screen_output "    -M - Adds chassis information, if any data for that is available."
+	print_screen_output "    -R - Adds superblock (if present); algorythm, U data. Adds system info line (kernel support,"
+	print_screen_output "         read ahead, raid events). Adds if present, unused device line. Resync line, shows progress bar."
 	print_screen_output "    -xx -@ <11-14> - Automatically uploads debugger data tar.gz file to ftp.techpatterns.com."
 	print_screen_output "-z  Adds security filters for IP addresses, Mac, and user home directory name. Default on for irc clients."
 	print_screen_output "-Z  Absolute override for output filters. Useful for debugging networking issues in irc for example."
@@ -2504,29 +2546,11 @@ get_start_client()
 					esac
 				done
 				B_CONSOLE_IRC='true'
-				if [[ -z $IRC_CLIENT_VERSION ]];then
-					# this is a hack to try to show konversation if inxi is running but started via /cmd
-					if [[ -n $( ps aux | grep -i 'konversation' | grep -v 'grep' ) && $B_RUNNING_IN_X == 'true' ]];then
-						IRC_CLIENT='Konversation'
-						IRC_CLIENT_VERSION=" $( konversation --version 2>/dev/null | gawk '/^Konversation/ {print $2}' )"
-						B_CONSOLE_IRC='false'
-					else
-						IRC_CLIENT="Unknown $app_working_name client"
-					fi
-				fi
+				set_perl_python_konvi "$app_working_name"
 				;;
 			python*)
 				# B_CONSOLE_IRC='true' # are there even any python type console irc clients? check.
-				if [[ -z $IRC_CLIENT_VERSION ]];then
-					# this is a hack to try to show konversation if inxi is running but started via /cmd
-					if [[ -n $( ps aux | grep -i 'konversation' | grep -v 'grep' ) && $B_RUNNING_IN_X == 'true' ]];then
-						IRC_CLIENT='Konversation'
-						IRC_CLIENT_VERSION=" $( konversation --version 2>/dev/null | gawk '/^Konversation/ {print $2}' )"
-						B_CONSOLE_IRC='false'
-					else
-						IRC_CLIENT="Unknown $app_working_name client"
-					fi
-				fi
+				set_perl_python_konvi "$app_working_name"
 				;;
 			# then unset, set unknown data
 			*)	
@@ -2568,6 +2592,20 @@ get_start_client()
 	log_function_data "IRC_CLIENT: $IRC_CLIENT :: IRC_CLIENT_VERSION: $IRC_CLIENT_VERSION :: PPID: $PPID"
 	eval $LOGFE
 }
+# args: $1 - app_working_name
+set_perl_python_konvi()
+{
+	if [[ -z $IRC_CLIENT_VERSION ]];then
+		# this is a hack to try to show konversation if inxi is running but started via /cmd
+		if [[ -n $( ps aux | grep -i 'konversation' | grep -v 'grep' ) && $B_RUNNING_IN_X == 'true' ]];then
+			IRC_CLIENT='Konversation'
+			IRC_CLIENT_VERSION=" $( konversation --version 2>/dev/null | gawk '/^Konversation/ {print $2}' )"
+			B_CONSOLE_IRC='false'
+		else
+			IRC_CLIENT="Unknown $1 client"
+		fi
+	fi
+}
 
 ## try to infer the use of Konversation >= 1.2, which shows $PPID improperly
 ## no known method of finding Kovni >= 1.2 as parent process, so we look to see if it is running,
@@ -2581,8 +2619,8 @@ is_this_qt4_konvi()
 	if [[ $B_QDBUS == 'true' ]];then
 		konvi_dbus_exist=$( qdbus 2>/dev/null | grep "org.kde.konversation" )
 	fi
-	 
-	if [[ -n $konvi_dbus_exist && -e /usr/share/kde4/apps/konversation ]]; then
+	# sabayon uses /usr/share/apps/konversation as path
+	if [[ -n $konvi_dbus_exist ]] && [[ -e /usr/share/kde4/apps/konversation || -e  /usr/share/apps/konversation ]]; then
 		konvi_pid=$( ps -A | grep -i 'konversation' )
 		konvi_pid=$( echo $konvi_pid | gawk '{ print $1 }' ) 
 		konvi_home_dir=$( readlink /proc/$konvi_pid/exe )
@@ -3032,6 +3070,7 @@ get_cpu_ht_multicore_smp_data()
 			num_of_cores = 0
 			num_of_processors = 0
 			num_of_cpus = 0
+			cpu_core_count = 0
 			core_id[0]
 			processor_id[0]
 			cpu_id[0]
@@ -3051,6 +3090,12 @@ get_cpu_ht_multicore_smp_data()
 			core_id[iter] = $NF
 			iter++
 		}
+		# this will be used to fix an intel glitch if needed, cause, intel
+		# sometimes reports core id as the same number for each core, 0
+		# so if cpu cores shows greater value than number of cores, use this
+		/^cpu cores/ {
+			cpu_core_count = $NF
+		}
 		END {
 			## 	Look thru the array and filter same numbers.
 			##	only unique numbers required
@@ -3059,10 +3104,11 @@ get_cpu_ht_multicore_smp_data()
 			
 			i = 0
 			## count unique processors ##
+			# note, this fails for intel cpus at times
 			for ( i in processor_id ) {
 				procHolder[processor_id[i]] = 1
 			}
-			for ( i in procHolder ) {				
+			for ( i in procHolder ) {
 				num_of_processors++
 			}
 			
@@ -3082,6 +3128,11 @@ get_cpu_ht_multicore_smp_data()
 			}
 			for ( i in coreHolder ) {				
 				num_of_cores++
+			}
+			# final check, override the num of cores value if it clearly is wrong
+			# and use the raw core count and synthesize the total instead of real count
+			if ( ( num_of_cores == 1 ) && ( cpu_core_count * num_of_cpus > 1 ) ) {
+				num_of_cores = cpu_core_count * num_of_cpus
 			}
 			
 			####################################################################
@@ -3267,15 +3318,15 @@ get_desktop_environment()
 			elif [[ -n $( grep -is 'scrotwm' <<< "$ps_aux" | grep -v 'grep' ) ]];then
 				version=$( get_de_app_version 'scrotwm' '^welcome.*scrotwm' '4' )
 				desktop_environment='Scrotwm' # no --version for this one
-			elif [[ -n $( grep -is '[[:space:]]twm' <<< "$ps_aux" | grep -v 'grep' ) ]];then
+			elif [[ -n $( grep -Eis '([[:space:]]|/)twm' <<< "$ps_aux" | grep -v 'grep' ) ]];then
 				desktop_environment='Twm' # no --version for this one
-			elif [[ -n $( grep -is '[[:space:]]dwm' <<< "$ps_aux" | grep -v 'grep' ) ]];then
+			elif [[ -n $( grep -Eis '([[:space:]]|/)dwm' <<< "$ps_aux" | grep -v 'grep' ) ]];then
 				version=$( get_de_app_version 'dwm' '^dwm' '1' )
 				desktop_environment='dwm'
 			elif [[ -n $( grep -is 'wmii' <<< "$ps_aux" | grep -v 'grep' ) ]];then
 				version=$( get_de_app_version 'wmii' '^wmii' '1' )
 				desktop_environment='wmii'
-			elif [[ -n $( grep -is '[[:space:]]jwm' <<< "$ps_aux" | grep -v 'grep' ) ]];then
+			elif [[ -n $( grep -Eis '([[:space:]]|/)jwm' <<< "$ps_aux" | grep -v 'grep' ) ]];then
 				version=$( get_de_app_version 'jwm' '^jwm' '2' )
 				desktop_environment='JWM'
 			fi
@@ -3409,9 +3460,17 @@ get_distro_data()
 	if [[ -z $distro ]] && [[ $B_LSB_FILE == 'true' ]];then
 		distro=$( get_distro_lsb_data )
 	fi
-	## finally, if all else has failed, give up
+	# now some final null tries
 	if [[ -z $distro ]];then
-		distro='Unknown distro o_O'
+		# if the file was null but present, which can happen in some cases, then use the file name itself to 
+		# set the distro value. Why say unknown if we have a pretty good idea, after all?
+		if [[ -n $distro_file ]] && [[ " $DISTROS_DERIVED $DISTROS_PRIMARY " == *" $distro_file "* ]];then
+			distro=$( sed -E -e 's/[-_]//' -e 's/(release|version)//' <<< $distro_file | sed -E 's/^([a-z])/\u\1/' )
+		fi
+		## finally, if all else has failed, give up
+		if [[ -z $distro ]];then
+			distro='unknown'
+		fi
 	fi
 
 	# this handles an arch bug where /etc/arch-release is empty and /etc/issue is corrupted
@@ -4196,6 +4255,30 @@ get_hard_drive_data_advanced()
 	eval $LOGFE
 }
 
+# args: $1 - which drive to get serial number of
+get_hdd_serial_number()
+{
+	eval $LOGFS
+	
+	local hdd_serial=''
+	
+	get_partition_dev_data 'id'
+	
+	# lrwxrwxrwx 1 root root  9 Apr 26 09:32 scsi-SATA_ST3160827AS_5MT2HMH6 -> ../../sdc
+	# exit on the first instance
+	hdd_serial=$( gawk '
+	/'$1'$/ {
+		serial=gensub( /^(.+)_([^_]+)$/, "\\2", 1, $9 )
+		print serial
+		exit
+	}' <<< "$DEV_DISK_ID"
+	)
+	
+	echo $hdd_serial
+	log_function_data "hdd serial: $hdd_serial"
+	eval $LOGFE
+}
+
 # a few notes, normally hddtemp requires root, but you can set user rights in /etc/sudoers.
 # args: $1 - /dev/<disk> to be tested for
 get_hdd_temp_data()
@@ -4246,19 +4329,26 @@ get_machine_data()
 {
 	eval $LOGFS
 	local temp_array='' separator='' id_file='' file_data='' array_string=''
-	local id_dir='/sys/class/dmi/id/'
+	local id_dir='/sys/class/dmi/id/' dmi_name='' dmi_data='' 
 	local machine_files="
 	sys_vendor product_name product_version product_serial product_uuid 
 	board_vendor board_name board_version board_serial 
 	bios_vendor bios_version bios_date 
 	"
+	local dmi_names="
+	system-manufacturer system-product-name system-version system-serial-number system-uuid 
+	baseboard-manufacturer baseboard-product-name baseboard-version baseboard-serial-number 
+	bios-vendor bios-version bios-release-date 
+	"
+	if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+		machine_files="$machine_files
+		chassis_vendor chassis_type chassis_version chassis_serial
+		"
+		dmi_names="$dmi_names
+		chassis-manufacturer chassis-type chassis-version chassis-serial-number
+		"
+	fi
 	if [[ -d $id_dir ]];then
-		if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
-			machine_files="$machine_files
-			chassis_vendor chassis_type chassis_version chassis_serial
-			"
-		fi
-
 		for id_file in $machine_files
 		do
 			file_data=''
@@ -4287,6 +4377,44 @@ get_machine_data()
 			array_string="$array_string$separator$file_data"
 			separator=','
 		done
+	else
+		if [[ -n $( type -p dmidecode 2>/dev/null ) && -n $( dmidecode 2>/dev/null ) ]];then
+			if [[ $B_ROOT == 'true' ]];then
+				# this handles very old systems, like Lenny 2.6.26, with dmidecode, but no data
+				if [[ -z $( dmidecode 2>/dev/null | grep -i 'no smbios or dmi' ) ]];then
+					array_string='dmidecode-no-smbios-dmi-data'
+				else
+					for dmi_name in $dmi_names
+					do
+			# 			echo "$dmi_name" >&2
+						dmi_data=''
+						dmi_data=$( dmidecode -s $dmi_name | gawk '
+							BEGIN {
+								IGNORECASE=1
+							}
+							{
+								gsub(/'"$BAN_LIST_NORMAL"'/, "", $0)
+								gsub(/,/, " ", $0)
+								# yes, there is a typo in a user data set, unknow
+								# Base Board Version|Base Board Serial Number
+								# Chassis Manufacturer|Chassis Version|Chassis Serial Number
+								# System manufacturer|System Product Name|System Version
+								# To Be Filled By O.E.M.
+								sub(/^Base Board .*|^Chassis .*|.*O\.E\.M\..*|.*OEM.*|^Not .*|^System .*|.*unknow.*|.*N\/A.*|none|^To be filled.*/, "", $0) 
+								gsub(/bios|acpi/, "", $0)
+								sub(/http:\/\/www.abit.com.tw\//, "Abit", $0)
+								gsub(/^ +| +$/, "", $0)
+								gsub(/ [ \t]+/, " ", $0)
+								print $0
+							}' )
+						array_string="$array_string$separator$dmi_data"
+						separator=','
+					done
+				fi
+			else
+				array_string='dmidecode-non-root-user'
+			fi
+		fi
 	fi
 	IFS=','
 	A_MACHINE_DATA=( $array_string )
@@ -4355,7 +4483,7 @@ get_networking_data()
 {
 	eval $LOGFS
 	
-	local b_usb_networking='false' temp_array=''
+	local B_USB_NETWORKING='false' temp_array=''
 	
 	IFS=$'\n'
 	A_NETWORK_DATA=( $( 
@@ -4429,9 +4557,8 @@ get_networking_data()
 	}'
 	) )
 	IFS="$ORIGINAL_IFS"
-	b_usb_networking=$( get_networking_usb_data )
-	
-	if [[ $B_SHOW_ADVANCED_NETWORK == 'true' || $b_usb_networking == 'true' ]];then
+	get_networking_usb_data
+	if [[ $B_SHOW_ADVANCED_NETWORK == 'true' || $B_USB_NETWORKING == 'true' ]];then
 		get_network_advanced_data
 	fi
 	temp_array=${A_NETWORK_DATA[@]}
@@ -4465,10 +4592,19 @@ get_network_advanced_data()
 			# /sys/bus/pci/devices/0000:02:02.0/net/eth1
 			# real paths are: /sys/devices/pci0000:00/0000:00:1e/0/0000:02:02.0/net/eth1/uevent
 			# and on older debian kernels: /sys/devices/pci0000:00/0000:02:02.0/net:eth1/uevent
+			# but broadcom shows this sometimes:
+			# /sys/devices/pci0000:00/0000:00:03.0/0000:03:00.0/ssb0:0/uevent:['DRIVER=b43', 'MODALIAS=ssb:v4243id0812rev0D']:
 			working_path="/sys/bus/pci/devices/0000:${a_network_adv_working[4]}"
 			# now we want the real one, that xiin also displays, without symbolic links.
 			if [[ -e $working_path ]];then
 				working_path=$( readlink -f $working_path 2>/dev/null )
+				# sometimes there is another directory between the path and /net
+				if [[ ! -e $working_path/net ]];then
+					# using find here, probably will need to also use it in usb part since the grep
+					# method seems to not be working now. Slice off the rest, which leaves the basic path
+					working_path=$( find $working_path/*/net/*/uevent 2>/dev/null | \
+					sed 's|/net.*||' )
+				fi
 			fi
 			# working_path=$( ls /sys/devices/pci*/*/0000:${a_network_adv_working[4]}/net/*/uevent  )
 		else
@@ -4557,7 +4693,7 @@ get_network_advanced_data()
 get_networking_usb_data()
 {
 	eval $LOGFS
-	local lsusb_path='' lsusb_data='' a_usb='' array_count='' b_usb_networking='false'
+	local lsusb_path='' lsusb_data='' a_usb='' array_count=''
 	
 	# now we'll check for usb wifi, a work in progress
 	# USB_NETWORK_SEARCH
@@ -4606,12 +4742,11 @@ get_networking_usb_data()
 				done
 				# need this to get the driver data for -N regular output, but no need
 				# to run the advanced stuff unless required
-				b_usb_networking='true'
+				B_USB_NETWORKING='true'
 			fi
 		fi
 	fi
-	echo $b_usb_networking
-	
+# 	echo $B_USB_NETWORKING
 	eval $LOGFE
 }
 
@@ -4620,14 +4755,23 @@ get_networking_wan_ip_data()
 	eval $LOGFS
 	local ip=''
 
-	# get ip using wget redirect to stdout. This is a clean, text only IP output url.
-	ip=$( wget -q -O - http://smxi.org/opt/ip.php | gawk -F 'is: ' '{
+	# get ip using wget redirect to stdout. This is a clean, text only IP output url,
+	# single line only, ending in the ip address. May have to modify this in the future
+	# to handle ipv4 and ipv6 addresses but should not be necessary.
+	# awk has bad regex handling so checking it with grep -E instead
+	# ip=$( echo  2001:0db8:85a3:0000:0000:8a2e:0370:7334 | gawk  --re-interval '
+	# ip=$( wget -q -O - $WAN_IP_URL | gawk  --re-interval '
+	ip=$( wget -q -O - $WAN_IP_URL | gawk  --re-interval '
+	{
 		#gsub("\n","",$2")
-		print $2
+		print $NF
 	}' )
-
+	# validate the data
 	if [[ -z $ip ]];then
 		ip='None Detected!'
+	elif [[ -z $( grep -Es \
+	'^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[[:alnum:]]{0,4}:[[:alnum:]]{0,4}:[[:alnum:]]{0,4}:[[:alnum:]]{0,4}:[[:alnum:]]{0,4}:[[:alnum:]]{0,4}:[[:alnum:]]{0,4}:[[:alnum:]]{0,4})$' <<< $ip ) ]];then
+		ip='IP Source Corrupt!'
 	fi
 	echo "$ip"
 	log_function_data "ip: $ip"
@@ -4928,11 +5072,18 @@ get_partition_data()
 	local main_partition_data="$( df -h -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs )"
 	local swap_data="$( swapon -s )"
 	# set dev disk label/uuid data globals
-	get_partition_uuid_label_data 'label'
-	get_partition_uuid_label_data 'uuid'
+	get_partition_dev_data 'label'
+	get_partition_dev_data 'uuid'
 	
 	log_function_data 'raw' "main_partition_data:\n$main_partition_data\n\nswap_data:\n$swap_data"
 	
+	# new kernels/df have rootfs and / repeated, creating two entries for the same partition
+	# so check for two string endings of / then slice out the rootfs one, I could check for it
+	# before slicing it out, but doing that would require the same action twice re code execution
+	if [[ $( grep -cs '[[:space:]]/$' <<< "$main_partition_data" ) -gt 1 ]];then
+		main_partition_data="$( grep -vs '^rootfs' <<< "$main_partition_data" )"
+	fi
+	log_function_data 'raw' "main_partition_data_post_rootfs:\n$main_partition_data\n\nswap_data:\n$swap_data"
 	IFS=$'\n'
 	# sample line: /dev/sda2     ext3     15G  8.9G  4.9G  65% /home
 	# $NF = partition name; $(NF - 4) = partition size; $(NF - 3) = used, in gB; $(NF - 1) = percent used
@@ -5053,8 +5204,8 @@ get_partition_data_advanced()
 	local dev_item='' dev_label='' dev_uuid='' temp_array=''
 	local mount_point=''
 	# set dev disk label/uuid data globals
-	get_partition_uuid_label_data 'label'
-	get_partition_uuid_label_data 'uuid'
+	get_partition_dev_data 'label'
+	get_partition_dev_data 'uuid'
 
 	if [[ $B_MOUNTS_FILE == 'true' ]];then
 		for (( i=0; i < ${#A_PARTITION_DATA[@]}; i++ ))
@@ -5182,8 +5333,8 @@ get_partition_data_advanced()
 	eval $LOGFE
 }
 
-# args: $1 - uuid/label
-get_partition_uuid_label_data()
+# args: $1 - uuid/label/id
+get_partition_dev_data()
 {
 	eval $LOGFS
 	
@@ -5205,8 +5356,16 @@ get_partition_uuid_label_data()
 				B_UUID_SET='true'
 			fi
 			;;
+		id)
+			if [[ $B_ID_SET != 'true' ]];then
+				if [[ -d /dev/disk/by-uuid ]];then
+					DEV_DISK_ID="$( ls -l /dev/disk/by-id )"
+				fi
+				B_ID_SET='true'
+			fi
+			;;
 	esac
-	log_function_data 'raw' "DEV_DISK_LABEL:\n$DEV_DISK_LABEL\n\nDEV_DISK_UUID:\n$DEV_DISK_UUID"
+	log_function_data 'raw' "DEV_DISK_LABEL:\n$DEV_DISK_LABEL\n\nDEV_DISK_UUID:\n$DEV_DISK_UUID$DEV_DISK_LABEL\n\nDEV_DISK_ID:\n$DEV_DISK_ID"
 	# debugging section, uncomment to insert user data
 # 	DEV_DISK_LABEL='
 #
@@ -5306,6 +5465,261 @@ get_ps_data()
 # 	echo ${A_PS_DATA[@]}
 	eval $LOGFE
 }
+
+# mdstat syntax information: http://www-01.ibm.com/support/docview.wss?uid=isg3T1011259
+# note that this does NOT use either Disk or Partition information for now, ie, there
+# is no connection between the data types, but the output should still be consistent
+get_raid_data()
+{
+	eval $LOGFS
+	
+	local mdstat=''
+		
+	if [[ $B_MDSTAT_FILE ]];then
+		# dump the first line, which is not data
+	 	mdstat="$( cat $FILE_MDSTAT )"
+	fi
+	
+mdstat1="Personalities : [linear] [multipath] [raid0] [raid1] [raid6] [raid5] [raid4] [raid10] 
+md0 : active raid1 sdb1[2] sda1[0]
+      175778744 blocks super 1.2 [2/2] [UU]
+      
+md125 : active raid6 sdr1[6](S) sdk1[4] sdp1[2] sdo1[0] sdm1[3] sdn1[1] sdl1[5]
+      7814047744 blocks level 6, 256k chunk, algorithm 2 [6/6] [UUUUUU]
+      
+md126 : active (auto-read-only) raid1 sdq1[0]
+      195310080 blocks [2/1] [U_]
+      
+md127 : active raid6 sdj1[2] sdc1[1] sdi1[3] sdg1[5] sdd1[0] sde1[6] sdh1[7] sdf1[4]
+      5860559616 blocks level 6, 64k chunk, algorithm 2 [8/8] [UUUUUUUU]
+      
+unused devices: <none>"
+
+mdstat2="Personalities : [raid1]
+read_ahead 1024 sectors
+md0 : active raid1 hda2[0] hdd2[1]
+73730240 blocks [2/2] [UU]
+
+md1 : active raid1 hda1[0] hdd1[1]
+48064 blocks [2/2] [UU]
+
+unused devices: <none>
+"
+
+mdstat3="Personalities : [linear] [multipath] [raid0] [raid1] [raid6] [raid5] [raid4] [raid10]
+md2 : active raid1 sda3[0] sdb3[1]
+      4883648 blocks [2/2] [UU]
+
+md1 : active raid1 sdb2[2] sda2[0]
+      195310144 blocks [2/1] [U_]
+      [=>...................]  recovery =  8.5% (16775552/195310144) finish=17.0min speed=259783K/sec
+
+md0 : active raid1 sdb1[1] sda1[0]
+      39061952 blocks [2/2] [UU]
+
+unused devices: <none>
+		
+"
+
+mdstat4="Personalities : [raid1]
+read_ahead 1024 sectors
+Event: 2
+md0 : active raid1 sdb1[1] sda1[0]
+859549696 blocks [2/2] [UU]
+resync=DELAYED
+md1 : active raid1 sdb2[1] sda2[0]
+859533632 blocks [2/2] [UU]
+[====>................] resync = 23.0% (198178176/859533632) finish=10578.9min speed=1040K/sec
+unused devices: <none>
+
+"
+mdstat5="Personalities : [linear] [raid0] [raid1] [raid5] [translucent]
+read_ahead not set
+md0 : active raid1 sdb5[0] sda5[1] 32000 blocks [2/1] [U_]
+unused devices: <none>
+
+"
+mdstat6="Personalities : [1 linear] [2 raid0] 
+read_ahead not set 
+md0 : inactive 
+md1 : inactive 
+md2 : inactive 
+md3 : inactive 
+"
+mdstat8="Personalities : [linear] [raid1] read_ahead 1024 sectors
+md0: active raid1 sda2[1] sdb2[0] 9940 blocks [2/2] [UU] resync=1% finish=12.3min algorithm 2 [3/3] [UUU]
+unused devices: <none>
+"
+
+mdstat9="Personalities : [raid1] [raid6] [raid5] [raid4]
+md_d0 : active raid5 sde1[0] sdf1[4] sdb1[5] sdd1[2] sdc1[1]
+      1250241792 blocks super 1.2 level 5, 64k chunk, algorithm 2 [5/5] [UUUUU]
+      bitmap: 0/10 pages [0KB], 16384KB chunk
+
+unused devices: <none>
+"
+mdstat10="Personalities : [linear] [raid0] [raid1] [raid5] [raid4] [raid6]
+md0 : active raid6 sdf1[0] sde1[1] sdd1[2] sdc1[3] sdb1[4] sda1[5] hdb1[6]
+      1225557760 blocks level 6, 256k chunk, algorithm 2 [7/7] [UUUUUUU]
+      bitmap: 0/234 pages [0KB], 512KB chunk
+
+unused devices: <none>
+"
+mdstat11="Personalities : [linear] [multipath] [raid0] [raid1] [raid6] [raid5] [raid4] [raid10]
+md0 : active raid6 sde1[4] sdh1[8] sdc1[2] sdb1[1] sdd1[3] sdq1[9](S) sdg1[6] sdf1[5] sda1[0]
+      5860559616 blocks level 6, 64k chunk, algorithm 2 [8/7] [UUUUUUU_]
+      [===================>.] recovery = 99.5% (972091272/976759936) finish=3.1min speed=24989K/sec
+
+md1 : active raid6 sdp1[6] sdm1[4] sdk1[2] sdi1[0] sdl1[3] sdn1[5] sdj1[1] sdr1[7]
+      5860559616 blocks level 6, 64k chunk, algorithm 2 [8/8] [UUUUUUUU]
+
+unused devices: <none>
+"
+
+mdstat="$mdstat2"
+	if [[ -n $mdstat ]];then
+		:
+		# need to make sure there's always a newline in front of each record type, and
+		# also correct possible weird formats for the output from older kernels etc.
+		mdstat="$( sed -e 's/^md/\nmd/' -e 's/^unused[[:space:]]/\nunused /' \
+		-e 's/read_ahead/\nread_ahead/' -e 's/^resync=/\nresync=/' -e 's/^Event/\nEvent/' \
+		-e 's/^[[:space:]]*$//' -e 's/[[:space:]]read_ahead/\nread_ahead/'  <<< "$mdstat" )"
+		# some fringe cases do not end as expected, so need to add newlines plus EOF to make sure while loop doesn't spin
+		mdstat=$( echo -e "$mdstat\n\nEOF" )
+# 		echo -n
+		# -e 's/[[:space:]]\([0-9]*[[:space:]]blocks\)/\n\1/'
+
+
+# 		echo -e "============================\n\n$mdstat\n============================\n\n"
+# 		exit
+		IFS=$'\n'
+		A_RAID_DATA=( $(
+		gawk '
+		BEGIN {
+			IGNORECASE=1
+			RS="\n"
+		}
+		
+		/^personalities/ {
+			KernelRaidSupport = gensub(/personalities[[:space:]]*:[[:space:]]*(.*)/, "\\1", 1, $0)
+			# clean off the brackets
+			gsub(/[\[\]]/,"",KernelRaidSupport)
+			print "KernelRaidSupport," KernelRaidSupport
+		}
+		/^read_ahead/ {
+			ReadAhead=gensub(/read_ahead (.*)/, "\\1", 1 )
+			print "ReadAhead," ReadAhead
+		}
+		/^Event:/ {
+			print "raidEvent," $NF
+		}
+		# print logic will search for this value and use it to print out the unused devices data
+		/^unused devices/ {
+			unusedDevices = gensub(/^unused devices:[[:space:]][<]?([^>]*)[>]?.*/, "\\1", 1, $0)
+			print "UnusedDevices," unusedDevices
+		}
+		
+		/^md/ {
+			# reset for each record loop through
+			deviceState = ""
+			bitmapValues = ""
+			blocks = ""
+			chunkSize = ""
+			components = ""
+			device = ""
+			deviceReport = ""
+			finishTime = ""
+			recoverSpeed = ""
+			recoveryProgressBar = ""
+			recoveryPercent = ""
+			raidLevel = ""
+			sectorsRecovered = ""
+			separator = ""
+			superBlock = ""
+			uData = ""
+			
+			while ( !/^[[:space:]]*$/  ) {
+				gsub(/,/, " ", $0 )
+				gsub(/[[:space:]]+/, " ", $0 )
+				if ( $0 ~ /^md/ ) {
+					device = gensub(/(md.*)[[:space:]]?:/, "\\1", "1", $1 )
+				}
+				if ( $0 ~ /raid[0-9]+/ ) {
+					raidLevel = gensub(/(.*)raid([0-9]+)(.*)/, "\\2", "g", $0 )
+				}
+				if ( $0 ~ /(active \(auto-read-only\)|active|inactive)/ ) {
+					deviceState = gensub(/(.*) (active \(auto-read-only\)|active|inactive) (.*)/, "\\2", "1", $0 )
+				}
+				# gawk will not return all the components using gensub, only last one
+				separator = ""
+				for ( i=3; i<=NF; i++ ) {
+					if ( $i ~ /[hs]d[a-z][0-9]*(\[[0-9]+\])?(\([SF]\))?/ ) {
+						components = components separator $i
+						separator=" "
+					}
+				}
+				if ( $0 ~ /blocks/ ) {
+					blocks = gensub(/(.*[[:space:]]+)?([0-9]+)[[:space:]]blocks.*/, "\\2", "1", $0)
+				}
+				if ( $0 ~ /super[[:space:]][0-9\.]+/ ) {
+					superBlock = gensub(/.*[[:space:]]super[[:space:]]([0-9\.]+)[[:space:]].*/, "\\1", "1", $0)
+				}
+				if ( $0 ~ /algorithm[[:space:]][0-9\.]+/ ) {
+					algorithm = gensub(/.*[[:space:]]algorithm[[:space:]]([0-9\.]+)[[:space:]].*/, "\\1", "1", $0)
+				}
+				if ( $0 ~ /\[[0-9]+\/[0-9]+\]/ ) {
+					deviceReport = gensub(/.*[[:space:]]\[([0-9]+\/[0-9]+)\][[:space:]].*/, "\\1", "1", $0)
+					uData = gensub(/.*[[:space:]]\[([U_]+)\]/, "\\1", "1", $0)
+				}
+				# need to avoid this:  bitmap: 0/10 pages [0KB], 16384KB chunk
+				# while currently all the normal chunks are marked with k, not kb, this can change in the future
+				if ( $0 ~ /[0-9]+[k] chunk/ && $0 !~ /bitmap/ ) {
+					chunkSize = gensub(/(.*) ([0-9]+[k]) chunk.*/, "\\2", "1", $0)
+				}
+				if ( $0 ~ /^resync=/ ) {
+					sub(/resync=/,"")
+					print "resyncStatus," $0
+				}
+				if ( $0 ~ /\[[=]*>[\.]*\].*(resync|recovery)/ ) {
+					recoveryProgressBar = gensub(/.*(\[[=]*>[\.]*\]).*/, "\\1",1,$0)
+				}
+				if ( $0 ~ / (resync|recovery)[[:space:]]*=/ ) {
+					recoveryPercent = gensub(/.* (resync|recovery)[[:space:]]*=[[:space:]]*([0-9\.]+%).*/, "\\1~\\2", 1 )
+					if ( $0 ~ /[[:space:]]\([0-9]+\/[0-9]+\)/ ) {
+						sectorsRecovered = gensub(/.* \(([0-9]+\/[0-9]+)\).*/, "\\1", 1, $0 )
+					}
+					if ( $0 ~ /finish[[:space:]]*=/ ) {
+						finishTime = gensub(/.* finish[[:space:]]*=[[:space:]]*([[0-9\.]+)([a-z]+) .*/, "\\1 \\2", 1, $0 )
+					}
+					if ( $0 ~ /speed[[:space:]]*=/ ) {
+						recoverSpeed = gensub(/.* speed[[:space:]]*=[[:space:]]*([[0-9\.]+)([a-z]+\/[a-z]+)/, "\\1 \\2", 1, $0 )
+					}
+				}
+				if ( $0 ~ /bitmap/ ) {
+					bitmapValues = gensub(/(.*[[:space:]])?bitmap:(.*)/, "\\2", 1, $0 )
+				}
+				
+				getline
+			}
+			raidString = device "," deviceState "," raidLevel "," components "," deviceReport "," uData 
+			raidString = raidString "," blocks "," superBlock "," algorithm "," chunkSize "," bitmapValues
+			raidString = raidString "," recoveryProgressBar "," recoveryPercent "," sectorsRecovered "," finishTime "," recoverSpeed
+			
+			print raidString
+		}
+		' <<< "$mdstat"
+		) )
+		IFS="$ORIGINAL_IFS"
+		temp_array=${A_RAID_DATA[@]}
+		log_function_data "A_RAID_DATA: $temp_array"
+# 		echo -e "A_RAID_DATA:\n${A_RAID_DATA[@]}"
+	fi
+	
+	eval $LOGFE
+}
+
+# B_MDSTAT_FILE=true
+# get_raid_data;exit
 
 # Repos will be added as we get distro package manager data to create the repo data. 
 # This method will output the file name also, which is useful to create output that's 
@@ -5835,8 +6249,8 @@ get_unmounted_partition_data()
 	
 	if [[ $B_PARTITIONS_FILE == 'true' ]];then
 		# set dev disk label/uuid data globals
-		get_partition_uuid_label_data 'label'
-		get_partition_uuid_label_data 'uuid'
+		get_partition_dev_data 'label'
+		get_partition_dev_data 'uuid'
 		
 		# create list for slicing out the mounted partitions
 		for (( i=0; i < ${#A_PARTITION_DATA[@]}; i++ ))
@@ -6073,6 +6487,9 @@ print_it_out()
 		fi
 		if [[ $B_SHOW_PARTITIONS == 'true' ]];then
 			print_partition_data
+		fi
+		if [[ $B_SHOW_RAID == 'true' || $B_SHOW_BASIC_RAID == 'true' ]];then
+			print_raid_data
 		fi
 		if [[ $B_SHOW_UNMOUNTED_PARTITIONS == 'true' ]];then
 			print_unmounted_partition_data
@@ -6588,6 +7005,7 @@ print_hard_disk_data()
 {
 	eval $LOGFS
 	local hdd_data='' hdd_data_2='' a_hdd_working='' hdd_temp_data='' hdd_string=''
+	local hdd_serial=''
 	local dev_data='' size_data='' hdd_model='' usb_data='' hdd_name='' divisor=5
 	local Line_Starter='Drives:' # inherited by print_optical_drives
 
@@ -6599,7 +7017,7 @@ print_hard_disk_data()
 	IFS=","
 	local a_hdd_basic_working=( ${A_HDD_DATA[$a_hdd_data_count]} )
 	IFS="$ORIGINAL_IFS"
-	local hdd_capacity=${a_hdd_basic_working[0]}
+	local hdd_capacity="${a_hdd_basic_working[0]}"
 	local hdd_used=${a_hdd_basic_working[1]}
 
 	if [[ $B_SHOW_BASIC_DISK == 'true' || $B_SHOW_DISK == 'true' ]];then
@@ -6618,20 +7036,30 @@ print_hard_disk_data()
 					usb_data=''
 				fi
 				dev_data="/dev/${a_hdd_working[0]} "
-				size_data=" ${a_hdd_working[1]}"
+				size_data=" ${C1}size$SEP3${C2} ${a_hdd_working[1]}"
 				if [[ $B_EXTRA_DATA == 'true' && -n $dev_data ]];then
 					hdd_temp_data=$( get_hdd_temp_data "$dev_data" )
 					# error handling is done in get data function
 					if [[ -n $hdd_temp_data ]];then
-						hdd_temp_data=" ${hdd_temp_data}C"
+						hdd_temp_data=" ${C1}temp$SEP3${C2} ${hdd_temp_data}C"
 					else
 						hdd_temp_data=''
 					fi
 				fi
-				divisor=2 # for modulus line print out, either 2 items for full, or default for short
+				if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+					hdd_serial=$( get_hdd_serial_number "${a_hdd_working[0]}" )
+					if [[ -z $hdd_serial ]];then
+						hdd_serial='N/A'
+					fi
+					hdd_serial=" ${C1}serial$SEP3${C2} $hdd_serial"
+					divisor=1 # print every line
+				else
+					divisor=2 # for modulus line print out, either 2 items for full, or default for short
+				fi
+				dev_data="${C1}id$SEP3${C2} /dev/${a_hdd_working[0]} "
 			fi
-			hdd_name="${a_hdd_working[2]}"
-			hdd_string="$usb_data$dev_data$hdd_name$size_data$hdd_temp_data"
+			hdd_name="${C1}model$SEP3${C2} ${a_hdd_working[2]}"
+			hdd_string="$usb_data$dev_data$hdd_name$size_data$hdd_serial$hdd_temp_data"
 			hdd_model="${hdd_model}${C1}$(($i+1)):${C2} $hdd_string "
 			# printing line one, then new lines according to $divisor setting, and after, if leftovers, print that line.
 			case $i in 
@@ -6857,7 +7285,18 @@ print_machine_data()
 		fi
 		IFS="$ORIGINAL_IFS"
 	else
-		system_line="${C2}No machine data found. Your kernel does not support this feature.${CN}"
+		system_line="${C2}No /sys/class/dmi machine data. Try newer kernel, or install dmidecode.${CN}"
+	fi
+	# patch to dump all of above if dmidecode was data source and non root user
+	if [[ ${A_MACHINE_DATA[0]} == 'dmidecode-non-root-user' || ${A_MACHINE_DATA[0]} == 'dmidecode-no-smbios-dmi-data' ]];then
+		if [[ ${A_MACHINE_DATA[0]} == 'dmidecode-non-root-user' ]];then
+			system_line="${C2}No /sys/class/dmi. Using dmidecode: you must be root to run dmidecode.${CN}"
+		elif [[ ${A_MACHINE_DATA[0]} == 'dmidecode-no-smbios-dmi-data' ]];then
+			system_line="${C2}No /sys/class/dmi. Using dmidecode: no machine data available.${CN}"
+		fi
+		mobo_line=''
+		bios_line=''
+		chassis_line=''
 	fi
 	system_line=$( create_print_line "Machine:" "$system_line" )
 	print_screen_output "$system_line"
@@ -7004,7 +7443,9 @@ print_network_advanced_data()
 		oper_state=${a_network_working[6]}
 	fi
 	# no print out for wifi since it doesn't have duplex/speed data availabe
-	if [[ $b_is_wifi != 'true' ]];then
+	# note that some cards show 'unknown' for state, so only testing explicitly
+	# for 'down' string in that to skip showing speed/duplex
+	if [[ $b_is_wifi != 'true' && $oper_state != 'down' ]];then
 		if [[ -n ${a_network_working[7]} ]];then
 			# make sure the value is strictly numeric before appending Mbps
 			if [[ -n $( grep -E '^[0-9\.,]+$' <<< "${a_network_working[7]}" ) ]];then
@@ -7448,7 +7889,267 @@ print_ps_item()
 	
 	eval $LOGFE
 }
+# device "," deviceState "," raidLevel "," components "," deviceReport "," uData 
+# blocks "," superBlock "," algorithm "," chunkSize "," bitmapValues
+# recoveryProgressBar "," recoveryPercent "," sectorsRecovered "," finishTime "," recoverSpeed
+print_raid_data()
+{
+	eval $LOGFS
+	local device='' device_string='' device_state='' raid_level='' device_components=''
+	local device_report='' u_data='' blocks='' super_blocks='' algorithm='' chunk_size=''
+	local bitmap_values='' recovery_progress_bar='' recovery_percent='' recovered_sectors=''
+	local finish_time='' recovery_speed='' raid_counter=0 device_counter=1 basic_counter=1
+	local a_partition_working='' raid_data='' kernel_support='' read_ahead='' unused_devices=''
+	local basic_raid='' basic_raid_separator='' basic_raid_plural='' inactive=''
+	local component_separator='' device_id='' print_string='' loop_limit='' array_count_unused=''
+	local array_count='' raid_event=''
+	
+	get_raid_data
+# 	temp_array=${A_RAID_DATA[@]}
+# 	echo $temp_array
+# 	echo ${#A_RAID_DATA[@]}
+	for (( i=0; i < ${#A_RAID_DATA[@]}; i++ ))
+	do
+		IFS=","
+		a_partition_working=(${A_RAID_DATA[i]})
+		IFS="$ORIGINAL_IFS"
+		
+		algorithm=''
+		bitmap_values=''
+		blocks=''
+		component_separator=''
+		device=''
+		device_components=''
+		device_id=''
+		device_report=''
+		device_state=''
+		failed=''
+		finish_time=''
+		inactive=''
+		raid_event=''
+		raid_level=''
+		recovery_percent=''
+		recovery_progress_bar=''
+		recovered_sectors=''
+		recovery_speed=''
+		spare=''
+		super_blocks=''
+		u_data=''
+		
+		if [[ -n $( grep '^md' <<< ${a_partition_working[0]} ) ]];then
+			if [[ $B_SHOW_BASIC_RAID == 'true' ]];then
+				if [[ $basic_raid != '' ]];then
+					basic_raid_plural='s'
+				fi
+				if [[ ${a_partition_working[1]} == 'inactive' ]];then
+					inactive=" - ${a_partition_working[1]}"
+				fi
+				basic_raid="$basic_raid$basic_raid_separator${C1}$basic_counter${SEP3}${C2} /dev/${a_partition_working[0]}$inactive"
+				basic_raid_separator=' '
+				(( basic_counter++ ))
+			else
+				device_id="-$device_counter"
+				device="/dev/${a_partition_working[0]}"
+				
+				(( device_counter++ ))
+				if [[ ${a_partition_working[1]} != '' ]];then
+					device_state=" - ${a_partition_working[1]}"
+				fi
+				
+				if [[ ${a_partition_working[2]} == '' ]];then
+					raid_level='N/A'
+				else
+					raid_level=${a_partition_working[2]}
+				fi
+				# there's one case: md0 : inactive  that has to be protected against
+				if [[ ${a_partition_working[2]} == '' && ${a_partition_working[1]} == 'inactive' ]];then
+					raid_level=''
+				else
+					raid_level=" ${C1}raid${SEP3}${C2} $raid_level"
+				fi
+				if [[ ${a_partition_working[4]} != '' ]];then
+					device_report="${a_partition_working[4]}"
+				fi
+				if [[ $B_EXTRA_DATA == 'true' ]];then
+					if [[ ${a_partition_working[6]} != '' ]];then
+						blocks=${a_partition_working[6]}
+					else
+						blocks='N/A'
+					fi
+					blocks=" ${C1}blocks${SEP3}${C2} $blocks"
+					
+					if [[ ${a_partition_working[9]} != '' ]];then
+						chunk_size=${a_partition_working[9]}
+					else
+						chunk_size='N/A'
+					fi
+					chunk_size=" ${C1}chunk size${SEP3}${C2} $chunk_size"
+					if [[ ${a_partition_working[10]} != '' ]];then
+						bitmap_value='true'
+						bitmap_value=" ${C1}bitmap${SEP3}${C2} $bitmap_value"
+					fi
+				fi
+				if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+					if [[ ${a_partition_working[5]} != '' ]];then
+						u_data=" ${a_partition_working[5]}"
+					fi
+					if [[ ${a_partition_working[7]} != '' ]];then
+						super_blocks=" ${C1}super blocks${SEP3}${C2} ${a_partition_working[7]}"
+					fi
+					if [[ ${a_partition_working[8]} != '' ]];then
+						algorithm=" ${C1}algorithm${SEP3}${C2} ${a_partition_working[8]}"
+					fi
+				fi
+				if [[ ${a_partition_working[3]} == '' ]];then
+					if [[ ${a_partition_working[1]} != 'inactive' ]];then
+						device_components='N/A'
+					fi
+				else
+					for component in ${a_partition_working[3]}
+					do
+						if [[ $B_EXTRA_DATA != 'true' ]];then
+							component=$( sed 's/\[[0-9]\+\]//' <<< $component )
+						fi
+# 						echo comp $component
+						if [[ -n $( grep 'F' <<< $component ) ]];then
+							component=$( sed -e 's/(F)//' -e 's/F//' <<<  $component )
+							failed="$failed $component"
+							component=''
+						elif [[ -n $( grep 'S' <<< $component ) ]];then
+							component=$( sed -e 's/(S)//' -e 's/S//' <<<  $component )
+							spare="$spare $component"
+							component=''
+						else
+							device_components=$device_components$component_separator$component
+							component_separator=' '
+						fi
+					done
 
+					if [[ $failed != '' ]];then
+						failed=" ${C1}FAILED${SEP3}${C2}$failed${C2}"
+					fi
+					if [[ $spare != '' ]];then
+						spare=" ${C1}spare${SEP3}${C2}$spare${C2}"
+					fi
+					if [[ $device_components != '' ]];then
+						if [[ $B_EXTRA_DATA != 'true' ]];then
+							device_components="$device_report - $device_components"
+						fi
+						device_components=" ${C1}components${SEP3}${C2} $device_components$failed$spare"
+					fi
+				fi
+				a_raid_data[$raid_counter]="${C1}Device$device_id${SEP3}${C2} $device$device_state$raid_level$device_components"
+				
+				if [[ $B_EXTRA_DATA == 'true' && ${a_partition_working[1]} != 'inactive' ]];then
+					a_raid_data[$raid_counter]="${C1}Device$device_id${SEP3}${C2} $device$device_state$device_components"
+					(( raid_counter++ ))
+					print_string="${C1}Info${SEP3}${C2}$raid_level ${C1}report${SEP}${C2} $device_report$u_data"
+					print_string="$print_string$blocks$chunk_size$bitmap_value$super_blocks$algorithm"
+					a_raid_data[$raid_counter]="$print_string"
+				else
+					a_raid_data[$raid_counter]="${C1}Device$device_id${SEP3}${C2} $device$device_state$raid_level$device_components"
+				fi
+				(( raid_counter++ ))
+				
+				# now let's do the recover line if required
+				if [[ ${a_partition_working[12]} != '' ]];then
+					recovery_percent=$( cut -d '~' -f 2 <<< ${a_partition_working[12]} )
+					if [[ ${a_partition_working[14]} != '' ]];then
+						finish_time=${a_partition_working[14]}
+					else
+						finish_time='N/A'
+					fi
+					finish_time=" ${C1}time remaining${SEP3}${C2} $finish_time"
+					if [[ $B_EXTRA_DATA == 'true' ]];then
+						if [[ ${a_partition_working[13]} != '' ]];then
+							recovered_sectors=" ${C1}sectors${SEP3}${C2} ${a_partition_working[13]}"
+						fi
+					fi
+					if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+						if [[ ${a_partition_working[11]} != '' ]];then
+							recovery_progress_bar=" ${a_partition_working[11]}"
+						fi
+						if [[ ${a_partition_working[15]} != '' ]];then
+							recovery_speed=" ${C1}speed${SEP3}${C2} ${a_partition_working[15]}"
+						fi
+					fi
+					
+					a_raid_data[$raid_counter]="${C1}Recovering${SEP3}${C2} $recovery_percent$recovery_progress_bar$recovered_sectors$finish_time$recovery_speed"
+					(( raid_counter++ ))
+				fi
+			fi
+		elif [[ ${a_partition_working[0]} == 'KernelRaidSupport' ]];then
+			if [[ ${a_partition_working[1]} == '' ]];then
+				kernel_support='N/A'
+			else
+				kernel_support=${a_partition_working[1]}
+			fi
+			kernel_support=" ${C1}supported${SEP3}${C2} $kernel_support"
+		elif [[ ${a_partition_working[0]} == 'ReadAhead' ]];then
+			if [[ ${a_partition_working[1]} != '' ]];then
+				read_ahead=${a_partition_working[1]}
+				read_ahead=" ${C1}read ahead${SEP3}${C2} $read_ahead"
+			fi
+			
+		elif [[ ${a_partition_working[0]} == 'UnusedDevices' ]];then
+			if [[ ${a_partition_working[1]} == '' ]];then
+				unused_devices='N/A'
+			else
+				unused_devices=${a_partition_working[1]}
+			fi
+			unused_devices="${C1}Unused Devices${SEP3}${C2} $unused_devices"
+		elif [[ ${a_partition_working[0]} == 'raidEvent' ]];then
+			if [[ ${a_partition_working[1]} != '' ]];then
+				raid_event=${a_partition_working[1]}
+				raid_event=" ${C1}Raid Event${SEP3}${C2} ${a_partition_working[1]}"
+			fi
+		fi
+	done
+	
+	if [[ $B_SHOW_BASIC_RAID == 'true' && $basic_raid != '' ]];then
+		a_raid_data[0]="${C1}Device$basic_raid_plural${SEP3}${C2} $basic_raid"
+	fi
+	if [[ ${a_raid_data[0]} == '' ]];then
+		a_raid_data[0]="${C1}Device${SEP3}${C2} No RAID devices detected"
+	fi
+	
+	# now let's add on the system line and the unused device line. Only print on -xx
+	array_count=${#a_raid_data[@]}
+	a_raid_data[array_count]="${C1}System${SEP3}${C2}$kernel_support$read_ahead$raid_event"
+	loop_limit=1
+	if [[ $unused_devices != '' ]];then
+		array_count_unused=${#a_raid_data[@]}
+		a_raid_data[array_count_unused]="$unused_devices"
+		loop_limit=2
+	fi
+	
+	# print out all lines, line starter on first line
+	for (( i=0; i < ${#a_raid_data[@]} - $loop_limit;i++ ))
+	do
+		if [[ $i -eq 0 ]];then
+			line_starter='RAID:'
+		else
+			line_starter=' '
+		fi
+		if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+			if [[ $i == 0 ]];then
+				raid_data=$( create_print_line "$line_starter" "${a_raid_data[array_count]}" )
+				print_screen_output "$raid_data"
+				line_starter=' '
+			fi
+		fi
+		raid_data=$( create_print_line "$line_starter" "${a_raid_data[i]}" )
+		print_screen_output "$raid_data"
+		if [[ $B_EXTRA_EXTRA_DATA == 'true' && $array_count_unused != '' ]];then
+			if [[ $i == $(( array_count_unused - 2 )) ]];then
+				raid_data=$( create_print_line "$line_starter" "${a_raid_data[array_count_unused]}" )
+				print_screen_output "$raid_data"
+			fi
+		fi
+	done
+	
+	eval $LOGFE
+}
 
 # currently only apt using distros support this feature, but over time we can add others
 print_repo_data()
@@ -7687,7 +8388,7 @@ print_system_data()
 		desktop_environment="tty$tty_session"
 		desktop_type='Console'
 	fi
-	de_distro_string="${C1}$desktop_type${C2} $desktop_environment ${C1}Distro$SEP3${C2} $distro"
+	de_distro_string="${C1}$desktop_type$SEP3${C2} $desktop_environment ${C1}Distro$SEP3${C2} $distro"
 	if [[ $B_EXTRA_DATA == 'true' ]];then
 		gcc_string=$( get_gcc_kernel_version )
 		if [[ -n $gcc_string ]];then
