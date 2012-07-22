@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.8.0
-####  Date: May 10 2012
+####  version: 1.8.2
+####  Date: May 11 2012
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -148,6 +148,7 @@
 ####  gawk arrays: http://www.math.utah.edu/docs/info/gawk_12.html
 ####  raid mdstat: http://www-01.ibm.com/support/docview.wss?uid=isg3T1011259
 ####               http://www.howtoforge.com/replacing_hard_disks_in_a_raid1_array
+####               https://raid.wiki.kernel.org/index.php/Mdstat
 ########################################################################
 ####  TESTING FLAGS
 ####  inxi supports advanced testing triggers to do various things, using -! <arg>
@@ -2148,7 +2149,7 @@ show_options()
 	print_screen_output "- - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
 	print_screen_output "Output Control Options:"
 	print_screen_output "-A  Show Audio/sound card information."
-	print_screen_output "-b  Shows basic output, short form (previously -d). Same as: $SCRIPT_NAME -v 2"
+	print_screen_output "-b  Shows basic output, short form. Like $SCRIPT_NAME -v 2, only minus hard disk names."
 	print_screen_output "-c  Available color schemes. Scheme number is required. Color selectors run a color selector option"
 	print_screen_output "    prior to $SCRIPT_NAME starting which lets you set the config file value for the selection."
 	print_screen_output "    Supported color schemes: 0-$color_scheme_count Example: $SCRIPT_NAME -c 11"
@@ -2195,7 +2196,7 @@ show_options()
 	print_screen_output "    0 - Short output, same as: $SCRIPT_NAME"
 	print_screen_output "    1 - Basic verbose, -S + basic CPU + -G + basic Disk + -I."
 	print_screen_output "    2 - Adds networking card (-N), Machine (-M) data, shows basic hard disk data (names only),"
-	print_screen_output "        and basic raid (devices only, and if inactive, notes that). Same as: $SCRIPT_NAME -b"
+	print_screen_output "        and, if present, basic raid (devices only, and if inactive, notes that). similar to: $SCRIPT_NAME -b"
 	print_screen_output "    3 - Adds advanced CPU (-C), network (-n) data, and switches on -x advanced data option."
 	print_screen_output "    4 - Adds partition size/filled data (-P) for (if present):/, /home, /var/, /boot"
 	print_screen_output "        Shows full disk data (-D)."
@@ -5476,11 +5477,10 @@ get_raid_data()
 	local mdstat=''
 		
 	if [[ $B_MDSTAT_FILE ]];then
-		# dump the first line, which is not data
-	 	mdstat="$( cat $FILE_MDSTAT )"
+	 	mdstat="$( cat $FILE_MDSTAT 2>/dev/null )"
 	fi
 	
-mdstat1="Personalities : [linear] [multipath] [raid0] [raid1] [raid6] [raid5] [raid4] [raid10] 
+	mdstat1="Personalities : [linear] [multipath] [raid0] [raid1] [raid6] [raid5] [raid4] [raid10] 
 md0 : active raid1 sdb1[2] sda1[0]
       175778744 blocks super 1.2 [2/2] [UU]
       
@@ -5576,9 +5576,9 @@ md1 : active raid6 sdp1[6] sdm1[4] sdk1[2] sdi1[0] sdl1[3] sdn1[5] sdj1[1] sdr1[
 unused devices: <none>
 "
 
-mdstat="$mdstat2"
+mdstat="$mdstat11"
+	
 	if [[ -n $mdstat ]];then
-		:
 		# need to make sure there's always a newline in front of each record type, and
 		# also correct possible weird formats for the output from older kernels etc.
 		mdstat="$( sed -e 's/^md/\nmd/' -e 's/^unused[[:space:]]/\nunused /' \
@@ -5586,12 +5586,7 @@ mdstat="$mdstat2"
 		-e 's/^[[:space:]]*$//' -e 's/[[:space:]]read_ahead/\nread_ahead/'  <<< "$mdstat" )"
 		# some fringe cases do not end as expected, so need to add newlines plus EOF to make sure while loop doesn't spin
 		mdstat=$( echo -e "$mdstat\n\nEOF" )
-# 		echo -n
-		# -e 's/[[:space:]]\([0-9]*[[:space:]]blocks\)/\n\1/'
 
-
-# 		echo -e "============================\n\n$mdstat\n============================\n\n"
-# 		exit
 		IFS=$'\n'
 		A_RAID_DATA=( $(
 		gawk '
@@ -5717,9 +5712,6 @@ mdstat="$mdstat2"
 	
 	eval $LOGFE
 }
-
-# B_MDSTAT_FILE=true
-# get_raid_data;exit
 
 # Repos will be added as we get distro package manager data to create the repo data. 
 # This method will output the file name also, which is useful to create output that's 
@@ -7889,9 +7881,7 @@ print_ps_item()
 	
 	eval $LOGFE
 }
-# device "," deviceState "," raidLevel "," components "," deviceReport "," uData 
-# blocks "," superBlock "," algorithm "," chunkSize "," bitmapValues
-# recoveryProgressBar "," recoveryPercent "," sectorsRecovered "," finishTime "," recoverSpeed
+
 print_raid_data()
 {
 	eval $LOGFS
@@ -7901,19 +7891,18 @@ print_raid_data()
 	local finish_time='' recovery_speed='' raid_counter=0 device_counter=1 basic_counter=1
 	local a_partition_working='' raid_data='' kernel_support='' read_ahead='' unused_devices=''
 	local basic_raid='' basic_raid_separator='' basic_raid_plural='' inactive=''
-	local component_separator='' device_id='' print_string='' loop_limit='' array_count_unused=''
-	local array_count='' raid_event=''
+	local component_separator='' device_id='' print_string='' loop_limit=0 array_count_unused=''
+	local array_count='' raid_event='' b_print_lines='true'
 	
 	get_raid_data
-# 	temp_array=${A_RAID_DATA[@]}
-# 	echo $temp_array
-# 	echo ${#A_RAID_DATA[@]}
+
 	for (( i=0; i < ${#A_RAID_DATA[@]}; i++ ))
 	do
 		IFS=","
 		a_partition_working=(${A_RAID_DATA[i]})
 		IFS="$ORIGINAL_IFS"
 		
+		# reset on each iteration
 		algorithm=''
 		bitmap_values=''
 		blocks=''
@@ -7969,6 +7958,8 @@ print_raid_data()
 				fi
 				if [[ ${a_partition_working[4]} != '' ]];then
 					device_report="${a_partition_working[4]}"
+				else
+					device_report="N/A"
 				fi
 				if [[ $B_EXTRA_DATA == 'true' ]];then
 					if [[ ${a_partition_working[6]} != '' ]];then
@@ -8010,7 +8001,6 @@ print_raid_data()
 						if [[ $B_EXTRA_DATA != 'true' ]];then
 							component=$( sed 's/\[[0-9]\+\]//' <<< $component )
 						fi
-# 						echo comp $component
 						if [[ -n $( grep 'F' <<< $component ) ]];then
 							component=$( sed -e 's/(F)//' -e 's/F//' <<<  $component )
 							failed="$failed $component"
@@ -8033,7 +8023,9 @@ print_raid_data()
 					fi
 					if [[ $device_components != '' ]];then
 						if [[ $B_EXTRA_DATA != 'true' ]];then
-							device_components="$device_report - $device_components"
+							if [[ $device_report != 'N/A' ]];then
+								device_components="$device_report - $device_components"
+							fi
 						fi
 						device_components=" ${C1}components${SEP3}${C2} $device_components$failed$spare"
 					fi
@@ -8043,7 +8035,7 @@ print_raid_data()
 				if [[ $B_EXTRA_DATA == 'true' && ${a_partition_working[1]} != 'inactive' ]];then
 					a_raid_data[$raid_counter]="${C1}Device$device_id${SEP3}${C2} $device$device_state$device_components"
 					(( raid_counter++ ))
-					print_string="${C1}Info${SEP3}${C2}$raid_level ${C1}report${SEP}${C2} $device_report$u_data"
+					print_string="${C1}Info${SEP3}${C2}$raid_level ${C1}report${SEP3}${C2} $device_report$u_data"
 					print_string="$print_string$blocks$chunk_size$bitmap_value$super_blocks$algorithm"
 					a_raid_data[$raid_counter]="$print_string"
 				else
@@ -8109,44 +8101,60 @@ print_raid_data()
 	if [[ $B_SHOW_BASIC_RAID == 'true' && $basic_raid != '' ]];then
 		a_raid_data[0]="${C1}Device$basic_raid_plural${SEP3}${C2} $basic_raid"
 	fi
-	if [[ ${a_raid_data[0]} == '' ]];then
-		a_raid_data[0]="${C1}Device${SEP3}${C2} No RAID devices detected"
-	fi
-	
-	# now let's add on the system line and the unused device line. Only print on -xx
-	array_count=${#a_raid_data[@]}
-	a_raid_data[array_count]="${C1}System${SEP3}${C2}$kernel_support$read_ahead$raid_event"
-	loop_limit=1
-	if [[ $unused_devices != '' ]];then
-		array_count_unused=${#a_raid_data[@]}
-		a_raid_data[array_count_unused]="$unused_devices"
-		loop_limit=2
-	fi
-	
-	# print out all lines, line starter on first line
-	for (( i=0; i < ${#a_raid_data[@]} - $loop_limit;i++ ))
-	do
-		if [[ $i -eq 0 ]];then
-			line_starter='RAID:'
+
+	if [[ $B_MDSTAT_FILE != 'true' ]];then
+		if [[ $B_SHOW_BASIC_RAID != 'true' ]];then
+			a_raid_data[0]="${C1}Error${SEP3}${C2} No $FILE_MDSTAT file detected!"
 		else
-			line_starter=' '
+			b_print_lines='false'
 		fi
-		if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
-			if [[ $i == 0 ]];then
-				raid_data=$( create_print_line "$line_starter" "${a_raid_data[array_count]}" )
-				print_screen_output "$raid_data"
+	else
+		if [[ ${a_raid_data[0]} == '' ]];then
+			if [[ $B_SHOW_BASIC_RAID != 'true' ]];then
+				a_raid_data[0]="${C1}Device${SEP3}${C2} No RAID devices detected!"
+			else
+				b_print_lines='false'
+			fi
+		fi
+		# now let's add on the system line and the unused device line. Only print on -xx
+		if [[ $kernel_support$read_ahead$raid_event != '' ]];then
+			array_count=${#a_raid_data[@]}
+			a_raid_data[array_count]="${C1}System${SEP3}${C2}$kernel_support$read_ahead$raid_event"
+			loop_limit=1
+		fi
+		if [[ $unused_devices != '' ]];then
+			array_count_unused=${#a_raid_data[@]}
+			a_raid_data[array_count_unused]="$unused_devices"
+			loop_limit=2
+		fi
+	fi
+	# we don't want to print anything if it's -b and no data is present, just a waste of a line
+	if [[ $b_print_lines == 'true' ]];then
+		# print out all lines, line starter on first line
+		for (( i=0; i < ${#a_raid_data[@]} - $loop_limit;i++ ))
+		do
+			if [[ $i -eq 0 ]];then
+				line_starter='RAID:'
+			else
 				line_starter=' '
 			fi
-		fi
-		raid_data=$( create_print_line "$line_starter" "${a_raid_data[i]}" )
-		print_screen_output "$raid_data"
-		if [[ $B_EXTRA_EXTRA_DATA == 'true' && $array_count_unused != '' ]];then
-			if [[ $i == $(( array_count_unused - 2 )) ]];then
-				raid_data=$( create_print_line "$line_starter" "${a_raid_data[array_count_unused]}" )
-				print_screen_output "$raid_data"
+			if [[ $B_EXTRA_EXTRA_DATA == 'true' && $array_count != '' ]];then
+				if [[ $i == 0 ]];then
+					raid_data=$( create_print_line "$line_starter" "${a_raid_data[array_count]}" )
+					print_screen_output "$raid_data"
+					line_starter=' '
+				fi
 			fi
-		fi
-	done
+			raid_data=$( create_print_line "$line_starter" "${a_raid_data[i]}" )
+			print_screen_output "$raid_data"
+			if [[ $B_EXTRA_EXTRA_DATA == 'true' && $array_count_unused != '' ]];then
+				if [[ $i == $(( array_count_unused - 2 )) ]];then
+					raid_data=$( create_print_line "$line_starter" "${a_raid_data[array_count_unused]}" )
+					print_screen_output "$raid_data"
+				fi
+			fi
+		done
+	fi
 	
 	eval $LOGFE
 }
