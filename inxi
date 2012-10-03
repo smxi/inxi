@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.8.17
-####  Date: September 16 2012
+####  version: 1.8.18
+####  Date: October 3 2012
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -180,6 +180,7 @@ COLOR_SCHEME=''
 CPU_SLEEP='0.3' 
 DEV_DISK_ID=''
 DEV_DISK_LABEL=''
+DEV_DISK_MAPPER=''
 DEV_DISK_UUID=''
 FILTER_STRING='<filter>'
 IRC_CLIENT=''
@@ -240,6 +241,7 @@ B_HANDLE_CORRUPT_DATA='false'
 B_LABEL_SET='false'
 B_LOG_COLORS='false'
 B_LOG_FULL_DATA='false'
+B_MAPPER_SET='false'
 B_OUTPUT_FILTER='false'
 B_OVERRIDE_FILTER='false'
 # kde qdbus
@@ -1465,6 +1467,7 @@ debug_data_collector()
 			ls -l /dev/disk/by-label &> $debug_data_dir/dev-disk-label-data.txt
 			ls -l /dev/disk/by-uuid &> $debug_data_dir/dev-disk-uuid-data.txt
 			ls -l /dev/disk/by-path &> $debug_data_dir/dev-disk-path-data.txt
+			ls -l /dev/mapper &> $debug_data_dir/dev-disk-mapper-data.txt
 			readlink /dev/root &> $debug_data_dir/dev-root.txt
 			df -h -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs &> $debug_data_dir/df-h-T-excludes.txt
 			swapon -s &> $debug_data_dir/swapon-s.txt
@@ -5247,14 +5250,15 @@ get_partition_data()
 {
 	eval $LOGFS
 	
-	local a_partition_working='' dev_item='' temp_array=''
+	local a_partition_working='' dev_item='' temp_array='' dev_working_item=''
 	#local excluded_file_types='--exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660'
 	# df doesn't seem to work in script with variables like at the command line
 	# added devfs linprocfs sysfs fdescfs which show on debian kfreebsd kernel output
 	local main_partition_data="$( df -h -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs )"
 	local swap_data="$( swapon -s )"
-	# set dev disk label/uuid data globals
+	# set dev disk label/mapper/uuid data globals
 	get_partition_dev_data 'label'
+	get_partition_dev_data 'mapper'
 	get_partition_dev_data 'uuid'
 	
 	log_function_data 'raw' "main_partition_data:\n$main_partition_data\n\nswap_data:\n$swap_data"
@@ -5345,11 +5349,13 @@ get_partition_data()
 		a_partition_working=( ${A_PARTITION_DATA[i]} )
 		IFS="$ORIGINAL_IFS"
 		dev_item='' # reset each loop
+		
 		# note: for swap this will already be set
 		if [[ -n $( grep -E '(by-uuid|by-label)' <<< ${a_partition_working[6]} ) ]];then
+			dev_working_item=$( basename ${a_partition_working[6]} )
 			if [[ -n $DEV_DISK_UUID ]];then
 				dev_item=$( echo "$DEV_DISK_UUID" | gawk '
-					/'$( basename ${a_partition_working[6]} )'/ {
+					$0 ~ /[ /t]'$dev_working_item'[ /t]/ {
 						item=gensub( /..\/..\/(.+)/, "\\1", 1, $NF )
 						print item
 					}' )
@@ -5357,17 +5363,21 @@ get_partition_data()
 			# if we didn't find anything for uuid try label
 			if [[ -z $dev_item && -n $DEV_DISK_LABEL ]];then
 				dev_item=$( echo "$DEV_DISK_LABEL" | gawk '
-					/'$( basename ${a_partition_working[6]} )'/ {
+					$0 ~ /[ /t]'$dev_working_item'[ /t]/ {
 						item=gensub( /..\/..\/(.+)/, "\\1", 1, $NF )
 						print item
 					}' )
 			fi
-			if [[ -n $dev_item ]];then
-				# assemble everything we could get for dev/h/dx, label, and uuid
-				IFS=","
-				A_PARTITION_DATA[i]=${a_partition_working[0]}","${a_partition_working[1]}","${a_partition_working[2]}","${a_partition_working[3]}","${a_partition_working[4]}","${a_partition_working[5]}","$dev_item
-				IFS="$ORIGINAL_IFS"
-			fi
+		elif [[ -n $( grep 'mapper/' <<< ${a_partition_working[6]} ) ]];then
+			# get the mapper actual dev item
+			dev_item=$( get_dev_processed_item "${a_partition_working[6]}" )
+		fi
+		
+		if [[ -n $dev_item ]];then
+			# assemble everything we could get for dev/h/dx, label, and uuid
+			IFS=","
+			A_PARTITION_DATA[i]=${a_partition_working[0]}","${a_partition_working[1]}","${a_partition_working[2]}","${a_partition_working[3]}","${a_partition_working[4]}","${a_partition_working[5]}","$dev_item
+			IFS="$ORIGINAL_IFS"
 		fi
 	done
 	temp_array=${A_PARTITION_DATA[@]}
@@ -5385,8 +5395,9 @@ get_partition_data_advanced()
 	local a_partition_working='' dev_partition_data=''
 	local dev_item='' dev_label='' dev_uuid='' temp_array=''
 	local mount_point=''
-	# set dev disk label/uuid data globals
+	# set dev disk label/mapper/uuid data globals
 	get_partition_dev_data 'label'
+	get_partition_dev_data 'mapper'
 	get_partition_dev_data 'uuid'
 
 	if [[ $B_MOUNTS_FILE == 'true' ]];then
@@ -5460,8 +5471,9 @@ get_partition_data_advanced()
 			IFS=","
 			a_partition_working=( ${A_PARTITION_DATA[i]} )
 			IFS="$ORIGINAL_IFS"
-
-			dev_item=${a_partition_working[6]}
+			# get the mapper actual dev item first, in case it's mapped
+			dev_item=$( get_dev_processed_item "${a_partition_working[6]}" )
+			dev_item=$( basename $dev_item ) ## needed to avoid error in case name still has / in it
 			dev_label=${a_partition_working[7]}
 			dev_uuid=${a_partition_working[8]}
 			
@@ -5472,7 +5484,7 @@ get_partition_data_advanced()
 			if [[ -z $dev_item ]];then
 				if [[ -n $DEV_DISK_UUID && -n $dev_uuid ]];then
 					dev_item=$( echo "$DEV_DISK_UUID" | gawk '
-						/'$dev_uuid'/ {
+						$0 ~ /[ \t]'$dev_uuid'[ \t]/ {
 							item=gensub( /..\/..\/(.+)/, "\\1", 1, $NF )
 							print item
 						}' )
@@ -5481,7 +5493,7 @@ get_partition_data_advanced()
 						# first we need to change space x20 in by-label back to a real space
 						#gsub( /x20/, " ", $0 )
 						# then we can see if the string is there
-						/'$dev_label'/ {
+						$0 ~ /[ \t]'$dev_label'[ \t]/ {
 							item=gensub( /..\/..\/(.+)/, "\\1", 1, $NF )
 							print item
 						}' )
@@ -5515,19 +5527,35 @@ get_partition_data_advanced()
 	eval $LOGFE
 }
 
-# args: $1 - uuid/label/id
+# args: $1 - uuid/label/id/mapper
 get_partition_dev_data()
 {
 	eval $LOGFS
 	
 	# only run these tests once per directory to avoid excessive queries to fs
 	case $1 in
+		id)
+			if [[ $B_ID_SET != 'true' ]];then
+				if [[ -d /dev/disk/by-id ]];then
+					DEV_DISK_ID="$( ls -l /dev/disk/by-id )"
+				fi
+				B_ID_SET='true'
+			fi
+			;;
 		label)
 			if [[ $B_LABEL_SET != 'true' ]];then
 				if [[ -d /dev/disk/by-label ]];then
 					DEV_DISK_LABEL="$( ls -l /dev/disk/by-label )"
 				fi
 				B_LABEL_SET='true'
+			fi
+			;;
+		mapper)
+			if [[ $B_MAPPER_SET != 'true' ]];then
+				if [[ -d /dev/mapper ]];then
+					DEV_DISK_MAPPER="$( ls -l /dev/mapper )"
+				fi
+				B_MAPPER_SET='true'
 			fi
 			;;
 		uuid)
@@ -5538,16 +5566,9 @@ get_partition_dev_data()
 				B_UUID_SET='true'
 			fi
 			;;
-		id)
-			if [[ $B_ID_SET != 'true' ]];then
-				if [[ -d /dev/disk/by-uuid ]];then
-					DEV_DISK_ID="$( ls -l /dev/disk/by-id )"
-				fi
-				B_ID_SET='true'
-			fi
-			;;
+		
 	esac
-	log_function_data 'raw' "DEV_DISK_LABEL:\n$DEV_DISK_LABEL\n\nDEV_DISK_UUID:\n$DEV_DISK_UUID$DEV_DISK_LABEL\n\nDEV_DISK_ID:\n$DEV_DISK_ID"
+	log_function_data 'raw' "DEV_DISK_LABEL:\n$DEV_DISK_LABEL\n\nDEV_DISK_UUID:\n$DEV_DISK_UUID\n\nDEV_DISK_ID:\n$DEV_DISK_ID\n\nDEV_DISK_MAPPER:\n$DEV_DISK_MAPPER"
 	# debugging section, uncomment to insert user data
 # 	DEV_DISK_LABEL='
 #
@@ -5555,12 +5576,40 @@ get_partition_dev_data()
 # DEV_DISK_UUID='
 #
 # '
+# DEV_DISK_MAPPER='
+#
+# '
+	eval $LOGFE
+}
+
+# args: $1 - dev item, check for mapper, then get actual dev item if mapped
+# eg: lrwxrwxrwx 1 root root       7 Sep 26 15:10 truecrypt1 -> ../dm-2 
+get_dev_processed_item()
+{
+	eval $LOGFS
+	
+	local dev_item=$1 dev_return=''
+	
+	if [[ -n $DEV_DISK_MAPPER && -n $( grep -is 'mapper/' <<< $dev_item ) ]];then
+		dev_return=$( echo "$DEV_DISK_MAPPER" | gawk '
+		$( NF - 2 ) ~ /^'$( basename $dev_item )'$/ {
+			item=gensub( /..\/(.+)/, "\\1", 1, $NF )
+			print item
+		}' )
+	fi
+	if [[ -z $dev_return ]];then
+		dev_return=$dev_item
+	fi
+	
+	echo $dev_return
+
 	eval $LOGFE
 }
 
 get_patch_version_string()
 {
 	local script_patch_number=$( sed 's/^[0]\+//' <<< $SCRIPT_PATCH_NUMBER )
+	
 	if [[ -n $script_patch_number ]];then
 		script_patch_number="-$script_patch_number"
 	fi
