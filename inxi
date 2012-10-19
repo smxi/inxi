@@ -3,7 +3,7 @@
 ####  Script Name: inxi
 ####  version: 1.8.19
 ####  Date: October 18 2012
-####  Patch Number: 01
+####  Patch Number: 02
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -2762,7 +2762,7 @@ get_audio_data()
 
 	IFS=$'\n'
 	# this first step handles the drivers for cases where the second step fails to find one
-	device_count=$( echo "$Lspci_Data" | grep -iEc '(multimedia audio controller|audio device)' )
+	device_count=$( echo "$Lspci_v_Data" | grep -iEc '(multimedia audio controller|audio device)' )
 	if [[ $device_count -eq 1 ]] && [[ $B_ASOUND_DEVICE_FILE == 'true' ]];then
 		alsa_driver=$( gawk -F ']: ' '
 		BEGIN {
@@ -2785,7 +2785,7 @@ get_audio_data()
 	alsa_driver=$( echo $alsa_driver )
 	# now we'll build the main audio data, card name, driver, and port. If no driver is found,
 	# and if the first method above is not null, and one card is found, it will use that instead.
-	A_AUDIO_DATA=( $( echo "$Lspci_Data" | gawk -F ': ' -v alsaDriver="$alsa_driver" '
+	A_AUDIO_DATA=( $( echo "$Lspci_v_Data" | gawk -F ': ' -v alsaDriver="$alsa_driver" '
 	BEGIN {
 		IGNORECASE=1
 	}
@@ -2922,7 +2922,7 @@ get_audio_usb_data()
 						}
 						if ( $2 != "" ){
 							sub(/:/,"", $4)
-							print string ",USB Audio,,," $2 "-" $4
+							print string ",USB Audio,,," $2 "-" $4 "," $6
 						}
 					}' <<< "$usb_data" )
 				fi
@@ -3976,7 +3976,7 @@ get_graphics_card_data()
 		gsub(/ [ \t]+/, " ", $NF)
 		busId=gensub(/^([0-9a-f:\.]+) (.+)$/,"\\1","",$1)
 		print $NF "," busId
-	}' <<< "$Lspci_Data" ) )
+	}' <<< "$Lspci_v_Data" ) )
 	IFS="$ORIGINAL_IFS"
 # 	for (( i=0; i < ${#A_GFX_CARD_DATA[@]}; i++ ))
 # 	do
@@ -3984,7 +3984,7 @@ get_graphics_card_data()
 # 	done
 
 	# GFXMEM is UNUSED at the moment, because it shows AGP aperture size, which is not necessarily equal to GFX memory..
-	# GFXMEM="size=[$(echo "$Lspci_Data" | gawk '/VGA/{while (!/^$/) {getline;if (/size=[0-9][0-9]*M/) {size2=gensub(/.*\[size=([0-9]+)M\].*/,"\\1","g",$0);if (size<size2){size=size2}}}}END{print size2}')M]"
+	# GFXMEM="size=[$(echo "$Lspci_v_Data" | gawk '/VGA/{while (!/^$/) {getline;if (/size=[0-9][0-9]*M/) {size2=gensub(/.*\[size=([0-9]+)M\].*/,"\\1","g",$0);if (size<size2){size=size2}}}}END{print size2}')M]"
 	temp_array=${A_GFX_CARD_DATA[@]}
 	log_function_data "A_GFX_CARD_DATA: $temp_array"
 	eval $LOGFE
@@ -4551,17 +4551,37 @@ get_hdd_temp_data()
 	eval $LOGFE
 }
 
+# args: $1 - v/n 
 get_lspci_data()
 {
 	eval $LOGFS
-	local lspci_data="$( lspci -v | gawk '{
+	local lspci_data="$( lspci -$1 | gawk '{
 		gsub(/\(prog-if[^)]*\)/,"")
 		sub(/^0000:/, "", $0) # seen case where the 0000: is prepended, rare, but happens
 		print
 	}' )"
 	
 	echo "$lspci_data"
-	log_function_data 'raw' "lspci_data:\n$lspci_data"
+	log_function_data 'raw' "lspci_data $1:\n$lspci_data"
+	eval $LOGFE
+}
+
+# args: $1 - busid
+get_lspci_vendor_product()
+{
+	eval $LOGFS
+	
+	local vendor_product=''
+	
+	vendor_product=$( gawk '
+	/^'$1'/ {
+		if ( $3 != "" ) {
+			print $3
+		}
+	}' <<< "$Lspci_n_Data" )
+	
+	echo $vendor_product
+	
 	eval $LOGFE
 }
 
@@ -4727,7 +4747,7 @@ get_networking_data()
 	
 	IFS=$'\n'
 	A_NETWORK_DATA=( $( 
-	echo "$Lspci_Data" | gawk '
+	echo "$Lspci_v_Data" | gawk '
 	BEGIN {
 		IGNORECASE=1
 		counter=0 # required to handle cases of > 1 instance of the same chipset
@@ -4768,6 +4788,7 @@ get_networking_data()
 			usePorts=""
 			useModules=""
 			usePciBusId=""
+
 			if ( eth[i] > 1 ) {
 				a[j] = eth[i] "x " i
 			}
@@ -4970,7 +4991,7 @@ get_networking_usb_data()
 				}
 				if ( $2 != "" ){
 					sub(/:/, "", $4 )
-					print string ",,,,usb-" $2  "-" $4
+					print string ",,,,usb-" $2  "-" $4 "," $6
 				}
 			}' <<< "$lsusb_data" 
 			) )
@@ -6635,13 +6656,16 @@ print_it_out()
 {
 	eval $LOGFS
 	# note that print_it_out passes local variable values on to its children,
-	# and in some cases, their children, with Lspci_Data
-	local Lspci_Data='' # only for verbose
+	# and in some cases, their children, with Lspci_v_Data
+	local Lspci_v_Data='' Lspci_n_Data='' # only for verbose
 
 	if [[ $B_SHOW_SHORT_OUTPUT == 'true' ]];then
 		print_short_data
 	else
-		Lspci_Data="$( get_lspci_data )"
+		Lspci_v_Data="$( get_lspci_data 'v' )"
+		if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+			Lspci_n_Data="$( get_lspci_data 'n' )"
+		fi
 		if [[ $B_SHOW_SYSTEM == 'true' ]];then
 			print_system_data
 		fi
@@ -7543,7 +7567,7 @@ print_networking_data()
 	eval $LOGFS
 	local i='' card_id='' network_data='' a_network_working='' port_data='' driver_data=''
 	local card_string='' port_plural='' module_version='' pci_bus_id='' bus_usb_text=''
-	local bus_usb_id='' line_starter='Network:' card_string='' card_data=''
+	local bus_usb_id='' line_starter='Network:' card_string='' card_data='' vendor_product=''
 	# set A_NETWORK_DATA
 	get_networking_data
 
@@ -7565,6 +7589,7 @@ print_networking_data()
 			pci_bus_id=''
 			port_data=''
 			port_plural=''
+			vendor_product=''
 
 			if [[ ${#A_NETWORK_DATA[@]} -gt 1 ]];then
 				card_id="-$(( $i + 1 ))"
@@ -7585,14 +7610,23 @@ print_networking_data()
 				if [[ -z $( grep '^usb-' <<< ${a_network_working[4]} ) ]];then
 					bus_usb_text='bus-ID'
 					bus_usb_id=${a_network_working[4]}
+					if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+						vendor_product=$( get_lspci_vendor_product "${a_network_working[4]}" )
+					fi
 				else
 					bus_usb_text='usb-ID'
 					bus_usb_id=$( cut -d '-' -f '2-4' <<< ${a_network_working[4]} )
+					if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+						vendor_product=${a_network_working[5]}
+					fi
 				fi
 				pci_bus_id="${C1}$bus_usb_text$SEP3${C2} $bus_usb_id"
+				if [[ -n $vendor_product ]];then
+					vendor_product=" ${C1}chip-ID$SEP3${C2} $vendor_product"
+				fi
 			fi
 			card_string="${C1}Card$card_id:${C2} ${a_network_working[0]} "
-			card_data="$driver_data$port_data$pci_bus_id"
+			card_data="$driver_data$port_data$pci_bus_id$vendor_product"
 			if [[ $( calculate_line_length "$card_string$card_data" ) -gt $LINE_MAX ]];then
 				network_data=$( create_print_line "$line_starter" "$card_string" )
 				line_starter=' '
