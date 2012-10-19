@@ -2,8 +2,8 @@
 ########################################################################
 ####  Script Name: inxi
 ####  version: 1.8.19
-####  Date: October 18 2012
-####  Patch Number: 05
+####  Date: October 19 2012
+####  Patch Number: 06
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -1364,6 +1364,7 @@ debug_data_collector()
 		echo 'Collecting system info: sensors, lsusb, lspci, lspci -v data, plus /proc data'
 		lsusb &> $debug_data_dir/lsusb.txt
 		lspci &> $debug_data_dir/lspci.txt
+		lspci -n &> $debug_data_dir/lspci-n.txt
 		lspci -v &> $debug_data_dir/lspci-v.txt
 		ps aux &> $debug_data_dir/ps-aux.txt
 		sensors &> $debug_data_dir/sensors.txt
@@ -2758,13 +2759,13 @@ get_cmdline()
 get_audio_data()
 {
 	eval $LOGFS
-	local i='' alsa_data='' alsa_driver='' device_count='' temp_array=''
+	local i='' alsa_data='' audio_driver='' device_count='' temp_array=''
 
 	IFS=$'\n'
 	# this first step handles the drivers for cases where the second step fails to find one
 	device_count=$( echo "$Lspci_v_Data" | grep -iEc '(multimedia audio controller|audio device)' )
 	if [[ $device_count -eq 1 ]] && [[ $B_ASOUND_DEVICE_FILE == 'true' ]];then
-		alsa_driver=$( gawk -F ']: ' '
+		audio_driver=$( gawk -F ']: ' '
 		BEGIN {
 			IGNORECASE=1
 		}
@@ -2782,10 +2783,10 @@ get_audio_data()
 
 	# this is to safeguard against line breaks from results > 1, which if inserted into following
 	# array will create a false array entry. This is a hack, not a permanent solution.
-	alsa_driver=$( echo $alsa_driver )
+	audio_driver=$( echo $audio_driver )
 	# now we'll build the main audio data, card name, driver, and port. If no driver is found,
 	# and if the first method above is not null, and one card is found, it will use that instead.
-	A_AUDIO_DATA=( $( echo "$Lspci_v_Data" | gawk -F ': ' -v alsaDriver="$alsa_driver" '
+	A_AUDIO_DATA=( $( echo "$Lspci_v_Data" | gawk -F ': ' -v audioDriver="$audio_driver" '
 	BEGIN {
 		IGNORECASE=1
 	}
@@ -2836,8 +2837,8 @@ get_audio_data()
 				if (drivers[i] != "") {
 					useDrivers=drivers[i]
 				}
-				else if ( alsaDriver != "" ) {
-					useDrivers=alsaDriver
+				else if ( audioDriver != "" ) {
+					useDrivers=audioDriver
 				}
 			}
 			if (ports[i] != "") {
@@ -6812,9 +6813,9 @@ print_short_data()
 print_audio_data()
 {
 	eval $LOGFS
-	local i='' card_id='' audio_data='' a_audio_data='' port_data='' pci_bus_id=''
-	local a_audio_working='' alsa_driver='' alsa_data='' port_plural='' module_version=''
-	local bus_usb_text='' bus_usb_id='' line_starter='Audio:' alsa='' alsa_version=''
+	local i='' card_id='' audio_data='' a_audio_data='' port_data='' pci_bus_id='' card_string=''
+	local a_audio_working='' audio_driver='' alsa_data='' port_plural='' module_version=''
+	local bus_usb_text='' bus_usb_id='' line_starter='Audio:' alsa='' alsa_version='' print_data=''
 	# set A_AUDIO_DATA and get alsa data
 	get_audio_data
 	get_audio_alsa_data
@@ -6843,13 +6844,15 @@ print_audio_data()
 			a_audio_working=( ${A_AUDIO_DATA[i]} )
 			IFS="$ORIGINAL_IFS"
 			port_data=''
-			alsa_driver=''
+			audio_driver=''
 			audio_data=''
+			card_string=''
 			port_plural=''
 			module_version=''
 			pci_bus_id=''
 			bus_usb_text=''
 			bus_usb_id=''
+			print_data=''
 			vendor_product=''
 			
 			if [[ ${#A_AUDIO_DATA[@]} -gt 1 ]];then
@@ -6862,13 +6865,13 @@ print_audio_data()
 			fi
 			# we're testing for the presence of the 2nd array item here, which is the driver name
 			if [[ -n ${a_audio_working[1]} ]];then
-				alsa_driver=" ${C1}driver$SEP3${C2} ${a_audio_working[1]}"
+				audio_driver="${C1}driver$SEP3${C2} ${a_audio_working[1]} "
 			fi
 			if [[ -n ${a_audio_working[2]} && $B_EXTRA_DATA == 'true' ]];then
 				if [[ $( wc -w <<< ${a_audio_working[2]} ) -gt 1 ]];then
 					port_plural='s'
 				fi
-				port_data=" ${C1}port$port_plural$SEP3${C2} ${a_audio_working[2]}"
+				port_data="${C1}port$port_plural$SEP3${C2} ${a_audio_working[2]} "
 			fi
 			if [[ -n ${a_audio_working[4]} && $B_EXTRA_DATA == 'true' ]];then
 				if [[ ${a_audio_working[1]} != 'USB Audio' ]];then
@@ -6883,24 +6886,33 @@ print_audio_data()
 					fi
 				fi
 				bus_usb_id=${a_audio_working[4]}
-				pci_bus_id=" ${C1}$bus_usb_text$SEP3${C2} $bus_usb_id"
+				pci_bus_id="${C1}$bus_usb_text$SEP3${C2} $bus_usb_id "
 				if [[ -n $vendor_product ]];then
-					vendor_product=" ${C1}chip-ID$SEP3${C2} $vendor_product"
+					vendor_product="${C1}chip-ID$SEP3${C2} $vendor_product "
 				fi
 			fi
 			if [[ -n ${a_audio_working[0]} ]];then
-				audio_data="${C1}Card$card_id:${C2} ${a_audio_working[0]}$alsa_driver$port_data$pci_bus_id"
+				card_string="${C1}Card$card_id:${C2} ${a_audio_working[0]} "
+				audio_data="$audio_driver$port_data$pci_bus_id$vendor_product"
 			fi
 			# only print alsa on last line if short enough, otherwise print on its own line
 			if [[ $i -eq 0 ]];then
-				if [[ -n $alsa_data && $( calculate_line_length "${audio_data}$alsa_data" ) -lt $LINE_MAX ]];then
+				if [[ -n $alsa_data && $( calculate_line_length "$card_string${audio_data}$alsa_data" ) -lt $LINE_MAX ]];then
 					audio_data="$audio_data $alsa_data"
 					alsa_data=''
 				fi
 			fi
 			if [[ -n $audio_data ]];then
-				audio_data=$( create_print_line "$line_starter" "$audio_data" )
-				print_screen_output "$audio_data"
+				if [[ $( calculate_line_length "$card_string${audio_data}$alsa_data" ) -lt $LINE_MAX ]];then
+					print_data=$( create_print_line "$line_starter" "$card_string$audio_data" )
+					print_screen_output "$print_data"
+				else
+					print_data=$( create_print_line "$line_starter" "$card_string" )
+					print_screen_output "$print_data"
+					line_starter=' '
+					print_data=$( create_print_line "$line_starter" "$audio_data" )
+					print_screen_output "$print_data"
+				fi
 				line_starter=' '
 			fi
 		done
@@ -7059,9 +7071,9 @@ print_gfx_data()
 	eval $LOGFS
 	local gfx_data='' i='' card_id='' root_alert='' root_x_string='' a_gfx_working=''
 	local b_is_mesa='false' display_full_string='' gfx_bus_id='' gfx_card_data=''
-	local res_tty='Resolution' xorg_data='' x_vendor_string='' 
+	local res_tty='Resolution' xorg_data='' x_vendor_string='' vendor_product=''
 	local spacer='' x_driver='' x_driver_string='' x_driver_plural='' direct_render_string=''
-	local separator_loaded='' separator_unloaded='' separator_failed=''
+	local separator_loaded='' separator_unloaded='' separator_failed='' 
 	local loaded='' unloaded='' failed=''
 	local line_starter='Graphics:'
 	local screen_resolution="$( get_graphics_res_data )"
@@ -7159,16 +7171,22 @@ print_gfx_data()
 			if [[ $B_EXTRA_DATA == 'true' ]];then
 				if [[ -n ${a_gfx_working[1]} ]];then
 					gfx_bus_id=" ${C1}bus-ID$SEP3${C2} ${a_gfx_working[1]}"
+					if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+						vendor_product=$( get_lspci_vendor_product "${a_gfx_working[1]}" )
+					fi
 				else
 					gfx_bus_id=" ${C1}bus-ID$SEP3${C2} N/A"
 				fi
+			fi
+			if [[ -n $vendor_product ]];then
+				vendor_product=" ${C1}chip-ID$SEP3${C2} $vendor_product"
 			fi
 			if [[ ${#A_GFX_CARD_DATA[@]} -gt 1 ]];then
 				card_id="Card-$(($i+1)):"
 			else
 				card_id='Card:'
 			fi
-			gfx_data="${C1}$card_id${C2} $gfx_card_data$gfx_bus_id "
+			gfx_data="${C1}$card_id${C2} $gfx_card_data$gfx_bus_id$vendor_product "
 			if [[ ${#A_GFX_CARD_DATA[@]} -gt 1 ]];then
 				gfx_data=$( create_print_line "$line_starter" "${gfx_data}" )
 				print_screen_output "$gfx_data"
