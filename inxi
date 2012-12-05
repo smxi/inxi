@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.8.23
-####  Date: November 19 2012
+####  version: 1.8.24
+####  Date: December 5 2012
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -420,9 +420,9 @@ LOG_FILE_1="$SCRIPT_DATA_DIR/inxi.1.log"
 LOG_FILE_2="$SCRIPT_DATA_DIR/inxi.2.log"
 MAN_FILE_DOWNLOAD='http://inxi.googlecode.com/svn/trunk/inxi.1.gz'
 MAN_FILE_LOCATION='/usr/share/man/man1'
-SCRIPT_NAME="inxi"
+SCRIPT_NAME='inxi'
 SCRIPT_PATCH_NUMBER=''
-SCRIPT_PATH=""			#filled-in in Main
+SCRIPT_PATH='' #filled-in in Main
 SCRIPT_VERSION_NUMBER=""	#filled-in in Main
 SCRIPT_DOWNLOAD='http://inxi.googlecode.com/svn/trunk/'
 SCRIPT_DOWNLOAD_BRANCH_1='http://inxi.googlecode.com/svn/branches/one/'
@@ -2233,7 +2233,7 @@ show_options()
 	print_screen_output "-G  Show Graphic card information (card, x type, resolution, glx renderer, version)."
 	print_screen_output "-i  Show Wan IP address, and shows local interfaces (requires ifconfig network tool). Same as -Nni"
 	print_screen_output "    Not shown with -F for user security reasons, you shouldn't paste your local/wan IP."
-	print_screen_output "-I  Show Information: processes, uptime, memory, irc client, inxi version."
+	print_screen_output "-I  Show Information: processes, uptime, memory, irc client (or shell type), inxi version."
 	print_screen_output "-l  Show partition labels. Default: short partition -P. For full -p output, use: -pl (or -plu)."
 	print_screen_output "-M  Show machine data. Motherboard, Bios, and if present, System Builder (Like Lenovo)."
 	print_screen_output "    Older systems/kernels without the required /sys data can use dmidecode instead, run as root."
@@ -2277,6 +2277,7 @@ show_options()
 	print_screen_output "    -G - (for single gpu, nvidia driver) screen number gpu is running on."
 	print_screen_output "    -i - Show IPv6 as well for LAN interface (IF) devices."
 	print_screen_output "    -I - Show system GCC, default. With -xx, also show other installed GCC versions."
+	print_screen_output "       - If running in console, not in IRC client, shows shell version number if detected."
 	print_screen_output "    -N -A - Adds version/port(s)/driver version (if available) for Network/Audio;"
 	print_screen_output "    -N -A -G - Network, audio, graphics, shows PCI Bus ID/Usb ID number of card;"
 	print_screen_output "    -R - Shows component raid id. Adds second RAID Info line: raid level; report on drives (like 5/5);"
@@ -3479,7 +3480,7 @@ get_desktop_environment()
 }
 
 # note: gawk doesn't support white spaces in search string, gave errors, so use [[:space:]] instead
-# args: $1 - desktop command for --version; $2 - search string; $3 - gawk print number
+# args: $1 - desktop/app command for --version; $2 - search string; $3 - gawk print number
 get_de_app_version()
 {
 	local version_data='' version='' get_version='--version' 
@@ -3490,10 +3491,17 @@ get_de_app_version()
 			get_version='-v'
 			;;
 	esac
-	# note, some wm send version info to stderr instead of stdout
+	
 	case $1 in
-		dwm|scrotwm)
+		# note, some wm/apps send version info to stderr instead of stdout
+		dwm|ksh|scrotwm)
 			version_data="$( $1 $get_version 2>&1 )"
+			;;
+		# quick debian/buntu hack until I find a universal way to get version for these
+		csh|dash)
+			if [[ -n $( type -p dpkg ) ]];then
+				version_data="$( dpkg -l $1 2>/dev/null )"
+			fi
 			;;
 		*)
 			version_data="$( $1 $get_version 2>/dev/null )"
@@ -6508,6 +6516,44 @@ get_sensors_output()
 	echo -e "$sensors_data"
 }
 
+get_shell_data()
+{
+	eval $LOGFS
+
+	local shell_type="$( ps -p $PPID -o comm= 2>/dev/null )"
+	local shell_version=''
+	
+	if [[ $B_EXTRA_DATA == 'true' && -n $shell_type ]];then
+		case $shell_type in
+			bash)
+				shell_version=$( get_de_app_version "$shell_type" "^GNU[[:space:]]bash,[[:space:]]version" "4" | sed -E 's/(\(.*|-release|-version)//' )
+				;;
+			# csh/dash use dpkg package version data, debian/buntu only
+			csh)
+				shell_version=$( get_de_app_version "$shell_type" "$shell_type" "3" )
+				;;
+			dash)
+				shell_version=$( get_de_app_version "$shell_type" "$shell_type" "3" )
+				;;
+			ksh)
+				shell_version=$( get_de_app_version "$shell_type" "version" "5" )
+				;;
+			tcsh)
+				shell_version=$( get_de_app_version "$shell_type" "^tcsh" "2" )
+				;;
+			zsh)
+				shell_version=$( get_de_app_version "$shell_type" "^zsh" "2" )
+				;;
+		esac
+	fi
+	if [[ -n $shell_version ]];then
+		shell_type="$shell_type $shell_version"
+	fi
+	echo $shell_type
+	
+	eval $LOGFS
+}
+
 get_unmounted_partition_data()
 {
 	eval $LOGFS
@@ -7416,7 +7462,7 @@ print_info_data()
 	eval $LOGFS
 
 	local info_data='' line_starter='Info:'
-	local runlvl='' client_data=''
+	local runlvl='' client_data='' shell_data=''
 	local memory="$( get_memory_data )"
 	local processes="$(( $( ps aux | wc -l ) - 1 ))"
 	local up_time="$( get_uptime )"
@@ -7437,8 +7483,11 @@ print_info_data()
 			gcc_installed="${C1}Gcc sys$SEP3${C2} $gcc_installed$gcc_others "
 		fi
 	fi
-	if [[  $B_RUNNING_IN_SHELL == 'true' && -n $SHELL ]];then
-		IRC_CLIENT="$IRC_CLIENT ($( basename $SHELL ))"
+	if [[  $B_RUNNING_IN_SHELL == 'true' ]];then
+		shell_data=$( get_shell_data )
+		if [[ -n $shell_data ]];then
+			IRC_CLIENT="$IRC_CLIENT ($shell_data)"
+		fi
 	fi
 
 	# Some code could look superfluous but BitchX doesn't like lines not ending in a newline. F*&k that bitch!
