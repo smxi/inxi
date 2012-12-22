@@ -1,9 +1,9 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.8.2
-####  Date: May 11 2012
-####  Patch Number: 00
+####  version: 1.8.24
+####  Date: December 6 2012
+####  Patch Number: 01-b1
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -180,6 +180,7 @@ COLOR_SCHEME=''
 CPU_SLEEP='0.3' 
 DEV_DISK_ID=''
 DEV_DISK_LABEL=''
+DEV_DISK_MAPPER=''
 DEV_DISK_UUID=''
 FILTER_STRING='<filter>'
 IRC_CLIENT=''
@@ -240,6 +241,7 @@ B_HANDLE_CORRUPT_DATA='false'
 B_LABEL_SET='false'
 B_LOG_COLORS='false'
 B_LOG_FULL_DATA='false'
+B_MAPPER_SET='false'
 B_OUTPUT_FILTER='false'
 B_OVERRIDE_FILTER='false'
 # kde qdbus
@@ -282,6 +284,8 @@ B_SHOW_PARTITIONS_FULL='false'
 B_SHOW_PS_CPU_DATA='false'
 B_SHOW_PS_MEM_DATA='false'
 B_SHOW_RAID='false'
+# because many systems have no mdstat file, -b/-F should not show error if no raid file found
+B_SHOW_RAID_R='false' 
 B_SHOW_REPOS='false'
 B_RUNNING_IN_X='false'
 B_SHOW_SENSORS='false'
@@ -311,6 +315,7 @@ B_MDSTAT_FILE='false'
 B_MEMINFO_FILE='false'
 B_MODULES_FILE='false' #
 B_MOUNTS_FILE='false'
+B_OS_RELEASE_FILE='false' # new default distro id file? will this one work where lsb-release didn't?
 B_PARTITIONS_FILE='false' #
 B_PROC_DIR='false'
 B_SCSI_FILE='false'
@@ -325,6 +330,7 @@ FILE_MDSTAT='/proc/mdstat'
 FILE_MEMINFO='/proc/meminfo'
 FILE_MODULES='/proc/modules'
 FILE_MOUNTS='/proc/mounts'
+FILE_OS_RELEASE='/etc/os-release'
 FILE_PARTITIONS='/proc/partitions'
 FILE_SCSI='/proc/scsi/scsi'
 FILE_XORG_LOG='/var/log/Xorg.0.log' # if not found, search and replace with actual location
@@ -412,9 +418,11 @@ ALTERNATE_FTP='' # for data uploads
 LOG_FILE="$SCRIPT_DATA_DIR/inxi.log"
 LOG_FILE_1="$SCRIPT_DATA_DIR/inxi.1.log"
 LOG_FILE_2="$SCRIPT_DATA_DIR/inxi.2.log"
-SCRIPT_NAME="inxi"
+MAN_FILE_DOWNLOAD='http://inxi.googlecode.com/svn/trunk/inxi.1.gz'
+MAN_FILE_LOCATION='/usr/share/man/man1'
+SCRIPT_NAME='inxi'
 SCRIPT_PATCH_NUMBER=''
-SCRIPT_PATH=""			#filled-in in Main
+SCRIPT_PATH='' #filled-in in Main
 SCRIPT_VERSION_NUMBER=""	#filled-in in Main
 SCRIPT_DOWNLOAD='http://inxi.googlecode.com/svn/trunk/'
 SCRIPT_DOWNLOAD_BRANCH_1='http://inxi.googlecode.com/svn/branches/one/'
@@ -500,8 +508,11 @@ CN=''
 DISTROS_DERIVED="antix-version aptosid-version kanotix-version knoppix-version mandrake-release pardus-release sabayon-release siduction-version sidux-version turbolinux-release zenwalk-version"
 # debian_version excluded from DISTROS_PRIMARY so Debian can fall through to /etc/issue detection. Same goes for Ubuntu.
 DISTROS_EXCLUDE_LIST="debian_version ubuntu_version"
-DISTROS_PRIMARY="gentoo-release redhat-release slackware-version SuSE-release"
+DISTROS_PRIMARY="arch-release gentoo-release redhat-release slackware-version SuSE-release"
 DISTROS_LSB_GOOD="mandrake-release mandriva-release mandrakelinux-release"
+# this is being used both by core distros and derived distros now, eg, solusos uses it for solusos id, while
+# debian, solusos base, uses it as well, so we have to know which it is.
+DISTROS_OS_RELEASE_GOOD="arch-release SuSE-release"
 ## Distros with known problems
 # DSL (Bash 2.05b: grep -m doesn't work; arrays won't work) --> unusable output
 # Puppy Linux 4.1.2 (Bash 3.0: arrays won't work) --> works partially
@@ -715,6 +726,10 @@ initialize_script_data()
 
 	if [[ -f $FILE_LSB_RELEASE ]];then
 		B_LSB_FILE='true'
+	fi
+	
+	if [[ -f $FILE_OS_RELEASE ]];then
+		B_OS_RELEASE_FILE='true'
 	fi
 
 	if [[ -e $FILE_SCSI ]];then
@@ -1248,7 +1263,9 @@ create_rotate_logfiles()
 script_self_updater()
 {
 	eval $LOGFS
-	local wget_error=0 file_contents=''
+	local wget_error=0 file_contents='' wget_man_error=0 
+	local man_file_path="$MAN_FILE_LOCATION/inxi.1.gz"
+
 	print_screen_output "Starting $SCRIPT_NAME self updater."
 	print_screen_output "Currently running $SCRIPT_NAME version number: $SCRIPT_VERSION_NUMBER"
 	print_screen_output "Current version patch number: $SCRIPT_PATCH_NUMBER"
@@ -1266,6 +1283,39 @@ script_self_updater()
 			print_screen_output "Successfully updated to $2 version: $SCRIPT_VERSION_NUMBER"
 			print_screen_output "New $2 version patch number: $SCRIPT_PATCH_NUMBER"
 			print_screen_output "To run the new version, just start $SCRIPT_NAME again."
+			print_screen_output "----------------------------------------"
+			print_screen_output "Starting download of man page file now."
+			if [[ ! -d $MAN_FILE_LOCATION ]];then
+				print_screen_output "The required man directory was not detected on your system, unable to continue: $MAN_FILE_LOCATION"
+			else
+				if [[ $B_ROOT == 'true' ]];then
+					print_screen_output "Checking Man page download URL..."
+					if [[ -f /usr/share/man/man8/inxi.8.gz ]];then
+						print_screen_output "Updating man page location to man1."
+						mv -f /usr/share/man/man8/inxi.8.gz /usr/share/man/man1/inxi.1.gz 
+						if [[ -n $( type -p mandb ) ]];then
+							exec $( type -p mandb ) -q 
+						fi
+					fi
+					wget -q --spider $MAN_FILE_DOWNLOAD || wget_man_error=$?
+					if [[ $wget_man_error -eq 0 ]];then
+						print_screen_output "Man file download URL verified: $MAN_FILE_DOWNLOAD"
+						print_screen_output "Downloading Man page file now."
+						wget -q -O $man_file_path $MAN_FILE_DOWNLOAD || wget_man_error=$?
+						if [[ $wget_man_error -gt 0 ]];then
+							print_screen_output "Oh no! Something went wrong downloading the Man gz file at: $MAN_FILE_DOWNLOAD"
+							print_screen_output "Check the error messages for what happened. Error: $wget_man_error"
+						else
+							print_screen_output "Download/install of man page successful. Check to make sure it works: man inxi"
+						fi
+					else
+						print_screen_output "Man file download URL failed, unable to continue: $MAN_FILE_DOWNLOAD"
+					fi
+				else
+					print_screen_output "Updating / Installing the Man page requires root user, writing to: $MAN_FILE_LOCATION"
+					print_screen_output "If you want the man page, you'll have to run $SCRIPT_NAME -U as root."
+				fi
+			fi
 			exit 0
 		else
 			error_handler 16
@@ -1315,12 +1365,15 @@ debug_data_collector()
 		echo 'Collecting system info: sensors, lsusb, lspci, lspci -v data, plus /proc data'
 		lsusb &> $debug_data_dir/lsusb.txt
 		lspci &> $debug_data_dir/lspci.txt
+		lspci -n &> $debug_data_dir/lspci-n.txt
 		lspci -v &> $debug_data_dir/lspci-v.txt
 		ps aux &> $debug_data_dir/ps-aux.txt
 		sensors &> $debug_data_dir/sensors.txt
 		ls /usr/bin/gcc* &> $debug_data_dir/gcc-sys-versions.txt
 		gcc --version &> $debug_data_dir/gcc-version.txt
+		cat /etc/issue &> $debug_data_dir/etc-issue.txt
 		cat $FILE_LSB_RELEASE &> $debug_data_dir/lsb-release.txt
+		cat $FILE_OS_RELEASE &> $debug_data_dir/os-release.txt
 		cat $FILE_ASOUND_DEVICE &> $debug_data_dir/proc-asound-device.txt
 		cat $FILE_ASOUND_VERSION &> $debug_data_dir/proc-asound-version.txt
 		cat $FILE_CPUINFO &> $debug_data_dir/proc-cpu-info.txt
@@ -1364,6 +1417,8 @@ debug_data_collector()
 			if [[ $b_run_xiin == 'true' ]];then
 				echo $Line
 				echo "Running $xiin_file tool now on /sys..."
+				echo "Using Python version:" && python --version
+				python --version &> $debug_data_dir/python-version.txt
 				python ./$xiin_file -d /sys -f $xiin_data_file
 				if [[ $? -ne 0 ]];then
 					error=$?
@@ -1417,6 +1472,7 @@ debug_data_collector()
 			ls -l /dev/disk/by-label &> $debug_data_dir/dev-disk-label-data.txt
 			ls -l /dev/disk/by-uuid &> $debug_data_dir/dev-disk-uuid-data.txt
 			ls -l /dev/disk/by-path &> $debug_data_dir/dev-disk-path-data.txt
+			ls -l /dev/mapper &> $debug_data_dir/dev-disk-mapper-data.txt
 			readlink /dev/root &> $debug_data_dir/dev-root.txt
 			df -h -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs &> $debug_data_dir/df-h-T-excludes.txt
 			swapon -s &> $debug_data_dir/swapon-s.txt
@@ -1432,7 +1488,7 @@ debug_data_collector()
 			cat /etc/mtab &> $debug_data_dir/etc-mtab.txt
 		fi
 		echo 'Creating inxi output file now. This can take a few seconds...'
-		$SCRIPT_NAME -Fploudxx -c 0 -@ 8 > $debug_data_dir/inxi-Fploudxx.txt
+		$SCRIPT_NAME -FRploudxxx -c 0 -@ 8 > $debug_data_dir/inxi-FRploudxxx.txt
 		cp $LOG_FILE $SCRIPT_DATA_DIR/$debug_data_dir
 		if [[ -f $debug_data_dir.tar.gz ]];then
 			echo "Found and removing previous tar.gz data file: $debug_data_dir.tar.gz"
@@ -1926,6 +1982,10 @@ get_parameters()
 				use_short='false'
 				;;
 			R)	B_SHOW_RAID='true'
+				# it turns out only users with mdraid software installed will have raid,
+				# so unless -R is explicitly called, blank -b/-F/-v6 and less output will not show
+				# error if file is missing.
+				B_SHOW_RAID_R='true'
 				use_short='false'
 				;;
 			s)	B_SHOW_SENSORS='true'
@@ -1989,10 +2049,12 @@ get_parameters()
 						B_SHOW_FULL_OPTICAL='true'
 						B_SHOW_PARTITIONS_FULL='true'
 						B_SHOW_UNMOUNTED_PARTITIONS='true'
+						B_EXTRA_EXTRA_DATA='true'
 					fi
 					if [[ $OPTARG -ge 7 ]];then
-						B_EXTRA_EXTRA_DATA='true'
+						B_EXTRA_EXTRA_EXTRA_DATA='true'
 						B_SHOW_IP='true'
+						B_SHOW_RAID_R='true'
 					fi
 				else
 					error_handler 4 "$OPTARG"
@@ -2003,11 +2065,14 @@ get_parameters()
 			V)	print_version_info
 				exit 0
 				;;
-			# this will trigger either with xx or with Fx but not with xF
-			x)	if [[ $B_EXTRA_DATA == 'true' ]];then
+			# this will trigger either with x, xx, xxx or with Fx but not with xF
+			x)	if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+					B_EXTRA_EXTRA_EXTRA_DATA='true'
+				elif [[ $B_EXTRA_DATA == 'true' ]];then
 					B_EXTRA_EXTRA_DATA='true'
+				else
+					B_EXTRA_DATA='true'
 				fi
-				B_EXTRA_DATA='true'
 				;;
 			z)	B_OUTPUT_FILTER='true'
 				;;
@@ -2169,7 +2234,7 @@ show_options()
 	print_screen_output "-G  Show Graphic card information (card, x type, resolution, glx renderer, version)."
 	print_screen_output "-i  Show Wan IP address, and shows local interfaces (requires ifconfig network tool). Same as -Nni"
 	print_screen_output "    Not shown with -F for user security reasons, you shouldn't paste your local/wan IP."
-	print_screen_output "-I  Show Information: processes, uptime, memory, irc client, inxi version."
+	print_screen_output "-I  Show Information: processes, uptime, memory, irc client (or shell type), inxi version."
 	print_screen_output "-l  Show partition labels. Default: short partition -P. For full -p output, use: -pl (or -plu)."
 	print_screen_output "-M  Show machine data. Motherboard, Bios, and if present, System Builder (Like Lenovo)."
 	print_screen_output "    Older systems/kernels without the required /sys data can use dmidecode instead, run as root."
@@ -2189,7 +2254,7 @@ show_options()
 	print_screen_output "-S  Show System information: host name, kernel, desktop environment (if in X), distro"
 	print_screen_output "-t  Show processes. Requires extra options: c (cpu) m (memory) cm (cpu+memory). If followed by numbers 1-20,"
 	print_screen_output "    shows that number of processes for each type (default: $PS_COUNT; if in irc, max: 5): -t cm10"
-	print_screen_output "    Make sure to have no space between letters and numbers (-t cm10 -right, -t cm 10 -wrong)."
+	print_screen_output "    Make sure to have no space between letters and numbers (-t cm10 - right, -t cm 10 - wrong)."
 	print_screen_output "-u  Show partition UUIDs. Default: short partition -P. For full -p output, use: -pu (or -plu)."
 	print_screen_output "-v  Script verbosity levels. Verbosity level number is required. Should not be used with -b or -F"
 	print_screen_output "    Supported levels: 0-${VERBOSITY_LEVELS} Example: $SCRIPT_NAME -v 4"
@@ -2202,8 +2267,8 @@ show_options()
 	print_screen_output "        Shows full disk data (-D)."
 	print_screen_output "    5 - Adds audio card (-A); sensors (-s), partition label (-l) and UUID (-u), short form of optical drives,"
 	print_screen_output "        standard raid data (-R)."
-	print_screen_output "    6 - Adds full partition data (-p), unmounted partition data (-o), optical drive data (-d), full raid."
-	print_screen_output "    7 - Adds network IP data (-i); triggers -xx."
+	print_screen_output "    6 - Adds data types: full partition (-p), unmounted partition (-o), optical drive (-d), full raid; triggers -xx."
+	print_screen_output "    7 - Adds network IP data (-i); triggers -xxx."
 	print_screen_output "-x  Show extra data (only works with verbose or line output, not short form): "
 	print_screen_output "    -C - bogomips on Cpu;"
 	print_screen_output "    -d - Adds items to features line of optical drive; adds rev version to optical drive."
@@ -2213,6 +2278,7 @@ show_options()
 	print_screen_output "    -G - (for single gpu, nvidia driver) screen number gpu is running on."
 	print_screen_output "    -i - Show IPv6 as well for LAN interface (IF) devices."
 	print_screen_output "    -I - Show system GCC, default. With -xx, also show other installed GCC versions."
+	print_screen_output "       - If running in console, not in IRC client, shows shell version number if detected."
 	print_screen_output "    -N -A - Adds version/port(s)/driver version (if available) for Network/Audio;"
 	print_screen_output "    -N -A -G - Network, audio, graphics, shows PCI Bus ID/Usb ID number of card;"
 	print_screen_output "    -R - Shows component raid id. Adds second RAID Info line: raid level; report on drives (like 5/5);"
@@ -2220,12 +2286,18 @@ show_options()
 	print_screen_output "    -S - Desktop toolkit if avaliable (GNOME/XFCE/KDE only); Kernel gcc version"
 	print_screen_output "    -t - Adds memory use output to cpu (-xt c), and cpu use to memory (-xt m)."
 	print_screen_output "-xx Show extra, extra data (only works with verbose or line output, not short form): "
+	print_screen_output "    -A - Adds chip vendor:product ID for each audio device."
 	print_screen_output "    -D - Adds disk serial number."
+	print_screen_output "    -G - Adds chip vendor:product ID for each video card."
 	print_screen_output "    -I - Adds other detected installed gcc versions to primary gcc output (if present)."
 	print_screen_output "    -M - Adds chassis information, if any data for that is available."
+	print_screen_output "    -N - Adds chip vendor:product ID for each nic."
 	print_screen_output "    -R - Adds superblock (if present); algorythm, U data. Adds system info line (kernel support,"
 	print_screen_output "         read ahead, raid events). Adds if present, unused device line. Resync line, shows progress bar."
+	print_screen_output "    -S - Adds display manager (dm) to desktop output, if in X (like kdm, gdm3, lightdm)."
 	print_screen_output "    -xx -@ <11-14> - Automatically uploads debugger data tar.gz file to ftp.techpatterns.com."
+	print_screen_output "-xxx Show extra, extra, extra data (only works with verbose or line output, not short form): "
+	print_screen_output "    -S - Adds panel/shell information to desktop output, if in X (like gnome-shell, cinnamon, mate-panel)."
 	print_screen_output "-z  Adds security filters for IP addresses, Mac, and user home directory name. Default on for irc clients."
 	print_screen_output "-Z  Absolute override for output filters. Useful for debugging networking issues in irc for example."
 	print_screen_output " "
@@ -2235,8 +2307,8 @@ show_options()
 	print_screen_output "--recommends   Checks $SCRIPT_NAME application dependencies + recommends, and directories, then shows"
 	print_screen_output "               what package(s) you need to install to add support for that feature."
 	if [[ $B_ALLOW_UPDATE == 'true' ]];then
-		print_screen_output "-U             Auto-update script. Note: if you installed as root, you"
-		print_screen_output "               must be root to update, otherwise user is fine."
+		print_screen_output "-U             Auto-update script. Will also install/update man page. Note: if you installed as root, you"
+		print_screen_output "               must be root to update, otherwise user is fine. Man page installs require root user mode."
 	fi
 	print_screen_output "-V --version   $SCRIPT_NAME version information. Prints information then exits."
 	print_screen_output " "
@@ -2312,8 +2384,8 @@ get_start_client()
 {
 	eval $LOGFS
 	local irc_client_path='' irc_client_path_lower='' non_native_konvi='' i=''
-	local b_non_native_app='false' pppid='' app_working_name=''
-	local b_qt4_konvi='false'
+	local b_non_native_app='false' pppid='' app_working_name='' file_data=''
+	local b_qt4_konvi='false' 
 
 	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
 		IRC_CLIENT='Shell'
@@ -2340,6 +2412,7 @@ get_start_client()
 				fi
 				;;
 		esac
+
 		# replacing loose detection with tight detection, bugs will be handled with app names
 		# as they appear.
 		case $app_working_name in
@@ -2378,6 +2451,35 @@ get_start_client()
 					print $2
 				}' )"
 				IRC_CLIENT="Gaim"
+				;;
+			hexchat)
+				# the hexchat author decided to make --version/-v return a gtk dialogue box, lol...
+				# so we need to read the actual config file for hexchat. Note that older hexchats
+				# used xchat config file, so test first for default, then legacy. Because it's possible
+				# for this file to be use edited, doing some extra checks here.
+				if [[ -f ~/.config/hexchat/hexchat.conf ]];then
+					file_data="$( cat ~/.config/hexchat/hexchat.conf )"
+				elif [[ -f  ~/.config/hexchat/xchat.conf ]];then
+					file_data="$( cat ~/.config/hexchat/xchat.conf )"
+				fi
+				if [[ -n $file_data ]];then
+					IRC_CLIENT_VERSION=$( gawk '
+					BEGIN {
+						IGNORECASE=1
+						FS="="
+					}
+					/^[[:space:]]*version/ {
+						# get rid of the space if present
+						gsub(/[[:space:]]*/, "", $2 )
+						print $2
+						exit # usually this is the first line, no point in continuing
+					}' <<< "$file_data" )
+					
+					IRC_CLIENT_VERSION=" $IRC_CLIENT_VERSION"
+				else
+					IRC_CLIENT_VERSION=' N/A'
+				fi
+				IRC_CLIENT="HexChat"
 				;;
 			ircii)
 				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 {
@@ -2686,13 +2788,13 @@ get_cmdline()
 get_audio_data()
 {
 	eval $LOGFS
-	local i='' alsa_data='' alsa_driver='' device_count='' temp_array=''
+	local i='' alsa_data='' audio_driver='' device_count='' temp_array=''
 
 	IFS=$'\n'
 	# this first step handles the drivers for cases where the second step fails to find one
-	device_count=$( echo "$Lspci_Data" | grep -iEc '(multimedia audio controller|audio device)' )
+	device_count=$( echo "$Lspci_v_Data" | grep -iEc '(multimedia audio controller|audio device)' )
 	if [[ $device_count -eq 1 ]] && [[ $B_ASOUND_DEVICE_FILE == 'true' ]];then
-		alsa_driver=$( gawk -F ']: ' '
+		audio_driver=$( gawk -F ']: ' '
 		BEGIN {
 			IGNORECASE=1
 		}
@@ -2710,10 +2812,10 @@ get_audio_data()
 
 	# this is to safeguard against line breaks from results > 1, which if inserted into following
 	# array will create a false array entry. This is a hack, not a permanent solution.
-	alsa_driver=$( echo $alsa_driver )
+	audio_driver=$( echo $audio_driver )
 	# now we'll build the main audio data, card name, driver, and port. If no driver is found,
 	# and if the first method above is not null, and one card is found, it will use that instead.
-	A_AUDIO_DATA=( $( echo "$Lspci_Data" | gawk -F ': ' -v alsaDriver="$alsa_driver" '
+	A_AUDIO_DATA=( $( echo "$Lspci_v_Data" | gawk -F ': ' -v audioDriver="$audio_driver" '
 	BEGIN {
 		IGNORECASE=1
 	}
@@ -2764,8 +2866,8 @@ get_audio_data()
 				if (drivers[i] != "") {
 					useDrivers=drivers[i]
 				}
-				else if ( alsaDriver != "" ) {
-					useDrivers=alsaDriver
+				else if ( audioDriver != "" ) {
+					useDrivers=audioDriver
 				}
 			}
 			if (ports[i] != "") {
@@ -2848,8 +2950,9 @@ get_audio_usb_data()
 							string = string separator $i
 							separator = " "
 						}
-						if ( $6 != "" ){
-							print string ",USB Audio,,," $6
+						if ( $2 != "" ){
+							sub(/:/,"", $4)
+							print string ",USB Audio,,," $2 "-" $4 "," $6
 						}
 					}' <<< "$usb_data" )
 				fi
@@ -3184,16 +3287,46 @@ get_desktop_environment()
 	local desktop_environment='' xprop_root='' ps_aux='' 
 	local version='' version_data='' toolkit=''
 	
+	if [[ -n $( type -p xprop ) ]];then
+		xprop_root="$( xprop -root 2>/dev/null )"
+	fi
+
+	# note that cinnamon split from gnome, and and can now be id'ed via xprop,
+	# but it will still trigger the next gnome true case, so this needs to go before gnome test
+	# eventually this needs to be better organized so all the xprop tests are in the same
+	# section, but this is good enough for now.
+	if [[ -n $xprop_root && -n $( grep -is '^_MUFFIN' <<< "$xprop_root" ) ]];then
+		version=$( get_de_app_version 'cinnamon' '^cinnamon' '2' )
+		# not certain cinn will always have version, so keep output right if not
+		if [[ -n $version ]];then
+			version="$version "
+		fi
+		if [[ $B_EXTRA_DATA == 'true' ]];then
+			toolkit=$( get_de_gtk_data )
+			if [[ -n $toolkit ]];then
+				version="${version}(Gtk ${toolkit})"
+			fi
+		fi
+		desktop_environment="Cinnamon"
+	elif [[ -n $xprop_root && -n $( grep -is '^_MARCO' <<< "$xprop_root" ) ]];then
+		version=$( get_de_app_version 'mate-about' '^MATE[[:space:]]DESKTOP' 'NF' )
+		# not certain cinn/mate will always have version, so keep output right if not
+		if [[ -n $version ]];then
+			version="$version "
+		fi
+		if [[ $B_EXTRA_DATA == 'true' ]];then
+			toolkit=$( get_de_gtk_data )
+			if [[ -n $toolkit ]];then
+				version="${version}(Gtk ${toolkit})"
+			fi
+		fi
+		desktop_environment="MATE"
 	# note, GNOME_DESKTOP_SESSION_ID is deprecated so we'll see how that works out
 	# https://bugzilla.gnome.org/show_bug.cgi?id=542880
-	if [[ -n $GNOME_DESKTOP_SESSION_ID ]]; then
+	elif [[ -n $GNOME_DESKTOP_SESSION_ID ]]; then
 		version=$( get_de_app_version 'gnome-about' 'gnome' '3' )
 		if [[ $B_EXTRA_DATA == 'true' ]];then
-			# this is a hack, and has to be changed with every toolkit version change
-			toolkit=$( pkg-config --modversion gtk+-3.0 2>/dev/null )
-			if [[ -z $toolkit ]];then
-				toolkit=$( pkg-config --modversion gtk+-2.0 2>/dev/null )
-			fi
+			toolkit=$( get_de_gtk_data )
 			if [[ -n $toolkit ]];then
 				version="$version (Gtk $toolkit)"
 			fi
@@ -3246,8 +3379,7 @@ get_desktop_environment()
 	# xprop detections possible
 	else
 		ps_aux="$( ps aux )"
-		if [[ -n $( type -p xprop ) ]];then
-			xprop_root="$( xprop -root 2>/dev/null )"
+		if [[ -n $xprop_root ]];then
 			# String: "This is xfdesktop version 4.2.12"
 			if [[ -n $( grep -Eis '\"xfce4\"' <<< "$xprop_root" ) ]];then
 				version=$( get_de_app_version 'xfdesktop' 'xfdesktop[[:space:]]version' '5' )
@@ -3288,6 +3420,11 @@ get_desktop_environment()
 						version="(Openbox $version)"
 					fi
 					desktop_environment='LXDE'
+				elif [[ -n $( grep -is 'razor-desktop' <<< "$ps_aux" | grep -v 'grep' ) ]];then
+					if [[ -n $version ]];then
+						version="(Openbox $version)"
+					fi
+					desktop_environment='Razor-QT'
 				else
 					desktop_environment='Openbox'
 				fi
@@ -3299,6 +3436,9 @@ get_desktop_environment()
 				# ENLIGHTENMENT_VERSION(STRING) = "Enlightenment 0.16.999.49898"
 				version=$( grep -is 'ENLIGHTENMENT_VERSION' <<< "$xprop_root" | cut -d '"' -f 2 | gawk '{print $2}' )
 				desktop_environment='Enlightenment'
+			elif [[ -n $( grep -is '^I3_' <<< "$xprop_root" ) ]];then
+				version=$( get_de_app_version 'i3' '^i3' '3' )
+				desktop_environment='i3'
 			fi
 		fi
 		# a few manual hacks for things that don't id with xprop, these are just good guesses
@@ -3341,20 +3481,28 @@ get_desktop_environment()
 }
 
 # note: gawk doesn't support white spaces in search string, gave errors, so use [[:space:]] instead
-# args: $1 - desktop command for --version; $2 - search string; $3 - gawk print number
+# args: $1 - desktop/app command for --version; $2 - search string; $3 - gawk print number
 get_de_app_version()
 {
 	local version_data='' version='' get_version='--version' 
 	
+	# mate-about -v = MATE Desktop Environment 1.4.0
 	case $1 in
-		dwm|jwm|wmii)
+		dwm|jwm|mate-about|wmii)
 			get_version='-v'
 			;;
 	esac
-	# note, some wm send version info to stderr instead of stdout
+	
 	case $1 in
-		dwm|scrotwm)
+		# note, some wm/apps send version info to stderr instead of stdout
+		dwm|ksh|scrotwm)
 			version_data="$( $1 $get_version 2>&1 )"
+			;;
+		# quick debian/buntu hack until I find a universal way to get version for these
+		csh|dash)
+			if [[ -n $( type -p dpkg ) ]];then
+				version_data="$( dpkg -l $1 2>/dev/null )"
+			fi
 			;;
 		*)
 			version_data="$( $1 $get_version 2>/dev/null )"
@@ -3377,19 +3525,101 @@ get_de_app_version()
 	echo $version
 }
 
+get_desktop_extra_data()
+{
+	eval $LOGFS
+	local de_data=$( ps -A | gawk '
+	BEGIN {
+		IGNORECASE=1
+		desktops=""
+		separator=""
+	}
+	/(gnome-shell|gnome-panel|kicker|lxpanel|mate-panel|plasma-desktop|xfce4-panel)$/ {
+		# only one entry per type, can be multiple
+		if ( desktops !~ $NF ) {
+			desktops = desktops separator $NF
+			separator = ","
+		}
+	}
+	END {
+		print desktops
+	}
+	' )
+	echo $de_data
+	
+	eval $LOGFE
+}
+
+get_de_gtk_data()
+{
+	eval $LOGFS
+	
+	local toolkit=''
+	
+	# this is a hack, and has to be changed with every toolkit version change
+	toolkit=$( pkg-config --modversion gtk+-4.0 2>/dev/null )
+	if [[ -z $toolkit ]];then
+		toolkit=$( pkg-config --modversion gtk+-3.0 2>/dev/null )
+	fi
+	if [[ -z $toolkit ]];then
+		toolkit=$( pkg-config --modversion gtk+-2.0 2>/dev/null )
+	fi
+	echo $toolkit
+	
+	eval $LOGFE
+}
+
+# see which dm has started if any
+get_display_manager()
+{
+	eval $LOGFS
+	# ldm - LTSP display manager
+	local dm_id_list='entranced.pid entrance/entranced.pid gdm.pid gdm3.pid kdm.pid ldm.pid lightdm.pid lxdm.pid mdm.pid nodm.pid slim.lock tint2.pid wdm.pid xdm.pid' 
+	local dm_id='' dm='' separator=''
+	# note we don't need to filter grep if we do it this way
+	local ps_aux="$( ps aux )"
+	local x_is_running=$( grep '/usr.*/X' <<< "$ps_aux" | grep -iv '/Xprt' )
+
+	for dm_id in $dm_id_list
+	do
+		if [[ -e /var/run/$dm_id || -e /run/$dm_id ]];then
+			# just on the off chance that two dms are running, good info to have in that case, if possible
+			dm=$dm$separator$( basename $dm_id | cut -d '.' -f 1 )
+			separator=','
+		fi
+	done
+	# might add this in, but the rate of new dm's makes it more likely it's an unknown dm, so
+	# we'll keep output to N/A
+	if [[ -n $x_is_running && -z $dm ]];then
+		if [[ -n $( grep 'startx$' <<< "$ps_aux" ) ]];then
+			dm='(startx)'
+		fi
+	fi
+	echo $dm
+
+	log_function_data "display manager: $dm"
+
+	eval $LOGFE
+}
+
 # for more on distro id, please reference this python thread: http://bugs.python.org/issue1322
 ## return distro name/id if found
 get_distro_data()
 {
 	eval $LOGFS
-	local i='' j='' distro='' distro_file='' a_distro_glob=''
+	local i='' j='' distro='' distro_file='' a_distro_glob='' temp_array=''
 
 	# get the wild carded array of release/version /etc files if present
 	shopt -s nullglob
 	cd /etc
+	# note: always exceptions, so wild card after release/version: /etc/lsb-release-crunchbang
+	# wait to handle since crunchbang file is one of the few in the world that uses this method
 	a_distro_glob=(*[-_]{release,version})
 	cd "$OLDPWD"
 	shopt -u nullglob
+	
+	temp_array=${a_distro_glob[@]}
+	log_function_data "A_GLX_DATA: $temp_array"
 
 	if [[ ${#a_distro_glob[@]} -eq 1 ]];then
 		distro_file="${a_distro_glob}"
@@ -3404,11 +3634,13 @@ get_distro_data()
 				# Now lets see if the distro file is in the known-good working-lsb-list
 				# if so, use lsb-release, if not, then just use the found file
 				# this is for only those distro's with self named release/version files
-				# because Mint does not use such, it must be done as below
+				# because Mint does not use such, it must be done as below 
 				## this if statement requires the spaces and * as it is, else it won't work
 				##
 				if [[ " $DISTROS_LSB_GOOD " == *" ${i} "* ]] && [[ $B_LSB_FILE == 'true' ]];then
 					distro_file='lsb-release'
+				elif [[ " $DISTROS_OS_RELEASE_GOOD " == *" ${i} "* ]] && [[ $B_OS_RELEASE_FILE == 'true' ]];then
+					distro_file='os-release'
 				else
 					distro_file="${i}"
 				fi
@@ -3423,19 +3655,29 @@ get_distro_data()
 	# this handles case where only one release/version file was found, and it's lsb-release. This would
 	# never apply for ubuntu or debian, which will filter down to the following conditions. In general
 	# if there's a specific distro release file available, that's to be preferred, but this is a good backup.
-	elif [[ -n $distro_file && -f $FILE_LSB_RELEASE && " $DISTROS_LSB_GOOD" == *" $distro_file "* ]];then
-		distro=$( get_distro_lsb_data )
+	elif [[ -n $distro_file && $B_LSB_FILE == 'true' && " $DISTROS_LSB_GOOD" == *" $distro_file "* ]];then
+		distro=$( get_lsb_os_release_data 'lsb-file' )
 	elif [[ $distro_file == 'lsb-release' ]];then
-		distro=$( get_distro_lsb_data )
+		distro=$( get_lsb_os_release_data 'lsb-file' )
+	elif [[ $distro_file == 'os-release' ]];then
+		distro=$( get_lsb_os_release_data 'os-release-file' )
 	# then if the distro id file was found and it's not in the exluded primary distro file list, read it
 	elif [[ -n $distro_file && -s /etc/$distro_file && " $DISTROS_EXCLUDE_LIST " != *" $distro_file "* ]];then
-		distro=$( remove_erroneous_chars "/etc/$distro_file" )
+		# new opensuse uses os-release, but older ones may have a similar syntax, so just use the first line
+		if [[ $distro_file == 'SuSE-release' ]];then
+			# leaving off extra data since all new suse have it, in os-release, this file has line breaks, like os-release
+			# but in case we  want it, it's: CODENAME = Mantis  | VERSION = 12.2 
+			# for now, just take first occurance, which should be the first line, which does not use a variable type format
+			distro=$( grep -i -m 1 'suse' /etc/$distro_file )
+		else
+			distro=$( remove_erroneous_chars "/etc/$distro_file" )
+		fi
 	# otherwise try  the default debian/ubuntu /etc/issue file
 	elif [[ -f /etc/issue ]];then
 		# lsb gives more manageable and accurate output than issue, but mint should use issue for now
 		# some bashism, boolean must be in parenthesis to work correctly, ie [[ $(boolean) ]] not [[ $boolean ]]
 		if [[ $B_LSB_FILE == 'true' ]] && [[ -z $( grep -i 'mint' /etc/issue ) ]];then
-			distro=$( get_distro_lsb_data )
+			distro=$( get_lsb_os_release_data 'lsb-file' )
 		else
 			distro=$( gawk '
 			BEGIN {
@@ -3448,10 +3690,17 @@ get_distro_data()
 				gsub(/ [ \t]+/, " ")
 				print
 			}' /etc/issue )
+			
+			# this handles an arch bug where /etc/arch-release is empty and /etc/issue is corrupted
+			# only older arch installs that have not been updated should have this fallback required, new ones use
+			# os-release
+			if [[ -n $( grep -i 'arch linux' <<< $distro ) ]];then
+				distro='Arch Linux'
+			fi
 		fi
 	fi
-
-	if [[ ${#distro} -gt 80 ]] &&  [[ $B_HANDLE_CORRUPT_DATA != 'true' ]];then
+	
+	if [[ ${#distro} -gt 80 ]] && [[ $B_HANDLE_CORRUPT_DATA != 'true' ]];then
 		distro="${RED}/etc/${distro_file} corrupted, use -% to override${NORMAL}"
 	fi
 	## note: would like to actually understand the method even if it's not used
@@ -3459,109 +3708,182 @@ get_distro_data()
 	## test for /etc/lsb-release as a backup in case of failure, in cases where > one version/release file
 	## were found but the above resulted in null distro value
 	if [[ -z $distro ]] && [[ $B_LSB_FILE == 'true' ]];then
-		distro=$( get_distro_lsb_data )
+		distro=$( get_lsb_os_release_data 'lsb-file' )
+	fi
+	if [[ -z $distro ]] && [[ $B_OS_RELEASE_FILE == 'true' ]];then
+		distro=$( get_lsb_os_release_data 'os-release-file' )
 	fi
 	# now some final null tries
 	if [[ -z $distro ]];then
 		# if the file was null but present, which can happen in some cases, then use the file name itself to 
 		# set the distro value. Why say unknown if we have a pretty good idea, after all?
 		if [[ -n $distro_file ]] && [[ " $DISTROS_DERIVED $DISTROS_PRIMARY " == *" $distro_file "* ]];then
-			distro=$( sed -E -e 's/[-_]//' -e 's/(release|version)//' <<< $distro_file | sed -E 's/^([a-z])/\u\1/' )
+			distro=$( sed -r -e 's/[-_]//' -e 's/(release|version)//' <<< $distro_file | sed -r 's/^([a-z])/\u\1/' )
 		fi
 		## finally, if all else has failed, give up
 		if [[ -z $distro ]];then
 			distro='unknown'
 		fi
 	fi
-
-	# this handles an arch bug where /etc/arch-release is empty and /etc/issue is corrupted
-	if [[ -n $( grep -i 'arch linux' <<< $distro ) ]];then
-		distro='Arch Linux'
-	fi
-
+	# final step cleanup of unwanted information
+	# opensuse has the x86 etc type string in names, not needed as redundant since -S already shows that
+	distro=$( gawk '
+	BEGIN {
+		IGNORECASE=1
+	}
+	{
+		sub(/ *\(*(x86_64|i486|i586|i686|686|586|486)\)*/, "", $0)
+		print $0
+	}' <<< $distro )
 	echo "$distro"
 	log_function_data "distro: $distro"
 	eval $LOGFE
 }
 
-# args: $1 - optional, app, uses the app test, not being used now
-get_distro_lsb_data()
+# args: $1 - lsb-file/lsb-app/os-release-file
+get_lsb_os_release_data()
 {
 	eval $LOGFS
 	local distro=''
-
-	if [[ $B_LSB_FILE == 'true' ]] && [[ $1 != 'app' ]];then
-		distro=$( gawk -F '=' '
-		BEGIN {
-			IGNORECASE=1
-		}
-		# note: adding the spacing directly to variable to make sure distro output is null if not found
-		/^DISTRIB_ID/ {
-			gsub(/^ +| +$/, "", $NF)
-			# this is needed because grep for "arch" is too loose to be safe
-			if ( $NF == "arch" ) {
-				distroId = "Arch Linux"
-			}
-			else if ( $NF != "n/a" ) {
-				distroId = $NF " "
-			}
-		}
-		/^DISTRIB_RELEASE/ {
-			gsub(/^ +| +$/, "", $NF)
-			if ( $NF != "n/a" ) {
-				distroRelease = $NF " "
-			}
-		}
-		/^DISTRIB_CODENAME/ {
-			gsub(/^ +| +$/, "", $NF)
-			if ( $NF != "n/a" ) {
-				distroCodename = $NF " "
-			}
-		}
-		# sometimes some distros cannot do their lsb-release files correctly, so here is
-		# one last chance to get it right.
-		/^DISTRIB_DESCRIPTION/ {
-			gsub(/^ +| +$/, "", $0)
-			if ( $NF != "n/a" ) {
-				# slice out the part inside "", like: DISTRIB_DESCRIPTION="Arch Linux"
-				gsub(/DISTRIB_DESCRIPTION=|"/,"",$0)
-				distroDescription = $0
-			}
-		}
-		END {
-			fullString=""
-			if ( distroId == "" && distroRelease == "" && distroCodename == "" && distroDescription != "" ){
-				fullString = distroDescription
-			}
-			else {
-				fullString = distroId distroRelease distroCodename
-			}
-			print fullString
-		}
-		' $FILE_LSB_RELEASE )
-		log_function_data 'cat' "$FILE_LSB_RELEASE"
-	fi
-	# this is HORRIBLY slow, but I don't know why, it runs fast in shell
-# 	if [[  -n $( type -p lsb_release ) && $1 == 'app' ]];then
-# 		distro=$( echo "$( lsb_release -irc )" | gawk '
-# 		{ IGNORECASE=1 }
-# 		/^Distributor ID/ {
-# 			gsub(/^ +| +$/, "", $NF)
-# 			distroId = $NF
-# 		}
-# 		/^Release/ {
-# 			gsub(/^ +| +$/, "", $NF)
-# 			distroRelease = $NF
-# 		}
-# 		/^Codename/ {
-# 			gsub(/^ +| +$/, "", $NF)
-# 			distroCodename = $NF
-# 		}
-# 		END {
-# 			print distroId " " distroRelease " (" distroCodename ")"
-# 		}' )
-# 	fi
-
+	
+	case $1 in
+		lsb-file)
+			if [[ $B_LSB_FILE == 'true' ]];then
+				distro=$( gawk -F '=' '
+				BEGIN {
+					IGNORECASE=1
+				}
+				# clean out unwanted characters
+				{ 
+					gsub(/\\|\"|[:\47]/,"", $0 )
+					gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2 )
+					gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1 )
+				}
+				# note: adding the spacing directly to variable to make sure distro output is null if not found
+				/^DISTRIB_ID/ {
+					# this is needed because grep for "arch" is too loose to be safe
+					if ( $2 == "arch" ) {
+						distroId = "Arch Linux"
+					}
+					else if ( $2 != "n/a" ) {
+						distroId = $2 " "
+					}
+				}
+				/^DISTRIB_RELEASE/ {
+					if ( $2 != "n/a" ) {
+						distroRelease = $2 " "
+					}
+				}
+				/^DISTRIB_CODENAME/ {
+					if ( $2 != "n/a" ) {
+						distroCodename = $2 " "
+					}
+				}
+				# sometimes some distros cannot do their lsb-release files correctly, so here is
+				# one last chance to get it right.
+				/^DISTRIB_DESCRIPTION/ {
+s					if ( $2 != "n/a" ) {
+						distroDescription = $2
+					}
+				}
+				END {
+					fullString=""
+					if ( distroId == "" && distroRelease == "" && distroCodename == "" && distroDescription != "" ){
+						fullString = distroDescription
+					}
+					else {
+						fullString = distroId distroRelease distroCodename
+					}
+					print fullString
+				}
+				' $FILE_LSB_RELEASE )
+				log_function_data 'cat' "$FILE_LSB_RELEASE"
+			fi
+			;;
+		lsb-app)
+			# this is HORRIBLY slow, not using
+			if [[  -n $( type -p lsb_release ) ]];then
+				distro=$( echo "$( lsb_release -irc )" | gawk -F ':' '
+				BEGIN { 
+					IGNORECASE=1 
+				}
+				# clean out unwanted characters
+				{ 
+					gsub(/\\|\"|[:\47]/,"", $0 )
+					gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2 )
+					gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1 )
+				}
+				/^Distributor ID/ {
+					distroId = $2
+				}
+				/^Release/ {
+					distroRelease = $2
+				}
+				/^Codename/ {
+					distroCodename = $2
+				}
+				END {
+					print distroId " " distroRelease " (" distroCodename ")"
+				}' )
+			fi
+			;;
+		os-release-file)
+			if [[ $B_OS_RELEASE_FILE == 'true' ]];then
+				distro=$( gawk -F '=' '
+				BEGIN {
+					IGNORECASE=1
+					prettyName=""
+					regularName=""
+					versionName=""
+					versionId=""
+					distroName=""
+				}
+				# clean out unwanted characters
+				{ 
+					gsub(/\\|\"|[:\47]/,"", $0 )
+					gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2 )
+					gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1 )
+				}
+				# note: adding the spacing directly to variable to make sure distro output is null if not found
+				/^PRETTY_NAME/ {
+					if ( $2 != "n/a" ) {
+						prettyName = $2
+					}
+				}
+				/^NAME/ {
+					if ( $2 != "n/a" ) {
+						regularName = $2
+					}
+				}
+				/^VERSION/ {
+					if ( $2 != "n/a" && $1 == "VERSION" ) {
+						versionName = $2
+					}
+					else if ( $2 != "n/a" && $1 == "VERSION_ID" ) {
+						versionId = $2
+					}
+				}
+				END {
+					if ( prettyName != "" ) {
+						distroName = prettyName
+					}
+					else if ( regularName != "" ) {
+						distroName = regularName
+						if ( versionName != "" ) {
+							distroName = distroName " " versionName
+						}
+						else if ( versionId != "" ) {
+							distroName = distroName " " versionId
+						}
+						
+					}
+					print distroName
+				}
+				' $FILE_OS_RELEASE )
+				log_function_data 'cat' "$FILE_OS_RELEASE"
+			fi
+			;;
+	esac
 	echo $distro
 	log_function_data "distro: $distro"
 	eval $LOGFE
@@ -3579,7 +3901,7 @@ get_gcc_system_version()
 	eval $LOGFS
 	local separator='' gcc_installed='' gcc_list='' gcc_others='' temp_array=''
 	local gcc_version=$( 
-	gcc --version 2>/dev/null | sed -E 's/\([^\)]*\)//g' | gawk '
+	gcc --version 2>/dev/null | sed -r 's/\([^\)]*\)//g' | gawk '
 	BEGIN {
 		IGNORECASE=1
 	}
@@ -3737,7 +4059,7 @@ get_graphics_card_data()
 		gsub(/ [ \t]+/, " ", $NF)
 		busId=gensub(/^([0-9a-f:\.]+) (.+)$/,"\\1","",$1)
 		print $NF "," busId
-	}' <<< "$Lspci_Data" ) )
+	}' <<< "$Lspci_v_Data" ) )
 	IFS="$ORIGINAL_IFS"
 # 	for (( i=0; i < ${#A_GFX_CARD_DATA[@]}; i++ ))
 # 	do
@@ -3745,7 +4067,7 @@ get_graphics_card_data()
 # 	done
 
 	# GFXMEM is UNUSED at the moment, because it shows AGP aperture size, which is not necessarily equal to GFX memory..
-	# GFXMEM="size=[$(echo "$Lspci_Data" | gawk '/VGA/{while (!/^$/) {getline;if (/size=[0-9][0-9]*M/) {size2=gensub(/.*\[size=([0-9]+)M\].*/,"\\1","g",$0);if (size<size2){size=size2}}}}END{print size2}')M]"
+	# GFXMEM="size=[$(echo "$Lspci_v_Data" | gawk '/VGA/{while (!/^$/) {getline;if (/size=[0-9][0-9]*M/) {size2=gensub(/.*\[size=([0-9]+)M\].*/,"\\1","g",$0);if (size<size2){size=size2}}}}END{print size2}')M]"
 	temp_array=${A_GFX_CARD_DATA[@]}
 	log_function_data "A_GFX_CARD_DATA: $temp_array"
 	eval $LOGFE
@@ -4312,17 +4634,37 @@ get_hdd_temp_data()
 	eval $LOGFE
 }
 
+# args: $1 - v/n 
 get_lspci_data()
 {
 	eval $LOGFS
-	local lspci_data="$( lspci -v | gawk '{
+	local lspci_data="$( lspci -$1 | gawk '{
 		gsub(/\(prog-if[^)]*\)/,"")
 		sub(/^0000:/, "", $0) # seen case where the 0000: is prepended, rare, but happens
 		print
 	}' )"
 	
 	echo "$lspci_data"
-	log_function_data 'raw' "lspci_data:\n$lspci_data"
+	log_function_data 'raw' "lspci_data $1:\n$lspci_data"
+	eval $LOGFE
+}
+
+# args: $1 - busid
+get_lspci_vendor_product()
+{
+	eval $LOGFS
+	
+	local vendor_product=''
+	
+	vendor_product=$( gawk '
+	/^'$1'/ {
+		if ( $3 != "" ) {
+			print $3
+		}
+	}' <<< "$Lspci_n_Data" )
+	
+	echo $vendor_product
+	
 	eval $LOGFE
 }
 
@@ -4488,7 +4830,7 @@ get_networking_data()
 	
 	IFS=$'\n'
 	A_NETWORK_DATA=( $( 
-	echo "$Lspci_Data" | gawk '
+	echo "$Lspci_v_Data" | gawk '
 	BEGIN {
 		IGNORECASE=1
 		counter=0 # required to handle cases of > 1 instance of the same chipset
@@ -4529,6 +4871,7 @@ get_networking_data()
 			usePorts=""
 			useModules=""
 			usePciBusId=""
+
 			if ( eth[i] > 1 ) {
 				a[j] = eth[i] "x " i
 			}
@@ -4572,7 +4915,7 @@ get_network_advanced_data()
 {
 	eval $LOGFS
 	local a_network_adv_working='' if_path='' working_path='' working_uevent_path='' dir_path=''
-	local if_id='' speed='' duplex='' mac_id='' oper_state='' 
+	local if_id='' speed='' duplex='' mac_id='' oper_state=''  vendor_product=''
 	local usb_data='' usb_vendor='' usb_product='' product_path='' driver_test=''
 	
 	for (( i=0; i < ${#A_NETWORK_DATA[@]}; i++ ))
@@ -4587,6 +4930,7 @@ get_network_advanced_data()
 		mac_id='' 
 		oper_state=''
 		usb_data=''
+		vendor_product=''
 		if [[ -z $( grep '^usb-' <<< ${a_network_adv_working[4]} ) ]];then
 			# note although this may exist technically don't use it, it's a virtual path
 			# and causes weird cat errors when there's a missing file as well as a virtual path
@@ -4609,8 +4953,8 @@ get_network_advanced_data()
 			fi
 			# working_path=$( ls /sys/devices/pci*/*/0000:${a_network_adv_working[4]}/net/*/uevent  )
 		else
-			# slice off the usb- part
-			usb_data=$( cut -d '-' -f 2-4 <<< ${a_network_adv_working[4]} )
+			# now we'll use the actual vendor:product string instead
+			usb_data=${a_network_adv_working[10]}
 			usb_vendor=$( cut -d ':' -f 1 <<< $usb_data )
 			usb_product=$( cut -d ':' -f 2 <<< $usb_data )
 			# this grep returns the path plus the contents of the file, with a colon separator, so slice that off
@@ -4684,7 +5028,10 @@ get_network_advanced_data()
 			fi
 		fi
 		
-		A_NETWORK_DATA[i]=${a_network_adv_working[0]}","${a_network_adv_working[1]}","${a_network_adv_working[2]}","${a_network_adv_working[3]}","${a_network_adv_working[4]}","$if_id","$oper_state","$speed","$duplex","$mac_id
+		if [[ -n ${a_network_adv_working[10]} ]];then
+			vendor_product=${a_network_adv_working[10]}
+		fi
+		A_NETWORK_DATA[i]=${a_network_adv_working[0]}","${a_network_adv_working[1]}","${a_network_adv_working[2]}","${a_network_adv_working[3]}","${a_network_adv_working[4]}","$if_id","$oper_state","$speed","$duplex","$mac_id","$vendor_product
 		IFS="$ORIGINAL_IFS"
 	done
 
@@ -4724,12 +5071,14 @@ get_networking_usb_data()
 				sub(/realtek semiconductor/, "Realtek", $0)
 				sub(/davicom semiconductor/, "Davicom", $0)
 				sub(/Belkin Components/, "Belkin", $0)
+				
 				for ( i=7; i<= NF; i++ ) {
 					string = string separator $i
 					separator = " "
 				}
-				if ( $6 != "" ){
-					print string ",,,,usb-" $6
+				if ( $2 != "" ){
+					sub(/:/, "", $4 )
+					print string ",,,,usb-" $2 "-" $4 ",,,,,," $6
 				}
 			}' <<< "$lsusb_data" 
 			) )
@@ -5066,14 +5415,15 @@ get_partition_data()
 {
 	eval $LOGFS
 	
-	local a_partition_working='' dev_item='' temp_array=''
+	local a_partition_working='' dev_item='' temp_array='' dev_working_item=''
 	#local excluded_file_types='--exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660'
 	# df doesn't seem to work in script with variables like at the command line
 	# added devfs linprocfs sysfs fdescfs which show on debian kfreebsd kernel output
 	local main_partition_data="$( df -h -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs )"
 	local swap_data="$( swapon -s )"
-	# set dev disk label/uuid data globals
+	# set dev disk label/mapper/uuid data globals
 	get_partition_dev_data 'label'
+	get_partition_dev_data 'mapper'
 	get_partition_dev_data 'uuid'
 	
 	log_function_data 'raw' "main_partition_data:\n$main_partition_data\n\nswap_data:\n$swap_data"
@@ -5164,11 +5514,13 @@ get_partition_data()
 		a_partition_working=( ${A_PARTITION_DATA[i]} )
 		IFS="$ORIGINAL_IFS"
 		dev_item='' # reset each loop
+		
 		# note: for swap this will already be set
 		if [[ -n $( grep -E '(by-uuid|by-label)' <<< ${a_partition_working[6]} ) ]];then
+			dev_working_item=$( basename ${a_partition_working[6]} )
 			if [[ -n $DEV_DISK_UUID ]];then
 				dev_item=$( echo "$DEV_DISK_UUID" | gawk '
-					/'$( basename ${a_partition_working[6]} )'/ {
+					$0 ~ /[ /t]'$dev_working_item'[ /t]/ {
 						item=gensub( /..\/..\/(.+)/, "\\1", 1, $NF )
 						print item
 					}' )
@@ -5176,17 +5528,21 @@ get_partition_data()
 			# if we didn't find anything for uuid try label
 			if [[ -z $dev_item && -n $DEV_DISK_LABEL ]];then
 				dev_item=$( echo "$DEV_DISK_LABEL" | gawk '
-					/'$( basename ${a_partition_working[6]} )'/ {
+					$0 ~ /[ /t]'$dev_working_item'[ /t]/ {
 						item=gensub( /..\/..\/(.+)/, "\\1", 1, $NF )
 						print item
 					}' )
 			fi
-			if [[ -n $dev_item ]];then
-				# assemble everything we could get for dev/h/dx, label, and uuid
-				IFS=","
-				A_PARTITION_DATA[i]=${a_partition_working[0]}","${a_partition_working[1]}","${a_partition_working[2]}","${a_partition_working[3]}","${a_partition_working[4]}","${a_partition_working[5]}","$dev_item
-				IFS="$ORIGINAL_IFS"
-			fi
+		elif [[ -n $( grep 'mapper/' <<< ${a_partition_working[6]} ) ]];then
+			# get the mapper actual dev item
+			dev_item=$( get_dev_processed_item "${a_partition_working[6]}" )
+		fi
+		
+		if [[ -n $dev_item ]];then
+			# assemble everything we could get for dev/h/dx, label, and uuid
+			IFS=","
+			A_PARTITION_DATA[i]=${a_partition_working[0]}","${a_partition_working[1]}","${a_partition_working[2]}","${a_partition_working[3]}","${a_partition_working[4]}","${a_partition_working[5]}","$dev_item
+			IFS="$ORIGINAL_IFS"
 		fi
 	done
 	temp_array=${A_PARTITION_DATA[@]}
@@ -5204,8 +5560,9 @@ get_partition_data_advanced()
 	local a_partition_working='' dev_partition_data=''
 	local dev_item='' dev_label='' dev_uuid='' temp_array=''
 	local mount_point=''
-	# set dev disk label/uuid data globals
+	# set dev disk label/mapper/uuid data globals
 	get_partition_dev_data 'label'
+	get_partition_dev_data 'mapper'
 	get_partition_dev_data 'uuid'
 
 	if [[ $B_MOUNTS_FILE == 'true' ]];then
@@ -5279,8 +5636,9 @@ get_partition_data_advanced()
 			IFS=","
 			a_partition_working=( ${A_PARTITION_DATA[i]} )
 			IFS="$ORIGINAL_IFS"
-
-			dev_item=${a_partition_working[6]}
+			# get the mapper actual dev item first, in case it's mapped
+			dev_item=$( get_dev_processed_item "${a_partition_working[6]}" )
+			dev_item=$( basename $dev_item ) ## needed to avoid error in case name still has / in it
 			dev_label=${a_partition_working[7]}
 			dev_uuid=${a_partition_working[8]}
 			
@@ -5291,7 +5649,7 @@ get_partition_data_advanced()
 			if [[ -z $dev_item ]];then
 				if [[ -n $DEV_DISK_UUID && -n $dev_uuid ]];then
 					dev_item=$( echo "$DEV_DISK_UUID" | gawk '
-						/'$dev_uuid'/ {
+						$0 ~ /[ \t]'$dev_uuid'[ \t]/ {
 							item=gensub( /..\/..\/(.+)/, "\\1", 1, $NF )
 							print item
 						}' )
@@ -5300,7 +5658,7 @@ get_partition_data_advanced()
 						# first we need to change space x20 in by-label back to a real space
 						#gsub( /x20/, " ", $0 )
 						# then we can see if the string is there
-						/'$dev_label'/ {
+						$0 ~ /[ \t]'$dev_label'[ \t]/ {
 							item=gensub( /..\/..\/(.+)/, "\\1", 1, $NF )
 							print item
 						}' )
@@ -5334,19 +5692,35 @@ get_partition_data_advanced()
 	eval $LOGFE
 }
 
-# args: $1 - uuid/label/id
+# args: $1 - uuid/label/id/mapper
 get_partition_dev_data()
 {
 	eval $LOGFS
 	
 	# only run these tests once per directory to avoid excessive queries to fs
 	case $1 in
+		id)
+			if [[ $B_ID_SET != 'true' ]];then
+				if [[ -d /dev/disk/by-id ]];then
+					DEV_DISK_ID="$( ls -l /dev/disk/by-id )"
+				fi
+				B_ID_SET='true'
+			fi
+			;;
 		label)
 			if [[ $B_LABEL_SET != 'true' ]];then
 				if [[ -d /dev/disk/by-label ]];then
 					DEV_DISK_LABEL="$( ls -l /dev/disk/by-label )"
 				fi
 				B_LABEL_SET='true'
+			fi
+			;;
+		mapper)
+			if [[ $B_MAPPER_SET != 'true' ]];then
+				if [[ -d /dev/mapper ]];then
+					DEV_DISK_MAPPER="$( ls -l /dev/mapper )"
+				fi
+				B_MAPPER_SET='true'
 			fi
 			;;
 		uuid)
@@ -5357,16 +5731,9 @@ get_partition_dev_data()
 				B_UUID_SET='true'
 			fi
 			;;
-		id)
-			if [[ $B_ID_SET != 'true' ]];then
-				if [[ -d /dev/disk/by-uuid ]];then
-					DEV_DISK_ID="$( ls -l /dev/disk/by-id )"
-				fi
-				B_ID_SET='true'
-			fi
-			;;
+		
 	esac
-	log_function_data 'raw' "DEV_DISK_LABEL:\n$DEV_DISK_LABEL\n\nDEV_DISK_UUID:\n$DEV_DISK_UUID$DEV_DISK_LABEL\n\nDEV_DISK_ID:\n$DEV_DISK_ID"
+	log_function_data 'raw' "DEV_DISK_LABEL:\n$DEV_DISK_LABEL\n\nDEV_DISK_UUID:\n$DEV_DISK_UUID\n\nDEV_DISK_ID:\n$DEV_DISK_ID\n\nDEV_DISK_MAPPER:\n$DEV_DISK_MAPPER"
 	# debugging section, uncomment to insert user data
 # 	DEV_DISK_LABEL='
 #
@@ -5374,12 +5741,40 @@ get_partition_dev_data()
 # DEV_DISK_UUID='
 #
 # '
+# DEV_DISK_MAPPER='
+#
+# '
+	eval $LOGFE
+}
+
+# args: $1 - dev item, check for mapper, then get actual dev item if mapped
+# eg: lrwxrwxrwx 1 root root       7 Sep 26 15:10 truecrypt1 -> ../dm-2 
+get_dev_processed_item()
+{
+	eval $LOGFS
+	
+	local dev_item=$1 dev_return=''
+	
+	if [[ -n $DEV_DISK_MAPPER && -n $( grep -is 'mapper/' <<< $dev_item ) ]];then
+		dev_return=$( echo "$DEV_DISK_MAPPER" | gawk '
+		$( NF - 2 ) ~ /^'$( basename $dev_item )'$/ {
+			item=gensub( /..\/(.+)/, "\\1", 1, $NF )
+			print item
+		}' )
+	fi
+	if [[ -z $dev_return ]];then
+		dev_return=$dev_item
+	fi
+	
+	echo $dev_return
+
 	eval $LOGFE
 }
 
 get_patch_version_string()
 {
 	local script_patch_number=$( sed 's/^[0]\+//' <<< $SCRIPT_PATCH_NUMBER )
+	
 	if [[ -n $script_patch_number ]];then
 		script_patch_number="-$script_patch_number"
 	fi
@@ -5479,104 +5874,6 @@ get_raid_data()
 	if [[ $B_MDSTAT_FILE ]];then
 	 	mdstat="$( cat $FILE_MDSTAT 2>/dev/null )"
 	fi
-	
-	mdstat1="Personalities : [linear] [multipath] [raid0] [raid1] [raid6] [raid5] [raid4] [raid10] 
-md0 : active raid1 sdb1[2] sda1[0]
-      175778744 blocks super 1.2 [2/2] [UU]
-      
-md125 : active raid6 sdr1[6](S) sdk1[4] sdp1[2] sdo1[0] sdm1[3] sdn1[1] sdl1[5]
-      7814047744 blocks level 6, 256k chunk, algorithm 2 [6/6] [UUUUUU]
-      
-md126 : active (auto-read-only) raid1 sdq1[0]
-      195310080 blocks [2/1] [U_]
-      
-md127 : active raid6 sdj1[2] sdc1[1] sdi1[3] sdg1[5] sdd1[0] sde1[6] sdh1[7] sdf1[4]
-      5860559616 blocks level 6, 64k chunk, algorithm 2 [8/8] [UUUUUUUU]
-      
-unused devices: <none>"
-
-mdstat2="Personalities : [raid1]
-read_ahead 1024 sectors
-md0 : active raid1 hda2[0] hdd2[1]
-73730240 blocks [2/2] [UU]
-
-md1 : active raid1 hda1[0] hdd1[1]
-48064 blocks [2/2] [UU]
-
-unused devices: <none>
-"
-
-mdstat3="Personalities : [linear] [multipath] [raid0] [raid1] [raid6] [raid5] [raid4] [raid10]
-md2 : active raid1 sda3[0] sdb3[1]
-      4883648 blocks [2/2] [UU]
-
-md1 : active raid1 sdb2[2] sda2[0]
-      195310144 blocks [2/1] [U_]
-      [=>...................]  recovery =  8.5% (16775552/195310144) finish=17.0min speed=259783K/sec
-
-md0 : active raid1 sdb1[1] sda1[0]
-      39061952 blocks [2/2] [UU]
-
-unused devices: <none>
-		
-"
-
-mdstat4="Personalities : [raid1]
-read_ahead 1024 sectors
-Event: 2
-md0 : active raid1 sdb1[1] sda1[0]
-859549696 blocks [2/2] [UU]
-resync=DELAYED
-md1 : active raid1 sdb2[1] sda2[0]
-859533632 blocks [2/2] [UU]
-[====>................] resync = 23.0% (198178176/859533632) finish=10578.9min speed=1040K/sec
-unused devices: <none>
-
-"
-mdstat5="Personalities : [linear] [raid0] [raid1] [raid5] [translucent]
-read_ahead not set
-md0 : active raid1 sdb5[0] sda5[1] 32000 blocks [2/1] [U_]
-unused devices: <none>
-
-"
-mdstat6="Personalities : [1 linear] [2 raid0] 
-read_ahead not set 
-md0 : inactive 
-md1 : inactive 
-md2 : inactive 
-md3 : inactive 
-"
-mdstat8="Personalities : [linear] [raid1] read_ahead 1024 sectors
-md0: active raid1 sda2[1] sdb2[0] 9940 blocks [2/2] [UU] resync=1% finish=12.3min algorithm 2 [3/3] [UUU]
-unused devices: <none>
-"
-
-mdstat9="Personalities : [raid1] [raid6] [raid5] [raid4]
-md_d0 : active raid5 sde1[0] sdf1[4] sdb1[5] sdd1[2] sdc1[1]
-      1250241792 blocks super 1.2 level 5, 64k chunk, algorithm 2 [5/5] [UUUUU]
-      bitmap: 0/10 pages [0KB], 16384KB chunk
-
-unused devices: <none>
-"
-mdstat10="Personalities : [linear] [raid0] [raid1] [raid5] [raid4] [raid6]
-md0 : active raid6 sdf1[0] sde1[1] sdd1[2] sdc1[3] sdb1[4] sda1[5] hdb1[6]
-      1225557760 blocks level 6, 256k chunk, algorithm 2 [7/7] [UUUUUUU]
-      bitmap: 0/234 pages [0KB], 512KB chunk
-
-unused devices: <none>
-"
-mdstat11="Personalities : [linear] [multipath] [raid0] [raid1] [raid6] [raid5] [raid4] [raid10]
-md0 : active raid6 sde1[4] sdh1[8] sdc1[2] sdb1[1] sdd1[3] sdq1[9](S) sdg1[6] sdf1[5] sda1[0]
-      5860559616 blocks level 6, 64k chunk, algorithm 2 [8/7] [UUUUUUU_]
-      [===================>.] recovery = 99.5% (972091272/976759936) finish=3.1min speed=24989K/sec
-
-md1 : active raid6 sdp1[6] sdm1[4] sdk1[2] sdi1[0] sdl1[3] sdn1[5] sdj1[1] sdr1[7]
-      5860559616 blocks level 6, 64k chunk, algorithm 2 [8/8] [UUUUUUUU]
-
-unused devices: <none>
-"
-
-mdstat="$mdstat11"
 	
 	if [[ -n $mdstat ]];then
 		# need to make sure there's always a newline in front of each record type, and
@@ -5719,16 +6016,29 @@ mdstat="$mdstat11"
 get_repo_data()
 {
 	eval $LOGFS
-	local repo_file='' repo_data_working='' repo_data_working2='' repo_line=''
+	local repo_file='' repo_data_working='' repo_data_working2='' repo_line='' repo_type='unknown'
 	local apt_file='/etc/apt/sources.list' yum_repo_dir='/etc/yum.repos.d/' yum_conf='/etc/yum.conf'
 	local pacman_conf='/etc/pacman.conf' pacman_repo_dir='/etc/pacman.d/' pisi_dir='/etc/pisi/'
 	
+	## note: a fringe case was discovered where repo files were in /etc/apt/sources.list.d for yum
+	# so handling more explicitly the actual repo file id
+	if [[ -n $( type -p apt-get ) ]];then
+		repo_type='apt'
+	elif [[ -n $( type -p yum ) ]];then
+		repo_type='yum'
+	elif [[ -n $( type -p pisi ) ]];then
+		repo_type='pisi'
+	elif [[ -n $( type -p pacman ) ]];then
+		repo_type='pacman'
+	fi
 	# apt - debian, buntus
 	if [[ -f $apt_file || -d $apt_file.d ]];then
 		REPO_DATA="$( grep -Esv '(^[[:space:]]*$|^[[:space:]]*#)' $apt_file $apt_file.d/*.list )"
-		REPO_FILE_ID='apt sources'
-	# yum - fedora, redhat, centos, etc
-	elif [[ -d $yum_repo_dir || -f $yum_conf ]];then
+		REPO_FILE_ID="$repo_type sources"
+	fi
+	# yum - fedora, redhat, centos, etc. Note that rpmforge for some odd reason places its yum repos
+	# in /etc/apt/sources.list.d/
+	if [[ -d $yum_repo_dir || -f $yum_conf ]];then
 		# older redhats put their yum data in /etc/yum.conf
 		for repo_file in $( ls $yum_repo_dir*.repo $yum_conf 2>/dev/null )
 		do
@@ -5797,9 +6107,10 @@ $repo_data_working"
 				repo_data_working=''
 			fi
 		done
-		REPO_FILE_ID='yum repos'
+		REPO_FILE_ID="$repo_type repos"
+	# pacman - archlinux, going to assume that pisi and arch/pacman don't have the above issue
 	# pisi - pardus
-	elif [[ -d $pisi_dir && -n $( type -p pisi ) ]];then
+	elif [[ -d $pisi_dir && $repo_type == 'pisi' ]];then
 		REPO_DATA="$( pisi list-repo )"
 		# now we need to create the structure: repo info: repo path
 		# we do that by looping through the lines of the output and then
@@ -5822,8 +6133,7 @@ $repo_data_working"
 		done <<< "$REPO_DATA"
 		# echo and execute the line breaks inserted
 		REPO_DATA="$( echo -e $repo_data_working )"
-		REPO_FILE_ID='pisi repo'
-	# pacman - archlinux
+		REPO_FILE_ID="$repo_type repos"
 	elif [[ -f $pacman_conf ]];then
 		# get list of mirror include files, trim white space off ends
 		repo_data_working="$( gawk '
@@ -5859,7 +6169,7 @@ $repo_data_working"
 		done
 		# execute line breaks
 		REPO_DATA="$( echo -e $repo_data_working2 )"
-		REPO_FILE_ID='arch repo servers'
+		REPO_FILE_ID="$repo_type repo servers"
 	fi
 	eval $LOGFE
 }
@@ -6206,9 +6516,6 @@ get_sensors_data()
 			}
 		}' <<< "$Sensors_Data"
 		) )
-	# the error case needs to go here because we are setting special array delimiter ','
-	else
-		A_SENSORS_DATA=( "You do not have the sensors app installed." )
 	fi
 	
 	IFS="$ORIGINAL_IFS"
@@ -6231,6 +6538,44 @@ get_sensors_output()
 		fi
 	fi
 	echo -e "$sensors_data"
+}
+
+get_shell_data()
+{
+	eval $LOGFS
+
+	local shell_type="$( ps -p $PPID -o comm= 2>/dev/null )"
+	local shell_version=''
+	
+	if [[ $B_EXTRA_DATA == 'true' && -n $shell_type ]];then
+		case $shell_type in
+			bash)
+				shell_version=$( get_de_app_version "$shell_type" "^GNU[[:space:]]bash,[[:space:]]version" "4" | sed -r 's/(\(.*|-release|-version)//' )
+				;;
+			# csh/dash use dpkg package version data, debian/buntu only
+			csh)
+				shell_version=$( get_de_app_version "$shell_type" "$shell_type" "3" )
+				;;
+			dash)
+				shell_version=$( get_de_app_version "$shell_type" "$shell_type" "3" )
+				;;
+			ksh)
+				shell_version=$( get_de_app_version "$shell_type" "version" "5" )
+				;;
+			tcsh)
+				shell_version=$( get_de_app_version "$shell_type" "^tcsh" "2" )
+				;;
+			zsh)
+				shell_version=$( get_de_app_version "$shell_type" "^zsh" "2" )
+				;;
+		esac
+	fi
+	if [[ -n $shell_version ]];then
+		shell_type="$shell_type $shell_version"
+	fi
+	echo $shell_type
+	
+	eval $LOGFS
 }
 
 get_unmounted_partition_data()
@@ -6449,13 +6794,16 @@ print_it_out()
 {
 	eval $LOGFS
 	# note that print_it_out passes local variable values on to its children,
-	# and in some cases, their children, with Lspci_Data
-	local Lspci_Data='' # only for verbose
+	# and in some cases, their children, with Lspci_v_Data
+	local Lspci_v_Data='' Lspci_n_Data='' # only for verbose
 
 	if [[ $B_SHOW_SHORT_OUTPUT == 'true' ]];then
 		print_short_data
 	else
-		Lspci_Data="$( get_lspci_data )"
+		Lspci_v_Data="$( get_lspci_data 'v' )"
+		if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+			Lspci_n_Data="$( get_lspci_data 'n' )"
+		fi
 		if [[ $B_SHOW_SYSTEM == 'true' ]];then
 			print_system_data
 		fi
@@ -6598,9 +6946,9 @@ print_short_data()
 print_audio_data()
 {
 	eval $LOGFS
-	local i='' card_id='' audio_data='' a_audio_data='' port_data='' pci_bus_id=''
-	local a_audio_working='' alsa_driver='' alsa_data='' port_plural='' module_version=''
-	local bus_usb_text='' bus_usb_id='' line_starter='Audio:' alsa='' alsa_version=''
+	local i='' card_id='' audio_data='' a_audio_data='' port_data='' pci_bus_id='' card_string=''
+	local a_audio_working='' audio_driver='' alsa_data='' port_plural='' module_version=''
+	local bus_usb_text='' bus_usb_id='' line_starter='Audio:' alsa='' alsa_version='' print_data=''
 	# set A_AUDIO_DATA and get alsa data
 	get_audio_data
 	get_audio_alsa_data
@@ -6629,13 +6977,17 @@ print_audio_data()
 			a_audio_working=( ${A_AUDIO_DATA[i]} )
 			IFS="$ORIGINAL_IFS"
 			port_data=''
-			alsa_driver=''
+			audio_driver=''
 			audio_data=''
+			card_string=''
 			port_plural=''
 			module_version=''
 			pci_bus_id=''
 			bus_usb_text=''
 			bus_usb_id=''
+			print_data=''
+			vendor_product=''
+			
 			if [[ ${#A_AUDIO_DATA[@]} -gt 1 ]];then
 				card_id="-$(( $i + 1 ))"
 			fi
@@ -6646,36 +6998,61 @@ print_audio_data()
 			fi
 			# we're testing for the presence of the 2nd array item here, which is the driver name
 			if [[ -n ${a_audio_working[1]} ]];then
-				alsa_driver=" ${C1}driver$SEP3${C2} ${a_audio_working[1]}"
+				audio_driver="${C1}driver$SEP3${C2} ${a_audio_working[1]} "
 			fi
 			if [[ -n ${a_audio_working[2]} && $B_EXTRA_DATA == 'true' ]];then
 				if [[ $( wc -w <<< ${a_audio_working[2]} ) -gt 1 ]];then
 					port_plural='s'
 				fi
-				port_data=" ${C1}port$port_plural$SEP3${C2} ${a_audio_working[2]}"
+				port_data="${C1}port$port_plural$SEP3${C2} ${a_audio_working[2]} "
 			fi
 			if [[ -n ${a_audio_working[4]} && $B_EXTRA_DATA == 'true' ]];then
 				if [[ ${a_audio_working[1]} != 'USB Audio' ]];then
 					bus_usb_text='bus-ID'
+					if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+						vendor_product=$( get_lspci_vendor_product "${a_audio_working[4]}" )
+					fi
 				else
 					bus_usb_text='usb-ID'
+					if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+						vendor_product=${a_audio_working[5]}
+					fi
 				fi
 				bus_usb_id=${a_audio_working[4]}
-				pci_bus_id=" ${C1}$bus_usb_text$SEP3${C2} $bus_usb_id"
+				pci_bus_id="${C1}$bus_usb_text$SEP3${C2} $bus_usb_id "
+				if [[ -n $vendor_product ]];then
+					vendor_product="${C1}chip-ID$SEP3${C2} $vendor_product "
+				fi
 			fi
 			if [[ -n ${a_audio_working[0]} ]];then
-				audio_data="${C1}Card$card_id:${C2} ${a_audio_working[0]}$alsa_driver$port_data$pci_bus_id"
+				card_string="${C1}Card$card_id:${C2} ${a_audio_working[0]} "
+				audio_data="$audio_driver$port_data$pci_bus_id$vendor_product"
 			fi
 			# only print alsa on last line if short enough, otherwise print on its own line
 			if [[ $i -eq 0 ]];then
-				if [[ -n $alsa_data && $( calculate_line_length "${audio_data}$alsa_data" ) -lt $LINE_MAX ]];then
-					audio_data="$audio_data $alsa_data"
+				if [[ -n $alsa_data && $( calculate_line_length "$card_string${audio_data}$alsa_data" ) -lt $LINE_MAX ]];then
+					audio_data="$audio_data$alsa_data"
 					alsa_data=''
 				fi
 			fi
 			if [[ -n $audio_data ]];then
-				audio_data=$( create_print_line "$line_starter" "$audio_data" )
-				print_screen_output "$audio_data"
+				if [[ $( calculate_line_length "$card_string$audio_data" ) -lt $LINE_MAX ]];then
+					print_data=$( create_print_line "$line_starter" "$card_string$audio_data" )
+					print_screen_output "$print_data"
+				# print the line
+				else
+					# keep the driver on the same line no matter what, looks weird alone on its own line
+					if [[ $B_EXTRA_DATA != 'true' ]];then
+						print_data=$( create_print_line "$line_starter" "$card_string$audio_data" )
+						print_screen_output "$print_data"
+					else
+						print_data=$( create_print_line "$line_starter" "$card_string" )
+						print_screen_output "$print_data"
+						line_starter=' '
+						print_data=$( create_print_line "$line_starter" "$audio_data" )
+						print_screen_output "$print_data"
+					fi
+				fi
 				line_starter=' '
 			fi
 		done
@@ -6834,9 +7211,9 @@ print_gfx_data()
 	eval $LOGFS
 	local gfx_data='' i='' card_id='' root_alert='' root_x_string='' a_gfx_working=''
 	local b_is_mesa='false' display_full_string='' gfx_bus_id='' gfx_card_data=''
-	local res_tty='Resolution' xorg_data='' x_vendor_string='' 
+	local res_tty='Resolution' xorg_data='' x_vendor_string='' vendor_product=''
 	local spacer='' x_driver='' x_driver_string='' x_driver_plural='' direct_render_string=''
-	local separator_loaded='' separator_unloaded='' separator_failed=''
+	local separator_loaded='' separator_unloaded='' separator_failed='' 
 	local loaded='' unloaded='' failed=''
 	local line_starter='Graphics:'
 	local screen_resolution="$( get_graphics_res_data )"
@@ -6934,16 +7311,22 @@ print_gfx_data()
 			if [[ $B_EXTRA_DATA == 'true' ]];then
 				if [[ -n ${a_gfx_working[1]} ]];then
 					gfx_bus_id=" ${C1}bus-ID$SEP3${C2} ${a_gfx_working[1]}"
+					if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+						vendor_product=$( get_lspci_vendor_product "${a_gfx_working[1]}" )
+					fi
 				else
 					gfx_bus_id=" ${C1}bus-ID$SEP3${C2} N/A"
 				fi
+			fi
+			if [[ -n $vendor_product ]];then
+				vendor_product=" ${C1}chip-ID$SEP3${C2} $vendor_product"
 			fi
 			if [[ ${#A_GFX_CARD_DATA[@]} -gt 1 ]];then
 				card_id="Card-$(($i+1)):"
 			else
 				card_id='Card:'
 			fi
-			gfx_data="${C1}$card_id${C2} $gfx_card_data$gfx_bus_id "
+			gfx_data="${C1}$card_id${C2} $gfx_card_data$gfx_bus_id$vendor_product "
 			if [[ ${#A_GFX_CARD_DATA[@]} -gt 1 ]];then
 				gfx_data=$( create_print_line "$line_starter" "${gfx_data}" )
 				print_screen_output "$gfx_data"
@@ -7056,10 +7439,19 @@ print_hard_disk_data()
 			# printing line one, then new lines according to $divisor setting, and after, if leftovers, print that line.
 			case $i in 
 				0)
-					hdd_data=$( create_print_line "$Line_Starter" "${C1}HDD Total Size:${C2} ${hdd_capacity} (${hdd_used}) ${hdd_model}" )
-					print_screen_output "$hdd_data"
-					hdd_model=''
-					Line_Starter=' '
+					if [[ $divisor -eq 1 ]];then
+						hdd_data=$( create_print_line "$Line_Starter" "${C1}HDD Total Size:${C2} ${hdd_capacity} (${hdd_used})" )
+						print_screen_output "$hdd_data"
+						Line_Starter=' '
+						hdd_data=$( create_print_line "$Line_Starter" "${hdd_model}" )
+						print_screen_output "$hdd_data"
+						hdd_model=''
+					else
+						hdd_data=$( create_print_line "$Line_Starter" "${C1}HDD Total Size:${C2} ${hdd_capacity} (${hdd_used}) ${hdd_model}" )
+						print_screen_output "$hdd_data"
+						hdd_model=''
+						Line_Starter=' '
+					fi
 					;;
 				*)
 					# using modulus here, if divisible by $divisor, print line, otherwise skip
@@ -7094,7 +7486,7 @@ print_info_data()
 	eval $LOGFS
 
 	local info_data='' line_starter='Info:'
-	local runlvl='' client_data=''
+	local runlvl='' client_data='' shell_data=''
 	local memory="$( get_memory_data )"
 	local processes="$(( $( ps aux | wc -l ) - 1 ))"
 	local up_time="$( get_uptime )"
@@ -7113,6 +7505,12 @@ print_info_data()
 				gcc_others=" ${C1}alt$SEP3${C2} $( tr ',' '/' <<< ${A_GCC_VERSIONS[1]} )"
 			fi
 			gcc_installed="${C1}Gcc sys$SEP3${C2} $gcc_installed$gcc_others "
+		fi
+	fi
+	if [[  $B_RUNNING_IN_SHELL == 'true' ]];then
+		shell_data=$( get_shell_data )
+		if [[ -n $shell_data ]];then
+			IRC_CLIENT="$IRC_CLIENT ($shell_data)"
 		fi
 	fi
 
@@ -7277,14 +7675,14 @@ print_machine_data()
 		fi
 		IFS="$ORIGINAL_IFS"
 	else
-		system_line="${C2}No /sys/class/dmi machine data. Try newer kernel, or install dmidecode.${CN}"
+		system_line="${C2}No /sys/class/dmi machine data - try newer kernel, or install dmidecode${CN}"
 	fi
 	# patch to dump all of above if dmidecode was data source and non root user
 	if [[ ${A_MACHINE_DATA[0]} == 'dmidecode-non-root-user' || ${A_MACHINE_DATA[0]} == 'dmidecode-no-smbios-dmi-data' ]];then
 		if [[ ${A_MACHINE_DATA[0]} == 'dmidecode-non-root-user' ]];then
-			system_line="${C2}No /sys/class/dmi. Using dmidecode: you must be root to run dmidecode.${CN}"
+			system_line="${C2}No /sys/class/dmi, using dmidecode: you must be root to run dmidecode${CN}"
 		elif [[ ${A_MACHINE_DATA[0]} == 'dmidecode-no-smbios-dmi-data' ]];then
-			system_line="${C2}No /sys/class/dmi. Using dmidecode: no machine data available.${CN}"
+			system_line="${C2}No /sys/class/dmi, using dmidecode: no machine data available${CN}"
 		fi
 		mobo_line=''
 		bios_line=''
@@ -7348,7 +7746,7 @@ print_networking_data()
 	eval $LOGFS
 	local i='' card_id='' network_data='' a_network_working='' port_data='' driver_data=''
 	local card_string='' port_plural='' module_version='' pci_bus_id='' bus_usb_text=''
-	local bus_usb_id='' line_starter='Network:' card_string='' card_data=''
+	local bus_usb_id='' line_starter='Network:' card_string='' card_data='' vendor_product=''
 	# set A_NETWORK_DATA
 	get_networking_data
 
@@ -7370,6 +7768,7 @@ print_networking_data()
 			pci_bus_id=''
 			port_data=''
 			port_plural=''
+			vendor_product=''
 
 			if [[ ${#A_NETWORK_DATA[@]} -gt 1 ]];then
 				card_id="-$(( $i + 1 ))"
@@ -7390,14 +7789,23 @@ print_networking_data()
 				if [[ -z $( grep '^usb-' <<< ${a_network_working[4]} ) ]];then
 					bus_usb_text='bus-ID'
 					bus_usb_id=${a_network_working[4]}
+					if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+						vendor_product=$( get_lspci_vendor_product "${a_network_working[4]}" )
+					fi
 				else
 					bus_usb_text='usb-ID'
 					bus_usb_id=$( cut -d '-' -f '2-4' <<< ${a_network_working[4]} )
+					if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+						vendor_product=${a_network_working[10]}
+					fi
 				fi
 				pci_bus_id="${C1}$bus_usb_text$SEP3${C2} $bus_usb_id"
+				if [[ -n $vendor_product ]];then
+					vendor_product=" ${C1}chip-ID$SEP3${C2} $vendor_product"
+				fi
 			fi
 			card_string="${C1}Card$card_id:${C2} ${a_network_working[0]} "
-			card_data="$driver_data$port_data$pci_bus_id"
+			card_data="$driver_data$port_data$pci_bus_id$vendor_product"
 			if [[ $( calculate_line_length "$card_string$card_data" ) -gt $LINE_MAX ]];then
 				network_data=$( create_print_line "$line_starter" "$card_string" )
 				line_starter=' '
@@ -7893,7 +8301,7 @@ print_raid_data()
 	local basic_raid='' basic_raid_separator='' basic_raid_plural='' inactive=''
 	local component_separator='' device_id='' print_string='' loop_limit=0 array_count_unused=''
 	local array_count='' raid_event='' b_print_lines='true'
-	
+
 	get_raid_data
 
 	for (( i=0; i < ${#A_RAID_DATA[@]}; i++ ))
@@ -8082,7 +8490,6 @@ print_raid_data()
 				read_ahead=${a_partition_working[1]}
 				read_ahead=" ${C1}read ahead${SEP3}${C2} $read_ahead"
 			fi
-			
 		elif [[ ${a_partition_working[0]} == 'UnusedDevices' ]];then
 			if [[ ${a_partition_working[1]} == '' ]];then
 				unused_devices='N/A'
@@ -8103,15 +8510,15 @@ print_raid_data()
 	fi
 
 	if [[ $B_MDSTAT_FILE != 'true' ]];then
-		if [[ $B_SHOW_BASIC_RAID != 'true' ]];then
-			a_raid_data[0]="${C1}Error${SEP3}${C2} No $FILE_MDSTAT file detected!"
+		if [[ $B_SHOW_RAID_R == 'true' ]];then
+			a_raid_data[0]="No RAID data available - $FILE_MDSTAT is missing - is md_mod kernel module loaded?"
 		else
 			b_print_lines='false'
 		fi
 	else
 		if [[ ${a_raid_data[0]} == '' ]];then
 			if [[ $B_SHOW_BASIC_RAID != 'true' ]];then
-				a_raid_data[0]="${C1}Device${SEP3}${C2} No RAID devices detected!"
+				a_raid_data[0]="No RAID devices detected - /proc/mdstat and md_mod kernel raid module present"
 			else
 				b_print_lines='false'
 			fi
@@ -8243,10 +8650,10 @@ print_sensors_data()
 	a_sensors_working=( ${A_SENSORS_DATA[0]} )
 	IFS="$ORIGINAL_IFS"
 	# initial error cases, for missing app or unconfigured sensors. Note that array 0
-	# always has at least 3 items, cpu/mobo/psu temp in it. If it's a single item, then
-	# it's an error message, not the real data arrays.
-	if [[ ${#a_sensors_working[@]} -eq 1 ]];then
-		cpu_temp="${C1}Error:${C2} ${A_SENSORS_DATA[0]}"
+	# always has at least 3 items, cpu/mobo/psu temp in it. If the count is 0, then
+	# no sensors are installed/configured
+	if [[ ${#a_sensors_working[@]} -eq 0 ]];then
+		cpu_temp="None detected - is lm-sensors installed and configured?"
 		b_is_error='true'
 	else
 		for (( i=0; i < ${#A_SENSORS_DATA[@]}; i++ ))
@@ -8373,7 +8780,7 @@ print_sensors_data()
 print_system_data()
 {
 	eval $LOGFS
-	local system_data='' bits='' desktop_environment='' 
+	local system_data='' bits='' desktop_environment='' dm_data='' de_extra_data=''
 	local host_kernel_string='' de_distro_string='' host_string='' desktop_type='Desktop'
 	local host_name=$HOSTNAME
 	local current_kernel=$( uname -rm ) # | gawk '{print $1,$3,$(NF-1)}' )
@@ -8386,6 +8793,13 @@ print_system_data()
 		if [[ -z $desktop_environment ]];then
 			desktop_environment='N/A'
 		fi
+		
+		if [[  $B_EXTRA_EXTRA_EXTRA_DATA == 'true' ]];then
+			de_extra_data=$( get_desktop_extra_data )
+			if [[ -n $de_extra_data ]];then
+				de_extra_data=" ${C1}info$SEP3${C2} $de_extra_data"
+			fi
+		fi
 	else
 		if [[ -z $tty_session && $B_CONSOLE_IRC == 'true' ]];then
 			tty_session=$( get_console_irc_tty )
@@ -8396,7 +8810,22 @@ print_system_data()
 		desktop_environment="tty$tty_session"
 		desktop_type='Console'
 	fi
-	de_distro_string="${C1}$desktop_type$SEP3${C2} $desktop_environment ${C1}Distro$SEP3${C2} $distro"
+	# having dm type can be useful if you are accessing remote system
+	# or are out of X and don't remember which dm is running the system
+	if [[  $B_EXTRA_EXTRA_DATA == 'true' ]];then
+		dm_data=$( get_display_manager )
+		# here we only want the dm info to show N/A if in X
+		if [[ -z $dm_data && $B_RUNNING_IN_X == 'true' ]];then
+			dm_data='N/A'
+		fi
+		# only print out of X if dm_data has info, then it's actually useful, but
+		# for headless servers, no need to print dm stuff.
+		if [[ -n $dm_data ]];then
+			dm_data=" ${C1}dm$SEP3${C2} $dm_data"
+		fi
+	fi
+	
+	de_distro_string="${C1}$desktop_type$SEP3${C2} $desktop_environment$de_extra_data$dm_data ${C1}Distro$SEP3${C2} $distro"
 	if [[ $B_EXTRA_DATA == 'true' ]];then
 		gcc_string=$( get_gcc_kernel_version )
 		if [[ -n $gcc_string ]];then
@@ -8491,7 +8920,7 @@ print_unmounted_partition_data()
 			print_screen_output "$unmounted_data"
 		done
 	else
-		unmounted_data=$( create_print_line "Unmounted:" "No unmounted partitions detected." )
+		unmounted_data=$( create_print_line "Unmounted:" "No unmounted partitions detected" )
 		print_screen_output "$unmounted_data"
 	fi
 	
