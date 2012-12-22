@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.8.24
-####  Date: December 6 2012
+####  version: 1.8.25
+####  Date: December 21 2012
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -191,7 +191,6 @@ LINE_MAX_IRC='105'
 PS_COUNT=5
 PS_THROTTLED=''
 REPO_DATA=''
-REPO_FILE_ID=''
 
 ### primary data array holders	## usage: 'A_<var>'
 A_ALSA_DATA=''
@@ -6016,23 +6015,27 @@ get_raid_data()
 get_repo_data()
 {
 	eval $LOGFS
-	local repo_file='' repo_data_working='' repo_data_working2='' repo_line=''
+	local repo_file='' repo_data_working='' repo_data_working2='' repo_line='' repo_type='unknown'
 	local apt_file='/etc/apt/sources.list' yum_repo_dir='/etc/yum.repos.d/' yum_conf='/etc/yum.conf'
 	local pacman_conf='/etc/pacman.conf' pacman_repo_dir='/etc/pacman.d/' pisi_dir='/etc/pisi/'
 	
-	# apt - debian, buntus
+	# apt - debian, buntus, also sometimes some yum/rpm repos may create apt repos here as well
 	if [[ -f $apt_file || -d $apt_file.d ]];then
-		REPO_DATA="$( grep -Esv '(^[[:space:]]*$|^[[:space:]]*#)' $apt_file $apt_file.d/*.list )"
-		REPO_FILE_ID='apt sources'
-	# yum - fedora, redhat, centos, etc
-	elif [[ -d $yum_repo_dir || -f $yum_conf ]];then
+		REPO_DATA="$( grep -Esv '(^[[:space:]]*$|^[[:space:]]*#)' $apt_file $apt_file.d/*.list | sed -r 's/^(.*)/apt sources:\1/' )"
+	fi
+	# yum - fedora, redhat, centos, etc. Note that rpmforge also may create apt sources
+	# in /etc/apt/sources.list.d/. Therefore rather than trying to assume what package manager is
+	# actually running, inxi will merely note the existence of each repo type for apt/yum. 
+	# Also, in rpm, you can install apt-rpm for the apt-get command, so it's not good to check for
+	# only the commands in terms of selecting which repos to show.
+	if [[ -d $yum_repo_dir || -f $yum_conf ]];then
 		# older redhats put their yum data in /etc/yum.conf
 		for repo_file in $( ls $yum_repo_dir*.repo $yum_conf 2>/dev/null )
 		do
 			repo_data_working="$( gawk -v repoFile=$repo_file '
 			# construct the string for the print function to work with, file name: data
 			function print_line( fileName, repoId, repoUrl ){
-				print fileName ":" repoId repoUrl
+				print "yum repos:" fileName ":" repoId repoUrl
 			}
 			BEGIN {
 				FS="\n"
@@ -6057,17 +6060,18 @@ get_repo_data()
 				repoTitle = $1 " ~ "
 			}
 			/^(mirrorlist|baseurl)/ {
-				sub( /(mirrorlist|baseurl)=/, "", $1 ) # strip out the field starter
+				sub( /(mirrorlist|baseurl)[[:space:]]*=[[:space:]]*/, "", $1 ) # strip out the field starter
 				urlData = $1
 			}
-			/^enabled=/ {
+			# note: enabled = 1. enabled = 0 means disabled
+			/^enabled[[:space:]]*=/ {
 				enabledStatus = $1
 			}
 			# print out the line if all 3 values are found, otherwise if a new
 			# repoTitle is hit above, it will print out the line there instead
 			{ 
 				if ( urlData != "" && enabledStatus != "" && repoTitle != "" ){
-					if ( enabledStatus !~ /enabled=0/ ){
+					if ( enabledStatus !~ /enabled[[:space:]]*=[[:space:]]*0/ ){
 						print_line( repoFile, repoTitle, urlData )
 					}
 					enabledStatus=""
@@ -6094,7 +6098,7 @@ $repo_data_working"
 				repo_data_working=''
 			fi
 		done
-		REPO_FILE_ID='yum repos'
+	# pacman - archlinux, going to assume that pisi and arch/pacman don't have the above issue with apt/yum
 	# pisi - pardus
 	elif [[ -d $pisi_dir && -n $( type -p pisi ) ]];then
 		REPO_DATA="$( pisi list-repo )"
@@ -6112,15 +6116,13 @@ $repo_data_working"
 				print $0
 			}' <<< $repo_line )
 			if [[ -n $( grep '://' <<< $repo_line ) ]];then
-				repo_data_working="$repo_data_working:$repo_line\n"
+				repo_data_working="pisi repos:$repo_data_working:$repo_line\n"
 			else
 				repo_data_working="$repo_data_working$repo_line"
 			fi
 		done <<< "$REPO_DATA"
 		# echo and execute the line breaks inserted
 		REPO_DATA="$( echo -e $repo_data_working )"
-		REPO_FILE_ID='pisi repo'
-	# pacman - archlinux
 	elif [[ -f $pacman_conf ]];then
 		# get list of mirror include files, trim white space off ends
 		repo_data_working="$( gawk '
@@ -6147,7 +6149,7 @@ $repo_data_working"
 				}
 				/^[[:space:]]*Server/ {
 					sub(/^[[:space:]]+|[[:space:]]+$/,"",$2)
-					print repoFile ":" $2 "\\n"
+					print "pacman repo servers:" repoFile ":" $2 "\\n"
 				}
 				' $repo_file )"
 			else
@@ -6156,7 +6158,6 @@ $repo_data_working"
 		done
 		# execute line breaks
 		REPO_DATA="$( echo -e $repo_data_working2 )"
-		REPO_FILE_ID='arch repo servers'
 	fi
 	eval $LOGFE
 }
@@ -8558,7 +8559,7 @@ print_repo_data()
 {
 	eval $LOGFS
 	local repo_count=0 repo_line='' file_name='' file_content='' file_name_holder=''
-	local repo_full='' b_print_next_line='false' 
+	local repo_full='' b_print_next_line='false' repo_type=''
 	
 	get_repo_data
 	
@@ -8567,8 +8568,9 @@ print_repo_data()
 		while read repo_line
 		do
 			(( repo_count++ ))
-			file_name=$( cut -d ':' -f 1 <<< $repo_line )
-			file_content=$( cut -d ':' -f 2-6 <<< $repo_line )
+			repo_type=$( cut -d ':' -f 1 <<< $repo_line )
+			file_name=$( cut -d ':' -f 2 <<< $repo_line )
+			file_content=$( cut -d ':' -f 3-7 <<< $repo_line )
 			# this will dump unwanted white space line starters. Some irc channels
 			# use bots that show page title for urls, so need to break the url by adding 
 			# a white space.
@@ -8579,10 +8581,10 @@ print_repo_data()
 			fi
 			# check file name, if different, update the holder for print out
 			if [[ $file_name != $file_name_holder ]];then
-				if [[ $REPO_FILE_ID != 'pisi repo' ]];then
-					repo_full="${C1}Active $REPO_FILE_ID in file:${C2} $file_name"
+				if [[ $repo_type != 'pisi repo' ]];then
+					repo_full="${C1}Active $repo_type in file:${C2} $file_name"
 				else
-					repo_full="${C1}$REPO_FILE_ID:${C2} $file_name"
+					repo_full="${C1}$repo_type:${C2} $file_name"
 				fi
 				file_name_holder=$file_name
 				b_print_next_line='true'
