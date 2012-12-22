@@ -1,9 +1,9 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.8.24
-####  Date: December 6 2012
-####  Patch Number: 06-b1
+####  version: 1.8.26
+####  Date: December 22 2012
+####  Patch Number: 01-b1
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -4414,7 +4414,8 @@ get_hdd_data_basic()
 		#	size += $3
 		# }
 		# special case from this data: 8     0  156290904 sda
-		$1 ~ /^(3|22|33|8)$/ && $NF ~ /[hsv]d[a-z]$/ && ( $2 % 16 == 0 || $2 % 16 == 8 ) {
+		# note: vm has 252 known starter
+		$1 ~ /^(3|8|22|33|252)$/ && $NF ~ /[hsv]d[a-z]$/ && ( $2 % 16 == 0 || $2 % 16 == 8 ) {
 			size += $3
 		}
 
@@ -4435,8 +4436,10 @@ get_hdd_data_basic()
 			else {
 				print "NA,-" # print an empty array, this will be further handled in the print out function
 			}
-		}' $FILE_PARTITIONS ) )
- 		log_function_data 'cat' "$FILE_PARTITIONS"
+		}' $FILE_PARTITIONS 
+		) )
+
+		log_function_data 'cat' "$FILE_PARTITIONS"
 	fi
 	IFS="$ORIGINAL_IFS"
 	temp_array=${A_HDD_DATA[@]}
@@ -4515,12 +4518,13 @@ get_hard_drive_data_advanced()
 	IFS="$ORIGINAL_IFS"
 
 	## then we'll loop through that array looking for matches.
-	if [[ -n $( grep -E 'sd[a-z]' <<< ${A_HDD_DATA[@]} ) ]];then
+	if [[ -n $( grep -E '[sv]d[a-z]' <<< ${A_HDD_DATA[@]} ) ]];then
 		# first pack the main ls variable so we don't have to keep using ls /dev...
-		ls_disk_by_id="$( ls -l /dev/disk/by-id )"
+		# not all systems have /dev/disk/by-id
+		ls_disk_by_id="$( ls -l /dev/disk/by-id 2>/dev/null )"
 		for (( i=0; i < ${#A_HDD_DATA[@]} - 1; i++ ))
 		do
-			if [[ -n $( grep -E '^sd[a-z]' <<< ${A_HDD_DATA[$i]} ) ]];then
+			if [[ -n $( grep -E '^[sv]d[a-z]' <<< ${A_HDD_DATA[$i]} ) ]];then
 				IFS=","
 				a_temp_working=( ${A_HDD_DATA[$i]} )
 				IFS="$ORIGINAL_IFS"
@@ -6011,11 +6015,13 @@ get_raid_data()
 
 # Repos will be added as we get distro package manager data to create the repo data. 
 # This method will output the file name also, which is useful to create output that's 
-# neat and readable.
+# neat and readable. Each line of the total number contains the following sections,
+# separated by a : for splitting in the print function
+# part one, repo type/string : part two, file name, if present, of info : part 3, repo data
 get_repo_data()
 {
 	eval $LOGFS
-	local repo_file='' repo_data_working='' repo_data_working2='' repo_line='' repo_type='unknown'
+	local repo_file='' repo_data_working='' repo_data_working2='' repo_line='' 
 	local apt_file='/etc/apt/sources.list' yum_repo_dir='/etc/yum.repos.d/' yum_conf='/etc/yum.conf'
 	local pacman_conf='/etc/pacman.conf' pacman_repo_dir='/etc/pacman.d/' pisi_dir='/etc/pisi/'
 	
@@ -6105,6 +6111,12 @@ $repo_data_working"
 		# now we need to create the structure: repo info: repo path
 		# we do that by looping through the lines of the output and then
 		# putting it back into the <data>:<url> format print repos expects to see
+		# note this structure in the data, so store first line and make start of line
+		# then when it's an http line, add it, and create the full line collection.
+# Pardus-2009.1 [Aktiv]
+# 	http://packages.pardus.org.tr/pardus-2009.1/pisi-index.xml.bz2
+# Contrib [Aktiv]
+# 	http://packages.pardus.org.tr/contrib-2009/pisi-index.xml.bz2
 		while read repo_line
 		do
 			repo_line=$( gawk '
@@ -6116,9 +6128,9 @@ $repo_data_working"
 				print $0
 			}' <<< $repo_line )
 			if [[ -n $( grep '://' <<< $repo_line ) ]];then
-				repo_data_working="pisi repos:$repo_data_working:$repo_line\n"
+				repo_data_working="$repo_data_working:$repo_line\n"
 			else
-				repo_data_working="$repo_data_working$repo_line"
+				repo_data_working="${repo_data_working}pisi repo:$repo_line"
 			fi
 		done <<< "$REPO_DATA"
 		# echo and execute the line breaks inserted
