@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.8.28
-####  Date: January 18 2013
+####  version: 1.8.29
+####  Date: January 21 2013
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -3080,15 +3080,32 @@ get_cpu_data()
 		# stop script for a bit to let cpu slow down before parsing cpu /proc file
 		sleep $CPU_SLEEP
 		IFS=$'\n'
-		A_CPU_DATA=( $( gawk -F': ' '
+		A_CPU_DATA=( $( 
+		gawk -F': ' '
 		BEGIN {
 			IGNORECASE=1
+			# need to prime nr for arm cpus, which do not have processor number output in some cases
+			nr = 0
+			count = 0
+			bArm = "false"
 		}
 		# TAKE STRONGER NOTE: \t+ does NOT always work, MUST be [ \t]+
 		# TAKE NOTE: \t+ will work for $FILE_CPUINFO, but SOME ARBITRARY FILE used for TESTING might contain SPACES!
 		# Therefore PATCH to use [ \t]+ when TESTING!
 		/^processor[ \t]+:/ {
-			nr = $NF
+			gsub(/,/, " ", $NF)
+			gsub(/^ +| +$/, "", $NF)
+			if ( $NF ~ "^[0-9]+$" ) {
+				nr = $NF
+			}
+			else {
+				if ( $NF ~ "^ARM" ) {
+					bArm = "true"
+				}
+				count += 1
+				nr = count - 1
+				cpu[nr, "model"] = $NF
+			}
 		}
 
 		/^model name|^cpu\t+:/ {
@@ -3122,7 +3139,7 @@ get_cpu_data()
 			cpu[nr, "cache"] = $NF
 		}
 
-		/^flags/ {
+		/^flags|^features/ {
 			cpu[nr, "flags"] = $NF
 		}
 
@@ -3138,25 +3155,33 @@ get_cpu_data()
 		END {
 			#if (!nr) { print ",,,"; exit } # <- should this be necessary or should bash handle that
 			for ( i = 0; i <= nr; i++ ) {
+				# note: assuming bogomips for arm at 1 x clock
+				# http://en.wikipedia.org/wiki/BogoMips ARM could change so watch this
+				if ( cpu[i, "bogomips"] != "" && cpu[i, "speed"] == "" ) {
+					cpu[i, "speed"] = cpu[i, "bogomips"]
+				}
 				print cpu[i, "model"] "," cpu[i, "speed"] "," cpu[i, "cache"] "," cpu[i, "flags"] "," cpu[i, "bogomips"] ","  cpu[nr, "vendor"]
 			}
 			if (!min) {
 				print "not found"
 				exit
 			}
-			if (min != max) {
-				printf("Min:%s%s Max:%s%s\n", min, "Mhz", max, "Mhz")
-			}
 			else {
-				printf("%s %s\n", max, "Mhz")
+				if (min != max) {
+					printf("Min:%s%s Max:%s%s\n", min, "Mhz", max, "Mhz")
+				}
+				else {
+					printf("%s %s\n", max, "Mhz")
+				}
 			}
-		}' $FILE_CPUINFO ) )
+		}
+ 		' $FILE_CPUINFO ) )
 		log_function_data 'cat' "$FILE_CPUINFO"
 	fi
 	IFS="$ORIGINAL_IFS"
 	temp_array=${A_CPU_DATA[@]}
 	log_function_data "A_CPU_DATA: $temp_array"
-	
+# 	echo ta: ${temp_array[@]}
 	eval $LOGFE
 # 	echo getMainCpu: ${[@]}
 }
@@ -3183,10 +3208,27 @@ get_cpu_ht_multicore_smp_data()
 			cpu_id[0]
 			type = "-"
 			iter = 0
+			# needed to handle arm cpu, no processor number cases
+			count = 0
+			nr = 0
+			bArm = "false"
 		}
 		# array of logical processors, both HT and physical
 		/^processor/ {
-			processor_id[iter] = $NF
+			gsub(/,/, " ", $NF)
+			gsub(/^ +| +$/, "", $NF)
+			if ( $NF ~ "^[0-9]+$" ) {
+				processor_id[iter] = $NF
+			}
+			else {
+				if ( $NF ~ "^ARM" ) {
+					bArm = "true"
+				}
+				count += 1
+				nr = count - 1
+				processor_id[iter] = nr
+			}
+			
 		}
 		# array of physical cpus ids
 		/^physical/ {
@@ -3272,8 +3314,7 @@ get_cpu_ht_multicore_smp_data()
 			
 			print type " " num_of_cpus " " num_of_cores
 		}
-		' $FILE_CPUINFO 
-		) )
+		' $FILE_CPUINFO ) )
 	fi
 	temp_array=${A_CPU_TYPE_PCNT_CCNT[@]}
 	log_function_data "A_CPU_TYPE_PCNT_CCNT: $temp_array"
