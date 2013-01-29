@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.8.32
-####  Date: January 23 2013
+####  version: 1.8.33
+####  Date: January 28 2013
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -2299,6 +2299,7 @@ show_options()
 	print_screen_output "    -D - Adds disk serial number."
 	print_screen_output "    -G - Adds chip vendor:product ID for each video card."
 	print_screen_output "    -I - Adds other detected installed gcc versions to primary gcc output (if present)."
+	print_screen_output "         Adds parent program for shell info if running in X (like Konsole or Gterm)."
 	print_screen_output "    -M - Adds chassis information, if any data for that is available."
 	print_screen_output "    -N - Adds chip vendor:product ID for each nic."
 	print_screen_output "    -R - Adds superblock (if present); algorythm, U data. Adds system info line (kernel support,"
@@ -2413,7 +2414,7 @@ get_start_client()
 	eval $LOGFS
 	local irc_client_path='' irc_client_path_lower='' non_native_konvi='' i=''
 	local b_non_native_app='false' pppid='' app_working_name='' file_data=''
-	local b_qt4_konvi='false' 
+	local b_qt4_konvi='false' ps_parent=''
 
 	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
 		IRC_CLIENT='Shell'
@@ -2715,7 +2716,14 @@ get_start_client()
 					exit
 				}' )"
 		else
-			IRC_CLIENT="PPID=\"$PPID\" - empty?"
+			# this should handle certain cases where it's ssh or some other startup tool
+			# that falls through all the other tests
+			ps_parent=$(ps -p $PPID --no-headers 2>/dev/null | gawk '{print $NF}' )
+			if [[ -n $ps_parent ]];then
+				IRC_CLIENT=$ps_parent
+			else
+				IRC_CLIENT="PPID=\"$PPID\" - empty?"
+			fi
 			unset IRC_CLIENT_VERSION
 		fi
 	fi
@@ -6637,7 +6645,7 @@ get_shell_data()
 	eval $LOGFS
 
 	local shell_type="$( ps -p $PPID -o comm= 2>/dev/null )"
-	local shell_version=''
+	local shell_version='' 
 	
 	if [[ $B_EXTRA_DATA == 'true' && -n $shell_type ]];then
 		case $shell_type in
@@ -6661,6 +6669,13 @@ get_shell_data()
 				shell_version=$( get_de_app_version "$shell_type" "^zsh" "2" )
 				;;
 		esac
+		if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+			script_parent=$( ps -fp $PPID --no-headers 2>/dev/null | awk '/'"$PPID"'/ { print $3 }' )
+			shell_parent=$( ps -p $script_parent --no-headers 2>/dev/null | awk '/'"$script_parent"'/ { print $NF}' )
+			if [[ -n $shell_parent ]];then
+				shell_parent=" - parent $shell_parent"
+			fi
+		fi
 	fi
 	if [[ -n $shell_version ]];then
 		shell_type="$shell_type $shell_version"
@@ -6668,6 +6683,18 @@ get_shell_data()
 	echo $shell_type
 	
 	eval $LOGFS
+}
+
+get_shell_parent()
+{
+	eval $LOGFS
+	local shell_parent='' script_parent=''
+	
+	script_parent=$( ps -fp $PPID --no-headers 2>/dev/null | awk '/'"$PPID"'/ { print $3 }' )
+	shell_parent=$( ps -p $script_parent --no-headers 2>/dev/null | awk '/'"$script_parent"'/ { print $NF}' )
+	echo $shell_parent
+	
+	eval $LOGFE
 }
 
 get_unmounted_partition_data()
@@ -7596,12 +7623,12 @@ print_info_data()
 	eval $LOGFS
 
 	local info_data='' line_starter='Info:'
-	local runlvl='' client_data='' shell_data=''
+	local runlvl='' client_data='' shell_data='' shell_parent=''
 	local memory="$( get_memory_data )"
 	local processes="$(( $( ps aux | wc -l ) - 1 ))"
 	local up_time="$( get_uptime )"
 	local script_patch_number=$( get_patch_version_string )
-	local gcc_string='' gcc_installed='' gcc_others='' closing_data=''
+	local gcc_string='' gcc_installed='' gcc_others='' closing_data='' 
 	
 	if [[ $B_EXTRA_DATA == 'true' ]];then
 		get_gcc_system_version
@@ -7620,7 +7647,16 @@ print_info_data()
 	if [[  $B_RUNNING_IN_SHELL == 'true' ]];then
 		shell_data=$( get_shell_data )
 		if [[ -n $shell_data ]];then
-			IRC_CLIENT="$IRC_CLIENT ($shell_data)"
+			# note, if you start this in tty, it will give 'login' as the parent, which we don't want.
+			if [[ $B_EXTRA_EXTRA_DATA == 'true' && $B_RUNNING_IN_X == 'true' ]];then
+				shell_parent=$( get_shell_parent )
+				if [[ $shell_parent == 'login' ]];then
+					shell_parent=''
+				elif [[ -n $shell_parent ]];then
+					shell_parent=" running in $shell_parent"
+				fi
+			fi
+			IRC_CLIENT="$IRC_CLIENT ($shell_data$shell_parent)"
 		fi
 	fi
 
