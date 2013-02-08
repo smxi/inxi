@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.8.34
-####  Date: January 28 2013
+####  version: 1.8.35
+####  Date: February 7 2013
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -53,7 +53,7 @@
 ####  DEPENDENCIES
 ####  * bash >=3.0 (bash); df, readlink, stty, tr, uname, wc (coreutils);
 ####    gawk (gawk); grep (grep); lspci (pciutils);
-####    free, ps, uptime (procps); find (findutils)
+####    ps, uptime (procps); find (findutils)
 ####  * Also the proc filesystem should be present and mounted
 ####  * Some features, like -M and -d will not work, or will work incompletely,
 ####    if /sys is missing
@@ -184,6 +184,7 @@ DEV_DISK_ID=''
 DEV_DISK_LABEL=''
 DEV_DISK_MAPPER=''
 DEV_DISK_UUID=''
+DMIDECODE_DATA=''
 FILTER_STRING='<filter>'
 IRC_CLIENT=''
 IRC_CLIENT_VERSION=''
@@ -222,6 +223,7 @@ A_X_DATA=''
 # flag to allow distro maintainers to turn off update features. If false, turns off
 # -U and -! testing/advanced update options, as well as removing the -U help menu item
 B_ALLOW_UPDATE='true'
+B_BSD='false'
 B_COLOR_SCHEME_SET='false'
 B_CONSOLE_IRC='false'
 # triggers full display of cpu flags
@@ -232,6 +234,7 @@ B_DBUS_CLIENT='false'
 B_DCOP='false'
 # Debug flood override: make 'true' to allow long debug output
 B_DEBUG_FLOOD='false'
+B_DMIDECODE_SET='false'
 # show extra output data
 B_EXTRA_DATA='false'
 # triggered by -xx
@@ -240,6 +243,7 @@ B_ID_SET='false'
 # override certain errors due to currupted data
 B_HANDLE_CORRUPT_DATA='false'
 B_LABEL_SET='false'
+B_LSPCI='false'
 B_LOG_COLORS='false'
 B_LOG_FULL_DATA='false'
 B_MAPPER_SET='false'
@@ -296,6 +300,7 @@ B_SHOW_SYSTEM='false'
 B_SHOW_UNMOUNTED_PARTITIONS='false'
 B_SHOW_UUIDS='false'
 B_SHOW_X_DATA='false'
+B_SYSCTL='false'
 # triggers various debugging and new option testing
 B_TESTING_1='false'
 B_TESTING_2='false'
@@ -430,6 +435,7 @@ SCRIPT_DOWNLOAD_BRANCH_1='http://inxi.googlecode.com/svn/branches/one/'
 SCRIPT_DOWNLOAD_BRANCH_2='http://inxi.googlecode.com/svn/branches/two/'
 SCRIPT_DOWNLOAD_BRANCH_3='http://inxi.googlecode.com/svn/branches/three/'
 SCRIPT_DOWNLOAD_BRANCH_4='http://inxi.googlecode.com/svn/branches/four/'
+SCRIPT_DOWNLOAD_BRANCH_BSD='http://inxi.googlecode.com/svn/branches/bsd/'
 SCRIPT_DOWNLOAD_DEV='http://smxi.org/test/'
 # note, you can use any ip url here as long as it's the only line on the output page.
 # Also the ip address must be the last thing on that line.
@@ -561,7 +567,6 @@ main()
 	fi
 
 	### Only continue if depends ok
-	SCRIPT_PATH=$( dirname $0 )
 	SCRIPT_VERSION_NUMBER=$( grep -im 1 'version:' $SCRIPT_PATH/$SCRIPT_NAME | gawk '{print $3}' )
 	SCRIPT_PATCH_NUMBER=$( grep -im 1 'Patch Number:' $SCRIPT_PATH/$SCRIPT_NAME | gawk '{print $4}' )
 	
@@ -695,9 +700,16 @@ initialize_script_data()
 {
 	eval $LOGFS
 	
+	if [[ -n $( grep -i 'bsd' <<< $( uname -s 2>/dev/null ) ) ]];then
+		B_BSD='true'
+	fi
+	SCRIPT_PATH=$( dirname $0 )
 	# now set the script BOOLEANS for files required to run features
-	if [[ -d "/proc/" ]];then
+	# note that freebsd has /proc but it's empty
+	if [[ -d "/proc/" && $B_BSD != 'true' ]];then
 		B_PROC_DIR='true'
+	elif [[ $B_BSD == 'true' ]];then
+		B_PROC_DIR='false'
 	else
 		error_handler 6
 	fi
@@ -822,6 +834,15 @@ check_script_suggested_apps()
 	else
 		script_debugger "Suggestion: update to Bash v3.1 for optimal inxi output"
 	fi
+	# test for a few apps that bsds may not have after initial tests
+	if [[ -n $( type -p lspci ) ]];then
+		B_LSPCI='true'
+	fi
+	if [[ $B_BSD == 'true' ]];then
+		if [[ -n $( type -p sysctl ) ]];then
+			B_SYSCTL='true'
+		fi
+	fi
 	# now setting qdbus/dcop for first run, some systems can have both by the way
 	if [[ -n $( type -p qdbus ) ]];then
 		B_QDBUS='true'
@@ -839,7 +860,11 @@ check_script_depends()
 	eval $LOGFS
 	local app_name='' app_path=''
 	# bc removed from deps for now
-	local depends="df free gawk grep lspci ps readlink tr uname uptime wc"
+	local depends="df gawk grep ps readlink tr uname uptime wc"
+	
+	if [[ $B_BSD != 'true' ]];then
+		depends="$depends lspci"
+	fi
 	# no need to add xprop because it will just give N/A if not there, but if we expand use of xprop,
 	# should add that here as a test, then use the B_SHOW_X_DATA flag to trigger the tests in de function
 	local x_apps="xrandr xdpyinfo glxinfo" 
@@ -1346,6 +1371,7 @@ debug_data_collector()
 	local debug_data_dir="inxi-$(tr ' ' '-' <<< $HOSTNAME | tr '[A-Z]' '[a-z]' )-$1-$(date +%Y%m%d)" 
 	local completed_gz_file='' xiin_file='xiin.py' ftp_upload='ftp.techpatterns.com/incoming'
 	local Line='-------------------------'
+	local startDir=$(pwd)
 	
 	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
 		if [[ -n $ALTERNATE_FTP ]];then
@@ -1358,23 +1384,27 @@ debug_data_collector()
 		fi
 		echo 'completed'
 		cd $SCRIPT_DATA_DIR
-		if [[ -d $debug_data_dir ]];then
+		if [[ -d $SCRIPT_DATA_DIR/$debug_data_dir ]];then
 			echo 'Deleting previous xiin data directory...'
-			rm -rf $debug_data_dir
+			rm -rf $SCRIPT_DATA_DIR/$debug_data_dir
 		fi
-		mkdir $debug_data_dir
-		if [[ -f $debug_data_dir.tar.gz ]];then
+		mkdir $SCRIPT_DATA_DIR/$debug_data_dir
+		if [[ -f $SCRIPT_DATA_DIR/$debug_data_dir.tar.gz ]];then
 			echo 'Deleting previous tar.gz file...'
-			rm -f $debug_data_dir.tar.gz
+			rm -f $SCRIPT_DATA_DIR/$debug_data_dir.tar.gz
 		fi
 		
 		echo 'Collecting system info: sensors, lsusb, lspci, lspci -v data, plus /proc data'
+		echo 'also checking for dmidecode data: note, you must be root to have dmidecode work.'
+		echo "Data going into: $SCRIPT_DATA_DIR/$debug_data_dir"
+		dmidecode &> $debug_data_dir/dmidecode.txt
 		lsusb &> $debug_data_dir/lsusb.txt
 		lspci &> $debug_data_dir/lspci.txt
 		lspci -n &> $debug_data_dir/lspci-n.txt
 		lspci -v &> $debug_data_dir/lspci-v.txt
 		ps aux &> $debug_data_dir/ps-aux.txt
 		sensors &> $debug_data_dir/sensors.txt
+		sysctl -a &> $debug_data_dir/sysctl-a.txt
 		ls /usr/bin/gcc* &> $debug_data_dir/gcc-sys-versions.txt
 		gcc --version &> $debug_data_dir/gcc-version.txt
 		cat /etc/issue &> $debug_data_dir/etc-issue.txt
@@ -1389,7 +1419,7 @@ debug_data_collector()
 		check_recommends &> $debug_data_dir/check-recommends.txt
 		# first download and verify xiin
 		if [[ $B_UPLOAD_DEBUG_DATA == 'true' || $1 == 'disk' || $1 == 'sys' || $1 == 'all' ]];then
-			touch $debug_data_dir/xiin-error.txt
+			touch $SCRIPT_DATA_DIR/$debug_data_dir/xiin-error.txt
 			echo "Downloading required tree traverse tool $xiin_file..."
 			if [[ -f xiin && ! -f $xiin_file ]];then
 				mv -f xiin $xiin_file
@@ -1420,7 +1450,7 @@ debug_data_collector()
 			echo 'Collecting networking data...'
 			ifconfig &> $debug_data_dir/ifconfig.txt
 			ip addr &> $debug_data_dir/ip-addr.txt
-			if [[ $b_run_xiin == 'true' ]];then
+			if [[ $b_run_xiin == 'true' && $B_BSD != 'true' ]];then
 				echo $Line
 				echo "Running $xiin_file tool now on /sys..."
 				echo "Using Python version:" && python --version
@@ -1452,13 +1482,13 @@ debug_data_collector()
 				touch $debug_data_dir/no-xorg-log-file
 			fi
 			if [[ -e /etc/X11/xorg.conf ]];then
-				cp /etc/X11/xorg.conf $debug_data_dir
+				cp /etc/X11/xorg.conf $SCRIPT_DATA_DIR/$debug_data_dir
 			else
 				touch $debug_data_dir/no-xorg-conf-file
 			fi
 			if [[ -n $( ls /etc/X11/xorg.conf.d/ 2>/dev/null ) ]];then
 				ls /etc/X11/xorg.conf.d &> $debug_data_dir/ls-etc-x11-xorg-conf-d.txt
-				cp /etc/X11/xorg.conf.d $debug_data_dir
+				cp /etc/X11/xorg.conf.d $SCRIPT_DATA_DIR/$debug_data_dir
 			else
 				touch $debug_data_dir/no-xorg-conf-d-files
 			fi
@@ -1494,12 +1524,15 @@ debug_data_collector()
 			cat /etc/mtab &> $debug_data_dir/etc-mtab.txt
 		fi
 		echo 'Creating inxi output file now. This can take a few seconds...'
-		$SCRIPT_NAME -FRploudxxx -c 0 -@ 8 > $debug_data_dir/inxi-FRploudxxx.txt
+		echo "Starting $SCRIPT_NAME from: $startDir"
+		cd $startDir
+		$SCRIPT_PATH/$SCRIPT_NAME -FRploudxxx -c 0 -@ 8 > $SCRIPT_DATA_DIR/$debug_data_dir/inxi-FRploudxxx.txt
 		cp $LOG_FILE $SCRIPT_DATA_DIR/$debug_data_dir
-		if [[ -f $debug_data_dir.tar.gz ]];then
+		if [[ -f $SCRIPT_DATA_DIR/$debug_data_dir.tar.gz ]];then
 			echo "Found and removing previous tar.gz data file: $debug_data_dir.tar.gz"
-			rm -f $debug_data_dir.tar.gz
+			rm -f $SCRIPT_DATA_DIR/$debug_data_dir.tar.gz
 		fi
+		cd $SCRIPT_DATA_DIR
 		echo 'Creating tar.gz compressed file of this material now. Contents:'
 		echo $Line
 		tar -cvzf $debug_data_dir.tar.gz $debug_data_dir
@@ -1609,7 +1642,6 @@ check_recommends_items()
 	# pardus: pisi sf -q /usr/bin/package
 	local required_apps='
 	df:coreutils~coreutils~coreutils~:partition_data 
-	free:procps~procps~procps~:system_memory 
 	gawk:gawk~gawk~gawk~:core_tool
 	grep:grep~grep~grep~:string_search 
 	lspci:pciutils~pciutils~pciutils~:hardware_data 
@@ -1628,6 +1660,7 @@ check_recommends_items()
 	xrandr:x11-xserver-utils~xrandr~x11-server-utils~:-G_single_screen_resolution
 	'
 	local recommended_apps='
+	dmidecode:dmidecode~dmidecode~dmidecode~:-M_if_no_sys_machine_data 
 	file:file~file~file~:-o_unmounted_file_system
 	hddtemp:hddtemp~hddtemp~hddtemp~:-Dx_show_hdd_temp 
 	ifconfig:net-tools~net-tools~net-tools~:-i_ip_lan-deprecated
@@ -1639,7 +1672,7 @@ check_recommends_items()
 	sudo:sudo~sudo~sudo~:-Dx_hddtemp-user;-o_file-user
 	'
 	local recommended_dirs='
-	/sys/class/dmi/id:-M_system,_motherboard,_bios
+	/sys/class/dmi/id:-M_system,_motherboard,_bios_(or_dmidecode_as_root)
 	/dev:-l,-u,-o,-p,-P,-D_disk_partition_data
 	/dev/disk/by-label:-l,-o,-p,-P_partition_labels
 	/dev/disk/by-uuid:-u,-o,-p,-P_partition_uuid
@@ -2160,6 +2193,9 @@ get_parameters()
 					14)
 						script_self_updater "$SCRIPT_DOWNLOAD_BRANCH_4" 'svn: branch four server'
 						;;
+					15)
+						script_self_updater "$SCRIPT_DOWNLOAD_BRANCH_BSD" 'svn: branch bsd server'
+						;;
 					30)
 						B_RUNNING_IN_SHELL='true'
 						;;
@@ -2348,6 +2384,7 @@ show_options()
 		print_screen_output "-! 12 - Triggers an update from svn branch two - if present, of course."
 		print_screen_output "-! 13 - Triggers an update from svn branch three - if present, of course."
 		print_screen_output "-! 14 - Triggers an update from svn branch four - if present, of course."
+		print_screen_output "-! 15 - Triggers an update from svn branch BSD - if present, of course."
 		print_screen_output "-! <http://......> - Triggers an update from whatever server you list."
 		print_screen_output "-! <ftp.......> - Changes debugging data ftp upload location to whatever you enter here."
 		print_screen_output "   Only used together with -xx@ 11-14, and must be used in front of that."
@@ -3047,59 +3084,65 @@ get_audio_alsa_data()
 	eval $LOGFE
 }
 
-get_console_irc_tty()
-{
-	eval $LOGFS
-	local tty_number=''
-	if [[ -n ${IRC_CLIENT} ]];then
-		tty_number=$( ps aux | gawk '
-			BEGIN {
-				IGNORECASE=1
-			}
-			/'${IRC_CLIENT}'/ {
-				gsub(/[^0-9]/, "", $7)
-				print $7
-			}' )
-	fi
-	log_function_data "tty_number: $tty_number"
-	echo $tty_number
-	eval $LOGFE
-}
-
 ## create A_CPU_CORE_DATA, currently with two values: integer core count; core string text
 ## return value cpu core count string, this helps resolve the multi redundant lines of old style output
 get_cpu_core_count()
 {
 	eval $LOGFS
+	local cpu_physical_count='' cpu_core_count='' cpu_type='' cpu_alpha_count=''
 	if [[ $B_CPUINFO_FILE == 'true' ]]; then
 		# load the A_CPU_TYPE_PCNT_CCNT core data array
 		get_cpu_ht_multicore_smp_data
 		## Because of the upcoming release of cpus with core counts over 6, a count of cores is given after Deca (10)
 		# count the number of processors given
-		local cpu_physical_count=${A_CPU_TYPE_PCNT_CCNT[1]}
-		local cpu_core_count=${A_CPU_TYPE_PCNT_CCNT[2]}
-		local cpu_type=${A_CPU_TYPE_PCNT_CCNT[0]}
+		cpu_physical_count=${A_CPU_TYPE_PCNT_CCNT[1]}
+		cpu_core_count=${A_CPU_TYPE_PCNT_CCNT[2]}
+		cpu_type=${A_CPU_TYPE_PCNT_CCNT[0]}
 
 		# match the numberic value to an alpha value
-		case $cpu_core_count in
-			1) cpu_alpha_count='Single';;
-			2) cpu_alpha_count='Dual';;
-			3) cpu_alpha_count='Triple';;
-			4) cpu_alpha_count='Quad';;
-			5) cpu_alpha_count='Penta';;
-			6) cpu_alpha_count='Hexa';;
-			7) cpu_alpha_count='Hepta';;
-			8) cpu_alpha_count='Octa';;
-			9) cpu_alpha_count='Ennea';;
-			10) cpu_alpha_count='Deca';;
-			*) cpu_alpha_count='Multi';;
-		esac
+		cpu_alpha_count=$( get_cpu_core_count_alpha "$cpu_core_count" )
+		
 		# create array, core count integer; core count string
 		# A_CPU_CORE_DATA=( "$cpu_core_count" "$cpu_alpha_count Core$cpu_type" )
+		A_CPU_CORE_DATA=( "$cpu_physical_count" "$cpu_alpha_count" "$cpu_type" "$cpu_core_count" )
+	elif [[ $B_BSD == 'true' ]];then
+		cpu_core_count=$( grep '^hw.ncpu' <<< "$Sysctl_a_Data" | gawk '{print $NF}' )
+		if [[ -n $( grep -E '^[0-9]+$' <<< "$cpu_core_count" ) ]];then
+			cpu_alpha_count=$( get_cpu_core_count_alpha "$cpu_core_count" )
+			if [[ $cpu_core_count -gt 1 ]];then
+				cpu_type='SMP'
+			fi
+		fi
+		cpu_physical_count=1
 		A_CPU_CORE_DATA=( "$cpu_physical_count" "$cpu_alpha_count" "$cpu_type" "$cpu_core_count" )
 	fi
 	temp_array=${A_CPU_CORE_DATA[@]}
 	log_function_data "A_CPU_CORE_DATA: $temp_array"
+	eval $LOGFE
+}
+
+# args: $1 - integer core count
+get_cpu_core_count_alpha()
+{
+	eval $LOGFS
+	local cpu_alpha_count=''
+	
+	case $1 in
+		1) cpu_alpha_count='Single';;
+		2) cpu_alpha_count='Dual';;
+		3) cpu_alpha_count='Triple';;
+		4) cpu_alpha_count='Quad';;
+		5) cpu_alpha_count='Penta';;
+		6) cpu_alpha_count='Hexa';;
+		7) cpu_alpha_count='Hepta';;
+		8) cpu_alpha_count='Octa';;
+		9) cpu_alpha_count='Ennea';;
+		10) cpu_alpha_count='Deca';;
+		*) cpu_alpha_count='Multi';;
+	esac
+	
+	echo $cpu_alpha_count
+	
 	eval $LOGFE
 }
 
@@ -3213,6 +3256,35 @@ get_cpu_data()
 		}
  		' $FILE_CPUINFO ) )
 		log_function_data 'cat' "$FILE_CPUINFO"
+	elif [[ $B_BSD == 'true' ]];then
+		IFS=$'\n'
+		A_CPU_DATA=( $( 
+		gawk -F': ' '
+		BEGIN {
+			IGNORECASE=1
+			cpuModel=""
+			cpuClock=""
+			cpuCache=""
+			cpuFlags=""
+			cpuBogomips=""
+			cpuVendor=""
+		}
+		/^hw.model/ {
+			gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF )
+			gsub(/'"$BAN_LIST_CPU"'/, "", $NF )
+			sub(/[a-z]+-core/, "", $NF )
+			gsub(/^ +| +$/, "", $NF)
+			gsub(/ [ \t]+/, " ", $NF)
+			cpuModel=$NF
+		}
+		/^hw.clock/ {
+			cpuClock=$NF
+		}
+		END {
+			print cpuModel "," cpuClock "," cpuCache "," cpuFlags "," cpuBogomips ","  cpuVendor
+			print "N/A"
+		}' <<< "$Sysctl_a_Data" ) )
+		
 	fi
 	IFS="$ORIGINAL_IFS"
 	temp_array=${A_CPU_DATA[@]}
@@ -3707,6 +3779,14 @@ get_distro_data()
 {
 	eval $LOGFS
 	local i='' j='' distro='' distro_file='' a_distro_glob='' temp_array=''
+	
+	if [[ $B_BSD == 'true' ]];then
+		distro=$( uname -sr )
+		echo "$distro"
+		log_function_data "distro: $distro"
+		eval $LOGFE
+		return 0
+	fi
 
 	# get the wild carded array of release/version /etc files if present
 	shopt -s nullglob
@@ -3755,11 +3835,11 @@ get_distro_data()
 	# never apply for ubuntu or debian, which will filter down to the following conditions. In general
 	# if there's a specific distro release file available, that's to be preferred, but this is a good backup.
 	elif [[ -n $distro_file && $B_LSB_FILE == 'true' && " $DISTROS_LSB_GOOD" == *" $distro_file "* ]];then
-		distro=$( get_lsb_os_release_data 'lsb-file' )
+		distro=$( get_distro_lsb_os_release_data 'lsb-file' )
 	elif [[ $distro_file == 'lsb-release' ]];then
-		distro=$( get_lsb_os_release_data 'lsb-file' )
+		distro=$( get_distro_lsb_os_release_data 'lsb-file' )
 	elif [[ $distro_file == 'os-release' ]];then
-		distro=$( get_lsb_os_release_data 'os-release-file' )
+		distro=$( get_distro_lsb_os_release_data 'os-release-file' )
 	# then if the distro id file was found and it's not in the exluded primary distro file list, read it
 	elif [[ -n $distro_file && -s /etc/$distro_file && " $DISTROS_EXCLUDE_LIST " != *" $distro_file "* ]];then
 		# new opensuse uses os-release, but older ones may have a similar syntax, so just use the first line
@@ -3776,7 +3856,7 @@ get_distro_data()
 		# lsb gives more manageable and accurate output than issue, but mint should use issue for now
 		# some bashism, boolean must be in parenthesis to work correctly, ie [[ $(boolean) ]] not [[ $boolean ]]
 		if [[ $B_LSB_FILE == 'true' ]] && [[ -z $( grep -i 'mint' /etc/issue ) ]];then
-			distro=$( get_lsb_os_release_data 'lsb-file' )
+			distro=$( get_distro_lsb_os_release_data 'lsb-file' )
 		else
 			distro=$( gawk '
 			BEGIN {
@@ -3807,10 +3887,10 @@ get_distro_data()
 	## test for /etc/lsb-release as a backup in case of failure, in cases where > one version/release file
 	## were found but the above resulted in null distro value
 	if [[ -z $distro ]] && [[ $B_LSB_FILE == 'true' ]];then
-		distro=$( get_lsb_os_release_data 'lsb-file' )
+		distro=$( get_distro_lsb_os_release_data 'lsb-file' )
 	fi
 	if [[ -z $distro ]] && [[ $B_OS_RELEASE_FILE == 'true' ]];then
-		distro=$( get_lsb_os_release_data 'os-release-file' )
+		distro=$( get_distro_lsb_os_release_data 'os-release-file' )
 	fi
 	# now some final null tries
 	if [[ -z $distro ]];then
@@ -3840,7 +3920,7 @@ get_distro_data()
 }
 
 # args: $1 - lsb-file/lsb-app/os-release-file
-get_lsb_os_release_data()
+get_distro_lsb_os_release_data()
 {
 	eval $LOGFS
 	local distro=''
@@ -3988,6 +4068,84 @@ s					if ( $2 != "n/a" ) {
 	eval $LOGFE
 }
 
+get_dmidecode_data()
+{
+	eval $LOGFS
+	
+	local dmidecodePath=''
+
+	if [[ $B_DMIDECODE_SET != 'true' ]];then
+		dmidecodePath=$( type -p dmidecode 2>/dev/null )
+		if [[ -n $dmidecodePath ]];then
+			# note stripping out these lines: Handle 0x0016, DMI type 17, 27 bytes
+			# but NOT deleting them, in case the dmidecode data is missing empty lines which will be
+			# used to separate results. Then we remove the doubled empty lines to keep it clean and
+			# strip out all the stuff we don't want to see in the results.
+			DMIDECODE_DATA="$( $dmidecodePath 2>/dev/null \
+			| gawk -F ':' '
+			BEGIN {
+				IGNORECASE=1
+				cutExtraTab="false"
+			}
+			{
+				if ( $2 != "" ) {
+					twoHolder="true"
+				}
+				else {
+					twoHolder="false"
+				}
+				if ( $0 ~ /^\tDMI type/ ) {
+					sub(/^\tDMI type.*/, "", $0)
+					cutExtraTab="true"
+				}
+				gsub(/'"$BAN_LIST_NORMAL"'/, "", $2)
+				gsub(/,/, " ", $0)
+				# clean out Handle line
+				sub(/^Handle.*/,"", $0)
+				sub(/^[[:space:]]*Inactive.*/,"",$0)
+				# yes, there is a typo in a user data set, unknow
+				# Base Board Version|Base Board Serial Number
+				# Chassis Manufacturer|Chassis Version|Chassis Serial Number
+				# System manufacturer|System Product Name|System Version
+				# To Be Filled By O.E.M.
+				sub(/^Base Board .*|^Chassis .*|.*O\.E\.M\..*|.*OEM.*|^Not .*|^System .*|.*unknow.*|.*N\/A.*|none|^To be filled.*/, "", $2) 
+				gsub(/bios|acpi/, "", $2)
+				sub(/http:\/\/www.abit.com.tw\//, "Abit", $2)
+				
+				# for double indented values replace with ~ so later can test for it, we are trusting that
+				# indentation will be tabbed in this case
+				# special case, dmidecode 2.2 has an extra tab and a DMI type line
+				if ( cutExtraTab == "true" ) {
+					sub(/^\t\t\t+/, "~", $1)
+				}
+				else {
+					sub(/^\t\t+/, "~", $1)
+				}
+				
+				gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
+				gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1)
+				gsub(/ [ \t]+/, " ", $2)
+				# reconstructing the line for processing so gawk can use -F : again
+				if ( $1 != "" && twoHolder == "true" ) {
+					print $1 ":" $2
+				}
+				else {
+					print $0
+				}
+			}' \
+			| sed '/^$/{
+N
+/^\n$/D
+}' \
+			)"
+		fi
+		B_DMIDECODE_SET='true'
+		log_function_data "DMIDECODE_DATA: $DMIDECODE_DATA"
+	fi
+
+	eval $LOGFE
+}
+# get_dmidecode_data;echo "$DMIDECODE_DATA";exit
 get_gcc_kernel_version()
 {
 	# note that we use gawk to get the last part because beta, alpha, git versions can be non-numeric
@@ -4010,7 +4168,7 @@ get_gcc_system_version()
 	}'
 	)
 
-	# can't use xargs -l basename because not all systems support thats
+	# can't use xargs -L basename because not all systems support thats
 	if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
 		gcc_others=$( ls /usr/bin/gcc-* 2>/dev/null )
 		if [[ -n $gcc_others ]];then
@@ -4337,9 +4495,21 @@ get_graphics_res_data()
 			}' <<< "$xdpy_data" )
 		fi
 	else
-		screen_resolution=$( stty -F $( readlink /proc/$PPID/fd/0 ) size | gawk '{
-			print $2"x"$1
-		}' )
+		if [[ $B_PROC_DIR == 'true' ]];then
+			screen_resolution=$( stty -F $( readlink /proc/$PPID/fd/0 ) size | gawk '{
+				print $2"x"$1
+			}' )
+		# note: this works fine for all systems but keeping the above for now since
+		# the above is probably more accurate for linux systems.
+		else
+			screen_resolution=$( stty -a | gawk -F ';' '
+				/^speed/ {
+					gsub(/[[:space:]]*(rows|columns)[[:space:]]*/,"",$0)
+					gsub(/[[:space:]]*/,"",$2)
+					gsub(/[[:space:]]*/,"",$3)
+					print $3"x"$2
+				}' )
+		fi
 	fi
 	echo "$screen_resolution"
 	log_function_data "screen_resolution: $screen_resolution"
@@ -4741,11 +4911,15 @@ get_hdd_temp_data()
 get_lspci_data()
 {
 	eval $LOGFS
-	local lspci_data="$( lspci -$1 | gawk '{
-		gsub(/\(prog-if[^)]*\)/,"")
-		sub(/^0000:/, "", $0) # seen case where the 0000: is prepended, rare, but happens
-		print
-	}' )"
+	local lspci_data=''
+
+	if [[ $B_LSPCI == 'true' ]];then
+		lspci_data="$( lspci -$1 | gawk '{
+			gsub(/\(prog-if[^)]*\)/,"")
+			sub(/^0000:/, "", $0) # seen case where the 0000: is prepended, rare, but happens
+			print
+		}' )"
+	fi
 	
 	echo "$lspci_data"
 	log_function_data 'raw' "lspci_data $1:\n$lspci_data"
@@ -4824,11 +4998,13 @@ get_machine_data()
 			separator=','
 		done
 	else
-		if [[ -n $( type -p dmidecode 2>/dev/null ) && -n $( dmidecode 2>/dev/null ) ]];then
+		get_dmidecode_data
+		if [[ -n $DMIDECODE_DATA ]];then
 			if [[ $B_ROOT == 'true' ]];then
 				# this handles very old systems, like Lenny 2.6.26, with dmidecode, but no data
-				if [[ -z $( dmidecode 2>/dev/null | grep -i 'no smbios or dmi' ) ]];then
+				if [[ -n $( grep -i 'no smbios or dmi' <<< "$DMIDECODE_DATA" ) ]];then
 					array_string='dmidecode-no-smbios-dmi-data'
+				# please note: only dmidecode version 2.11 or newer supports consistently the -s flag
 				else
 					for dmi_name in $dmi_names
 					do
@@ -4866,6 +5042,7 @@ get_machine_data()
 	A_MACHINE_DATA=( $array_string )
 	IFS="$ORIGINAL_IFS"
 	temp_array=${A_MACHINE_DATA[@]}
+	# echo ${temp_array[@]}
 	log_function_data "A_MACHINE_DATA: $temp_array"
 	eval $LOGFE
 }
@@ -4874,7 +5051,7 @@ get_machine_data()
 get_memory_data()
 {
 	eval $LOGFS
-	local memory=''
+	local memory='' memory_full=''
 	if [[ $B_MEMINFO_FILE == 'true' ]];then
 		memory=$( gawk '
 		/^MemTotal:/ {
@@ -4884,10 +5061,24 @@ get_memory_data()
 			notused+=$2
 		}
 		END {
-			used = tot-notused
+			used = tot - notused
 			printf("%.1f/%.1fMB\n", used/1024, tot/1024)
 		}' $FILE_MEMINFO )
 		log_function_data 'cat' "$FILE_MEMINFO"
+	elif [[ $B_SYSCTL == 'true' && -n $Sysctl_a_Data ]];then
+		memory=$( grep -i 'memory' <<< "$Sysctl_a_Data" | gawk '
+		/^Real Memory:/ {
+			gsub(/[^0-9]/,"",$4)
+			tot = $4
+		}
+		/^Free Memory:/ {
+			gsub(/[^0-9]/,"",$3)
+			notused = $3
+		}
+		END {
+			used = tot - notused
+			printf("%.1f/%.1fMB\n", used/1024, tot/1024)
+		}' )
 	fi
 	echo "$memory"
 	log_function_data "memory: $memory"
@@ -5352,8 +5543,8 @@ get_optical_drive_data()
 	local separator='' linked='' disk='' item_string='' proc_info_string='' 
 	local dev_disks_links="$( ls /dev/dvd* /dev/cd* /dev/scd* 2>/dev/null  )"
 	# get the actual disk dev location, first try default which is easier to run, need to preserve line breaks
-	local dev_disks_real="$( echo "$dev_disks_links" | xargs -l readlink 2>/dev/null | sort -u )"
-	# Some systems don't support xargs -l so we need to do it manually
+	local dev_disks_real="$( echo "$dev_disks_links" | xargs -L 1 readlink 2>/dev/null | sort -u )"
+	# Some systems don't support xargs -L so we need to do it manually
 	if [[ -z $dev_disks_real ]];then
 		for linked in $dev_disks_links
 		do
@@ -5888,18 +6079,28 @@ get_patch_version_string()
 get_ps_data()
 {
 	eval $LOGFS
-	local array_length='' reorder_temp='' i=0 head_tail='' sort_type=''
+	local array_length='' reorder_temp='' i=0 head_tail='' sort_type='' ps_data=''
 	
 	# bummer, have to make it more complex here because of reverse sort
 	# orders in output, pesky lack of support of +rss in old systems
 	case $1 in
 		mem)
-			head_tail='head'
-			sort_type='-rss'
+			if [[ $B_BSD != 'true' ]];then
+				sort_type='ps aux --sort -rss'
+				head_tail='head'
+			else
+				sort_type='ps aux -m'
+				head_tail='head'
+			fi
 			;;
 		cpu)
-			head_tail='tail'
-			sort_type='%cpu'
+			if [[ $B_BSD != 'true' ]];then
+				sort_type='ps aux --sort %cpu'
+				head_tail='tail'
+			else
+				sort_type='ps aux -r'
+				head_tail='head'
+			fi
 			;;
 	esac
 	
@@ -5908,10 +6109,12 @@ get_ps_data()
 		PS_THROTTLED=$PS_COUNT
 		PS_COUNT=5
 	fi
+	# use eval here to avoid glitches with -
+	ps_data="$( eval $sort_type )"
 
 	IFS=$'\n'
 	# note that inxi can use a lot of cpu, and can actually show up here as the script runs
-	A_PS_DATA=( $( ps aux --sort $sort_type | grep -Ev "($SCRIPT_NAME|%CPU|[[:space:]]ps[[:space:]])" | $head_tail -n $PS_COUNT | gawk '
+	A_PS_DATA=( $( echo "$ps_data" | grep -Ev "($SCRIPT_NAME|%CPU|[[:space:]]ps[[:space:]])" | $head_tail -n $PS_COUNT | gawk '
 	BEGIN {
 		IGNORECASE=1
 		appName=""
@@ -5948,7 +6151,7 @@ get_ps_data()
 	# make the array ordered highest to lowest so output looks the way we expect it to
 	# this isn't necessary for -rss, and we can't make %cpu ordered the other way, so
 	# need to reverse it here. -rss is used because on older systems +rss is not supported
-	if [[ $1 == 'cpu' ]];then
+	if [[ $1 == 'cpu' && $B_BSD != 'true' ]];then
 		array_length=${#A_PS_DATA[@]}; 
 		while (( $i < $array_length/2 ))
 		do 
@@ -5974,7 +6177,7 @@ get_raid_data()
 	
 	local mdstat=''
 		
-	if [[ $B_MDSTAT_FILE ]];then
+	if [[ $B_MDSTAT_FILE == 'true' ]];then
 	 	mdstat="$( cat $FILE_MDSTAT 2>/dev/null )"
 	fi
 	
@@ -6696,6 +6899,52 @@ get_shell_parent()
 	eval $LOGFE
 }
 
+# this will be used for some bsd data types
+# args: $1 - option type
+get_sysctl_data()
+{
+	eval $LOGFS
+	
+	local sysctl_data=''
+	
+	if [[ $B_SYSCTL ]];then
+		sysctl_data="$( sysctl -$1 )"
+	fi
+	log_function_data "sysctl_data: $sysctl_data"
+	echo "$sysctl_data"
+	eval $LOGFE
+}
+
+get_tty_console_irc()
+{
+	eval $LOGFS
+	local tty_number=''
+	if [[ -n ${IRC_CLIENT} ]];then
+		tty_number=$( ps aux | gawk '
+			BEGIN {
+				IGNORECASE=1
+			}
+			/'${IRC_CLIENT}'/ {
+				gsub(/[^0-9]/, "", $7)
+				print $7
+			}' )
+	fi
+	log_function_data "tty_number: $tty_number"
+	echo $tty_number
+	eval $LOGFE
+}
+
+get_tty_number()
+{
+	eval $LOGFS
+	
+	local tty_number=$( basename "$( tty 2>/dev/null )" | sed 's/[^0-9]*//g' )
+	
+	echo $tty_number
+	
+	eval $LOGFE
+}
+
 get_unmounted_partition_data()
 {
 	eval $LOGFS
@@ -6838,7 +7087,7 @@ calculate_multicore_data()
 			print total
 		}' )
 	elif [[ $string_number == '' ]];then
-		string_number='Not Available'
+		string_number='N/A'
 	else
 		# I believe that the above returns 'unknown' by default so no need for extra text
 		string_number="$string_number "
@@ -6914,6 +7163,11 @@ print_it_out()
 	# note that print_it_out passes local variable values on to its children,
 	# and in some cases, their children, with Lspci_v_Data
 	local Lspci_v_Data='' Lspci_n_Data='' # only for verbose
+	local Sysctl_a_Data=''
+	
+	if [[ $B_BSD == 'true' ]];then
+		Sysctl_a_Data="$( get_sysctl_data 'a' )"
+	fi
 
 	if [[ $B_SHOW_SHORT_OUTPUT == 'true' ]];then
 		print_short_data
@@ -7025,7 +7279,7 @@ print_short_data()
 	# look for that and use the speed from the first array array, same where we got 
 	# model from
 	if [[ "$min_max_clock" == 'N/A' && ${a_cpu_working[1]} != '' ]];then
-		min_max_clock="${a_cpu_working[1]}"
+		min_max_clock="${a_cpu_working[1]} MHz"
 	fi
 	local script_patch_number=$( get_patch_version_string )
 
@@ -7650,7 +7904,7 @@ print_info_data()
 			if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
 				shell_parent=$( get_shell_parent )
 				if [[ $B_RUNNING_IN_X != 'true' ]];then
-					shell_parent=$( basename "$( tty 2>/dev/null )" | sed 's/[^0-9]*//g' )
+					shell_parent=$( get_tty_number )
 					shell_parent="tty $shell_parent"
 				fi
 				if [[ $shell_parent == 'login' ]];then
@@ -7968,6 +8222,10 @@ print_networking_data()
 				print_network_advanced_data
 			fi
 		done
+	else
+		network_data="${C1}Card:${C2} Failed to Detect Network Card! "
+		network_data=$( create_print_line "$line_starter" "$network_data" )
+		print_screen_output "$network_data"
 	fi
 	if [[ $B_SHOW_IP == 'true' ]];then
 		print_networking_ip_data
@@ -8935,7 +9193,7 @@ print_system_data()
 	local host_name=$HOSTNAME
 	local current_kernel=$( uname -rm ) # | gawk '{print $1,$3,$(NF-1)}' )
 	local distro="$( get_distro_data )"
-	local tty_session=$( basename "$( tty 2>/dev/null )" | sed 's/[^0-9]*//g' )
+	local tty_session=''
 	
 	# I think these will work, maybe, if logged in as root and in X
 	if [[ $B_RUNNING_IN_X == 'true' ]];then
@@ -8951,8 +9209,9 @@ print_system_data()
 			fi
 		fi
 	else
+		tty_session=$( get_tty_number )
 		if [[ -z $tty_session && $B_CONSOLE_IRC == 'true' ]];then
-			tty_session=$( get_console_irc_tty )
+			tty_session=$( get_tty_console_irc )
 		fi
 		if [[ -n $tty_session ]];then
 			tty_session=" $tty_session"
@@ -8983,7 +9242,7 @@ print_system_data()
 		fi
 	fi
 	# check for 64 bit first
-	if [[ -n $( uname -m | grep -o 'x86_64' ) ]];then
+	if [[ -n $( uname -m | grep -E '(x86_64|amd64)' ) ]];then
 		bits="64"
 	else
 		bits="32"
