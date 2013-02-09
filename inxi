@@ -1,8 +1,8 @@
 #!/bin/bash
 ########################################################################
 ####  Script Name: inxi
-####  version: 1.8.35
-####  Date: February 7 2013
+####  Version: 1.8.36
+####  Date: February 8 2013
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -83,6 +83,17 @@
 ####       Note: requires setup of lm-sensors (sensors-detect and adding modules/modprobe/reboot,
 ####       and ideally, pwmconfig) prior to full output being available. 
 ####  -S   For desktop environment, user must be in X and have xprop installed (in X11-utils)
+########################################################################
+####  BSD Adjustments
+####  * sed -i '' form added to bsd branch by inxi2bsd script automatically.
+####  * Note: BSD sed supports using -r instead of -E for compatibility with gnu sed
+####  * Gnu grep options can be used if the function component is only run in linux
+####    These are the options that bsd grep does not support that inxi uses: -m <number> -o 
+####    so make sure if you use those to have them in gnu/linux only sections.
+####    It appears that freebsd uses gnu grep but openbsd uses bsd grep, however.
+####  * BSD ps does not support --without-headers option, and also does not support --sort <option>
+####    Tests show that -m fails to sort memory as expected, but -r does sort cpu percentage.
+####  * BSD_TYPE is set with values null, dgbsd (debian gnu/kfreebsd), bsd (all other bsds)
 ########################################################################
 ####  CONVENTIONS:
 ####  * Character Encoding: UTF-8 - this file contains special characters that must be opened and saved as UTF8
@@ -176,6 +187,7 @@
 # set to default LANG to avoid locales errors with , or .
 LANG=C
 ### Variable initializations: null values
+BSD_TYPE=''
 CMDL_MAX=''
 COLOR_SCHEME=''
 # override in user config if desired, seems like less than .3 doesn't work as reliably
@@ -223,7 +235,6 @@ A_X_DATA=''
 # flag to allow distro maintainers to turn off update features. If false, turns off
 # -U and -! testing/advanced update options, as well as removing the -U help menu item
 B_ALLOW_UPDATE='true'
-B_BSD='false'
 B_COLOR_SCHEME_SET='false'
 B_CONSOLE_IRC='false'
 # triggers full display of cpu flags
@@ -436,6 +447,7 @@ SCRIPT_DOWNLOAD_BRANCH_2='http://inxi.googlecode.com/svn/branches/two/'
 SCRIPT_DOWNLOAD_BRANCH_3='http://inxi.googlecode.com/svn/branches/three/'
 SCRIPT_DOWNLOAD_BRANCH_4='http://inxi.googlecode.com/svn/branches/four/'
 SCRIPT_DOWNLOAD_BRANCH_BSD='http://inxi.googlecode.com/svn/branches/bsd/'
+SCRIPT_DOWNLOAD_BRANCH_GNUBSD='http://inxi.googlecode.com/svn/branches/gnubsd/'
 SCRIPT_DOWNLOAD_DEV='http://smxi.org/test/'
 # note, you can use any ip url here as long as it's the only line on the output page.
 # Also the ip address must be the last thing on that line.
@@ -556,19 +568,19 @@ main()
 	local color_scheme=''
 	
 	# This function just initializes variables
-	initialize_script_data
+	initialize_data
 
 	# Check for dependencies BEFORE running ANYTHING else except above functions
 	# Not all distro's have these depends installed by default. Don't want to run
 	# this if the user is requesting to see this information in the first place
+	# Only continue if required apps tests ok
 	if [[ $1 != '--recommends' ]];then
-		check_script_depends
-		check_script_suggested_apps
+		check_required_apps
+		check_recommended_apps
 	fi
 
-	### Only continue if depends ok
-	SCRIPT_VERSION_NUMBER=$( grep -im 1 'version:' $SCRIPT_PATH/$SCRIPT_NAME | gawk '{print $3}' )
-	SCRIPT_PATCH_NUMBER=$( grep -im 1 'Patch Number:' $SCRIPT_PATH/$SCRIPT_NAME | gawk '{print $4}' )
+	SCRIPT_VERSION_NUMBER=$( parse_version_data 'main' )
+	SCRIPT_PATCH_NUMBER=$( parse_version_data 'patch' )
 	
 	### Source global config overrides
 	if [[ -s /etc/$SCRIPT_NAME.conf ]];then
@@ -688,7 +700,7 @@ main()
 }
 
 #### -------------------------------------------------------------------
-#### basic tests: set script data, booleans, PATH
+#### basic tests: set script data, booleans, PATH, version numbers
 #### -------------------------------------------------------------------
 
 # Set PATH data so we can access all programs as user. Set BAN lists.
@@ -696,25 +708,29 @@ main()
 # some apps are used for extended functions any directory used, should be
 # checked here first.
 # No args taken.
-initialize_script_data()
+initialize_data()
 {
 	eval $LOGFS
 	
+	# note: archbsd says they are a freebsd distro, so assuming it's the same as freebsd
 	if [[ -n $( grep -i 'bsd' <<< $( uname -s 2>/dev/null ) ) ]];then
-		B_BSD='true'
+		if [[ -n $( grep -i 'kfreebsd' <<< $( uname -s 2>/dev/null ) ) ]];then
+			BSD_TYPE='dgbsd' # debian gnu bsd
+		else
+			BSD_TYPE='bsd' # all other bsds
+		fi
 	fi
-	SCRIPT_PATH=$( dirname $0 )
 	# now set the script BOOLEANS for files required to run features
 	# note that freebsd has /proc but it's empty
-	if [[ -d "/proc/" && $B_BSD != 'true' ]];then
+	if [[ -d "/proc/" && -z $BSD_TYPE ]];then
 		B_PROC_DIR='true'
-	elif [[ $B_BSD == 'true' ]];then
+	elif [[ -n $BSD_TYPE ]];then
 		B_PROC_DIR='false'
 	else
 		error_handler 6
 	fi
 	
-	initialize_script_paths
+	initialize_paths
 	
 	# found a case of battery existing but having nothing in it on desktop mobo
 	# not all laptops show the first, 
@@ -788,11 +804,43 @@ initialize_script_data()
 	eval $LOGFE
 }
 
-initialize_script_paths()
+# arg: $1 - version number: main/patch/date
+parse_version_data()
+{
+	local version_data=''
+
+	# note, using ####[[:space:]]+ to avoid having this function also trip the version datas
+	case $1 in
+		date)
+			version_data="$( gawk -F ': ' '
+			/####[[:space:]]+Date:/ {
+				print $NF
+			}' $SCRIPT_PATH/$SCRIPT_NAME )"
+			;;
+		main)
+			version_data="$( gawk '
+			/####[[:space:]]+Version:/ {
+				print $3
+			}' $SCRIPT_PATH/$SCRIPT_NAME )"
+			;;
+		patch)
+			version_data="$( gawk '
+			/####[[:space:]]+Patch Number:/ {
+				print $4
+			}' $SCRIPT_PATH/$SCRIPT_NAME )"
+			;;
+	esac
+	echo $version_data
+}
+
+initialize_paths()
 {
 	local path='' added_path='' b_path_found='' sys_path=''
 	# Extra path variable to make execute failures less likely, merged below
 	local extra_paths="/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin"
+	
+	# this needs to be set here because various options call the parent initialize function directly.
+	SCRIPT_PATH=$( dirname $0 )
 
 	# Fallback paths put into $extra_paths; This might, among others, help on gentoo.
 	# Now, create a difference of $PATH and $extra_paths and add that to $PATH:
@@ -818,7 +866,7 @@ initialize_script_paths()
 }
 
 # No args taken.
-check_script_suggested_apps()
+check_recommended_apps()
 {
 	eval $LOGFS
 	local bash_array_test=( "one" "two" )
@@ -838,7 +886,7 @@ check_script_suggested_apps()
 	if [[ -n $( type -p lspci ) ]];then
 		B_LSPCI='true'
 	fi
-	if [[ $B_BSD == 'true' ]];then
+	if [[ -n $BSD_TYPE ]];then
 		if [[ -n $( type -p sysctl ) ]];then
 			B_SYSCTL='true'
 		fi
@@ -855,15 +903,20 @@ check_script_suggested_apps()
 
 # Determine if any of the absolutely necessary tools are absent
 # No args taken.
-check_script_depends()
+check_required_apps()
 {
 	eval $LOGFS
 	local app_name='' app_path=''
 	# bc removed from deps for now
 	local depends="df gawk grep ps readlink tr uname uptime wc"
 	
-	if [[ $B_BSD != 'true' ]];then
+	if [[ -z $BSD_TYPE  ]];then
 		depends="$depends lspci"
+	elif [[ $BSD_TYPE == 'bsd' ]];then
+		depends="$depends sysctl pciconf"
+		# dgbsd has lspci but you must be root to run it
+	elif [[ $BSD_TYPE == 'dgbsd' ]];then
+		depends="$depends sysctl lspci"
 	fi
 	# no need to add xprop because it will just give N/A if not there, but if we expand use of xprop,
 	# should add that here as a test, then use the B_SHOW_X_DATA flag to trigger the tests in de function
@@ -922,7 +975,7 @@ sanitize_characters()
 set_color_scheme()
 {
 	eval $LOGFS
-	local i='' a_script_colors='' a_color_codes=''
+	local i='' a_output_colors='' a_color_codes=''
 
 	if [[ $1 -ge ${#A_COLOR_SCHEMES[@]} ]];then
 		set -- 1
@@ -939,12 +992,12 @@ set_color_scheme()
 		eval "${A_COLORS_AVAILABLE[i]}=\"${a_color_codes[i]}\""
 	done
 	IFS=","
-	a_script_colors=( ${A_COLOR_SCHEMES[$1]} )
+	a_output_colors=( ${A_COLOR_SCHEMES[$1]} )
 	IFS="$ORIGINAL_IFS"
 	# then assign the colors globally
-	C1="${!a_script_colors[0]}"
-	C2="${!a_script_colors[1]}"
-	CN="${!a_script_colors[2]}"
+	C1="${!a_output_colors[0]}"
+	C2="${!a_output_colors[1]}"
+	CN="${!a_output_colors[2]}"
 	# ((COLOR_SCHEME++)) ## note: why is this? ##
 	eval $LOGFE
 }
@@ -1309,8 +1362,8 @@ script_self_updater()
 		if [[ -n $( grep '###\*\*EOF\*\*###' <<< "$file_contents" ) ]];then
 			echo "$file_contents" > $SCRIPT_PATH/$SCRIPT_NAME || error_handler 14 "$?"
 			chmod +x $SCRIPT_PATH/$SCRIPT_NAME || error_handler 15 "$?"
-			SCRIPT_VERSION_NUMBER=$( grep -im 1 'version:' $SCRIPT_PATH/$SCRIPT_NAME | gawk '{print $3}' )
-			SCRIPT_PATCH_NUMBER=$( grep -im 1 'Patch Number:' $SCRIPT_PATH/$SCRIPT_NAME | gawk '{print $4}' )
+			SCRIPT_VERSION_NUMBER=$( parse_version_data 'main' )
+			SCRIPT_PATCH_NUMBER=$( parse_version_data 'patch' )
 			print_screen_output "Successfully updated to $2 version: $SCRIPT_VERSION_NUMBER"
 			print_screen_output "New $2 version patch number: $SCRIPT_PATCH_NUMBER"
 			print_screen_output "To run the new version, just start $SCRIPT_NAME again."
@@ -1371,7 +1424,7 @@ debug_data_collector()
 	local debug_data_dir="inxi-$(tr ' ' '-' <<< $HOSTNAME | tr '[A-Z]' '[a-z]' )-$1-$(date +%Y%m%d)" 
 	local completed_gz_file='' xiin_file='xiin.py' ftp_upload='ftp.techpatterns.com/incoming'
 	local Line='-------------------------'
-	local startDir=$(pwd)
+	local start_directory=$( pwd )
 	
 	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
 		if [[ -n $ALTERNATE_FTP ]];then
@@ -1402,6 +1455,8 @@ debug_data_collector()
 		lspci &> $debug_data_dir/lspci.txt
 		lspci -n &> $debug_data_dir/lspci-n.txt
 		lspci -v &> $debug_data_dir/lspci-v.txt
+		# bsd tool
+		pciconf -vl &> $debug_data_dir/pciconf-vl.txt
 		ps aux &> $debug_data_dir/ps-aux.txt
 		sensors &> $debug_data_dir/sensors.txt
 		sysctl -a &> $debug_data_dir/sysctl-a.txt
@@ -1416,7 +1471,7 @@ debug_data_collector()
 		cat $FILE_MEMINFO &> $debug_data_dir/proc-meminfo.txt
 		cat $FILE_MODULES &> $debug_data_dir/proc-modules.txt
 		cat /proc/net/arp &> $debug_data_dir/proc-net-arp.txt 
-		check_recommends &> $debug_data_dir/check-recommends.txt
+		check_recommends_user_output &> $debug_data_dir/check-recommends-user-output.txt
 		# first download and verify xiin
 		if [[ $B_UPLOAD_DEBUG_DATA == 'true' || $1 == 'disk' || $1 == 'sys' || $1 == 'all' ]];then
 			touch $SCRIPT_DATA_DIR/$debug_data_dir/xiin-error.txt
@@ -1450,7 +1505,7 @@ debug_data_collector()
 			echo 'Collecting networking data...'
 			ifconfig &> $debug_data_dir/ifconfig.txt
 			ip addr &> $debug_data_dir/ip-addr.txt
-			if [[ $b_run_xiin == 'true' && $B_BSD != 'true' ]];then
+			if [[ $b_run_xiin == 'true' && -z $BSD_TYPE ]];then
 				echo $Line
 				echo "Running $xiin_file tool now on /sys..."
 				echo "Using Python version:" && python --version
@@ -1511,8 +1566,11 @@ debug_data_collector()
 			ls -l /dev/mapper &> $debug_data_dir/dev-disk-mapper-data.txt
 			readlink /dev/root &> $debug_data_dir/dev-root.txt
 			df -h -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs &> $debug_data_dir/df-h-T-excludes.txt
+			df -H -T &> $debug_data_dir/df-H-T-no-excludes.txt
+			swapctl -l &> $debug_data_dir/swapctl-l.txt
 			swapon -s &> $debug_data_dir/swapon-s.txt
-			df -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 &> $debug_data_dir/df-excludes.txt
+			df -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 &> $debug_data_dir/df-P-excludes.txt
+			df -P &> $debug_data_dir/df-P-no-excludes.txt
 			cat /proc/mdstat &> $debug_data_dir/proc-mdstat.txt
 			cat $FILE_PARTITIONS &> $debug_data_dir/proc-partitions.txt
 			cat $FILE_SCSI &> $debug_data_dir/proc-scsi.txt
@@ -1524,8 +1582,8 @@ debug_data_collector()
 			cat /etc/mtab &> $debug_data_dir/etc-mtab.txt
 		fi
 		echo 'Creating inxi output file now. This can take a few seconds...'
-		echo "Starting $SCRIPT_NAME from: $startDir"
-		cd $startDir
+		echo "Starting $SCRIPT_NAME from: $start_directory"
+		cd $start_directory
 		$SCRIPT_PATH/$SCRIPT_NAME -FRploudxxx -c 0 -@ 8 > $SCRIPT_DATA_DIR/$debug_data_dir/inxi-FRploudxxx.txt
 		cp $LOG_FILE $SCRIPT_DATA_DIR/$debug_data_dir
 		if [[ -f $SCRIPT_DATA_DIR/$debug_data_dir.tar.gz ]];then
@@ -1575,7 +1633,7 @@ debug_data_collector()
 	exit 0
 }
 
-check_recommends()
+check_recommends_user_output()
 {
 	local Line='-----------------------------------------------------------------------------------------'
 	local gawk_version='N/A' sed_version='N/A' sudo_version='N/A' python_version='N/A'
@@ -1585,7 +1643,7 @@ check_recommends()
 		exit 1
 	fi
 	
-	initialize_script_paths
+	initialize_paths
 	
 	echo "$SCRIPT_NAME will now begin checking for the programs it needs to operate. First a check of"
 	echo "the main languages and tools $SCRIPT_NAME uses. Python is only for debugging data collection."
@@ -1596,6 +1654,10 @@ check_recommends()
 	fi
 	if [[ -n $( type -p sed ) ]];then
 		sed_version=$( sed --version 2>&1 | awk 'BEGIN {IGNORECASE=1} /^GNU sed version/ {print $4}' )
+		if [[ -z $sed_version ]];then
+			# note: bsd sed shows error with --version flag
+			sed_version=$( sed --version 2>&1 | awk 'BEGIN {IGNORECASE=1} /^sed: illegal option/ {print "BSD sed"}' )
+		fi
 	fi
 	if [[ -n $( type -p sudo ) ]];then
 		sudo_version=$( sudo -V 2>&1 | awk 'BEGIN {IGNORECASE=1} /^Sudo version/ {print $3}' )
@@ -1890,7 +1952,7 @@ get_parameters()
 		show_options
 		exit 0
 	elif [[ $1 == '--recommends' ]];then
-		check_recommends
+		check_recommends_user_output
 		exit 0
 	# the short form only runs if no args output args are used
 	# no need to run through these if there are no args
@@ -2036,7 +2098,7 @@ get_parameters()
 			t)	if [[ -n $( grep -E '^(c|m|cm|mc)([1-9]|1[0-9]|20)?$' <<< $OPTARG ) ]];then
 					use_short='false'
 					if [[ -n $( grep -E '[0-9]+' <<< $OPTARG ) ]];then
-						PS_COUNT=$( grep -Eo '[0-9]+' <<< $OPTARG )
+						PS_COUNT=$( sed 's/[^0-9]//g' <<< $OPTARG )
 					fi
 					if [[ -n $( grep 'c' <<< $OPTARG ) ]];then
 						B_SHOW_PS_CPU_DATA='true'
@@ -2161,7 +2223,7 @@ get_parameters()
 									debug_data_type='all'
 									;;
 							esac
-							initialize_script_data
+							initialize_data
 							debug_data_collector $debug_data_type
 							;;
 					esac
@@ -2195,6 +2257,9 @@ get_parameters()
 						;;
 					15)
 						script_self_updater "$SCRIPT_DOWNLOAD_BRANCH_BSD" 'svn: branch bsd server'
+						;;
+					16)
+						script_self_updater "$SCRIPT_DOWNLOAD_BRANCH_GNUBSD" 'svn: branch gnubsd server'
 						;;
 					30)
 						B_RUNNING_IN_SHELL='true'
@@ -2385,6 +2450,7 @@ show_options()
 		print_screen_output "-! 13 - Triggers an update from svn branch three - if present, of course."
 		print_screen_output "-! 14 - Triggers an update from svn branch four - if present, of course."
 		print_screen_output "-! 15 - Triggers an update from svn branch BSD - if present, of course."
+		print_screen_output "-! 16 - Triggers an update from svn branch GNUBSD - if present, of course."
 		print_screen_output "-! <http://......> - Triggers an update from whatever server you list."
 		print_screen_output "-! <ftp.......> - Changes debugging data ftp upload location to whatever you enter here."
 		print_screen_output "   Only used together with -xx@ 11-14, and must be used in front of that."
@@ -2411,7 +2477,7 @@ print_version_info()
 		script_path=$( readlink $script_path/$SCRIPT_NAME )
 		script_path=$( dirname $script_path )
 	fi
-	local last_modified=$( grep -m 1 '^####  Date:' $SCRIPT_PATH/$SCRIPT_NAME | gawk -F ': ' '{print $NF}' ) 
+	local last_modified=$( parse_version_data 'date' ) 
 	local year_modified=$( gawk '{print $NF}' <<< "$last_modified" )
 	
 	print_screen_output "$SCRIPT_NAME $SCRIPT_VERSION_NUMBER-$SCRIPT_PATCH_NUMBER ($last_modified)"
@@ -2449,287 +2515,40 @@ print_version_info()
 get_start_client()
 {
 	eval $LOGFS
-	local irc_client_path='' irc_client_path_lower='' non_native_konvi='' i=''
-	local b_non_native_app='false' pppid='' app_working_name='' file_data=''
+	local Irc_Client_Path='' irc_client_path_lower='' non_native_konvi='' i=''
+	local B_Non_Native_App='false' pppid='' App_Working_Name=''
 	local b_qt4_konvi='false' ps_parent=''
 
 	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
 		IRC_CLIENT='Shell'
 		unset IRC_CLIENT_VERSION
+	# elif [[ -n $PPID ]];then
 	elif [[ -n $PPID && -f /proc/$PPID/exe ]];then
 		if [[ $B_OVERRIDE_FILTER != 'true' ]];then
 			B_OUTPUT_FILTER='true'
 		fi
-		irc_client_path=$( readlink /proc/$PPID/exe )
-		irc_client_path_lower=$( tr '[:upper:]' '[:lower:]' <<< $irc_client_path )
-		app_working_name=$( basename $irc_client_path_lower )
+		Irc_Client_Path=$( readlink /proc/$PPID/exe )
+		# Irc_Client_Path=$( ps -p $PPID | gawk '!/[[:space:]]*PID/ {print $5}'  )
+		# echo $( ps -p $PPID )
+		irc_client_path_lower=$( tr '[:upper:]' '[:lower:]' <<< $Irc_Client_Path )
+		App_Working_Name=$( basename $irc_client_path_lower )
 		# handles the xchat/sh/bash/dash cases, and the konversation/perl cases, where clients
 		# report themselves as perl or unknown shell. IE:  when konversation starts inxi
 		# from inside itself, as a script, the parent is konversation/xchat, not perl/bash etc
 		# note: perl can report as: perl5.10.0, so it needs wildcard handling
-		case $app_working_name in
+		case $App_Working_Name in
 			bash|dash|sh|python*|perl*)	# We want to know who wrapped it into the shell or perl.
-				pppid="$( ps -p $PPID -o ppid --no-headers | sed 's/ //g' )"
+				pppid="$( ps -p $PPID -o ppid --no-headers | sed 's/[[:space:]]//g' )"
 				if [[ -n $pppid && -f /proc/$pppid/exe ]];then
-					irc_client_path="$( readlink /proc/$pppid/exe )"
-					irc_client_path_lower="$( tr '[:upper:]' '[:lower:]' <<< $irc_client_path )"
-					app_working_name=$( basename $irc_client_path_lower )
-					b_non_native_app='true'
+					Irc_Client_Path="$( readlink /proc/$pppid/exe )"
+					irc_client_path_lower="$( tr '[:upper:]' '[:lower:]' <<< $Irc_Client_Path )"
+					App_Working_Name=$( basename $irc_client_path_lower )
+					B_Non_Native_App='true'
 				fi
 				;;
 		esac
-
-		# replacing loose detection with tight detection, bugs will be handled with app names
-		# as they appear.
-		case $app_working_name in
-			# check for shell first
-			bash|dash|sh)
-				unset IRC_CLIENT_VERSION
-				IRC_CLIENT="Shell wrapper"
-				;;
-			# now start on irc clients, alphabetically
-			bitchx)
-				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk '
-				/Version/ {
-					a=tolower($2)
-					gsub(/[()]|bitchx-/,"",a)
-					print a
-					exit
-				}
-				$2 == "version" {
-					a=tolower($3)
-					sub(/bitchx-/,"",a)
-					print a
-					exit
-				}' )"
-				B_CONSOLE_IRC='true'
-				IRC_CLIENT="BitchX"
-				;;
-			finch)
-				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 {
-					print $2
-				}' )"
-				B_CONSOLE_IRC='true'
-				IRC_CLIENT="Finch"
-				;;
-			gaim)
-				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 {
-					print $2
-				}' )"
-				IRC_CLIENT="Gaim"
-				;;
-			hexchat)
-				# the hexchat author decided to make --version/-v return a gtk dialogue box, lol...
-				# so we need to read the actual config file for hexchat. Note that older hexchats
-				# used xchat config file, so test first for default, then legacy. Because it's possible
-				# for this file to be use edited, doing some extra checks here.
-				if [[ -f ~/.config/hexchat/hexchat.conf ]];then
-					file_data="$( cat ~/.config/hexchat/hexchat.conf )"
-				elif [[ -f  ~/.config/hexchat/xchat.conf ]];then
-					file_data="$( cat ~/.config/hexchat/xchat.conf )"
-				fi
-				if [[ -n $file_data ]];then
-					IRC_CLIENT_VERSION=$( gawk '
-					BEGIN {
-						IGNORECASE=1
-						FS="="
-					}
-					/^[[:space:]]*version/ {
-						# get rid of the space if present
-						gsub(/[[:space:]]*/, "", $2 )
-						print $2
-						exit # usually this is the first line, no point in continuing
-					}' <<< "$file_data" )
-					
-					IRC_CLIENT_VERSION=" $IRC_CLIENT_VERSION"
-				else
-					IRC_CLIENT_VERSION=' N/A'
-				fi
-				IRC_CLIENT="HexChat"
-				;;
-			ircii)
-				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 {
-					print $3
-				}' )"
-				B_CONSOLE_IRC='true'
-				IRC_CLIENT="ircII"
-				;;
-			irssi-text|irssi)
-				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 {
-					print $2
-				}' )"
-				B_CONSOLE_IRC='true'
-				IRC_CLIENT="Irssi"
-				;;
-			konversation) ## konvi < 1.2 (qt4)
-				# this is necessary to avoid the dcop errors from starting inxi as a /cmd started script
-				if [[ $b_non_native_app == 'true' ]];then  ## true negative is confusing
-					KONVI=2
-				else # if native app
-					KONVI=1
-				fi
-				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk '
-				/Konversation:/ {
-					for ( i=2; i<=NF; i++ ) {
-						if (i == NF) {
-							print $i
-						}
-						else {
-							printf $i" "
-						}
-					}
-					exit
-				}' )"
-
-				T=($IRC_CLIENT_VERSION)
-				if [[ ${T[0]} == *+* ]];then
-					# < Sho_> locsmif: The version numbers of SVN versions look like this:
-					#         "<version number of last release>+ #<build number", i.e. "1.0+ #3177" ...
-					#         for releases we remove the + and build number, i.e. "1.0" or soon "1.0.1"
-					IRC_CLIENT_VERSION=" CVS $IRC_CLIENT_VERSION"
-					T2="${T[0]/+/}"
-				else
-					IRC_CLIENT_VERSION=" ${T[0]}"
-					T2="${T[0]}"
-				fi
-				# Remove any dots except the first, and make sure there are no trailing zeroes,
-				T2=$( echo "$T2" | gawk '{
-					sub(/\./, " ")
-					gsub(/\./, "")
-					sub(/ /, ".")
-					printf("%g\n", $0)
-				}' )
-				# Since Konversation 1.0, the DCOP interface has changed a bit: dcop "$DCPORT" Konversation ..etc
-				# becomes : dcop "$DCPORT" default ... or dcop "$DCPORT" irc ..etc. So we check for versions smaller
-				# than 1 and change the DCOP parameter/object accordingly.
-				if [[ ${T2} -lt 1 ]];then
-					DCOPOBJ="Konversation"
-				fi
-				IRC_CLIENT="Konversation"
-				;;
-			kopete)
-				IRC_CLIENT_VERSION=" $( kopete -v | gawk '
-				/Kopete:/ {
-					print $2
-					exit
-				}' )"
-				IRC_CLIENT="Kopete"
-				;;
-			kvirc)
-				IRC_CLIENT_VERSION=" $( $irc_client_path -v 2>&1 | gawk '{
-					for ( i=2; i<=NF; i++) {
-				 		if ( i == NF ) {
-				 			print $i
-				 		}
-				 		else {
-				 			printf $i" "
-				 		}
-				 	}
-				 	exit
-				 }' )"
-				IRC_CLIENT="KVIrc"
-				;;
-			pidgin)
-				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 {
-					print $2
-				}' )"
-				IRC_CLIENT="Pidgin"
-				;;
-			quassel*)
-				# sample: quassel -v
-				# Qt: 4.5.0
-				# KDE: 4.2.65 (KDE 4.2.65 (KDE 4.3 >= 20090226))
-				# Quassel IRC: v0.4.0 [+60] (git-22effe5)
-				# note: early < 0.4.1 quassels do not have -v
-				IRC_CLIENT_VERSION=" $( $irc_client_path -v 2>/dev/null | gawk -F ': ' '
-				BEGIN {
-					IGNORECASE=1
-					clientVersion=""
-				}
-				/Quassel IRC/ {
-					clientVersion = $2
-				}
-				END {
-					# this handles pre 0.4.1 cases with no -v
-					if ( clientVersion == "" ) {
-						clientVersion = "(pre v0.4.1)"
-					}
-					print clientVersion
-				}' )"
-				# now handle primary, client, and core. quasselcore doesn't actually
-				# handle scripts with exec, but it's here just to be complete
-				case $app_working_name in
-					quassel)
-						IRC_CLIENT="Quassel [M]"
-						;;
-					quasselclient)
-						IRC_CLIENT="Quassel"
-						;;
-					quasselcore)
-						IRC_CLIENT="Quassel (core)"
-						;;
-				esac
-				;;
-			weechat-curses)
-				IRC_CLIENT_VERSION=" $( $irc_client_path -v ) "
-				B_CONSOLE_IRC='true'
-				IRC_CLIENT="Weechat"
-				;;
-			xchat-gnome)
-				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 {
-					print $2
-				}' )"
-				IRC_CLIENT="X-Chat-Gnome"
-				;;
-			xchat)
-				IRC_CLIENT_VERSION=" $( $irc_client_path -v | gawk 'NR == 1 {
-					print $2
-				}' )"
-				IRC_CLIENT="X-Chat"
-				;;
-			# then do some perl type searches, do this last since it's a wildcard search
-			perl*|ksirc|dsirc)
-				unset IRC_CLIENT_VERSION
-				# KSirc is one of the possibilities now. KSirc is a wrapper around dsirc, a perl client
-				get_cmdline $PPID
-				for (( i=0; i <= $CMDL_MAX; i++ ))
-				do
-					case ${A_CMDL[i]} in
-						*dsirc*)
-						IRC_CLIENT="KSirc"
-						# Dynamic runpath detection is too complex with KSirc, because KSirc is started from
-						# kdeinit. /proc/<pid of the grandparent of this process>/exe is a link to /usr/bin/kdeinit
-						# with one parameter which contains parameters separated by spaces(??), first param being KSirc.
-						# Then, KSirc runs dsirc as the perl irc script and wraps around it. When /exec is executed,
-						# dsirc is the program that runs inxi, therefore that is the parent process that we see.
-						# You can imagine how hosed I am if I try to make inxi find out dynamically with which path
-						# KSirc was run by browsing up the process tree in /proc. That alone is straightjacket material.
-						# (KSirc sucks anyway ;)
-						IRC_CLIENT_VERSION=" $( ksirc -v | gawk '
-						/KSirc:/ {
-							print $2
-							exit
-						}' )"
-						break
-						;;
-					esac
-				done
-				B_CONSOLE_IRC='true'
-				set_perl_python_konvi "$app_working_name"
-				;;
-			python*)
-				# B_CONSOLE_IRC='true' # are there even any python type console irc clients? check.
-				set_perl_python_konvi "$app_working_name"
-				;;
-			# then unset, set unknown data
-			*)	
-				IRC_CLIENT="Unknown : ${irc_client_path##*/}"
-				unset IRC_CLIENT_VERSION
-				;;
-		esac
-		if [[ $SHOW_IRC -lt 2 ]];then
-			unset IRC_CLIENT_VERSION
-		fi
+		# sets version number if it can find it
+		get_irc_client_version
 	else
 		## lets look to see if qt4_konvi is the parent.  There is no direct way to tell, so lets infer it.
 		## because $PPID does not work with qt4_konvi, the above case does not work
@@ -2755,20 +2574,288 @@ get_start_client()
 		else
 			# this should handle certain cases where it's ssh or some other startup tool
 			# that falls through all the other tests
-			ps_parent=$(ps -p $PPID --no-headers 2>/dev/null | gawk '{print $NF}' )
-			if [[ -n $ps_parent ]];then
-				IRC_CLIENT=$ps_parent
+			if [[ $BSD_TYPE != 'bsd' ]];then
+				App_Working_Name=$(ps -p $PPID --no-headers 2>/dev/null | gawk '{print $NF}' )
+			else
+				# without --no-headers we need the second line
+				App_Working_Name=$(ps -p $PPID 2>/dev/null | gawk '/^[0-9]+/ {print $5}' )
+			fi
+			
+			if [[ -n $App_Working_Name ]];then
+				Irc_Client_Path=$App_Working_Name
+				B_Non_Native_App='false'
+				get_irc_client_version
+				if [[ -z $IRC_CLIENT ]];then
+					IRC_CLIENT=$App_Working_Name
+				fi
 			else
 				IRC_CLIENT="PPID=\"$PPID\" - empty?"
+				unset IRC_CLIENT_VERSION
 			fi
-			unset IRC_CLIENT_VERSION
 		fi
 	fi
 
 	log_function_data "IRC_CLIENT: $IRC_CLIENT :: IRC_CLIENT_VERSION: $IRC_CLIENT_VERSION :: PPID: $PPID"
 	eval $LOGFE
 }
-# args: $1 - app_working_name
+# note: all variables set in caller so no need to pass
+get_irc_client_version()
+{
+	local file_data=''
+	# replacing loose detection with tight detection, bugs will be handled with app names
+	# as they appear.
+	case $App_Working_Name in
+		# check for shell first
+		bash|dash|sh)
+			unset IRC_CLIENT_VERSION
+			IRC_CLIENT="Shell wrapper"
+			;;
+		# now start on irc clients, alphabetically
+		bitchx)
+			IRC_CLIENT_VERSION=" $( $Irc_Client_Path -v | gawk '
+			/Version/ {
+				a=tolower($2)
+				gsub(/[()]|bitchx-/,"",a)
+				print a
+				exit
+			}
+			$2 == "version" {
+				a=tolower($3)
+				sub(/bitchx-/,"",a)
+				print a
+				exit
+			}' )"
+			B_CONSOLE_IRC='true'
+			IRC_CLIENT="BitchX"
+			;;
+		finch)
+			IRC_CLIENT_VERSION=" $( $Irc_Client_Path -v | gawk 'NR == 1 {
+				print $2
+			}' )"
+			B_CONSOLE_IRC='true'
+			IRC_CLIENT="Finch"
+			;;
+		gaim)
+			IRC_CLIENT_VERSION=" $( $Irc_Client_Path -v | gawk 'NR == 1 {
+				print $2
+			}' )"
+			IRC_CLIENT="Gaim"
+			;;
+		hexchat)
+			# the hexchat author decided to make --version/-v return a gtk dialogue box, lol...
+			# so we need to read the actual config file for hexchat. Note that older hexchats
+			# used xchat config file, so test first for default, then legacy. Because it's possible
+			# for this file to be use edited, doing some extra checks here.
+			if [[ -f ~/.config/hexchat/hexchat.conf ]];then
+				file_data="$( cat ~/.config/hexchat/hexchat.conf )"
+			elif [[ -f  ~/.config/hexchat/xchat.conf ]];then
+				file_data="$( cat ~/.config/hexchat/xchat.conf )"
+			fi
+			if [[ -n $file_data ]];then
+				IRC_CLIENT_VERSION=$( gawk '
+				BEGIN {
+					IGNORECASE=1
+					FS="="
+				}
+				/^[[:space:]]*version/ {
+					# get rid of the space if present
+					gsub(/[[:space:]]*/, "", $2 )
+					print $2
+					exit # usually this is the first line, no point in continuing
+				}' <<< "$file_data" )
+				
+				IRC_CLIENT_VERSION=" $IRC_CLIENT_VERSION"
+			else
+				IRC_CLIENT_VERSION=' N/A'
+			fi
+			IRC_CLIENT="HexChat"
+			;;
+		ircii)
+			IRC_CLIENT_VERSION=" $( $Irc_Client_Path -v | gawk 'NR == 1 {
+				print $3
+			}' )"
+			B_CONSOLE_IRC='true'
+			IRC_CLIENT="ircII"
+			;;
+		irssi-text|irssi)
+			IRC_CLIENT_VERSION=" $( $Irc_Client_Path -v | gawk 'NR == 1 {
+				print $2
+			}' )"
+			B_CONSOLE_IRC='true'
+			IRC_CLIENT="Irssi"
+			;;
+		konversation) ## konvi < 1.2 (qt4)
+			# this is necessary to avoid the dcop errors from starting inxi as a /cmd started script
+			if [[ $B_Non_Native_App == 'true' ]];then  ## true negative is confusing
+				KONVI=2
+			else # if native app
+				KONVI=1
+			fi
+			IRC_CLIENT_VERSION=" $( $Irc_Client_Path -v | gawk '
+			/Konversation:/ {
+				for ( i=2; i<=NF; i++ ) {
+					if (i == NF) {
+						print $i
+					}
+					else {
+						printf $i" "
+					}
+				}
+				exit
+			}' )"
+
+			T=($IRC_CLIENT_VERSION)
+			if [[ ${T[0]} == *+* ]];then
+				# < Sho_> locsmif: The version numbers of SVN versions look like this:
+				#         "<version number of last release>+ #<build number", i.e. "1.0+ #3177" ...
+				#         for releases we remove the + and build number, i.e. "1.0" or soon "1.0.1"
+				IRC_CLIENT_VERSION=" CVS $IRC_CLIENT_VERSION"
+				T2="${T[0]/+/}"
+			else
+				IRC_CLIENT_VERSION=" ${T[0]}"
+				T2="${T[0]}"
+			fi
+			# Remove any dots except the first, and make sure there are no trailing zeroes,
+			T2=$( echo "$T2" | gawk '{
+				sub(/\./, " ")
+				gsub(/\./, "")
+				sub(/ /, ".")
+				printf("%g\n", $0)
+			}' )
+			# Since Konversation 1.0, the DCOP interface has changed a bit: dcop "$DCPORT" Konversation ..etc
+			# becomes : dcop "$DCPORT" default ... or dcop "$DCPORT" irc ..etc. So we check for versions smaller
+			# than 1 and change the DCOP parameter/object accordingly.
+			if [[ ${T2} -lt 1 ]];then
+				DCOPOBJ="Konversation"
+			fi
+			IRC_CLIENT="Konversation"
+			;;
+		kopete)
+			IRC_CLIENT_VERSION=" $( kopete -v | gawk '
+			/Kopete:/ {
+				print $2
+				exit
+			}' )"
+			IRC_CLIENT="Kopete"
+			;;
+		kvirc)
+			IRC_CLIENT_VERSION=" $( $Irc_Client_Path -v 2>&1 | gawk '{
+				for ( i=2; i<=NF; i++) {
+					if ( i == NF ) {
+						print $i
+					}
+					else {
+						printf $i" "
+					}
+				}
+				exit
+				}' )"
+			IRC_CLIENT="KVIrc"
+			;;
+		pidgin)
+			IRC_CLIENT_VERSION=" $( $Irc_Client_Path -v | gawk 'NR == 1 {
+				print $2
+			}' )"
+			IRC_CLIENT="Pidgin"
+			;;
+		quassel*)
+			# sample: quassel -v
+			# Qt: 4.5.0
+			# KDE: 4.2.65 (KDE 4.2.65 (KDE 4.3 >= 20090226))
+			# Quassel IRC: v0.4.0 [+60] (git-22effe5)
+			# note: early < 0.4.1 quassels do not have -v
+			IRC_CLIENT_VERSION=" $( $Irc_Client_Path -v 2>/dev/null | gawk -F ': ' '
+			BEGIN {
+				IGNORECASE=1
+				clientVersion=""
+			}
+			/Quassel IRC/ {
+				clientVersion = $2
+			}
+			END {
+				# this handles pre 0.4.1 cases with no -v
+				if ( clientVersion == "" ) {
+					clientVersion = "(pre v0.4.1)"
+				}
+				print clientVersion
+			}' )"
+			# now handle primary, client, and core. quasselcore doesn't actually
+			# handle scripts with exec, but it's here just to be complete
+			case $App_Working_Name in
+				quassel)
+					IRC_CLIENT="Quassel [M]"
+					;;
+				quasselclient)
+					IRC_CLIENT="Quassel"
+					;;
+				quasselcore)
+					IRC_CLIENT="Quassel (core)"
+					;;
+			esac
+			;;
+		weechat-curses)
+			IRC_CLIENT_VERSION=" $( $Irc_Client_Path -v ) "
+			B_CONSOLE_IRC='true'
+			IRC_CLIENT="Weechat"
+			;;
+		xchat-gnome)
+			IRC_CLIENT_VERSION=" $( $Irc_Client_Path -v | gawk 'NR == 1 {
+				print $2
+			}' )"
+			IRC_CLIENT="X-Chat-Gnome"
+			;;
+		xchat)
+			IRC_CLIENT_VERSION=" $( $Irc_Client_Path -v | gawk 'NR == 1 {
+				print $2
+			}' )"
+			IRC_CLIENT="X-Chat"
+			;;
+		# then do some perl type searches, do this last since it's a wildcard search
+		perl*|ksirc|dsirc)
+			unset IRC_CLIENT_VERSION
+			# KSirc is one of the possibilities now. KSirc is a wrapper around dsirc, a perl client
+			get_cmdline $PPID
+			for (( i=0; i <= $CMDL_MAX; i++ ))
+			do
+				case ${A_CMDL[i]} in
+					*dsirc*)
+					IRC_CLIENT="KSirc"
+					# Dynamic runpath detection is too complex with KSirc, because KSirc is started from
+					# kdeinit. /proc/<pid of the grandparent of this process>/exe is a link to /usr/bin/kdeinit
+					# with one parameter which contains parameters separated by spaces(??), first param being KSirc.
+					# Then, KSirc runs dsirc as the perl irc script and wraps around it. When /exec is executed,
+					# dsirc is the program that runs inxi, therefore that is the parent process that we see.
+					# You can imagine how hosed I am if I try to make inxi find out dynamically with which path
+					# KSirc was run by browsing up the process tree in /proc. That alone is straightjacket material.
+					# (KSirc sucks anyway ;)
+					IRC_CLIENT_VERSION=" $( ksirc -v | gawk '
+					/KSirc:/ {
+						print $2
+						exit
+					}' )"
+					break
+					;;
+				esac
+			done
+			B_CONSOLE_IRC='true'
+			set_perl_python_konvi "$App_Working_Name"
+			;;
+		python*)
+			# B_CONSOLE_IRC='true' # are there even any python type console irc clients? check.
+			set_perl_python_konvi "$App_Working_Name"
+			;;
+		# then unset, set unknown data
+		*)	
+			IRC_CLIENT="Unknown : ${Irc_Client_Path##*/}"
+			unset IRC_CLIENT_VERSION
+			;;
+	esac
+	if [[ $SHOW_IRC -lt 2 ]];then
+		unset IRC_CLIENT_VERSION
+	fi
+}
+
+# args: $1 - App_Working_Name
 set_perl_python_konvi()
 {
 	if [[ -z $IRC_CLIENT_VERSION ]];then
@@ -3105,7 +3192,7 @@ get_cpu_core_count()
 		# create array, core count integer; core count string
 		# A_CPU_CORE_DATA=( "$cpu_core_count" "$cpu_alpha_count Core$cpu_type" )
 		A_CPU_CORE_DATA=( "$cpu_physical_count" "$cpu_alpha_count" "$cpu_type" "$cpu_core_count" )
-	elif [[ $B_BSD == 'true' ]];then
+	elif [[ -n $BSD_TYPE ]];then
 		cpu_core_count=$( grep '^hw.ncpu' <<< "$Sysctl_a_Data" | gawk '{print $NF}' )
 		if [[ -n $( grep -E '^[0-9]+$' <<< "$cpu_core_count" ) ]];then
 			cpu_alpha_count=$( get_cpu_core_count_alpha "$cpu_core_count" )
@@ -3256,7 +3343,7 @@ get_cpu_data()
 		}
  		' $FILE_CPUINFO ) )
 		log_function_data 'cat' "$FILE_CPUINFO"
-	elif [[ $B_BSD == 'true' ]];then
+	elif [[ -n $BSD_TYPE ]];then
 		IFS=$'\n'
 		A_CPU_DATA=( $( 
 		gawk -F': ' '
@@ -3780,7 +3867,8 @@ get_distro_data()
 	eval $LOGFS
 	local i='' j='' distro='' distro_file='' a_distro_glob='' temp_array=''
 	
-	if [[ $B_BSD == 'true' ]];then
+	# may need modification if archbsd / debian can be id'ed with /etc files
+	if [[ -n $BSD_TYPE ]];then
 		distro=$( uname -sr )
 		echo "$distro"
 		log_function_data "distro: $distro"
@@ -4149,7 +4237,11 @@ N
 get_gcc_kernel_version()
 {
 	# note that we use gawk to get the last part because beta, alpha, git versions can be non-numeric
-	local gccVersion=$( grep -Eio 'gcc[[:space:]]*version[[:space:]]*([^ \t]*)' /proc/version 2>/dev/null | gawk '{print $3}' )
+	local gccVersion=''
+	
+	if [[ -e /proc/version ]];then
+		gccVersion=$( grep -Eio 'gcc[[:space:]]*version[[:space:]]*([^ \t]*)' /proc/version 2>/dev/null | gawk '{print $3}' )
+	fi
 	echo $gccVersion
 }
 
@@ -4453,7 +4545,7 @@ get_graphics_glx_data()
 get_graphics_res_data()
 {
 	eval $LOGFS
-	local screen_resolution='' xdpy_data='' screens_count=0
+	local screen_resolution='' xdpy_data='' screens_count=0 tty_session=''
 
 	if [[ $B_SHOW_X_DATA == 'true' && $B_ROOT != 'true' ]];then
 		# Added the two ?'s , because the resolution is now reported without spaces around the 'x', as in
@@ -4495,20 +4587,28 @@ get_graphics_res_data()
 			}' <<< "$xdpy_data" )
 		fi
 	else
-		if [[ $B_PROC_DIR == 'true' ]];then
+		if [[ $B_PROC_DIR == 'true' && -z $BSD_TYPE ]];then
 			screen_resolution=$( stty -F $( readlink /proc/$PPID/fd/0 ) size | gawk '{
 				print $2"x"$1
 			}' )
 		# note: this works fine for all systems but keeping the above for now since
 		# the above is probably more accurate for linux systems.
 		else
-			screen_resolution=$( stty -a | gawk -F ';' '
-				/^speed/ {
-					gsub(/[[:space:]]*(rows|columns)[[:space:]]*/,"",$0)
-					gsub(/[[:space:]]*/,"",$2)
-					gsub(/[[:space:]]*/,"",$3)
-					print $3"x"$2
-				}' )
+			if [[ $B_CONSOLE_IRC != 'true' ]];then
+				screen_resolution=$( stty -a | gawk -F ';' '
+					/^speed/ {
+						gsub(/[[:space:]]*(rows|columns)[[:space:]]*/,"",$0)
+						gsub(/[[:space:]]*/,"",$2)
+						gsub(/[[:space:]]*/,"",$3)
+						print $3"x"$2
+					}' )
+			else
+				if [[ -n $BSD_TYPE ]];then
+					tty_session=$( get_tty_console_irc )
+					# getting information for tty that owns the irc client
+					screen_resolution="$( stty -f /dev/pts/$tty_session size | gawk '{print $2"x"$1}' )"
+				fi
+			fi
 		fi
 	fi
 	echo "$screen_resolution"
@@ -4627,30 +4727,42 @@ get_graphics_x_version()
 get_hdd_data_basic()
 {
 	eval $LOGFS
-	local hdd_used='' temp_array=''
-	local hdd_data="$( df -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 )"
+	local hdd_used='' temp_array='' df_string=''
+	local hdd_data=''
+	
+	if [[ -z $BSD_TYPE ]];then
+		df_string='df -P -T --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660'
+	else
+		# default size is 512, so use -k for 1024
+		df_string='df -P -T -k'
+	fi
+	hdd_data="$( eval $df_string )"
 	log_function_data 'raw' "hdd_data:\n$hdd_data"
 	
-	hdd_used=$( echo "$hdd_data" | gawk '
+	hdd_used=$( echo "$hdd_data" | gawk -v bsdType=$BSD_TYPE '
+	( bsdType != "" ) && $2 ~ /^(type|aufs|squashfs|unionfs|devtmpfs|tmpfs|iso9660|devfs|linprocfs|sysfs|fdescfs)$/ {
+		# note use next, not getline or it does not work right
+		next 
+	}
 	# also handles odd dm-1 type, from lvm
-	/^\/dev\/(mapper\/|[hsv]d[a-z][0-9]+|dm[-]?[0-9]+)/ {
+	/^\/dev\/(mapper\/|[hsv]d[a-z][0-9]+|dm[-]?[0-9]+|ada[0-9]+p[0-9]+)/ {
 		# this handles the case where the first item is too long
 		# and makes df wrap output to next line, so here we advance
 		# it to the next line for that single case. Using df -P should
 		# make this unneeded but leave it in just in case
-		if ( NF < 5 && $0 !~ /.*%/ ) {
+		if ( NF < 6 && $0 !~ /.*%/ ) {
 			getline
 		}
 		# if the first item caused a wrap, use one less than standard
 		# testing for the field with % in it, ie: 34%, then go down from there
 		# this also protects against cases where the mount point has a space in the
 		# file name, thus breaking going down from $NF directly.
-		if ( $4 ~ /.*%/ ) {
-			used += $2
+		if ( $5 ~ /.*%/ ) {
+			used += $3
 		}
 		# otherwise use standard
-		else if ( $5 ~ /.*%/ ) {
-			used += $3
+		else if ( $6 ~ /.*%/ ) {
+			used += $4
 		}
 		# and if this is not detected, give up, we need user data to debug
 		else {
@@ -4708,7 +4820,6 @@ get_hdd_data_basic()
 			}
 		}' $FILE_PARTITIONS 
 		) )
-
 		log_function_data 'cat' "$FILE_PARTITIONS"
 	fi
 	IFS="$ORIGINAL_IFS"
@@ -5709,12 +5820,20 @@ get_partition_data()
 {
 	eval $LOGFS
 	
-	local a_partition_working='' dev_item='' temp_array='' dev_working_item=''
+	local a_partition_working='' dev_item='' temp_array='' dev_working_item='' 
+	local swap_data='' df_string='' main_partition_data
 	#local excluded_file_types='--exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660'
 	# df doesn't seem to work in script with variables like at the command line
 	# added devfs linprocfs sysfs fdescfs which show on debian kfreebsd kernel output
-	local main_partition_data="$( df -h -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs )"
-	local swap_data="$( swapon -s )"
+	if [[ -z $BSD_TYPE ]];then
+		swap_data="$( swapon -s 2>/dev/null )"
+		df_string='df -h -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs'
+	else
+		swap_data="$( swapctl -l 2>/dev/null )"
+		# default size is 512, -H only for size in human readable format
+		df_string='df -H -T'
+	fi
+	main_partition_data="$( eval $df_string )"
 	# set dev disk label/mapper/uuid data globals
 	get_partition_dev_data 'label'
 	get_partition_dev_data 'mapper'
@@ -5734,12 +5853,17 @@ get_partition_data()
 	# $NF = partition name; $(NF - 4) = partition size; $(NF - 3) = used, in gB; $(NF - 1) = percent used
 	## note: by subtracting from the last field number NF, we avoid a subtle issue with LVM df output, where if
 	## the first field is too long, it will occupy its own line, this way we are getting only the needed data
-	A_PARTITION_DATA=( $( echo "$main_partition_data" | gawk '
+	A_PARTITION_DATA=( $( echo "$main_partition_data" | gawk -v bsdType=$BSD_TYPE '
 	BEGIN {
 		IGNORECASE=1
 	}
 	# this has to be nulled for every iteration so it does not retain value from last iteration
 	devBase=""
+	# skipping these file systems because bsds do not support df --exclude-type=<fstype>
+	( bsdType != "" ) && $2 ~ /^(type|aufs|squashfs|unionfs|devtmpfs|tmpfs|iso9660|devfs|linprocfs|sysfs|fdescfs)$/ {
+		# note use next, not getline or it does not work right
+		next 
+	}
 	# this is required because below we are subtracting from NF, so it has to be > 5
 	# the real issue is long file system names that force the wrap of df output: //fileserver/main
 	# but we still need to handle more dynamically long space containing file names, but later.
@@ -5751,6 +5875,7 @@ get_partition_data()
 		}
 		getline
 	}
+	
 	# next set devBase if it didn not get set above here
 	( $1 ~ /^\/dev\// ) && ( devBase == "" ) {
 		devBase=gensub( /^(\/dev\/)(.+)$/, "\\2", 1, $1 )
@@ -5782,15 +5907,25 @@ get_partition_data()
 	# now add the swap partition data, don't want to show swap files, just partitions,
 	# though this can include /dev/ramzswap0. Note: you can also use /proc/swaps for this
 	# data, it's the same exact output as swapon -s
-	$( echo "$swap_data" | gawk '
+	$( echo "$swap_data" | gawk -v bsdType=$BSD_TYPE '
 	BEGIN {
 		swapCounter = 1
+		usedHolder=""
+		sizeHolder=""
 	}
 	/^\/dev/ {
-		size = sprintf( "%.2f", $3*1024/1000**3 )
+		if ( bsdType == "" ) {
+			usedHolder=$4
+			sizeHolder=$3
+		}
+		else {
+			usedHolder=$3
+			sizeHolder=$2
+		}
+		size = sprintf( "%.2f", sizeHolder*1024/1000**3 )
 		devBase = gensub( /^(\/dev\/)(.+)$/, "\\2", 1, $1 )
-		used = sprintf( "%.2f", $4*1024/1000**3 )
-		percentUsed = sprintf( "%.0f", ( $4/$3 )*100 )
+		used = sprintf( "%.2f", usedHolder*1024/1000**3 )
+		percentUsed = sprintf( "%.0f", ( usedHolder/sizeHolder )*100 )
 		print "swap-" swapCounter "," size "GB," used "GB," percentUsed "%,main," "swap," devBase
 		swapCounter = ++swapCounter
 	}' ) )
@@ -6067,12 +6202,16 @@ get_dev_processed_item()
 
 get_patch_version_string()
 {
-	local script_patch_number=$( sed 's/^[0]\+//' <<< $SCRIPT_PATCH_NUMBER )
+	local patch_version_number=$( sed 's/^[0]\+//' <<< $SCRIPT_PATCH_NUMBER )
 	
-	if [[ -n $script_patch_number ]];then
-		script_patch_number="-$script_patch_number"
+	if [[ -n $patch_version_number ]];then
+		patch_version_number="-$patch_version_number"
+		# for cases where it was for example: 00-bsd cleaned to --bsd trim out one -
+		if [[ -n $( grep '\--' <<< $patch_version_number ) ]];then
+			patch_version_number=$( sed 's/--/-/' <<< $patch_version_number )
+		fi
 	fi
-	echo $script_patch_number
+	echo $patch_version_number
 }
 
 # args: $1 - type cpu/mem 
@@ -6085,7 +6224,7 @@ get_ps_data()
 	# orders in output, pesky lack of support of +rss in old systems
 	case $1 in
 		mem)
-			if [[ $B_BSD != 'true' ]];then
+			if [[ $BSD_TYPE != 'bsd' ]];then
 				sort_type='ps aux --sort -rss'
 				head_tail='head'
 			else
@@ -6094,7 +6233,7 @@ get_ps_data()
 			fi
 			;;
 		cpu)
-			if [[ $B_BSD != 'true' ]];then
+			if [[ $BSD_TYPE != 'bsd' ]];then
 				sort_type='ps aux --sort %cpu'
 				head_tail='tail'
 			else
@@ -6151,7 +6290,7 @@ get_ps_data()
 	# make the array ordered highest to lowest so output looks the way we expect it to
 	# this isn't necessary for -rss, and we can't make %cpu ordered the other way, so
 	# need to reverse it here. -rss is used because on older systems +rss is not supported
-	if [[ $1 == 'cpu' && $B_BSD != 'true' ]];then
+	if [[ $1 == 'cpu' && $BSD_TYPE != 'bsd' ]];then
 		array_length=${#A_PS_DATA[@]}; 
 		while (( $i < $array_length/2 ))
 		do 
@@ -6924,9 +7063,12 @@ get_tty_console_irc()
 			BEGIN {
 				IGNORECASE=1
 			}
-			/'${IRC_CLIENT}'/ {
+			# if multiple irc clients open, can give wrong results
+			# so make sure to also use the PPID number to get the right tty
+			/.*'$PPID'.*'${IRC_CLIENT}'/ {
 				gsub(/[^0-9]/, "", $7)
 				print $7
+				exit
 			}' )
 	fi
 	log_function_data "tty_number: $tty_number"
@@ -7032,6 +7174,7 @@ get_unmounted_partition_filesystem()
 		# this will fail if regular user and no sudo present, but that's fine, it will just return null
 		# note the hack that simply slices out the first line if > 1 items found in string
 		# also, if grub/lilo is on partition boot sector, no file system data is available
+		# BSD fix: -Eio -Em 1
 		partition_filesystem=$( eval $sudo_command $FILE_PATH -s $1 | grep -Eio '(ext2|ext3|ext4|ext5|ext[[:space:]]|ntfs|fat32|fat16|fat[[:space:]]\(.*\)|vfat|fatx|tfat|swap|btrfs|ffs[[:space:]]|hfs\+|hfs[[:space:]]plus|hfs[[:space:]]extended[[:space:]]version[[:space:]][1-9]|hfsj|hfs[[:space:]]|jfs[[:space:]]|nss[[:space:]]|reiserfs|reiser4|ufs2|ufs[[:space:]]|xfs[[:space:]]|zfs[[:space:]])' | grep -Em 1 '.*' )
 		if [[ -n $partition_filesystem ]];then
 			echo $partition_filesystem
@@ -7165,7 +7308,7 @@ print_it_out()
 	local Lspci_v_Data='' Lspci_n_Data='' # only for verbose
 	local Sysctl_a_Data=''
 	
-	if [[ $B_BSD == 'true' ]];then
+	if [[ -n $BSD_TYPE ]];then
 		Sysctl_a_Data="$( get_sysctl_data 'a' )"
 	fi
 
@@ -7281,7 +7424,7 @@ print_short_data()
 	if [[ "$min_max_clock" == 'N/A' && ${a_cpu_working[1]} != '' ]];then
 		min_max_clock="${a_cpu_working[1]} MHz"
 	fi
-	local script_patch_number=$( get_patch_version_string )
+	local patch_version_number=$( get_patch_version_string )
 
 	#set_color_scheme 12
 	if [[ $B_RUNNING_IN_SHELL == 'false' ]];then
@@ -7311,7 +7454,7 @@ print_short_data()
 	if [[ $SHOW_IRC -gt 0 ]];then
 		short_data="${short_data}${C1}Client${C2}${SEP1}${IRC_CLIENT}${IRC_CLIENT_VERSION}${SEP2}"
 	fi
-	short_data="${short_data}${C1}$SCRIPT_NAME${C2}${SEP1}$SCRIPT_VERSION_NUMBER$script_patch_number${SEP2}${CN}"
+	short_data="${short_data}${C1}$SCRIPT_NAME${C2}${SEP1}$SCRIPT_VERSION_NUMBER$patch_version_number${SEP2}${CN}"
 	if [[ $SCHEME -gt 0 ]];then
 		short_data="${short_data} $NORMAL"
 	fi
@@ -7880,7 +8023,7 @@ print_info_data()
 	local memory="$( get_memory_data )"
 	local processes="$(( $( ps aux | wc -l ) - 1 ))"
 	local up_time="$( get_uptime )"
-	local script_patch_number=$( get_patch_version_string )
+	local patch_version_number=$( get_patch_version_string )
 	local gcc_string='' gcc_installed='' gcc_others='' closing_data='' 
 	
 	if [[ $B_EXTRA_DATA == 'true' ]];then
@@ -7932,7 +8075,7 @@ print_info_data()
 		client_data="${C1}Client$SEP3${C2} ${IRC_CLIENT}${IRC_CLIENT_VERSION} "
 	fi
 	info_data="${info_data}$gcc_installed"
-	closing_data="$client_data${C1}$SCRIPT_NAME$SEP3${C2} $SCRIPT_VERSION_NUMBER$script_patch_number${CN}"
+	closing_data="$client_data${C1}$SCRIPT_NAME$SEP3${C2} $SCRIPT_VERSION_NUMBER$patch_version_number${CN}"
 	if [[ -n $info_data && $( calculate_line_length "$info_data$closing_data" ) -gt $LINE_MAX ]];then
 		info_data=$( create_print_line "$line_starter" "$info_data" )
 		print_screen_output "$info_data"
@@ -8973,6 +9116,20 @@ print_raid_data()
 	eval $LOGFE
 }
 
+print_program_version()
+{
+	local patch_version_number=$( get_patch_version_string )
+	local program_version="${C1}$SCRIPT_NAME$SEP3${C2} $SCRIPT_VERSION_NUMBER$patch_version_number${CN}"
+	# great trick from: http://ideatrash.net/2011/01/bash-string-padding-with-sed.html
+	# left pad: sed -e :a -e 's/^.\{1,80\}$/& /;ta'
+	# right pad: sed -e :a -e 's/^.\{1,80\}$/ &/;ta'
+	# center pad: sed -e :a -e 's/^.\{1,80\}$/ & /;ta'
+	#local line_max=$(( $LINE_MAX - 10 ))
+	#program_version="$( sed -e :a -e "s/^.\{1,$line_max\}$/ &/;ta" <<< $program_version )" # use to create padding if needed
+	# program_version=$( create_print_line "Version:" "$program_version" )
+	print_screen_output "$program_version"
+}
+
 # currently only apt using distros support this feature, but over time we can add others
 print_repo_data()
 {
@@ -9029,20 +9186,6 @@ print_repo_data()
 		print_screen_output "$repo_full"
 	fi
 	eval $LOGFE
-}
-
-print_script_version()
-{
-	local script_patch_number=$( get_patch_version_string )
-	local script_version="${C1}$SCRIPT_NAME$SEP3${C2} $SCRIPT_VERSION_NUMBER$script_patch_number${CN}"
-	# great trick from: http://ideatrash.net/2011/01/bash-string-padding-with-sed.html
-	# left pad: sed -e :a -e 's/^.\{1,80\}$/& /;ta'
-	# right pad: sed -e :a -e 's/^.\{1,80\}$/ &/;ta'
-	# center pad: sed -e :a -e 's/^.\{1,80\}$/ & /;ta'
-	#local line_max=$(( $LINE_MAX - 10 ))
-	#script_version="$( sed -e :a -e "s/^.\{1,$line_max\}$/ &/;ta" <<< $script_version )" # use to create padding if needed
-	# script_version=$( create_print_line "Version:" "$script_version" )
-	print_screen_output "$script_version"
 }
 
 print_sensors_data()
