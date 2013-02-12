@@ -1,8 +1,8 @@
-#!/bin/bash
+#!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 1.8.36
-####  Date: February 8 2013
+####  Version: 1.8.37
+####  Date: February 11 2013
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -85,7 +85,7 @@
 ####  -S   For desktop environment, user must be in X and have xprop installed (in X11-utils)
 ########################################################################
 ####  BSD Adjustments
-####  * sed -i '' form added to bsd branch by inxi2bsd script automatically.
+####  * sed -i '' form supported by using SED_I="-i ''".
 ####  * Note: BSD sed supports using -r instead of -E for compatibility with gnu sed
 ####  * Gnu grep options can be used if the function component is only run in linux
 ####    These are the options that bsd grep does not support that inxi uses: -m <number> -o 
@@ -206,6 +206,7 @@ LINE_MAX_IRC='105'
 PS_COUNT=5
 PS_THROTTLED=''
 REPO_DATA=''
+SED_I='-i' # for gnu sed, will be set to -i '' for bsd sed
 
 ### primary data array holders	## usage: 'A_<var>'
 A_ALSA_DATA=''
@@ -260,6 +261,7 @@ B_LOG_FULL_DATA='false'
 B_MAPPER_SET='false'
 B_OUTPUT_FILTER='false'
 B_OVERRIDE_FILTER='false'
+B_PCICONF='false'
 # kde qdbus
 B_QDBUS='false'
 B_PORTABLE='false'
@@ -327,6 +329,7 @@ B_ASOUND_DEVICE_FILE='false'
 B_ASOUND_VERSION_FILE='false'
 B_BASH_ARRAY='false'
 B_CPUINFO_FILE='false'
+B_DMESG_BOOT_FILE='false' # bsd only
 B_LSB_FILE='false'
 B_MDSTAT_FILE='false'
 B_MEMINFO_FILE='false'
@@ -342,6 +345,7 @@ FILE_ASOUND_DEVICE='/proc/asound/cards'
 FILE_ASOUND_MODULES='/proc/asound/modules' # not used but maybe for -A?
 FILE_ASOUND_VERSION='/proc/asound/version'
 FILE_CPUINFO='/proc/cpuinfo'
+FILE_DMESG_BOOT='/var/run/dmesg.boot'
 FILE_LSB_RELEASE='/etc/lsb-release'
 FILE_MDSTAT='/proc/mdstat'
 FILE_MEMINFO='/proc/meminfo'
@@ -566,6 +570,8 @@ main()
 	eval $LOGFS
 	
 	local color_scheme=''
+	# this will be used by all functions following
+	local Ps_aux_Data="$( ps aux )"
 	
 	# This function just initializes variables
 	initialize_data
@@ -590,6 +596,8 @@ main()
 	if [[ -s $HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf ]];then
 		source $HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf
 	fi
+	
+	
 
 	## this needs to run before the KONVI stuff is set below
 	## Konversation 1.2 apparently does not like the $PPID test in get_start_client
@@ -716,6 +724,7 @@ initialize_data()
 	if [[ -n $( grep -i 'bsd' <<< $( uname -s 2>/dev/null ) ) ]];then
 		if [[ -n $( grep -i 'kfreebsd' <<< $( uname -s 2>/dev/null ) ) ]];then
 			BSD_TYPE='dgbsd' # debian gnu bsd
+			SED_I="-i ''"
 		else
 			BSD_TYPE='bsd' # all other bsds
 		fi
@@ -732,11 +741,19 @@ initialize_data()
 	
 	initialize_paths
 	
-	# found a case of battery existing but having nothing in it on desktop mobo
-	# not all laptops show the first, 
-	if [[ -n $( ls /proc/acpi/battery 2>/dev/null ) ]];then
-		B_PORTABLE='true'
+	if [[ -n $BSD_TYPE ]];then
+		if [[ -e $FILE_DMESG_BOOT ]];then
+			B_DMESG_BOOT_FILE='true'
+		fi
+	else
+		# found a case of battery existing but having nothing in it on desktop mobo
+		# not all laptops show the first, 
+		if [[ -n $( ls /proc/acpi/battery 2>/dev/null ) ]];then
+			B_PORTABLE='true'
+		fi
 	fi
+	
+	
 	if [[ -e $FILE_CPUINFO ]]; then
 		B_CPUINFO_FILE='true'
 	fi
@@ -890,6 +907,9 @@ check_recommended_apps()
 		if [[ -n $( type -p sysctl ) ]];then
 			B_SYSCTL='true'
 		fi
+		if [[ -n $( type -p pciconf ) ]];then
+			B_PCICONF='true'
+		fi
 	fi
 	# now setting qdbus/dcop for first run, some systems can have both by the way
 	if [[ -n $( type -p qdbus ) ]];then
@@ -913,7 +933,7 @@ check_required_apps()
 	if [[ -z $BSD_TYPE  ]];then
 		depends="$depends lspci"
 	elif [[ $BSD_TYPE == 'bsd' ]];then
-		depends="$depends sysctl pciconf"
+		depends="$depends sysctl"
 		# dgbsd has lspci but you must be root to run it
 	elif [[ $BSD_TYPE == 'dgbsd' ]];then
 		depends="$depends sysctl lspci"
@@ -1114,21 +1134,21 @@ select_default_color_scheme()
 				echo "$config_variable=$user_selection" >> $config_file
 			else
 				print_screen_output "Updating config file for $COLOR_SELECTION color scheme now..."
-				sed -i "s/$config_variable=.*/$config_variable=$user_selection/" $config_file
+				sed $SED_I "s/$config_variable=.*/$config_variable=$user_selection/" $config_file
 			fi
 			# file exists now so we can go on to cleanup
 			case $COLOR_SELECTION in
 				irc|irc-console|irc-virtual-terminal|console|virtual-terminal)
-					sed -i '/GLOBAL_COLOR_SCHEME=/d' $config_file
+					sed $SED_I '/GLOBAL_COLOR_SCHEME=/d' $config_file
 					;;
 				global)
-					sed -i -e '/VIRT_TERM_COLOR_SCHEME=/d' -e '/CONSOLE_COLOR_SCHEME=/d' -e '/IRC_COLOR_SCHEME=/d' \
+					sed $SED_I -e '/VIRT_TERM_COLOR_SCHEME=/d' -e '/CONSOLE_COLOR_SCHEME=/d' -e '/IRC_COLOR_SCHEME=/d' \
 					-e '/IRC_CONS_COLOR_SCHEME=/d' -e '/IRC_X_TERM_COLOR_SCHEME=/d' $config_file
 					;;
 			esac
 		elif [[ $user_selection == $i ]];then
 			print_screen_output "Removing all color settings from config file now..."
-			sed -i -e '/VIRT_TERM_COLOR_SCHEME=/d' -e '/GLOBAL_COLOR_SCHEME=/d' -e '/CONSOLE_COLOR_SCHEME=/d' \
+			sed $SED_I -e '/VIRT_TERM_COLOR_SCHEME=/d' -e '/GLOBAL_COLOR_SCHEME=/d' -e '/CONSOLE_COLOR_SCHEME=/d' \
 			-e '/IRC_COLOR_SCHEME=/d' -e '/IRC_CONS_COLOR_SCHEME=/d' -e '/IRC_X_TERM_COLOR_SCHEME=/d' $config_file
 			set_color_scheme $DEFAULT_COLOR_SCHEME
 		elif [[ $user_selection == $(( $i+1 )) ]];then
@@ -1338,6 +1358,7 @@ create_rotate_logfiles()
 }
 
 # args: $1 - download url, not including file name; $2 - string to print out
+# $3 - update type option
 # note that $1 must end in / to properly construct the url path
 script_self_updater()
 {
@@ -1346,7 +1367,7 @@ script_self_updater()
 	local man_file_path="$MAN_FILE_LOCATION/inxi.1.gz"
 	
 	if [[ $B_RUNNING_IN_SHELL != 'true' ]];then
-		print_screen_output "Sorry, you can't run the $SCRIPT_NAME self updater option (-U) in an IRC client."
+		print_screen_output "Sorry, you can't run the $SCRIPT_NAME self updater option (-$3) in an IRC client."
 		exit 1
 	fi
 
@@ -1397,7 +1418,7 @@ script_self_updater()
 					fi
 				else
 					print_screen_output "Updating / Installing the Man page requires root user, writing to: $MAN_FILE_LOCATION"
-					print_screen_output "If you want the man page, you'll have to run $SCRIPT_NAME -U as root."
+					print_screen_output "If you want the man page, you'll have to run $SCRIPT_NAME -$3 as root."
 				fi
 			fi
 			exit 0
@@ -1421,10 +1442,16 @@ script_self_updater()
 debug_data_collector()
 {
 	local xiin_app='' xiin_data_file='' xiin_download='' error='' b_run_xiin='false'
-	local debug_data_dir="inxi-$(tr ' ' '-' <<< $HOSTNAME | tr '[A-Z]' '[a-z]' )-$1-$(date +%Y%m%d)" 
+	local debug_data_dir='' bsd_string=''
 	local completed_gz_file='' xiin_file='xiin.py' ftp_upload='ftp.techpatterns.com/incoming'
 	local Line='-------------------------'
 	local start_directory=$( pwd )
+	
+	if [[ -n $BSD_TYPE ]];then
+		bsd_string="$BSD_TYPE-"
+	fi
+	
+	debug_data_dir="inxi-$bsd_string$(tr ' ' '-' <<< $HOSTNAME | tr '[A-Z]' '[a-z]' )-$1-$(date +%Y%m%d)" 
 	
 	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
 		if [[ -n $ALTERNATE_FTP ]];then
@@ -1450,16 +1477,18 @@ debug_data_collector()
 		echo 'Collecting system info: sensors, lsusb, lspci, lspci -v data, plus /proc data'
 		echo 'also checking for dmidecode data: note, you must be root to have dmidecode work.'
 		echo "Data going into: $SCRIPT_DATA_DIR/$debug_data_dir"
+		# bsd tools
+		pciconf -vl &> $debug_data_dir/bsd-pciconf-vl.txt
+		sysctl -a &> $debug_data_dir/bsd-sysctl-a.txt
+		
 		dmidecode &> $debug_data_dir/dmidecode.txt
 		lsusb &> $debug_data_dir/lsusb.txt
 		lspci &> $debug_data_dir/lspci.txt
 		lspci -n &> $debug_data_dir/lspci-n.txt
 		lspci -v &> $debug_data_dir/lspci-v.txt
-		# bsd tool
-		pciconf -vl &> $debug_data_dir/pciconf-vl.txt
 		ps aux &> $debug_data_dir/ps-aux.txt
 		sensors &> $debug_data_dir/sensors.txt
-		sysctl -a &> $debug_data_dir/sysctl-a.txt
+		
 		ls /usr/bin/gcc* &> $debug_data_dir/gcc-sys-versions.txt
 		gcc --version &> $debug_data_dir/gcc-version.txt
 		cat /etc/issue &> $debug_data_dir/etc-issue.txt
@@ -1471,6 +1500,9 @@ debug_data_collector()
 		cat $FILE_MEMINFO &> $debug_data_dir/proc-meminfo.txt
 		cat $FILE_MODULES &> $debug_data_dir/proc-modules.txt
 		cat /proc/net/arp &> $debug_data_dir/proc-net-arp.txt 
+		# bsd data
+		cat /var/run/dmesg.boot &> $debug_data_dir/bsd-var-run-dmesg.boot.txt 
+		
 		check_recommends_user_output &> $debug_data_dir/check-recommends-user-output.txt
 		# first download and verify xiin
 		if [[ $B_UPLOAD_DEBUG_DATA == 'true' || $1 == 'disk' || $1 == 'sys' || $1 == 'all' ]];then
@@ -1566,11 +1598,20 @@ debug_data_collector()
 			ls -l /dev/mapper &> $debug_data_dir/dev-disk-mapper-data.txt
 			readlink /dev/root &> $debug_data_dir/dev-root.txt
 			df -h -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs &> $debug_data_dir/df-h-T-excludes.txt
-			df -H -T &> $debug_data_dir/df-H-T-no-excludes.txt
-			swapctl -l &> $debug_data_dir/swapctl-l.txt
+			df -H -T &> $debug_data_dir/bsd-df-H-T-no-excludes.txt
+			# bsd tool
+			gpart list &> $debug_data_dir/bsd-gpart-list.txt
+			gpart show &> $debug_data_dir/bsd-gpart-show.txt
+			gpart status &> $debug_data_dir/bsd-gpart-status.txt
+			swapctl -l &> $debug_data_dir/bsd-swapctl-l.txt
 			swapon -s &> $debug_data_dir/swapon-s.txt
+			sysctl -b kern.geom.conftxt  &> $debug_data_dir/bsd-sysctl-b-kern.geom.conftxt.txt
+			sysctl -b kern.geom.confxml &> $debug_data_dir/bsd-sysctl-b-kern.geom.confxml.txt
+			zfs list &> $debug_data_dir/bsd-zfs-list.txt
+			zpool list &> $debug_data_dir/bsd-zpool-list.txt
+			zpool list -v &> $debug_data_dir/bsd-zpool-list-v.txt
 			df -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 &> $debug_data_dir/df-P-excludes.txt
-			df -P &> $debug_data_dir/df-P-no-excludes.txt
+			df -P &> $debug_data_dir/bsd-df-P-no-excludes.txt
 			cat /proc/mdstat &> $debug_data_dir/proc-mdstat.txt
 			cat $FILE_PARTITIONS &> $debug_data_dir/proc-partitions.txt
 			cat $FILE_SCSI &> $debug_data_dir/proc-scsi.txt
@@ -1738,6 +1779,7 @@ check_recommends_items()
 	/dev:-l,-u,-o,-p,-P,-D_disk_partition_data
 	/dev/disk/by-label:-l,-o,-p,-P_partition_labels
 	/dev/disk/by-uuid:-u,-o,-p,-P_partition_uuid
+	/var/run/dmesg.boot:-C,-f_(BSD_only)
 	'
 	
 	case $1 in
@@ -2161,7 +2203,7 @@ get_parameters()
 					error_handler 4 "$OPTARG"
 				fi
 				;;
-			U)	script_self_updater "$SCRIPT_DOWNLOAD" 'svn server'
+			U)	script_self_updater "$SCRIPT_DOWNLOAD" 'svn server' "$opt"
 				;;
 			V)	print_version_info
 				exit 0
@@ -2241,25 +2283,25 @@ get_parameters()
 						B_TESTING_2='true'
 						;;
 					10)
-						script_self_updater "$SCRIPT_DOWNLOAD_DEV" 'dev server'
+						script_self_updater "$SCRIPT_DOWNLOAD_DEV" 'dev server' "$opt $OPTARG"
 						;;
 					11)
-						script_self_updater "$SCRIPT_DOWNLOAD_BRANCH_1" 'svn: branch one server'
+						script_self_updater "$SCRIPT_DOWNLOAD_BRANCH_1" 'svn: branch one server' "$opt $OPTARG"
 						;;
 					12)
-						script_self_updater "$SCRIPT_DOWNLOAD_BRANCH_2" 'svn: branch two server'
+						script_self_updater "$SCRIPT_DOWNLOAD_BRANCH_2" 'svn: branch two server' "$opt $OPTARG"
 						;;
 					13)
-						script_self_updater "$SCRIPT_DOWNLOAD_BRANCH_3" 'svn: branch three server'
+						script_self_updater "$SCRIPT_DOWNLOAD_BRANCH_3" 'svn: branch three server' "$opt $OPTARG"
 						;;
 					14)
-						script_self_updater "$SCRIPT_DOWNLOAD_BRANCH_4" 'svn: branch four server'
+						script_self_updater "$SCRIPT_DOWNLOAD_BRANCH_4" 'svn: branch four server' "$opt $OPTARG"
 						;;
 					15)
-						script_self_updater "$SCRIPT_DOWNLOAD_BRANCH_BSD" 'svn: branch bsd server'
+						script_self_updater "$SCRIPT_DOWNLOAD_BRANCH_BSD" 'svn: branch bsd server' "$opt $OPTARG"
 						;;
 					16)
-						script_self_updater "$SCRIPT_DOWNLOAD_BRANCH_GNUBSD" 'svn: branch gnubsd server'
+						script_self_updater "$SCRIPT_DOWNLOAD_BRANCH_GNUBSD" 'svn: branch gnubsd server' "$opt $OPTARG"
 						;;
 					30)
 						B_RUNNING_IN_SHELL='true'
@@ -2268,7 +2310,7 @@ get_parameters()
 						ALTERNATE_FTP="$OPTARG"
 						;;
 					http*)
-						script_self_updater "$OPTARG" 'alt server'
+						script_self_updater "$OPTARG" 'alt server' "$opt <http...>"
 						;;
 					*)	error_handler 11 "$OPTARG"
 						;;
@@ -2307,25 +2349,30 @@ get_parameters()
 show_options()
 {
 	local color_scheme_count=$(( ${#A_COLOR_SCHEMES[@]} - 1 ))
+	local partition_string='partition' partition_string_u='Partition'
 	
 	if [[ $B_RUNNING_IN_SHELL != 'true' ]];then
 		print_screen_output "Sorry, you can't run the help option in an IRC client."
 		exit 1
 	fi
+	if [[ -n $BSD_TYPE ]];then
+		partition_string='slice'
+		partition_string_u='Slice'
+	fi
 	print_screen_output "$SCRIPT_NAME supports the following options. You can combine them, or list them"
 	print_screen_output "one by one: Examples: $SCRIPT_NAME -v4 -c6 OR $SCRIPT_NAME -bDc 6"
 	print_screen_output " "
 	print_screen_output "If you start $SCRIPT_NAME with no arguments, it will show the short form."
-	print_screen_output "The following options if used without -F, -b, or -v will show just the complete line(s):"
-	print_screen_output "A,C,D,G,I,M,N,P,S,f,i,n,o,p,l,u,r,s,t - you can use these alone or together to show"
+	print_screen_output "The following options if used without -F, -b, or -v will show just option line(s):"
+	print_screen_output "A,C,D,G,I,M,N,P,R,S,f,i,n,o,p,l,u,r,s,t - you can use these alone or together to show"
 	print_screen_output "just the line(s) you want to see."
 	print_screen_output "If you use them with -v [level], -b or -F, it will show the full output for that line "
 	print_screen_output "along with the output for the chosen verbosity level."
 	print_screen_output "- - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
 	print_screen_output "Output Control Options:"
-	print_screen_output "-A  Show Audio/sound card information."
-	print_screen_output "-b  Shows basic output, short form. Like $SCRIPT_NAME -v 2, only minus hard disk names."
-	print_screen_output "-c  Available color schemes. Scheme number is required. Color selectors run a color selector option"
+	print_screen_output "-A  Audio/sound card information."
+	print_screen_output "-b  Basic output, short form. Like $SCRIPT_NAME -v 2, only minus hard disk names."
+	print_screen_output "-c  Color schemes. Scheme number is required. Color selectors run a color selector option"
 	print_screen_output "    prior to $SCRIPT_NAME starting which lets you set the config file value for the selection."
 	print_screen_output "    Supported color schemes: 0-$color_scheme_count Example: $SCRIPT_NAME -c 11"
 	print_screen_output "    Color selectors for each type display (NOTE: irc and global only show safe color set):"
@@ -2335,81 +2382,82 @@ show_options()
 	print_screen_output "    97 - Console IRC running in X - like irssi in xTerm"
 	print_screen_output "    98 - Console IRC not in  X"
 	print_screen_output "    99 - Global - Overrides/removes all settings. Setting specific removes global."
-	print_screen_output "-C  Show full CPU output, including per CPU clockspeed."
-	print_screen_output "-d  Shows optical drive data. Same as -Dd. With -x, adds features line to output. -xx adds a few more features."
-	print_screen_output "-D  Show full hard Disk info, not only model, ie: /dev/sda ST380817AS 80.0GB. See also -x and -xx."
-	print_screen_output "-f  Show all cpu flags used, not just the short list. Not shown with -F to avoid spamming."
-	print_screen_output "-F  Show Full output for $SCRIPT_NAME. Includes all Upper Case line letters, plus -s and -n."
-	print_screen_output "    Does not show extra verbose options like -x -d -f -u -l -o -p -t -r unless you use that argument."
-	print_screen_output "-G  Show Graphic card information (card, x type, resolution, glx renderer, version)."
-	print_screen_output "-i  Show Wan IP address, and shows local interfaces (requires ifconfig network tool). Same as -Nni"
+	print_screen_output "-C  Full CPU output, including per CPU clockspeed (if available)."
+	print_screen_output "-d  Optical drive data. Same as -Dd. See also -x and -xx."
+	print_screen_output "-D  Full hard Disk info, not only model, ie: /dev/sda ST380817AS 80.0GB. See also -x and -xx."
+	print_screen_output "-f  All cpu flags, triggers -C. Not shown with -F to avoid spamming."
+	print_screen_output "-F  Full output for $SCRIPT_NAME. Includes all Upper Case line letters, plus -s and -n."
+	print_screen_output "    Does not show extra verbose options like -x -d -f -u -l -o -p -t -r"
+	print_screen_output "-G  Graphic card information (card, x type, resolution, glx renderer, version)."
+	print_screen_output "-i  Wan IP address, and shows local interfaces (requires ifconfig network tool). Same as -Nni"
 	print_screen_output "    Not shown with -F for user security reasons, you shouldn't paste your local/wan IP."
-	print_screen_output "-I  Show Information: processes, uptime, memory, irc client (or shell type), inxi version."
-	print_screen_output "-l  Show partition labels. Default: short partition -P. For full -p output, use: -pl (or -plu)."
-	print_screen_output "-M  Show machine data. Motherboard, Bios, and if present, System Builder (Like Lenovo)."
+	print_screen_output "-I  Information: processes, uptime, memory, irc client (or shell type), $SCRIPT_NAME version."
+	print_screen_output "-l  ${partition_string_u} labels. Default: short ${partition_string} -P. For full -p output, use: -pl (or -plu)."
+	print_screen_output "-M  Machine data. Motherboard, Bios, and if present, System Builder (Like Lenovo)."
 	print_screen_output "    Older systems/kernels without the required /sys data can use dmidecode instead, run as root."
-	print_screen_output "-n  Show Advanced Network card information. Same as -Nn. Shows interface, speed, mac id, state, etc."
-	print_screen_output "-N  Show Network card information. With -x, shows PCI BusID, Port number."
-	print_screen_output "-o  Show unmounted partition information (includes UUID and LABEL if available)."
+	print_screen_output "-n  Advanced Network card information. Same as -Nn. Shows interface, speed, mac id, state, etc."
+	print_screen_output "-N  Network card information. With -x, shows PCI BusID, Port number."
+	print_screen_output "-o  Unmounted ${partition_string} information (includes UUID and LABEL if available)."
 	print_screen_output "    Shows file system type if you have file installed, if you are root OR if you have"
 	print_screen_output "    added to /etc/sudoers (sudo v. 1.7 or newer): <username> ALL = NOPASSWD: /usr/bin/file (sample)"
-	print_screen_output "-p  Show full partition information (-P plus all other detected partitions)."
-	print_screen_output "-P  Show Partition information (shows what -v 4 would show, but without extra data)."
-	print_screen_output "    Shows, if detected: / /boot /home /tmp /usr /var. Use -p to see all mounted partitions."
-	print_screen_output "-r  Show distro repository data. Currently supported repo types: APT; PACMAN; PISI; YUM."
-	print_screen_output "-R  Show RAID data. Shows RAID devices, states, levels, and components, and extra data with -x/-xx"
+	print_screen_output "-p  Full ${partition_string} information (-P plus all other detected ${partition_string}s)."
+	print_screen_output "-P  Basic ${partition_string} information (shows what -v 4 would show, but without extra data)."
+	print_screen_output "    Shows, if detected: / /boot /home /tmp /usr /var. Use -p to see all mounted ${partition_string}s."
+	print_screen_output "-r  Distro repository data. Currently supported repo types: APT; PACMAN; PISI; YUM, Ports."
+	print_screen_output "-R  RAID data. Shows RAID devices, states, levels, and components, and extra data with -x/-xx"
 	print_screen_output "    If device is resyncing, shows resync progress line as well."
-	print_screen_output "-s  Show sensors output (if sensors installed/configured): mobo/cpu/gpu temp; detected fan speeds."
+	print_screen_output "-s  Sensors output (if sensors installed/configured): mobo/cpu/gpu temp; detected fan speeds."
 	print_screen_output "    Gpu temp only for Fglrx/Nvidia drivers. Nvidia shows screen number for > 1 screens."
-	print_screen_output "-S  Show System information: host name, kernel, desktop environment (if in X), distro"
-	print_screen_output "-t  Show processes. Requires extra options: c (cpu) m (memory) cm (cpu+memory). If followed by numbers 1-20,"
+	print_screen_output "-S  System information: host name, kernel, desktop environment (if in X), distro"
+	print_screen_output "-t  Processes. Requires extra options: c (cpu) m (memory) cm (cpu+memory). If followed by numbers 1-20,"
 	print_screen_output "    shows that number of processes for each type (default: $PS_COUNT; if in irc, max: 5): -t cm10"
 	print_screen_output "    Make sure to have no space between letters and numbers (-t cm10 - right, -t cm 10 - wrong)."
-	print_screen_output "-u  Show partition UUIDs. Default: short partition -P. For full -p output, use: -pu (or -plu)."
+	print_screen_output "-u  ${partition_string_u} UUIDs. Default: short ${partition_string} -P. For full -p output, use: -pu (or -plu)."
 	print_screen_output "-v  Script verbosity levels. Verbosity level number is required. Should not be used with -b or -F"
 	print_screen_output "    Supported levels: 0-${VERBOSITY_LEVELS} Example: $SCRIPT_NAME -v 4"
 	print_screen_output "    0 - Short output, same as: $SCRIPT_NAME"
 	print_screen_output "    1 - Basic verbose, -S + basic CPU + -G + basic Disk + -I."
-	print_screen_output "    2 - Adds networking card (-N), Machine (-M) data, shows basic hard disk data (names only),"
+	print_screen_output "    2 - Networking card (-N), Machine (-M) data, shows basic hard disk data (names only),"
 	print_screen_output "        and, if present, basic raid (devices only, and if inactive, notes that). similar to: $SCRIPT_NAME -b"
-	print_screen_output "    3 - Adds advanced CPU (-C), network (-n) data, and switches on -x advanced data option."
-	print_screen_output "    4 - Adds partition size/filled data (-P) for (if present):/, /home, /var/, /boot"
+	print_screen_output "    3 - Advanced CPU (-C), network (-n) data, and switches on -x advanced data option."
+	print_screen_output "    4 - ${partition_string_u} size/filled data (-P) for (if present):/, /home, /var/, /boot"
 	print_screen_output "        Shows full disk data (-D)."
-	print_screen_output "    5 - Adds audio card (-A); sensors (-s), partition label (-l) and UUID (-u), short form of optical drives,"
+	print_screen_output "    5 - Audio card (-A); sensors (-s), ${partition_string} label (-l) and UUID (-u), short form of optical drives,"
 	print_screen_output "        standard raid data (-R)."
-	print_screen_output "    6 - Adds data types: full partition (-p), unmounted partition (-o), optical drive (-d), full raid; triggers -xx."
-	print_screen_output "    7 - Adds network IP data (-i); triggers -xxx."
-	print_screen_output "-x  Show extra data (only works with verbose or line output, not short form): "
-	print_screen_output "    -C - bogomips on Cpu;"
-	print_screen_output "    -d - Adds items to features line of optical drive; adds rev version to optical drive."
+	print_screen_output "    6 - Full ${partition_string} (-p), unmounted ${partition_string} (-o), optical drive (-d), full raid; triggers -xx."
+	print_screen_output "    7 - Network IP data (-i); triggers -xxx."
+	print_screen_output "-x  Adds the following extra data (only works with verbose or line output, not short form): "
+	print_screen_output "    -C - Bogomips on Cpu;"
+	print_screen_output "    -d - Extra optical drive data; adds rev version to optical drive."
 	print_screen_output "    -D - Hdd temp with disk data if you have hddtemp installed, if you are root OR if you have added to"
 	print_screen_output "         /etc/sudoers (sudo v. 1.7 or newer): <username> ALL = NOPASSWD: /usr/sbin/hddtemp (sample)"
 	print_screen_output "    -G - Direct rendering status for Graphics (in X)."
 	print_screen_output "    -G - (for single gpu, nvidia driver) screen number gpu is running on."
-	print_screen_output "    -i - Show IPv6 as well for LAN interface (IF) devices."
-	print_screen_output "    -I - Show system GCC, default. With -xx, also show other installed GCC versions."
+	print_screen_output "    -i - IPv6 as well for LAN interface (IF) devices."
+	print_screen_output "    -I - System GCC, default. With -xx, also show other installed GCC versions."
 	print_screen_output "       - If running in console, not in IRC client, shows shell version number if detected."
-	print_screen_output "    -N -A - Adds version/port(s)/driver version (if available) for Network/Audio;"
+	print_screen_output "    -N -A - Version/port(s)/driver version (if available) for Network/Audio;"
 	print_screen_output "    -N -A -G - Network, audio, graphics, shows PCI Bus ID/Usb ID number of card;"
-	print_screen_output "    -R - Shows component raid id. Adds second RAID Info line: raid level; report on drives (like 5/5);"
+	print_screen_output "    -R - Show component raid id. Adds second RAID Info line: raid level; report on drives (like 5/5);"
 	print_screen_output "         blocks; chunk size; bitmap (if present). Resync line, shows blocks synced/total blocks."
 	print_screen_output "    -S - Desktop toolkit if avaliable (GNOME/XFCE/KDE only); Kernel gcc version"
 	print_screen_output "    -t - Adds memory use output to cpu (-xt c), and cpu use to memory (-xt m)."
 	print_screen_output "-xx Show extra, extra data (only works with verbose or line output, not short form): "
-	print_screen_output "    -A - Adds chip vendor:product ID for each audio device."
-	print_screen_output "    -D - Adds disk serial number."
-	print_screen_output "    -G - Adds chip vendor:product ID for each video card."
-	print_screen_output "    -I - Adds other detected installed gcc versions to primary gcc output (if present)."
+	print_screen_output "    -A - Chip vendor:product ID for each audio device."
+	print_screen_output "    -D - Disk serial number."
+	print_screen_output "    -G - Chip vendor:product ID for each video card."
+	print_screen_output "    -I - Other detected installed gcc versions (if present)."
 	print_screen_output "         Adds parent program (or tty) for shell info if not in IRC (like Konsole or Gterm)."
-	print_screen_output "    -M - Adds chassis information, if any data for that is available."
-	print_screen_output "    -N - Adds chip vendor:product ID for each nic."
-	print_screen_output "    -R - Adds superblock (if present); algorythm, U data. Adds system info line (kernel support,"
-	print_screen_output "         read ahead, raid events). Adds if present, unused device line. Resync line, shows progress bar."
-	print_screen_output "    -S - Adds display manager (dm) to desktop output, if in X (like kdm, gdm3, lightdm)."
+	print_screen_output "    -M - Chassis information, bios rom size (dmidecode only), if data for either is available."
+	print_screen_output "    -N - Chip vendor:product ID for each nic."
+	print_screen_output "    -R - Superblock (if present); algorythm, U data. Adds system info line (kernel support,"
+	print_screen_output "         read ahead, raid events). If present, adds unused device line. Resync line, shows"
+	print_screen_output "         progress bar."
+	print_screen_output "    -S - Display manager (dm) in desktop output, if in X (like kdm, gdm3, lightdm)."
 	print_screen_output "    -xx -@ <11-14> - Automatically uploads debugger data tar.gz file to ftp.techpatterns.com."
 	print_screen_output "-xxx Show extra, extra, extra data (only works with verbose or line output, not short form): "
-	print_screen_output "    -S - Adds panel/shell information to desktop output, if in X (like gnome-shell, cinnamon, mate-panel)."
-	print_screen_output "-z  Adds security filters for IP addresses, Mac, and user home directory name. Default on for irc clients."
+	print_screen_output "    -S - Panel/shell information in desktop output, if in X (like gnome-shell, cinnamon, mate-panel)."
+	print_screen_output "-z  Security filters for IP/Mac addresses, and user home directory name. Default on for irc clients."
 	print_screen_output "-Z  Absolute override for output filters. Useful for debugging networking issues in irc for example."
 	print_screen_output " "
 	print_screen_output "Additional Options:"
@@ -2436,7 +2484,7 @@ show_options()
 	print_screen_output "    For alternate ftp upload locations: Example: inxi -! ftp.yourserver.com/incoming -xx@ 14"
 	print_screen_output "    11 - With data file of xiin read of /sys."
 	print_screen_output "    12 - With xorg conf and log data, xrandr, xprop, xdpyinfo, glxinfo etc."
-	print_screen_output "    13 - With data from dev, disks, partitions, etc., plus xiin data file."
+	print_screen_output "    13 - With data from dev, disks, ${partition_string}s, etc., plus xiin data file."
 	print_screen_output "    14 - Everything, full data collection."
 	if [[ $1 == 'full' ]];then
 		print_screen_output " "
@@ -2537,6 +2585,7 @@ get_start_client()
 		# from inside itself, as a script, the parent is konversation/xchat, not perl/bash etc
 		# note: perl can report as: perl5.10.0, so it needs wildcard handling
 		case $App_Working_Name in
+			# bsd will never use this section
 			bash|dash|sh|python*|perl*)	# We want to know who wrapped it into the shell or perl.
 				pppid="$( ps -p $PPID -o ppid --no-headers | sed 's/[[:space:]]//g' )"
 				if [[ -n $pppid && -f /proc/$pppid/exe ]];then
@@ -2860,7 +2909,7 @@ set_perl_python_konvi()
 {
 	if [[ -z $IRC_CLIENT_VERSION ]];then
 		# this is a hack to try to show konversation if inxi is running but started via /cmd
-		if [[ -n $( ps aux | grep -i 'konversation' | grep -v 'grep' ) && $B_RUNNING_IN_X == 'true' ]];then
+		if [[ -n $( grep -i 'konversation' <<< "$Ps_aux_Data" | grep -v 'grep' ) && $B_RUNNING_IN_X == 'true' ]];then
 			IRC_CLIENT='Konversation'
 			IRC_CLIENT_VERSION=" $( konversation --version 2>/dev/null | gawk '/^Konversation/ {print $2}' )"
 			B_CONSOLE_IRC='false'
@@ -2884,8 +2933,7 @@ is_this_qt4_konvi()
 	fi
 	# sabayon uses /usr/share/apps/konversation as path
 	if [[ -n $konvi_dbus_exist ]] && [[ -e /usr/share/kde4/apps/konversation || -e  /usr/share/apps/konversation ]]; then
-		konvi_pid=$( ps -A | grep -i 'konversation' )
-		konvi_pid=$( echo $konvi_pid | gawk '{ print $1 }' ) 
+		konvi_pid=$( ps -A | gawk 'BEGIN{IGNORECASE=1} /konversation/ { print $1 }' ) 
 		konvi_home_dir=$( readlink /proc/$konvi_pid/exe )
 		konvi=$( echo $konvi_home_dir | sed "s/\// /g" )
 		konvi=($konvi)
@@ -3238,6 +3286,7 @@ get_cpu_data()
 {
 	eval $LOGFS
 	local i='' j='' cpu_array_nu='' a_cpu_working='' multi_cpu='' bits='' temp_array=''
+	local bsd_cpu_flags=''
 
 	if [[ $B_CPUINFO_FILE == 'true' ]];then
 		# stop script for a bit to let cpu slow down before parsing cpu /proc file
@@ -3344,15 +3393,15 @@ get_cpu_data()
  		' $FILE_CPUINFO ) )
 		log_function_data 'cat' "$FILE_CPUINFO"
 	elif [[ -n $BSD_TYPE ]];then
+		bsd_cpu_flags=$( get_cpu_flags_bsd )
 		IFS=$'\n'
 		A_CPU_DATA=( $( 
-		gawk -F': ' '
+		gawk -F': ' -v cpuFlags="$bsd_cpu_flags" '
 		BEGIN {
 			IGNORECASE=1
 			cpuModel=""
 			cpuClock=""
 			cpuCache=""
-			cpuFlags=""
 			cpuBogomips=""
 			cpuVendor=""
 		}
@@ -3379,6 +3428,36 @@ get_cpu_data()
 # 	echo ta: ${temp_array[@]}
 	eval $LOGFE
 # 	echo getMainCpu: ${[@]}
+}
+
+get_cpu_flags_bsd()
+{
+	eval $LOGFS
+	
+	local cpu_flags=$( gawk -F '=' '
+	BEGIN {
+		IGNORECASE=1
+		cpuFlags=""
+	}
+	/^CPU:/ {
+		while ( getline && !/memory/  ) {
+			if ( $1 ~ /Features/ ) {
+				# clean up odd stuff like <b23>
+				gsub(/<[a-z0-9]+>/,"", $2)
+				# all the flags are contained within < ... > on freebsd at least
+				gsub(/.*<|>.*/,"", $2)
+				gsub(/,/," ", $2)
+				cpuFlags = cpuFlags " " $2
+			}
+		}
+		cpuFlags=tolower(cpuFlags)
+		print cpuFlags
+		exit
+	}' <<< "$Dmesg_Boot_Data" )
+	
+	echo $cpu_flags
+	log_function_data "$cpu_flags"
+	eval $LOGFE
 }
 
 ## this is for counting processors and finding HT types
@@ -3523,7 +3602,7 @@ get_desktop_environment()
 	eval $LOGFS
 	
 	# set the default, this function only runs in X, if null, don't print data out
-	local desktop_environment='' xprop_root='' ps_aux='' 
+	local desktop_environment='' xprop_root='' 
 	local version='' version_data='' toolkit=''
 	
 	if [[ -n $( type -p xprop ) ]];then
@@ -3617,7 +3696,6 @@ get_desktop_environment()
 	# now that the primary ones have been handled, next is to find the ones with unique
 	# xprop detections possible
 	else
-		ps_aux="$( ps aux )"
 		if [[ -n $xprop_root ]];then
 			# String: "This is xfdesktop version 4.2.12"
 			if [[ -n $( grep -Eis '\"xfce4\"' <<< "$xprop_root" ) ]];then
@@ -3646,7 +3724,7 @@ get_desktop_environment()
 				fi
 				desktop_environment="Xfce"
 			elif [[ -n $( grep -is 'BLACKBOX_PID' <<< "$xprop_root" ) ]];then
-				if [[ -n $( grep -is 'fluxbox' <<< "$ps_aux" | grep -v 'grep' ) ]];then
+				if [[ -n $( grep -is 'fluxbox' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
 					version=$( get_de_app_version 'fluxbox' '^fluxbox' '2' )
 					desktop_environment='Fluxbox'
 				else
@@ -3654,12 +3732,12 @@ get_desktop_environment()
 				fi
 			elif [[ -n $( grep -is 'OPENBOX_PID' <<< "$xprop_root" ) ]];then
 				version=$( get_de_app_version 'openbox' '^openbox' '2' )
-				if [[ -n $( grep -is 'lxde' <<< "$ps_aux" | grep -v 'grep' ) ]];then
+				if [[ -n $( grep -is 'lxde' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
 					if [[ -n $version ]];then
 						version="(Openbox $version)"
 					fi
 					desktop_environment='LXDE'
-				elif [[ -n $( grep -is 'razor-desktop' <<< "$ps_aux" | grep -v 'grep' ) ]];then
+				elif [[ -n $( grep -is 'razor-desktop' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
 					if [[ -n $version ]];then
 						version="(Openbox $version)"
 					fi
@@ -3698,34 +3776,34 @@ get_desktop_environment()
 		# a few manual hacks for things that don't id with xprop, these are just good guesses
 		# note that gawk is going to exit after first occurance of search string, so no need for extra
 		if [[ -z $desktop_environment ]];then
-			if [[ -n $( grep -is 'fvwm-crystal'  <<< "$ps_aux" | grep -v 'grep' ) ]];then
+			if [[ -n $( grep -is 'fvwm-crystal'  <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
 				version=$( get_de_app_version 'fvwm' '^fvwm' '2' )
 				desktop_environment='FVWM-Crystal'
-			elif [[ -n $( grep -is 'fvwm'  <<< "$ps_aux" | grep -v 'grep' ) ]];then
+			elif [[ -n $( grep -is 'fvwm'  <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
 				version=$( get_de_app_version 'fvwm' '^fvwm' '2' )
 				desktop_environment='FVWM'
-			elif [[ -n $( grep -is 'pekwm'  <<< "$ps_aux" | grep -v 'grep' ) ]];then
+			elif [[ -n $( grep -is 'pekwm'  <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
 				version=$( get_de_app_version 'pekwm' '^pekwm' '3' )
 				desktop_environment='pekwm'
-			elif [[ -n $( grep -is 'awesome' <<< "$ps_aux" | grep -v 'grep' ) ]];then
+			elif [[ -n $( grep -is 'awesome' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
 				version=$( get_de_app_version 'awesome' '^awesome' '2' )
 				desktop_environment='Awesome'
-			elif [[ -n $( grep -is 'scrotwm' <<< "$ps_aux" | grep -v 'grep' ) ]];then
+			elif [[ -n $( grep -is 'scrotwm' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
 				version=$( get_de_app_version 'scrotwm' '^welcome.*scrotwm' '4' )
 				desktop_environment='Scrotwm' # no --version for this one
-			elif [[ -n $( grep -Eis '([[:space:]]|/)twm' <<< "$ps_aux" | grep -v 'grep' ) ]];then
+			elif [[ -n $( grep -Eis '([[:space:]]|/)twm' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
 				desktop_environment='Twm' # no --version for this one
-			elif [[ -n $( grep -Eis '([[:space:]]|/)dwm' <<< "$ps_aux" | grep -v 'grep' ) ]];then
+			elif [[ -n $( grep -Eis '([[:space:]]|/)dwm' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
 				version=$( get_de_app_version 'dwm' '^dwm' '1' )
 				desktop_environment='dwm'
-			elif [[ -n $( grep -is 'wmii2' <<< "$ps_aux" | grep -v 'grep' ) ]];then
+			elif [[ -n $( grep -is 'wmii2' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
 				version=$( get_de_app_version 'wmii2' '^wmii2' '1' )
 				desktop_environment='wmii2'
 			# note: in debian at least, wmii is actuall wmii3
-			elif [[ -n $( grep -is 'wmii' <<< "$ps_aux" | grep -v 'grep' ) ]];then
+			elif [[ -n $( grep -is 'wmii' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
 				version=$( get_de_app_version 'wmii' '^wmii' '1' )
 				desktop_environment='wmii'
-			elif [[ -n $( grep -Eis '([[:space:]]|/)jwm' <<< "$ps_aux" | grep -v 'grep' ) ]];then
+			elif [[ -n $( grep -Eis '([[:space:]]|/)jwm' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
 				version=$( get_de_app_version 'jwm' '^jwm' '2' )
 				desktop_environment='JWM'
 			fi
@@ -3835,8 +3913,7 @@ get_display_manager()
 	local dm_id_list='entranced.pid entrance/entranced.pid gdm.pid gdm3.pid kdm.pid ldm.pid lightdm.pid lxdm.pid mdm.pid nodm.pid slim.lock tint2.pid wdm.pid xdm.pid' 
 	local dm_id='' dm='' separator=''
 	# note we don't need to filter grep if we do it this way
-	local ps_aux="$( ps aux )"
-	local x_is_running=$( grep '/usr.*/X' <<< "$ps_aux" | grep -iv '/Xprt' )
+	local x_is_running=$( grep '/usr.*/X' <<< "$Ps_aux_Data" | grep -iv '/Xprt' )
 
 	for dm_id in $dm_id_list
 	do
@@ -3849,7 +3926,7 @@ get_display_manager()
 	# might add this in, but the rate of new dm's makes it more likely it's an unknown dm, so
 	# we'll keep output to N/A
 	if [[ -n $x_is_running && -z $dm ]];then
-		if [[ -n $( grep 'startx$' <<< "$ps_aux" ) ]];then
+		if [[ -n $( grep 'startx$' <<< "$Ps_aux_Data" ) ]];then
 			dm='(startx)'
 		fi
 	fi
@@ -4196,6 +4273,8 @@ get_dmidecode_data()
 				# Chassis Manufacturer|Chassis Version|Chassis Serial Number
 				# System manufacturer|System Product Name|System Version
 				# To Be Filled By O.E.M.
+				# strip out starting white space so that the following stuff will clear properly
+				sub(/^[[:space:]]+/, "", $2)
 				sub(/^Base Board .*|^Chassis .*|.*O\.E\.M\..*|.*OEM.*|^Not .*|^System .*|.*unknow.*|.*N\/A.*|none|^To be filled.*/, "", $2) 
 				gsub(/bios|acpi/, "", $2)
 				sub(/http:\/\/www.abit.com.tw\//, "Abit", $2)
@@ -4234,6 +4313,23 @@ N
 	eval $LOGFE
 }
 # get_dmidecode_data;echo "$DMIDECODE_DATA";exit
+
+# BSD only
+get_dmesg_boot_data()
+{
+	eval $LOGFS
+	
+	local dmsg_boot_data=''
+	
+	if [[ $B_DMESG_BOOT_FILE == 'true' ]];then
+		# replace all indented items with ~ so we can id them easily while processing
+		dmsg_boot_data="$( cat $FILE_DMESG_BOOT | sed -r 's/"//g' )"
+	fi
+	echo "$dmsg_boot_data"
+	# log_function_data "$dmsg_boot_data"
+	eval $LOGFE
+}
+
 get_gcc_kernel_version()
 {
 	# note that we use gawk to get the last part because beta, alpha, git versions can be non-numeric
@@ -5060,23 +5156,16 @@ get_machine_data()
 {
 	eval $LOGFS
 	local temp_array='' separator='' id_file='' file_data='' array_string=''
-	local id_dir='/sys/class/dmi/id/' dmi_name='' dmi_data='' 
+	local id_dir='/sys/class/dmi/id/' dmi_data='' 
 	local machine_files="
 	sys_vendor product_name product_version product_serial product_uuid 
 	board_vendor board_name board_version board_serial 
 	bios_vendor bios_version bios_date 
 	"
-	local dmi_names="
-	system-manufacturer system-product-name system-version system-serial-number system-uuid 
-	baseboard-manufacturer baseboard-product-name baseboard-version baseboard-serial-number 
-	bios-vendor bios-version bios-release-date 
-	"
+
 	if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
 		machine_files="$machine_files
 		chassis_vendor chassis_type chassis_version chassis_serial
-		"
-		dmi_names="$dmi_names
-		chassis-manufacturer chassis-type chassis-version chassis-serial-number
 		"
 	fi
 	if [[ -d $id_dir ]];then
@@ -5117,32 +5206,103 @@ get_machine_data()
 					array_string='dmidecode-no-smbios-dmi-data'
 				# please note: only dmidecode version 2.11 or newer supports consistently the -s flag
 				else
-					for dmi_name in $dmi_names
-					do
-			# 			echo "$dmi_name" >&2
-						dmi_data=''
-						dmi_data=$( dmidecode -s $dmi_name | gawk '
-							BEGIN {
-								IGNORECASE=1
-							}
-							{
-								gsub(/'"$BAN_LIST_NORMAL"'/, "", $0)
-								gsub(/,/, " ", $0)
-								# yes, there is a typo in a user data set, unknow
-								# Base Board Version|Base Board Serial Number
-								# Chassis Manufacturer|Chassis Version|Chassis Serial Number
-								# System manufacturer|System Product Name|System Version
-								# To Be Filled By O.E.M.
-								sub(/^Base Board .*|^Chassis .*|.*O\.E\.M\..*|.*OEM.*|^Not .*|^System .*|.*unknow.*|.*N\/A.*|none|^To be filled.*/, "", $0) 
-								gsub(/bios|acpi/, "", $0)
-								sub(/http:\/\/www.abit.com.tw\//, "Abit", $0)
-								gsub(/^ +| +$/, "", $0)
-								gsub(/ [ \t]+/, " ", $0)
-								print $0
-							}' )
-						array_string="$array_string$separator$dmi_data"
-						separator=','
-					done
+					array_string=$( gawk -F ':' '
+					BEGIN {
+						IGNORECASE=1
+						baseboardManufacturer=""
+						baseboardProductName=""
+						baseboardSerialNumber=""
+						baseboardVersion=""
+						biosReleaseDate=""
+						biosRevision="" # only available from dmidecode
+						biosRomSize="" # only available from dmidecode
+						biosVendor=""
+						biosVersion=""
+						chassisManufacturer=""
+						chassisSerialNumber=""
+						chassisType=""
+						chassisVersion=""
+						systemManufacturer=""
+						systemProductName=""
+						systemVersion=""
+						systemSerialNumber=""
+						systemUuid=""
+						bItemFound="" # we will only output if at least one item was found
+						fullString=""
+						testString=""
+						bSys=""
+						bCha=""
+						bBio=""
+						bBas=""
+					}
+					/^Bios Information/ {
+						while ( getline && !/^$/ ) {
+							if ( $1 ~ /^Release Date/ ) { biosReleaseDate=$2 }
+							if ( $1 ~ /^BIOS Revision/ ) { biosRevision=$2 }
+							if ( $1 ~ /^ROM Size/ ) { biosRomSize=$2 }
+							if ( $1 ~ /^Vendor/ ) { biosVendor=$2 }
+							if ( $1 ~ /^Version/ ) { biosVersion=$2 }
+						}
+						testString=biosReleaseDate biosRevision biosRomSize biosVendor biosVersion
+						if ( testString != ""  ) {
+							bItemFound="true"
+						}
+						bBio="true"
+					}
+					/^Base Board Information/ {
+						while ( getline && !/^$/ ) {
+							if ( $1 ~ /^Manufacturer/ ) { baseboardManufacturer=$2 }
+							if ( $1 ~ /^Product Name/ ) { baseboardProductName=$2 }
+							if ( $1 ~ /^Serial Number/ ) { baseboardSerialNumber=$2 }
+						}
+						testString=baseboardManufacturer baseboardProductName baseboardSerialNumber
+						if ( testString != ""  ) {
+							bItemFound="true"
+						}
+						bBas="true"
+					}
+					/^Chassis Information/ {
+						while ( getline && !/^$/ ) {
+							if ( $1 ~ /^Manufacturer/ ) { chassisManufacturer=$2 }
+							if ( $1 ~ /^Serial Number/ ) { chassisSerialNumber=$2 }
+							if ( $1 ~ /^Type/ ) { chassisType=$2 }
+							if ( $1 ~ /^Version/ ) { chassisVersion=$2 }
+						}
+						testString=chassisManufacturer chassisSerialNumber chassisType chassisVersion
+						if ( testString != ""  ) {
+							bItemFound="true"
+						}
+						bCha="true"
+					}
+					/^System Information/ {
+						while ( getline && !/^$/ ) {
+							if ( $1 ~ /^Manufacturer/ ) { systemManufacturer=$2 }
+							if ( $1 ~ /^Product Name/ ) { systemProductName=$2 }
+							if ( $1 ~ /^Version/ ) { systemVersion=$2 }
+							if ( $1 ~ /^Serial Number/ ) { systemSerialNumber=$2 }
+							if ( $1 ~ /^UUID/ ) { systemUuid=$2 }
+						}
+						testString=systemManufacturer systemProductName systemVersion systemSerialNumber systemUuid
+						if ( testString != ""  ) {
+							bItemFound="true"
+						}
+						bSys="true"
+					}
+					( bSys == "true" && bCha="true" && bBio == "true" && bBas == "true" ) {
+						exit # stop the loop
+					}
+					END {
+						if ( bItemFound == "true" ) {
+							fullString = systemManufacturer "," systemProductName "," systemVersion "," systemSerialNumber 
+							fullString = fullString "," systemUuid "," baseboardManufacturer "," baseboardProductName 
+							fullString = fullString "," baseboardVersion "," baseboardSerialNumber "," biosVendor
+							fullString = fullString "," biosVersion "," biosReleaseDate "," chassisManufacturer
+							fullString = fullString "," chassisType "," chassisVersion "," chassisSerialNumber 
+							fullString = fullString ","  biosRevision "," biosRomSize
+							
+							print fullString
+						}
+					}' <<< "$DMIDECODE_DATA" )
 				fi
 			else
 				array_string='dmidecode-non-root-user'
@@ -5153,16 +5313,16 @@ get_machine_data()
 	A_MACHINE_DATA=( $array_string )
 	IFS="$ORIGINAL_IFS"
 	temp_array=${A_MACHINE_DATA[@]}
-	# echo ${temp_array[@]}
+# 	echo ${temp_array[@]}
 	log_function_data "A_MACHINE_DATA: $temp_array"
 	eval $LOGFE
 }
-
+# B_ROOT='true';get_machine_data;exit
 ## return memory used/installed
 get_memory_data()
 {
 	eval $LOGFS
-	local memory='' memory_full=''
+	local memory='' memory_full='' 
 	if [[ $B_MEMINFO_FILE == 'true' ]];then
 		memory=$( gawk '
 		/^MemTotal:/ {
@@ -5177,18 +5337,31 @@ get_memory_data()
 		}' $FILE_MEMINFO )
 		log_function_data 'cat' "$FILE_MEMINFO"
 	elif [[ $B_SYSCTL == 'true' && -n $Sysctl_a_Data ]];then
-		memory=$( grep -i 'memory' <<< "$Sysctl_a_Data" | gawk '
-		/^Real Memory:/ {
-			gsub(/[^0-9]/,"",$4)
-			tot = $4
+		memory=$( grep -i 'mem' <<< "$Sysctl_a_Data" | gawk  '
+		BEGIN {
+			
+			realMemory=""
+			freeMemory=""
 		}
+		# freebsd seems to use bytes here
+		/^hw.physmem:/ {
+			gsub(/^[^0-9]+|[^0-9]+$/,"",$2)
+			realMemory = $2/1024
+			if ( freeMemory != "" ) {
+				exit
+			}
+		}
+		# But, it uses K here
 		/^Free Memory:/ {
 			gsub(/[^0-9]/,"",$3)
-			notused = $3
+			freeMemory = $3
+			if ( realMemory != "" ) {
+				exit
+			}
 		}
 		END {
-			used = tot - notused
-			printf("%.1f/%.1fMB\n", used/1024, tot/1024)
+			used = realMemory - freeMemory
+			printf("%.1f/%.1fMB\n", used/1024, realMemory/1024)
 		}' )
 	fi
 	echo "$memory"
@@ -6215,7 +6388,7 @@ get_patch_version_string()
 }
 
 # args: $1 - type cpu/mem 
-get_ps_data()
+get_ps_tcm_data()
 {
 	eval $LOGFS
 	local array_length='' reorder_temp='' i=0 head_tail='' sort_type='' ps_data=''
@@ -6466,6 +6639,7 @@ get_repo_data()
 	local repo_file='' repo_data_working='' repo_data_working2='' repo_line='' 
 	local apt_file='/etc/apt/sources.list' yum_repo_dir='/etc/yum.repos.d/' yum_conf='/etc/yum.conf'
 	local pacman_conf='/etc/pacman.conf' pacman_repo_dir='/etc/pacman.d/' pisi_dir='/etc/pisi/'
+	local freebsd_conf='/etc/portsnap.conf'
 	
 	# apt - debian, buntus, also sometimes some yum/rpm repos may create apt repos here as well
 	if [[ -f $apt_file || -d $apt_file.d ]];then
@@ -6612,6 +6786,15 @@ $repo_data_working"
 		done
 		# execute line breaks
 		REPO_DATA="$( echo -e $repo_data_working2 )"
+	elif [[ -f $freebsd_conf ]];then
+		REPO_DATA="$( gawk -F '=' -v repoFile=$freebsd_conf '
+		BEGIN {
+			IGNORECASE=1
+		}
+		/^SERVERNAME/ {
+			print "BSD ports servers:" repoFile ":" $2
+		}
+		' $freebsd_conf )"
 	fi
 	eval $LOGFE
 }
@@ -7023,18 +7206,20 @@ get_shell_data()
 get_shell_parent()
 {
 	eval $LOGFS
-	local shell_parent='' script_parent=''
+	local shell_parent='' script_parent='' 
 	
-	script_parent=$( ps -fp $PPID --no-headers 2>/dev/null | gawk '/'"$PPID"'/ { print $3 }' )
-	shell_parent=$( ps -p $script_parent --no-headers 2>/dev/null | gawk '/'"$script_parent"'/ { print $NF}' )
+	# removed --no-headers to make bsd safe, adding in -j to make output the same
+	script_parent=$( ps -j -fp $PPID 2>/dev/null | gawk '/'"$PPID"'/ { print $3 }' )
+	log_function_data "script parent: $script_parent"
+	shell_parent=$( ps -j -p $script_parent 2>/dev/null | gawk '/'"$script_parent"'/ { print $NF}' )
 	# no idea why have to do script_parent action twice in su case, but you do, oh well.
 	if [[ $shell_parent == 'su' ]];then
-		script_parent=$( ps -fp $script_parent --no-headers 2>/dev/null | gawk '/'"$script_parent"'/ { print $3 }' )
-		script_parent=$( ps -fp $script_parent --no-headers 2>/dev/null | gawk '/'"$script_parent"'/ { print $3 }' )
-		shell_parent=$( ps -p $script_parent --no-headers 2>/dev/null | gawk '/'"$script_parent"'/ { print $NF}' )
+		script_parent=$( ps -j -fp $script_parent 2>/dev/null | gawk '/'"$script_parent"'/ { print $3 }' )
+		script_parent=$( ps -j -fp $script_parent 2>/dev/null | gawk '/'"$script_parent"'/ { print $3 }' )
+		shell_parent=$( ps -j -p $script_parent 2>/dev/null | gawk '/'"$script_parent"'/ { print $NF}' )
 	fi
 	echo $shell_parent
-	
+	log_function_data "shell parent final: $shell_parent"
 	eval $LOGFE
 }
 
@@ -7049,7 +7234,7 @@ get_sysctl_data()
 	if [[ $B_SYSCTL ]];then
 		sysctl_data="$( sysctl -$1 )"
 	fi
-	log_function_data "sysctl_data: $sysctl_data"
+	# log_function_data "sysctl_data: $sysctl_data"
 	echo "$sysctl_data"
 	eval $LOGFE
 }
@@ -7059,7 +7244,7 @@ get_tty_console_irc()
 	eval $LOGFS
 	local tty_number=''
 	if [[ -n ${IRC_CLIENT} ]];then
-		tty_number=$( ps aux | gawk '
+		tty_number=$( gawk '
 			BEGIN {
 				IGNORECASE=1
 			}
@@ -7069,7 +7254,7 @@ get_tty_console_irc()
 				gsub(/[^0-9]/, "", $7)
 				print $7
 				exit
-			}' )
+			}' <<< "$Ps_aux_Data" )
 	fi
 	log_function_data "tty_number: $tty_number"
 	echo $tty_number
@@ -7306,10 +7491,11 @@ print_it_out()
 	# note that print_it_out passes local variable values on to its children,
 	# and in some cases, their children, with Lspci_v_Data
 	local Lspci_v_Data='' Lspci_n_Data='' # only for verbose
-	local Sysctl_a_Data=''
+	local Sysctl_a_Data='' Dmesg_Boot_Data=''
 	
 	if [[ -n $BSD_TYPE ]];then
 		Sysctl_a_Data="$( get_sysctl_data 'a' )"
+		Dmesg_Boot_Data="$( get_dmesg_boot_data )"
 	fi
 
 	if [[ $B_SHOW_SHORT_OUTPUT == 'true' ]];then
@@ -7372,7 +7558,7 @@ print_short_data()
 {
 	eval $LOGFS
 	local current_kernel=$( uname -rm ) # | gawk '{print $1,$3,$(NF-1)}' )
-	local processes="$(( $( ps aux | wc -l ) - 1 ))"
+	local processes=$(( $( wc -l <<< "$Ps_aux_Data" ) - 1 ))
 	local short_data='' i='' b_background_black='false'
 	local memory=$( get_memory_data )
 	local up_time="$( get_uptime )"
@@ -8021,7 +8207,7 @@ print_info_data()
 	local info_data='' line_starter='Info:'
 	local runlvl='' client_data='' shell_data='' shell_parent='' tty_session=''
 	local memory="$( get_memory_data )"
-	local processes="$(( $( ps aux | wc -l ) - 1 ))"
+	local processes=$(( $( wc -l <<< "$Ps_aux_Data" ) - 1 ))
 	local up_time="$( get_uptime )"
 	local patch_version_number=$( get_patch_version_string )
 	local gcc_string='' gcc_installed='' gcc_others='' closing_data='' 
@@ -8045,10 +8231,11 @@ print_info_data()
 		if [[ -n $shell_data ]];then
 			# note, if you start this in tty, it will give 'login' as the parent, which we don't want.
 			if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
-				shell_parent=$( get_shell_parent )
 				if [[ $B_RUNNING_IN_X != 'true' ]];then
 					shell_parent=$( get_tty_number )
 					shell_parent="tty $shell_parent"
+				else
+					shell_parent=$( get_shell_parent )
 				fi
 				if [[ $shell_parent == 'login' ]];then
 					shell_parent=''
@@ -8098,12 +8285,19 @@ print_machine_data()
 	
 	local system_line='' mobo_line='' bios_line='' chassis_line=''
 	local mobo_vendor='' mobo_model='' mobo_version='' mobo_serial=''
-	local bios_vendor='' bios_version='' bios_date=''
+	local bios_vendor='' bios_version='' bios_date='' bios_rom=''
 	local system_vendor='' product_name='' product_version='' product_serial='' product_uuid=''
-	local chassis_vendor='' chassis_type='' chassis_version='' chassis_serial=''
+	local chassis_vendor='' chassis_type='' chassis_version='' chassis_serial='' 
 	local b_skip_system='false' b_skip_chassis='false'
+	local sysDmiError='No /sys/class/dmi, using '
+	local sysDmiNull='No /sys/class/dmi machine data: try newer kernel, or install dmidecode'
 	# set A_MACHINE_DATA
 	get_machine_data
+	
+	if [[ -n $BSD_TYPE ]];then
+		sysDmiError=''
+		sysDmiNull='No machine data available. Is dmidecode installed?'
+	fi
 
 	IFS=','
 	## keys for machine data are:
@@ -8179,6 +8373,9 @@ print_machine_data()
 		fi
 		if [[ -n ${A_MACHINE_DATA[10]} ]];then
 			bios_version=${A_MACHINE_DATA[10]}
+			if [[ -n ${A_MACHINE_DATA[16]} ]];then
+				bios_version="$bios_version rv ${A_MACHINE_DATA[16]}"
+			fi
 		else
 			bios_version='N/A'
 		fi
@@ -8187,8 +8384,11 @@ print_machine_data()
 		else
 			bios_date='N/A'
 		fi
+		if [[ $B_EXTRA_EXTRA_DATA == 'true' && -n ${A_MACHINE_DATA[17]} ]];then
+			bios_rom=" ${C1}rom size$SEP3${C2} ${A_MACHINE_DATA[17]}"
+		fi
 		mobo_line="${C1}Mobo$SEP3${C2} $mobo_vendor ${C1}model$SEP3${C2} $mobo_model$mobo_version$mobo_serial"
-		bios_line="${C1}Bios$SEP3${C2} $bios_vendor ${C1}version$SEP3${C2} $bios_version ${C1}date$SEP3${C2} $bios_date"
+		bios_line="${C1}Bios$SEP3${C2} $bios_vendor ${C1}version$SEP3${C2} $bios_version ${C1}date$SEP3${C2} $bios_date$bios_rom"
 		if [[ $( calculate_line_length "$mobo_line$bios_line" ) -lt $LINE_MAX ]];then
 			mobo_line="$mobo_line $bios_line"
 			bios_line=''
@@ -8221,14 +8421,14 @@ print_machine_data()
 		fi
 		IFS="$ORIGINAL_IFS"
 	else
-		system_line="${C2}No /sys/class/dmi machine data - try newer kernel, or install dmidecode${CN}"
+		system_line="${C2}$sysDmiNull${CN}"
 	fi
 	# patch to dump all of above if dmidecode was data source and non root user
 	if [[ ${A_MACHINE_DATA[0]} == 'dmidecode-non-root-user' || ${A_MACHINE_DATA[0]} == 'dmidecode-no-smbios-dmi-data' ]];then
 		if [[ ${A_MACHINE_DATA[0]} == 'dmidecode-non-root-user' ]];then
-			system_line="${C2}No /sys/class/dmi, using dmidecode: you must be root to run dmidecode${CN}"
+			system_line="${C2}${sysDmiError}dmidecode: you must be root to run dmidecode${CN}"
 		elif [[ ${A_MACHINE_DATA[0]} == 'dmidecode-no-smbios-dmi-data' ]];then
-			system_line="${C2}No /sys/class/dmi, using dmidecode: no machine data available${CN}"
+			system_line="${C2}${sysDmiError}dmidecode: no machine data available${CN}"
 		fi
 		mobo_line=''
 		bios_line=''
@@ -8755,12 +8955,12 @@ print_ps_data()
 	local b_print_first='true' 
 
 	if [[ $B_SHOW_PS_CPU_DATA == 'true' ]];then
-		get_ps_data 'cpu'
+		get_ps_tcm_data 'cpu'
 		print_ps_item 'cpu' "$b_print_first"
 		b_print_first='false' 
 	fi
 	if [[ $B_SHOW_PS_MEM_DATA == 'true' ]];then
-		get_ps_data 'mem'
+		get_ps_tcm_data 'mem'
 		print_ps_item 'mem' "$b_print_first"
 	fi
 	
