@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 1.8.37
-####  Date: February 11 2013
+####  Version: 1.8.38
+####  Date: February 18 2013
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -86,7 +86,8 @@
 ########################################################################
 ####  BSD Adjustments
 ####  * sed -i '' form supported by using SED_I="-i ''".
-####  * Note: BSD sed supports using -r instead of -E for compatibility with gnu sed
+####  * Note: New BSD sed supports using -r instead of -E for compatibility with gnu sed
+####    However, older, like FreeBSD 7.x, does not have -r so using SED_RX='-E' for this.
 ####  * Gnu grep options can be used if the function component is only run in linux
 ####    These are the options that bsd grep does not support that inxi uses: -m <number> -o 
 ####    so make sure if you use those to have them in gnu/linux only sections.
@@ -94,6 +95,8 @@
 ####  * BSD ps does not support --without-headers option, and also does not support --sort <option>
 ####    Tests show that -m fails to sort memory as expected, but -r does sort cpu percentage.
 ####  * BSD_TYPE is set with values null, dgbsd (debian gnu/kfreebsd), bsd (all other bsds)
+####  * Subshell and array closing ) must not be on their own line unless you use an explicit \ 
+####    to indicate that logic continues to next line where closing ) or )) are located.
 ########################################################################
 ####  CONVENTIONS:
 ####  * Character Encoding: UTF-8 - this file contains special characters that must be opened and saved as UTF8
@@ -207,6 +210,7 @@ PS_COUNT=5
 PS_THROTTLED=''
 REPO_DATA=''
 SED_I='-i' # for gnu sed, will be set to -i '' for bsd sed
+SED_RX='-r' # for gnu sed, will be set to -E for bsd sed for backward compatibility
 
 ### primary data array holders	## usage: 'A_<var>'
 A_ALSA_DATA=''
@@ -288,8 +292,7 @@ B_SHOW_DISK='false'
 B_SHOW_FULL_HDD='false'
 B_SHOW_FULL_OPTICAL='false'
 B_SHOW_GRAPHICS='false'
-# Set this to 'false' to avoid printing the hostname, this isn't used except for 
-# user configuration options via config files
+# Set this to 'false' to avoid printing the hostname, can be set false now
 B_SHOW_HOST='true'
 B_SHOW_INFO='false'
 B_SHOW_IP='false'
@@ -596,8 +599,6 @@ main()
 	if [[ -s $HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf ]];then
 		source $HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf
 	fi
-	
-	
 
 	## this needs to run before the KONVI stuff is set below
 	## Konversation 1.2 apparently does not like the $PPID test in get_start_client
@@ -722,11 +723,13 @@ initialize_data()
 	
 	# note: archbsd says they are a freebsd distro, so assuming it's the same as freebsd
 	if [[ -n $( grep -i 'bsd' <<< $( uname -s 2>/dev/null ) ) ]];then
+		# GNU/kfreebsd will by definition have GNU tools like sed/grep
 		if [[ -n $( grep -i 'kfreebsd' <<< $( uname -s 2>/dev/null ) ) ]];then
 			BSD_TYPE='dgbsd' # debian gnu bsd
-			SED_I="-i ''"
 		else
 			BSD_TYPE='bsd' # all other bsds
+			SED_I="-i ''"
+			SED_RX='-E'
 		fi
 	fi
 	# now set the script BOOLEANS for files required to run features
@@ -1324,7 +1327,7 @@ log_function_data()
 		# This pattern doesn't work for irc colors, if we need that someone can figure it out
 		if [[ -n $logged_data ]];then
 			if [[ $B_LOG_COLORS != 'true' ]];then
-				echo -e "${spacer}$logged_data" | sed -r 's/\x1b\[[0-9]{1,2}(;[0-9]{1,2}){0,2}m//g' >> $LOG_FILE
+				echo -e "${spacer}$logged_data" | sed $SED_RX 's/\x1b\[[0-9]{1,2}(;[0-9]{1,2}){0,2}m//g' >> $LOG_FILE
 			else
 				echo -e "${spacer}$logged_data" >> $LOG_FILE
 			fi
@@ -1482,10 +1485,12 @@ debug_data_collector()
 		sysctl -a &> $debug_data_dir/bsd-sysctl-a.txt
 		
 		dmidecode &> $debug_data_dir/dmidecode.txt
-		lsusb &> $debug_data_dir/lsusb.txt
+		
+		lscpu &> $debug_data_dir/lscpu.txt
 		lspci &> $debug_data_dir/lspci.txt
 		lspci -n &> $debug_data_dir/lspci-n.txt
 		lspci -v &> $debug_data_dir/lspci-v.txt
+		lsusb &> $debug_data_dir/lsusb.txt
 		ps aux &> $debug_data_dir/ps-aux.txt
 		sensors &> $debug_data_dir/sensors.txt
 		
@@ -2306,6 +2311,12 @@ get_parameters()
 					30)
 						B_RUNNING_IN_SHELL='true'
 						;;
+					31)
+						B_SHOW_HOST='false'
+						;;
+					32)
+						B_SHOW_HOST='true'
+						;;
 					ftp*)
 						ALTERNATE_FTP="$OPTARG"
 						;;
@@ -2486,6 +2497,9 @@ show_options()
 	print_screen_output "    12 - With xorg conf and log data, xrandr, xprop, xdpyinfo, glxinfo etc."
 	print_screen_output "    13 - With data from dev, disks, ${partition_string}s, etc., plus xiin data file."
 	print_screen_output "    14 - Everything, full data collection."
+	print_screen_output "Advanced Options:"
+	print_screen_output "-! 31  Turns off hostname in output. Useful if showing output from servers etc."
+	print_screen_output "-! 32  Turns on hostname in output. Overrides global B_SHOW_HOST='false'"
 	if [[ $1 == 'full' ]];then
 		print_screen_output " "
 		print_screen_output "Developer and Testing Options (Advanced):"
@@ -3209,8 +3223,7 @@ get_audio_alsa_data()
 				}
 				version=$NF
 				print alsa "," version
-			}' $FILE_ASOUND_VERSION 
-		) )
+			}' $FILE_ASOUND_VERSION ) )
 		IFS="$ORIGINAL_IFS"
 		log_function_data 'cat' "$FILE_ASOUND_VERSION"
 	fi
@@ -3834,8 +3847,11 @@ get_de_app_version()
 		dwm|ksh|scrotwm)
 			version_data="$( $1 $get_version 2>&1 )"
 			;;
+		csh)
+			version_data="$( tcsh $get_version 2>/dev/null )"
+			;;
 		# quick debian/buntu hack until I find a universal way to get version for these
-		csh|dash)
+		dash)
 			if [[ -n $( type -p dpkg ) ]];then
 				version_data="$( dpkg -l $1 2>/dev/null )"
 			fi
@@ -4062,7 +4078,7 @@ get_distro_data()
 		# if the file was null but present, which can happen in some cases, then use the file name itself to 
 		# set the distro value. Why say unknown if we have a pretty good idea, after all?
 		if [[ -n $distro_file ]] && [[ " $DISTROS_DERIVED $DISTROS_PRIMARY " == *" $distro_file "* ]];then
-			distro=$( sed -r -e 's/[-_]//' -e 's/(release|version)//' <<< $distro_file | sed -r 's/^([a-z])/\u\1/' )
+			distro=$( sed $SED_RX -e 's/[-_]//' -e 's/(release|version)//' <<< $distro_file | sed $SED_RX 's/^([a-z])/\u\1/' )
 		fi
 		## finally, if all else has failed, give up
 		if [[ -z $distro ]];then
@@ -4323,7 +4339,7 @@ get_dmesg_boot_data()
 	
 	if [[ $B_DMESG_BOOT_FILE == 'true' ]];then
 		# replace all indented items with ~ so we can id them easily while processing
-		dmsg_boot_data="$( cat $FILE_DMESG_BOOT | sed -r 's/"//g' )"
+		dmsg_boot_data="$( cat $FILE_DMESG_BOOT | sed $SED_RX 's/"//g' )"
 	fi
 	echo "$dmsg_boot_data"
 	# log_function_data "$dmsg_boot_data"
@@ -4346,15 +4362,14 @@ get_gcc_system_version()
 	eval $LOGFS
 	local separator='' gcc_installed='' gcc_list='' gcc_others='' temp_array=''
 	local gcc_version=$( 
-	gcc --version 2>/dev/null | sed -r 's/\([^\)]*\)//g' | gawk '
+	gcc --version 2>/dev/null | sed $SED_RX 's/\([^\)]*\)//g' | gawk '
 	BEGIN {
 		IGNORECASE=1
 	}
 	/^gcc/ {
 		print $2
 		exit
-	}'
-	)
+	}' 	)
 
 	# can't use xargs -L basename because not all systems support thats
 	if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
@@ -4413,8 +4428,7 @@ get_gpu_temp_data()
 			}
 			END {
 				print gpuTemp
-			}'
-			)
+			}' 	)
 			screen_nu=$( cut -d ':' -f 2 <<< $screen_nu )
 			gpu_temp="$gpu_temp$screen_nu:$gpu_temp_looper "
 		done
@@ -4434,8 +4448,7 @@ get_gpu_temp_data()
 		}
 		END {
 			print gpuTemp
-		}'
-		)
+		}' 	)
 	# this handles some newer cases of free driver temp readouts, will require modifications as
 	# more user data appears.
 	elif [[ -n $Sensors_Data ]];then
@@ -4458,8 +4471,7 @@ get_gpu_temp_data()
 		}
 		END {
 			print gpuTemp
-		}' <<< "$Sensors_Data"
-		)
+		}' <<< "$Sensors_Data" )
 	fi
 	
 	if [[ -n $gpu_temp ]];then
@@ -4559,8 +4571,7 @@ get_graphics_driver()
 			for ( driver in aDrivers ) {
 				print driver "," aDrivers[driver]
 			}
-		}' < $FILE_XORG_LOG
-		) )
+		}' < $FILE_XORG_LOG ) )
 	fi
 	temp_array=${A_GRAPHIC_DRIVERS[@]}
 	log_function_data "A_GRAPHIC_DRIVERS: $temp_array"
@@ -4811,8 +4822,7 @@ get_graphics_x_version()
 		/^X Window System Version/ {
 			print $5
 			exit
-		}' <<< "$x_data"
-		)
+		}' <<< "$x_data" )
 	fi
 	echo $x_version
 	log_function_data " x_version: $x_version"
@@ -4824,19 +4834,30 @@ get_hdd_data_basic()
 {
 	eval $LOGFS
 	local hdd_used='' temp_array='' df_string=''
-	local hdd_data=''
+	local hdd_data='' df_test=''
 	
 	if [[ -z $BSD_TYPE ]];then
-		df_string='df -P -T --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660'
+		df_string='df -P -T --exclude-type=aufs --exclude-type=devfs --exclude-type=devtmpfs 
+		--exclude-type=fdescfs --exclude-type=iso9660 --exclude-type=linprocfs --exclude-type=procfs
+		--exclude-type=squashfs --exclude-type=sysfs --exclude-type=tmpfs --exclude-type=unionfs'
 	else
 		# default size is 512, so use -k for 1024
-		df_string='df -P -T -k'
+		df_string='df -T -k'
+		# default size is 512, -H only for size in human readable format
+		# older bsds don't support -T, pain, so we'll use partial output there
+		df_test=$( df -H -T 2>/dev/null )
+		if [[ -n $df_test ]];then
+			df_string='df -k -T'
+		else
+			df_string='df -k'
+		fi
 	fi
 	hdd_data="$( eval $df_string )"
 	log_function_data 'raw' "hdd_data:\n$hdd_data"
 	
 	hdd_used=$( echo "$hdd_data" | gawk -v bsdType=$BSD_TYPE '
-	( bsdType != "" ) && $2 ~ /^(type|aufs|squashfs|unionfs|devtmpfs|tmpfs|iso9660|devfs|linprocfs|sysfs|fdescfs)$/ {
+	# using $1, not $2, because older bsd df do not have -T, filesystem type
+	( bsdType != "" ) && $1 ~ /^(aufs|devfs|devtmpfs|fdescfs|iso9660|linprocfs|procfs|squashfs|sysfs|tmpfs|type|unionfs)$/ {
 		# note use next, not getline or it does not work right
 		next 
 	}
@@ -4914,8 +4935,7 @@ get_hdd_data_basic()
 			else {
 				print "NA,-" # print an empty array, this will be further handled in the print out function
 			}
-		}' $FILE_PARTITIONS 
-		) )
+		}' $FILE_PARTITIONS ) )
 		log_function_data 'cat' "$FILE_PARTITIONS"
 	fi
 	IFS="$ORIGINAL_IFS"
@@ -5074,8 +5094,7 @@ get_hdd_serial_number()
 		serial=gensub( /^(.+)_([^_]+)$/, "\\2", 1, $9 )
 		print serial
 		exit
-	}' <<< "$DEV_DISK_ID"
-	)
+	}' <<< "$DEV_DISK_ID" )
 	
 	echo $hdd_serial
 	log_function_data "hdd serial: $hdd_serial"
@@ -5191,8 +5210,7 @@ get_machine_data()
 					gsub(/^ +| +$/, "", $0)
 					gsub(/ [ \t]+/, " ", $0)
 					print $0
-				}' < $id_dir$id_file
-				)
+				}' < $id_dir$id_file )
 			fi
 			array_string="$array_string$separator$file_data"
 			separator=','
@@ -5476,8 +5494,7 @@ get_networking_data()
 			print a[j] "," useDrivers "," usePorts "," useModules, "," usePciBusId
 			j++
 		}
-	}'
-	) )
+	}' ) )
 	IFS="$ORIGINAL_IFS"
 	get_networking_usb_data
 	if [[ $B_SHOW_ADVANCED_NETWORK == 'true' || $B_USB_NETWORKING == 'true' ]];then
@@ -5658,8 +5675,7 @@ get_networking_usb_data()
 					sub(/:/, "", $4 )
 					print string ",,,,usb-" $2 "-" $4 ",,,,,," $6
 				}
-			}' <<< "$lsusb_data" 
-			) )
+			}' <<< "$lsusb_data" ) )
 			IFS="$ORIGINAL_IFS"
 			if [[ ${#a_usb[@]} -gt 0 ]];then
 				array_count=${#A_NETWORK_DATA[@]}
@@ -5806,8 +5822,7 @@ get_networking_local_ip_data()
 				}
 				j++
 			}
-		}' <<< "$ip_tool_data"
-		) )
+		}' <<< "$ip_tool_data" ) )
 		IFS="$ORIGINAL_IFS"
 	else
 		A_INTERFACES_DATA=( "Interfaces program $ip_tool present but created no data. " )
@@ -5917,8 +5932,7 @@ get_optical_drive_data()
 					gsub(/^[[:space:]]*|[[:space:]]*$/, "", $0)
 					gsub(/ [[:space:]]+/, " ", $0)
 					print $0
-				}'	<<< $vendor
-				)
+				}'	<<< $vendor )
 			fi
 			# this needs to run no matter if there's proc data or not to create the array comma list
 			if [[ $B_SHOW_FULL_OPTICAL == 'true' ]];then
@@ -5975,12 +5989,11 @@ get_optical_drive_data()
 				END {
 					print speed "," multisession "," mcn "," audio "," cdr "," cdrw "," dvd "," dvdr "," dvdram
 				}
-				' <<< "$proc_cdrom"
-				)
+				' <<< "$proc_cdrom" )
 			fi
 			item_string="$item_string,$vendor,$model,$rev_number,$proc_info_string,$state"
 			echo $item_string
-		done
+		done \
 		) )
 		IFS="$ORIGINAL_IFS"
 	fi
@@ -5994,17 +6007,25 @@ get_partition_data()
 	eval $LOGFS
 	
 	local a_partition_working='' dev_item='' temp_array='' dev_working_item='' 
-	local swap_data='' df_string='' main_partition_data
+	local swap_data='' df_string='' main_partition_data='' df_test=''
 	#local excluded_file_types='--exclude-type=aufs --exclude-type=tmpfs --exclude-type=iso9660'
 	# df doesn't seem to work in script with variables like at the command line
 	# added devfs linprocfs sysfs fdescfs which show on debian kfreebsd kernel output
 	if [[ -z $BSD_TYPE ]];then
 		swap_data="$( swapon -s 2>/dev/null )"
-		df_string='df -h -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs'
+		df_string='df -h -T -P --exclude-type=aufs --exclude-type=devfs --exclude-type=devtmpfs 
+		--exclude-type=fdescfs --exclude-type=iso9660 --exclude-type=linprocfs --exclude-type=procfs
+		--exclude-type=squashfs --exclude-type=sysfs --exclude-type=tmpfs --exclude-type=unionfs'
 	else
 		swap_data="$( swapctl -l 2>/dev/null )"
 		# default size is 512, -H only for size in human readable format
-		df_string='df -H -T'
+		# older bsds don't support -T, pain, so we'll use partial output there
+		df_test=$( df -H -T 2>/dev/null )
+		if [[ -n $df_test ]];then
+			df_string='df -H -T'
+		else
+			df_string='df -H'
+		fi
 	fi
 	main_partition_data="$( eval $df_string )"
 	# set dev disk label/mapper/uuid data globals
@@ -6029,13 +6050,19 @@ get_partition_data()
 	A_PARTITION_DATA=( $( echo "$main_partition_data" | gawk -v bsdType=$BSD_TYPE '
 	BEGIN {
 		IGNORECASE=1
+		fileSystem=""
 	}
 	# this has to be nulled for every iteration so it does not retain value from last iteration
 	devBase=""
 	# skipping these file systems because bsds do not support df --exclude-type=<fstype>
-	( bsdType != "" ) && $2 ~ /^(type|aufs|squashfs|unionfs|devtmpfs|tmpfs|iso9660|devfs|linprocfs|sysfs|fdescfs)$/ {
-		# note use next, not getline or it does not work right
-		next 
+	# note that using $1 to handle older bsd df, which do not support -T. This will not be reliable but we will see
+	( bsdType != "" ) {
+		# skip if non disk/partition, or if raid primary id, which will not have a / in it
+		if ( $1 ~ /^(aufs|devfs|devtmpfs|fdescfs|iso9660|linprocfs|procfs|squashfs|sysfs|tmpfs|type|unionfs)$/ || 
+		$1 ~ /^([^\/]+)$/ ) {
+			# note use next, not getline or it does not work right
+			next 
+		}
 	}
 	# this is required because below we are subtracting from NF, so it has to be > 5
 	# the real issue is long file system names that force the wrap of df output: //fileserver/main
@@ -6043,20 +6070,30 @@ get_partition_data()
 	# Using df -P should fix this, ie, no wrapping of line lines, but leaving this for now
 	( NF < 6 ) && ( $0 !~ /[0-9]+%/ ) {
 		# set the dev location here for cases of wrapped output
-		if ( NF == 1 ){
+		if ( NF == 1 ) {
 			devBase=gensub( /^(\/dev\/)(.+)$/, "\\2", 1, $1 )
 		}
 		getline
 	}
 	
 	# next set devBase if it didn not get set above here
-	( $1 ~ /^\/dev\// ) && ( devBase == "" ) {
+	( $1 ~ /^\/dev\/|:\/|\/\// ) && ( devBase == "" ) {
 		devBase=gensub( /^(\/dev\/)(.+)$/, "\\2", 1, $1 )
+	}
+	( bsdType != "" && devBase == "" && $1 ~ /^[^\/]+\/.+/ ) {
+		devBase=gensub( /^([^\/]+\/)([^\/]+)$/, "non-dev-\\1\\2", 1, $1 )
 	}
 	# this handles yet another fredforfaen special case where a mounted drive
 	# has the search string in its name
 	$NF ~ /^\/$|^\/boot$|^\/var$|^\/home$|^\/tmp$|^\/usr$/ {
-		print $NF "," $(NF - 4) "," $(NF - 3) "," $(NF - 1) ",main," $(NF - 5) "," devBase 
+		# note, older df in bsd do not have file system column
+		if ( NF == "7" && $(NF - 1) ~ /[0-9]+%/ ) {
+			fileSystem=$(NF - 5)
+		}
+		else {
+			fileSystem=""
+		}
+		print $NF "," $(NF - 4) "," $(NF - 3) "," $(NF - 1) ",main," fileSystem "," devBase 
 	}
 	# skip all these, including the first, header line. Use the --exclude-type
 	# to handle new filesystems types we do not want listed here
@@ -6065,17 +6102,37 @@ get_partition_data()
 		# the test show the wrong data in each of the fields, if no x%, then do not use
 		# using 3 cases, first default, standard, 2nd, 3rd, handles one and two spaces in name
 		if ( $(NF - 1) ~ /[0-9]+%/ ) {
-			print $NF "," $(NF - 4) "," $(NF - 3) "," $(NF - 1) ",secondary," $(NF - 5) "," devBase 
+			# note, older df in bsd do not have file system column
+			if ( NF == "7" ) {
+				fileSystem=$(NF - 5)
+			}
+			else {
+				fileSystem=""
+			}
+			print $NF "," $(NF - 4) "," $(NF - 3) "," $(NF - 1) ",secondary," fileSystem "," devBase 
 		}
 		# these two cases construct the space containing name
 		else if ( $(NF - 2) ~ /[0-9]+%/ ) {
-			print $(NF - 1) " " $NF "," $(NF - 5) "," $(NF - 4) "," $(NF - 2) ",secondary," $(NF - 6) "," devBase
+			# note, older df in bsd do not have file system column
+			if ( NF == "8" && $(NF - 6) !~ /^[0-9]+/ ) {
+				fileSystem=$(NF - 6)
+			}
+			else {
+				fileSystem=""
+			}
+			print $(NF - 1) " " $NF "," $(NF - 5) "," $(NF - 4) "," $(NF - 2) ",secondary," fileSystem "," devBase
 		}
 		else if ( $(NF - 3) ~ /[0-9]+%/ ) {
-			print $(NF - 2) " " $(NF - 1) " " $NF "," $(NF - 6) "," $(NF - 5) "," $(NF - 3) ",secondary," $(NF - 7) "," devBase 
+			# note, older df in bsd do not have file system column
+			if ( NF == "9" && $(NF - 7) !~ /^[0-9]+/ ) {
+				fileSystem=$(NF - 7)
+			}
+			else {
+				fileSystem=""
+			}
+			print $(NF - 2) " " $(NF - 1) " " $NF "," $(NF - 6) "," $(NF - 5) "," $(NF - 3) ",secondary," fileSystem "," devBase 
 		}
-	}
-	' )
+	}' )
 	
 	# now add the swap partition data, don't want to show swap files, just partitions,
 	# though this can include /dev/ramzswap0. Note: you can also use /proc/swaps for this
@@ -6105,6 +6162,7 @@ get_partition_data()
 	IFS="$ORIGINAL_IFS"
 	
 	temp_array=${A_PARTITION_DATA[@]}
+	# echo $temp_array
 	log_function_data "1: A_PARTITION_DATA:\n$temp_array"
 	
 	# now we'll handle some fringe cases where irregular df -hT output shows /dev/disk/.. instead of 
@@ -6148,6 +6206,7 @@ get_partition_data()
 		fi
 	done
 	temp_array=${A_PARTITION_DATA[@]}
+	# echo $temp_array
 	log_function_data "2: A_PARTITION_DATA:\n$temp_array"
 	if [[ $B_SHOW_LABELS == 'true' || $B_SHOW_UUIDS == 'true' ]];then
 		get_partition_data_advanced
@@ -6176,6 +6235,7 @@ get_partition_data_advanced()
 			
 			# note: for swap this will already be set
 			if [[ -z ${a_partition_working[6]} ]];then
+				
 				mount_point=$( sed 's|/|\\/|g'  <<< ${a_partition_working[0]} )
 				#echo mount_point $mount_point
 				dev_partition_data=$( gawk '
@@ -6240,10 +6300,12 @@ get_partition_data_advanced()
 			IFS="$ORIGINAL_IFS"
 			# get the mapper actual dev item first, in case it's mapped
 			dev_item=$( get_dev_processed_item "${a_partition_working[6]}" )
-			dev_item=$( basename $dev_item ) ## needed to avoid error in case name still has / in it
+			# make sure not to slice off rest if it's a network mounted file system
+			if [[ -n $dev_item && -z $( grep -E '(^//|:/)' <<< $dev_item ) ]];then
+				dev_item=$( basename $dev_item ) ## needed to avoid error in case name still has / in it
+			fi
 			dev_label=${a_partition_working[7]}
 			dev_uuid=${a_partition_working[8]}
-			
 			# then if dev data/uuid is incomplete, try to get missing piece
 			# it's more likely we'll get a uuid than a label. But this should get the
 			# dev item set no matter what, so then we can get the rest of any missing data
@@ -6266,6 +6328,7 @@ get_partition_data_advanced()
 						}' )
 				fi
 			fi
+			
 			# this can trigger all kinds of weird errors if it is a non /dev path, like: remote:/machine/name
 			if [[ -n $dev_item && -z $( grep -E '(^//|:/)' <<< $dev_item ) ]];then
 				if [[ -n $DEV_DISK_UUID && -z $dev_uuid ]];then
@@ -6288,9 +6351,59 @@ get_partition_data_advanced()
 			IFS="$ORIGINAL_IFS"
 		done
 		log_function_data 'cat' "$FILE_MOUNTS"
+	else
+		if [[ $BSD_TYPE == 'bsd' ]];then
+			get_partition_data_advanced_bsd
+		fi
 	fi
 	temp_array=${A_PARTITION_DATA[@]}
+	# echo $temp_array
 	log_function_data "3-advanced: A_PARTITION_DATA:\n$temp_array"
+	eval $LOGFE
+}
+
+get_partition_data_advanced_bsd()
+{
+	eval $LOGFS
+	local gpart_data="$( gpart list 2>/dev/null )"
+	local a_partition_working='' label_uuid='' dev_item=''
+	
+	if [[ -n $gpart_data ]];then
+		for (( i=0; i < ${#A_PARTITION_DATA[@]}; i++ ))
+		do
+			IFS=","
+			a_partition_working=( ${A_PARTITION_DATA[i]} )
+			IFS="$ORIGINAL_IFS"
+			# no need to use the rest of the name if it's not a straight /dev/item
+			dev_item=$( basename ${a_partition_working[6]} )
+			
+			label_uuid=$( gawk -F ':' '
+			BEGIN {
+				IGNORECASE=1
+				label=""
+				uuid=""
+			}
+			/^[0-9]+\.[[:space:]]*Name.*'$dev_item'/ {
+				while ( getline && $1 !~ /^[0-9]+\.[[:space:]]*Name/ ) {
+					if ( $1 ~ /rawuuid/ ) {
+						gsub(/^[[:space:]]+|[[:space:]]+$/,"",$2)
+						uuid=$2
+					}
+					if ( $1 ~ /label/ ) {
+						gsub(/^[[:space:]]+|[[:space:]]+$|none|\(null\)/,"",$2)
+						label=$2
+					}
+				}
+				print label","uuid
+				exit
+			}' <<< "$gpart_data" )
+
+			# assemble everything we could get for dev/h/dx, label, and uuid
+			IFS=","
+			A_PARTITION_DATA[i]=${a_partition_working[0]}","${a_partition_working[1]}","${a_partition_working[2]}","${a_partition_working[3]}","${a_partition_working[4]}","${a_partition_working[5]}","${a_partition_working[6]}","$label_uuid
+			IFS="$ORIGINAL_IFS"
+		done
+	fi
 	eval $LOGFE
 }
 
@@ -6617,8 +6730,7 @@ get_raid_data()
 			
 			print raidString
 		}
-		' <<< "$mdstat"
-		) )
+		' <<< "$mdstat" ) )
 		IFS="$ORIGINAL_IFS"
 		temp_array=${A_RAID_DATA[@]}
 		log_function_data "A_RAID_DATA: $temp_array"
@@ -6643,7 +6755,7 @@ get_repo_data()
 	
 	# apt - debian, buntus, also sometimes some yum/rpm repos may create apt repos here as well
 	if [[ -f $apt_file || -d $apt_file.d ]];then
-		REPO_DATA="$( grep -Esv '(^[[:space:]]*$|^[[:space:]]*#)' $apt_file $apt_file.d/*.list | sed -r 's/^(.*)/apt sources:\1/' )"
+		REPO_DATA="$( grep -Esv '(^[[:space:]]*$|^[[:space:]]*#)' $apt_file $apt_file.d/*.list | sed $SED_RX 's/^(.*)/apt sources:\1/' )"
 	fi
 	# yum - fedora, redhat, centos, etc. Note that rpmforge also may create apt sources
 	# in /etc/apt/sources.list.d/. Therefore rather than trying to assume what package manager is
@@ -7139,8 +7251,7 @@ get_sensors_data()
 				print fanMainString
 				print fanDefaultString
 			}
-		}' <<< "$Sensors_Data"
-		) )
+		}' <<< "$Sensors_Data" ) )
 	fi
 	
 	IFS="$ORIGINAL_IFS"
@@ -7175,11 +7286,12 @@ get_shell_data()
 	if [[ $B_EXTRA_DATA == 'true' && -n $shell_type ]];then
 		case $shell_type in
 			bash)
-				shell_version=$( get_de_app_version "$shell_type" "^GNU[[:space:]]bash,[[:space:]]version" "4" | sed -r 's/(\(.*|-release|-version)//' )
+				shell_version=$( get_de_app_version "$shell_type" "^GNU[[:space:]]bash,[[:space:]]version" "4" | \
+				sed $SED_RX 's/(\(.*|-release|-version)//' )
 				;;
 			# csh/dash use dpkg package version data, debian/buntu only
 			csh)
-				shell_version=$( get_de_app_version "$shell_type" "$shell_type" "3" )
+				shell_version=$( get_de_app_version "$shell_type" "^tcsh" "2" )
 				;;
 			dash)
 				shell_version=$( get_de_app_version "$shell_type" "$shell_type" "3" )
@@ -7430,8 +7542,16 @@ calculate_multicore_data()
 process_cpu_flags()
 {
 	eval $LOGFS
+	
+	local cpu_flags_working=$1
+	local bits=$( uname -m | grep 64 )
+	
+	# no need to show pae for 64 bit cpus, it's pointless
+	if [[ -n $bits ]];then
+		cpu_flags_working=$( sed 's/[[:space:]]*pae//' <<< "$cpu_flags_working" )
+	fi
 	# must have a space after last item in list for RS=" "
-	local cpu_flags_working="$1 "
+	cpu_flags_working="$cpu_flags_working "
 	
 	# nx = AMD stack protection extensions
 	# lm = Intel 64bit extensions
@@ -7446,6 +7566,7 @@ process_cpu_flags()
 		i = 1 # start at one because of for increment issue
 		flag_string = ""
 	}
+	
 	/^(lm|nx|pae|pni|svm|vmx|(sss|ss)e([2-9])?([a-z])?(_[0-9])?)$/ {
 		if ( $0 == "pni" ){
 			a_flags[i] = "sse3"
@@ -7467,8 +7588,7 @@ process_cpu_flags()
 			}
 		}
 		print flag_string
-	}' 
-	)
+	}' )
 
 	#grep -oE '\<(nx|lm|sse[0-9]?|pni|svm|vmx)\>' | tr '\n' ' '))
 	if [[ -z $cpu_flags ]];then
@@ -7778,6 +7898,9 @@ print_cpu_data()
 	eval $LOGFS
 	local cpu_data='' i='' cpu_clock_speed='' cpu_multi_clock_data=''
 	local bmip_data='' cpu_cache='' cpu_vendor='' cpu_flags=''
+	local a_cpu_working='' cpu_model='' cpu_clock='' cpu_null_error=''
+	local cpc_plural='' cpu_count_print='' model_plural='' cpu_data_string=''
+	local cpu_physical_count='' cpu_core_count='' cpu_core_alpha='' cpu_type=''
 
 	##print_screen_output "A_CPU_DATA[0]=\"${A_CPU_DATA[0]}\""
 	# Array A_CPU_DATA always has one extra element: max clockfreq found.
@@ -7786,29 +7909,9 @@ print_cpu_data()
 	get_cpu_data
 
 	IFS=","
-	local a_cpu_working=(${A_CPU_DATA[0]})
+	a_cpu_working=(${A_CPU_DATA[0]})
 	IFS="$ORIGINAL_IFS"
-	local cpu_model="${a_cpu_working[0]}"
-	## assemble data for output
-	local cpu_clock="${a_cpu_working[1]}"
 
-	cpu_vendor=${a_cpu_working[5]}
-
-	# set A_CPU_CORE_DATA
-	get_cpu_core_count
-	local cpc_plural='' cpu_count_print='' model_plural=''
-	local cpu_physical_count=${A_CPU_CORE_DATA[0]}
-	local cpu_core_count=${A_CPU_CORE_DATA[3]}
-	local cpu_core_alpha=${A_CPU_CORE_DATA[1]}
-	local cpu_type=${A_CPU_CORE_DATA[2]}
-
-	if [[ $cpu_physical_count -gt 1 ]];then
-		cpc_plural='(s)'
-		cpu_count_print="$cpu_physical_count "
-		model_plural='s'
-	fi
-
-	local cpu_data_string="${cpu_count_print}${cpu_core_alpha} core"
 	# Strange (and also some expected) behavior encountered. If print_screen_output() uses $1
 	# as the parameter to output to the screen, then passing "<text1> ${ARR[@]} <text2>"
 	# will output only <text1> and first element of ARR. That "@" splits in elements and "*" _doesn't_,
@@ -7816,48 +7919,80 @@ print_cpu_data()
 	# This has been confirmed by #bash on freenode.
 	# The above mentioned only emerges when using the debugging markers below
 	## print_screen_output "a_cpu_working=\"***${a_cpu_working[@]} $hostName+++++++\"----------"
-	
-	# cpu cache
-	if [[ -z ${a_cpu_working[2]} ]];then
-		a_cpu_working[2]="unknown"
-	fi
+	# unless all these are null, process whatever you have
+	if [[ -n ${a_cpu_working[0]} || -n ${a_cpu_working[1]} || -n ${a_cpu_working[2]} || -n ${a_cpu_working[3]} ]];then
+		cpu_model="${a_cpu_working[0]}"
+		## assemble data for output
+		cpu_clock="${a_cpu_working[1]}"
 
-	cpu_data=$( create_print_line "CPU$cpc_plural:" "${C1}${cpu_data_string}${C2} ${a_cpu_working[0]}$model_plural (${cpu_type})" )
-	if [[ $B_SHOW_CPU == 'true' ]];then
-		# update for multicore, bogomips x core count.
-		if [[ $B_EXTRA_DATA == 'true' ]];then
-# 			if [[ $cpu_vendor != 'intel' ]];then
-				bmip_data=$( calculate_multicore_data "${a_cpu_working[4]}" "$(( $cpu_core_count * $cpu_physical_count ))" )
-# 			else
-# 				bmip_data="${a_cpu_working[4]}"
-# 			fi
-			bmip_data=" ${C1}bmips$SEP3${C2} $bmip_data"
+		cpu_vendor=${a_cpu_working[5]}
+
+		# set A_CPU_CORE_DATA
+		get_cpu_core_count
+		cpu_physical_count=${A_CPU_CORE_DATA[0]}
+		cpu_core_count=${A_CPU_CORE_DATA[3]}
+		cpu_core_alpha=${A_CPU_CORE_DATA[1]}
+		cpu_type=${A_CPU_CORE_DATA[2]}
+		
+		if [[ $cpu_physical_count -gt 1 ]];then
+			cpc_plural='(s)'
+			cpu_count_print="$cpu_physical_count "
+			model_plural='s'
 		fi
-		## note: this handles how intel reports L2, total instead of per core like AMD does
-		# note that we need to multiply by number of actual cpus here to get true cache size
-		if [[ $cpu_vendor != 'intel' ]];then
-			cpu_cache=$( calculate_multicore_data "${a_cpu_working[2]}" "$(( $cpu_core_count * $cpu_physical_count ))"  )
+
+		cpu_data_string="${cpu_count_print}${cpu_core_alpha} core"
+		cpu_data=$( create_print_line "CPU$cpc_plural:" "${C1}${cpu_data_string}${C2} ${a_cpu_working[0]}$model_plural (${cpu_type})" )
+		if [[ $B_SHOW_CPU == 'true' ]];then
+			# update for multicore, bogomips x core count.
+			if [[ $B_EXTRA_DATA == 'true' ]];then
+	# 			if [[ $cpu_vendor != 'intel' ]];then
+				if [[ -n ${a_cpu_working[4]} ]];then
+					bmip_data=$( calculate_multicore_data "${a_cpu_working[4]}" "$(( $cpu_core_count * $cpu_physical_count ))" )
+				fi
+	# 			else
+	# 				bmip_data="${a_cpu_working[4]}"
+	# 			fi
+				# bogomips are a linux thing, but my guess is over time bsds will use them somewhere anyway
+				if [[ $BSD_TYPE == 'bsd' && -z $bmip_data ]];then
+					bmip_data=''
+				else
+					bmip_data=" ${C1}bmips$SEP3${C2} $bmip_data"
+				fi
+			fi
+			## note: this handles how intel reports L2, total instead of per core like AMD does
+			# note that we need to multiply by number of actual cpus here to get true cache size
+			if [[ -n ${a_cpu_working[2]} ]];then
+				if [[ $cpu_vendor != 'intel' ]];then
+					cpu_cache=$( calculate_multicore_data "${a_cpu_working[2]}" "$(( $cpu_core_count * $cpu_physical_count ))"  )
+				else
+					cpu_cache=$( calculate_multicore_data "${a_cpu_working[2]}" "$cpu_physical_count"  )
+				fi
+			else
+				cpu_cache='N/A'
+			fi
+			# only print shortened list
+			if [[ $B_CPU_FLAGS_FULL != 'true' ]];then
+				# gawk has already sorted this output, no flags returns -
+				cpu_flags=$( process_cpu_flags "${a_cpu_working[3]}" )
+				cpu_flags="($cpu_flags)"
+				cpu_flags=" ${C1}flags$SEP3${C2} $cpu_flags"
+			fi
+			cpu_data="$cpu_data${C2} ${C1}cache$SEP3${C2} $cpu_cache$cpu_flags$bmip_data${CN}"
+		fi
+		# we don't this printing out extra line unless > 1 cpu core
+		if [[ ${#A_CPU_DATA[@]} -gt 2 && $B_SHOW_CPU == 'true' ]];then
+			cpu_clock_speed='' # null < verbosity level 5
 		else
-			cpu_cache=$( calculate_multicore_data "${a_cpu_working[2]}" "$cpu_physical_count"  )
+			cpu_data="$cpu_data ${C1}clocked at${C2} ${a_cpu_working[1]} MHz${CN}"
 		fi
-		# only print shortened list
-		if [[ $B_CPU_FLAGS_FULL != 'true' ]];then
-			# gawk has already sorted this output
-			cpu_flags=$( process_cpu_flags "${a_cpu_working[3]}" )
-			cpu_flags=" ${C1}flags$SEP3${C2} ($cpu_flags)"
-		fi
-		cpu_data="$cpu_data${C2} ${C1}cache$SEP3${C2} $cpu_cache$cpu_flags$bmip_data${CN}"
-	fi
-	# we don't this printing out extra line unless > 1 cpu core
-	if [[ ${#A_CPU_DATA[@]} -gt 2 && $B_SHOW_CPU == 'true' ]];then
-		cpu_clock_speed='' # null < verbosity level 5
+		cpu_data="$cpu_data $cpu_clock_speed"
 	else
-		cpu_data="$cpu_data ${C1}clocked at${C2} ${a_cpu_working[1]} MHz${CN}"
+		if [[ $BSD_TYPE == 'bsd' && $B_ROOT != 'true' ]];then
+			cpu_null_error=' No permissions for sysctl use?'
+		fi
+		cpu_data=$( create_print_line "CPU:" "${C2}No CPU data available.$cpu_null_error" )
 	fi
-
-	cpu_data="$cpu_data $cpu_clock_speed"
-	print_screen_output "$cpu_data"
-
+	print_screen_output "$cpu_data"	
 	# we don't this printing out extra line unless > 1 cpu core
 	# note the numbering, the last array item is the min/max/not found for cpu speeds
 	if [[ ${#A_CPU_DATA[@]} -gt 2 && $B_SHOW_CPU == 'true' ]];then
@@ -7985,6 +8120,10 @@ print_gfx_data()
 	fi
 	if [[ -n $failed ]];then
 		x_driver="${x_driver} ${RED}FAILED:${C2} $failed"
+	fi
+	# sometimes for some reason there is no driver found but the array is started
+	if [[ -z $x_driver ]];then
+		x_driver=' N/A'
 	fi
 
 	if [[ ${#A_GRAPHIC_DRIVERS[@]} -gt 1 ]];then
@@ -8211,6 +8350,10 @@ print_info_data()
 	local up_time="$( get_uptime )"
 	local patch_version_number=$( get_patch_version_string )
 	local gcc_string='' gcc_installed='' gcc_others='' closing_data='' 
+	
+	if [[ -z $memory ]];then
+		memory='N/A'
+	fi
 	
 	if [[ $B_EXTRA_DATA == 'true' ]];then
 		get_gcc_system_version
@@ -8855,6 +8998,7 @@ print_partition_data()
 	local counter=0 i=0 a_partition_data='' line_starter='' line_max=$(( $LINE_MAX - 35 ))
 	local partitionIdClean='' part_dev='' full_dev='' part_label='' full_label=''
 	local part_uuid='' full_uuid='' dev_remote='' full_fs='' line_max_label_uuid=$(( $LINE_MAX - 10 ))
+	local b_non_dev='false' holder=''
 
 	# set A_PARTITION_DATA
 	get_partition_data
@@ -8882,9 +9026,13 @@ print_partition_data()
 
 			if [[ $B_SHOW_LABELS == 'true' || $B_SHOW_UUIDS == 'true' ]];then
 				if [[ -n ${a_partition_working[6]} ]];then
-					if [[ -z $( grep -E '(^//|:/)' <<< ${a_partition_working[6]} ) ]];then
+					if [[ -z $( grep -E '(^//|:/|non-dev)' <<< ${a_partition_working[6]} ) ]];then
 						part_dev="/dev/${a_partition_working[6]}"
 						dev_remote='dev'
+					elif [[ -n $( grep '^non-dev' <<< ${a_partition_working[6]} ) ]];then
+						holder=$( sed 's/non-dev-//' <<< ${a_partition_working[6]} )
+						part_dev="$holder"
+						dev_remote='raid'
 					else
 						part_dev="${a_partition_working[6]}"
 						dev_remote='remote'
@@ -8913,7 +9061,7 @@ print_partition_data()
 			fi
 			# don't show user names in output
 			if [[ $B_OUTPUT_FILTER == 'true' ]];then
-				partitionIdClean=$( sed -r "s|/home/([^/]+)/(.*)|/home/$FILTER_STRING/\2|" <<< ${a_partition_working[0]} )
+				partitionIdClean=$( sed $SED_RX "s|/home/([^/]+)/(.*)|/home/$FILTER_STRING/\2|" <<< ${a_partition_working[0]} )
 			else
 				partitionIdClean=${a_partition_working[0]}
 			fi
@@ -9051,6 +9199,17 @@ print_raid_data()
 	local basic_raid='' basic_raid_separator='' basic_raid_plural='' inactive=''
 	local component_separator='' device_id='' print_string='' loop_limit=0 array_count_unused=''
 	local array_count='' raid_event='' b_print_lines='true'
+	local no_raid_detected=""
+	local empty_raid_data=""
+	
+	if [[ -n $BSD_TYPE ]];then
+		no_raid_detected='No RAID data available - not yet configured for BSD systems.'
+		empty_raid_data='No RAID data available - not yet configured for BSD systems.'
+	else
+		no_raid_detected="No RAID data available - $FILE_MDSTAT is missing - is md_mod kernel module loaded?"
+		empty_raid_data="No RAID devices detected - $FILE_MDSTAT and md_mod kernel raid module present"
+	fi
+	
 
 	get_raid_data
 
@@ -9261,14 +9420,14 @@ print_raid_data()
 
 	if [[ $B_MDSTAT_FILE != 'true' ]];then
 		if [[ $B_SHOW_RAID_R == 'true' ]];then
-			a_raid_data[0]="No RAID data available - $FILE_MDSTAT is missing - is md_mod kernel module loaded?"
+			a_raid_data[0]="$no_raid_detected"
 		else
 			b_print_lines='false'
 		fi
 	else
 		if [[ ${a_raid_data[0]} == '' ]];then
 			if [[ $B_SHOW_BASIC_RAID != 'true' ]];then
-				a_raid_data[0]="No RAID devices detected - /proc/mdstat and md_mod kernel raid module present"
+				a_raid_data[0]="$empty_raid_data"
 			else
 				b_print_lines='false'
 			fi
@@ -9394,8 +9553,13 @@ print_sensors_data()
 	local mobo_temp='' cpu_temp='' psu_temp='' cpu_fan='' mobo_fan='' ps_fan='' sys_fans='' sys_fans2='' 
 	local temp_data='' fan_data='' fan_data2='' b_is_error='false' fan_count=0 gpu_temp=''
 	local a_sensors_working=''
+	local no_sensors_message='None detected - is lm-sensors installed and configured?'
 	local Sensors_Data="$( get_sensors_output )"
 	get_sensors_data
+	
+	if [[ $BSD_TYPE == 'bsd' ]];then
+		no_sensors_message='This feature is not yet supported for BSD systems.'
+	fi
 	
 	IFS=","
 	a_sensors_working=( ${A_SENSORS_DATA[0]} )
@@ -9404,7 +9568,7 @@ print_sensors_data()
 	# always has at least 3 items, cpu/mobo/psu temp in it. If the count is 0, then
 	# no sensors are installed/configured
 	if [[ ${#a_sensors_working[@]} -eq 0 ]];then
-		cpu_temp="None detected - is lm-sensors installed and configured?"
+		cpu_temp=$no_sensors_message
 		b_is_error='true'
 	else
 		for (( i=0; i < ${#A_SENSORS_DATA[@]}; i++ ))
