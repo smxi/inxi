@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 1.8.40
+####  Version: 1.8.41
 ####  Date: February 27 2013
 ####  Patch Number: 00
 ########################################################################
@@ -270,6 +270,7 @@ B_PCICONF='false'
 # kde qdbus
 B_QDBUS='false'
 B_PORTABLE='false'
+B_RAID_SET='false'
 B_ROOT='false'
 B_RUN_COLOR_SELECTOR='false'
 # Running in a shell? Defaults to false, and is determined later.
@@ -6769,7 +6770,7 @@ get_raid_data()
 			get_raid_data_bsd
 		fi
 	fi
-	
+	B_RAID_SET='true'
 	temp_array=${A_RAID_DATA[@]}
 	log_function_data "A_RAID_DATA: $temp_array"
 # 	echo -e "A_RAID_DATA:\n${temp_array}"
@@ -7534,14 +7535,19 @@ get_tty_number()
 get_unmounted_partition_data()
 {
 	eval $LOGFS
-	local a_unmounted_working='' mounted_partitions='' separator='' unmounted_fs=''
-	local dev_working='' uuid_working='' label_working=''
+	local a_unmounted_working='' mounted_partitions='' separator='|' unmounted_fs=''
+	local dev_working='' uuid_working='' label_working='' a_raid_working='' raid_partitions=''
 	
 	if [[ $B_PARTITIONS_FILE == 'true' ]];then
 		# set dev disk label/uuid data globals
 		get_partition_dev_data 'label'
 		get_partition_dev_data 'uuid'
-		
+		# load the raid data array here so we can exclude its partitions
+		if [[ $B_RAID_SET != 'true' ]];then
+			get_raid_data
+		fi
+		# sr0 type cd drives are showing up now as unmounted partitions
+		mounted_partitions="sr[0-9]|cdrom[0-9]*|dvd[0-9]*"
 		# create list for slicing out the mounted partitions
 		for (( i=0; i < ${#A_PARTITION_DATA[@]}; i++ ))
 		do
@@ -7550,11 +7556,22 @@ get_unmounted_partition_data()
 			IFS="$ORIGINAL_IFS"
 			if [[ -n ${a_unmounted_working[6]} ]];then
 				mounted_partitions="$mounted_partitions$separator${a_unmounted_working[6]}"
-				separator='|'
+			fi
+		done
+		# now we need to exclude the mdraid partitions from the unmounted partition output as well
+		for (( i=0; i < ${#A_RAID_DATA[@]}; i++ ))
+		do
+			IFS=","
+			a_raid_working=( ${A_RAID_DATA[i]} )
+			IFS="$ORIGINAL_IFS"
+			if [[ -n ${a_raid_working[3]} ]];then
+				raid_partitions=$( sed $SED_RX 's/(\([^\)]*\)|\[[^\]]*\])//g' <<< ${a_raid_working[3]}\
+				| sed 's/[[:space:]]\+/|/g' )
+				mounted_partitions="$mounted_partitions$separator$raid_partitions"
 			fi
 		done
 	
-		A_UNMOUNTED_PARTITION_DATA=( $( grep -Ev '('$mounted_partitions')$' $FILE_PARTITIONS | gawk '
+		A_UNMOUNTED_PARTITION_DATA=( $( grep -Ev '[[:space:]]('$mounted_partitions')$' $FILE_PARTITIONS | gawk '
 		BEGIN {
 			IGNORECASE=1
 		}
@@ -9377,7 +9394,9 @@ print_raid_data()
 	if [[ $BSD_TYPE == 'bsd' ]];then
 		dev_string=''
 	fi
-	get_raid_data
+	if [[ $B_RAID_SET != 'true' ]];then
+		get_raid_data
+	fi
 
 	for (( i=0; i < ${#A_RAID_DATA[@]}; i++ ))
 	do
