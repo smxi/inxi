@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 1.8.43
+####  Version: 1.8.44
 ####  Date: February 28 2013
 ####  Patch Number: 00
 ########################################################################
@@ -230,6 +230,7 @@ A_MACHINE_DATA=''
 A_NETWORK_DATA=''
 A_OPTICAL_DRIVE_DATA=''
 A_PARTITION_DATA=''
+A_PCICONF_DATA=''
 A_PS_DATA=''
 A_RAID_DATA=''
 A_SENSORS_DATA=''
@@ -270,6 +271,7 @@ B_MAPPER_SET='false'
 B_OUTPUT_FILTER='false'
 B_OVERRIDE_FILTER='false'
 B_PCICONF='false'
+B_PCICONF_SET='false'
 # kde qdbus
 B_QDBUS='false'
 B_PORTABLE='false'
@@ -552,7 +554,7 @@ DISTROS_OS_RELEASE_GOOD="arch-release SuSE-release"
 ### Bans Data
 # Note that \<ltd\> bans only words, not parts of strings; in \<corp\> you can't use punctuation characters like . or ,
 # we're saving about 10+% of the total script exec time by hand building the ban lists here, using hard quotes.
-BAN_LIST_NORMAL='computing|computer|corporation|communications|electronics|electrical|electric|gmbh|group|industrial|international|revision|software|technologies|technology|ltd\.|\<ltd\>|inc\.|\<inc\>|intl\.|co\.|\<co\>|corp\.|\<corp\>|\(tm\)|\(r\)|®|\(rev ..\)'
+BAN_LIST_NORMAL='components|computing|computer|corporation|communications|electronics|electrical|electric|gmbh|group|industrial|international|revision|semiconductor|software|technologies|technology|ltd\.|\<ltd\>|inc\.|\<inc\>|intl\.|co\.|\<co\>|corp\.|\<corp\>|\(tm\)|\(r\)|®|\(rev ..\)'
 BAN_LIST_CPU='@|cpu deca|dual core|dual-core|tri core|tri-core|quad core|quad-core|ennea|genuine|hepta|hexa|multi|octa|penta|processor|single|triple|[0-9\.]+ *[MmGg][Hh][Zz]'
 
 SENSORS_GPU_SEARCH='intel|radeon|nouveau'
@@ -5467,8 +5469,8 @@ get_networking_data()
 	}
 	/^[0-9a-f:\.]+ (ethernet|network) (controller|bridge)/ || /^[0-9a-f:\.]+ [^:]+: .*(ethernet|network).*$/ {
 		nic=gensub(/^[0-9a-f:\.]+ [^:]+: (.+)$/,"\\1","g",$0)
-		gsub(/realtek semiconductor/, "Realtek", nic)
-		gsub(/davicom semiconductor/, "Davicom", nic)
+		#gsub(/realtek semiconductor/, "Realtek", nic)
+		#gsub(/davicom semiconductor/, "Davicom", nic)
 		# The doublequotes are necessary because of the pipes in the variable.
 		gsub(/'"$BAN_LIST_NORMAL"'/, "", nic)
 		gsub(/,/, " ", nic)
@@ -5697,9 +5699,9 @@ get_networking_usb_data()
 				gsub( /,/, " ", $0 )
 				gsub(/'"$BAN_LIST_NORMAL"'/, "", $0)
 				gsub(/ [ \t]+/, " ", $0)
-				sub(/realtek semiconductor/, "Realtek", $0)
-				sub(/davicom semiconductor/, "Davicom", $0)
-				sub(/Belkin Components/, "Belkin", $0)
+				#sub(/realtek semiconductor/, "Realtek", $0)
+				#sub(/davicom semiconductor/, "Davicom", $0)
+				#sub(/Belkin Components/, "Belkin", $0)
 				
 				for ( i=7; i<= NF; i++ ) {
 					string = string separator $i
@@ -5772,7 +5774,11 @@ get_networking_local_ip_data()
 	fi
 	if [[ -n "$ip_tool_command" ]];then
 		if [[ $ip_tool == 'ifconfig' ]];then
-			ip_tool_data="$( $ip_tool_command )"
+			ip_tool_data="$( $ip_tool_command | gawk '
+			{
+				line=gensub(/^([a-z]+[0-9][:]?[[:space:]].*)/, "\n\\1", $0)
+				print line
+			}' )"
 		# note, ip addr does not have proper record separation, so creating new lines explicitly here at start
 		# of each IF record item. Also getting rid of the unneeded numeric line starters, now it can be parsed 
 		# like ifconfig more or less
@@ -5785,7 +5791,7 @@ get_networking_local_ip_data()
 	elif [[ -n "$ip_tool_data" ]];then
 		IFS=$'\n' # $ip_tool_command
 		A_INTERFACES_DATA=( $( 
-		gawk -v ipTool=$ip_tool '
+		gawk -v ipTool=$ip_tool -v bsdType=$BSD_TYPE '
 		BEGIN {
 			IGNORECASE=1
 			interface=""
@@ -5823,6 +5829,18 @@ get_networking_local_ip_data()
 					}
 					if (/inet6 addr:/) {
 						ifIpV6 = $3
+					}
+					if ( bsdType == "bsd" ) {
+						if ( $1 == "inet" ) {
+							ifIp = $2
+							if ( $3 == "netmask" ) {
+								ifMask = $4
+							}
+						}
+						if ( $0 ~ /inet6.*%/ ) {
+							sub(/%.*/,"",$2)
+							ifIpV6 = $2
+						}
 					}
 				}
 				else if ( ipTool == "ip" ) {
@@ -6562,13 +6580,15 @@ get_pciconf_data()
 {
 	eval $LOGFS
 	
-	local pciconf="$( type -p pciconf 2>/dev/null )"
-	local pciconf_data=''
+	local pciconf_data='' temp_array=''
 	
-	if [[ -n $pciconf ]];then
-		pciconf_data="$( $pciconf -lv 2>/dev/null )"
+	if [[ $B_PCICONF == 'true' ]];then
+		pciconf_data="$( pciconf -lv 2>/dev/null )"
 		if [[ -n $pciconf_data ]];then
 			pciconf_data=$( gawk '
+			BEGIN {
+				IGNORECASE=1
+			}
 			{
 					gsub(/'"$BAN_LIST_NORMAL"'/, "", $0)
 					gsub(/[[:space:]]+=[[:space:]]+/, "=",$0)
@@ -6578,35 +6598,157 @@ get_pciconf_data()
 					line=gensub(/(.*@.*)/,"\n\\1",$0)
 					print line
 			}' <<< "$pciconf_data" )
+			# create empty last line with this spacing trick
+			pciconf_data="$pciconf_data
+
+EOF"
+			# echo "$pciconf_data"
 			# now insert into arrays
-			# order: type, 
-			gawk '
+			IFS=$'\n'
+			A_PCICONF_DATA=( $( gawk '
 			BEGIN {
-				audio=""
-				graphics=""
-				nic=""
 				fullLine=""
 				driver=""
 				vendor=""
 				device=""
 				class=""
+				chipId=""
 				pciId=""
+				itemData=""
+				IGNORECASE=1
 			}
 			/^.*@/ {
+				pciId=""
+				vendor=""
+				class=""
+				driver=""
+				device=""
+				chipId=""
+				itemData=$1
+				
+				driver=gensub(/^([^@]+)@.*/, "\\1", itemData )
+				pciId=gensub(/^.*@pci([0-9\.:]+).*/, "\\1", itemData )
+				sub(/:$/, "", pciId)
+				itemData=$4
+				chipId=gensub(/.*chip=([0-9a-f][0-9a-f][0-9a-f][0-9a-f])([0-9a-f][0-9a-f][0-9a-f][0-9a-f]).*/, "\\2:\\1", itemData )
+				if ( $2 == "class=020000" ) {
+					class="network"
+				}
+				else if ( $2 == "class=030000" ) {
+					class="display"
+				}
+				else if ( $2 == "class=040300" ) {
+					class="audio"
+				}
+				
 				while ( getline && $1 !~ /^$/ ) {
-					driver=gensub(/^([^0-9@]).*/, "\\1", $2 )
-					if ( $2 == "class=020000" ) {
-					
+					if ( $1 ~ /^vendor/ ) {
+						sub(/^vendor=/, "", $1 )
+						vendor=$0
+					}
+					else if ( $1 ~ /^device/ ) {
+						sub(/^device=/, "", $1 )
+						device=$0
+					}
+					else if ( $1 ~ /^class=/ && class == "" ) {
+						sub(/^class=/, "", $1)
+						class=$0
 					}
 				}
-				fullLine=class "," 
+				if ( device == "" ) {
+					device=vendor
+				}
+				
+				fullLine=class "," device "," vendor "," driver "," pciId "," chipId
+				print fullLine
 			
-			}' <<< "$pciconf_data"
+			}' <<< "$pciconf_data" ))
+			IFS="$ORIGINAL_IFS"
 		fi
 	else
 		A_PCICONF_DATA='pciconf-not-installed'
 	fi
+	B_PCICONF_SET='true'
+	temp_array=${A_PCICONF_DATA[@]}
+	log_function_data "$temp_array"
 	log_function_data "$pciconf_data"
+	eval $LOGFE
+}
+
+# packs standard card arrays using the pciconf stuff
+# args: $1 - audio/network/display - matches first item in A_PCICONF_DATA arrays
+get_pciconf_card_data()
+{
+	eval $LOGFS
+	local a_temp='' array_string='' j=0 device_string=''
+	local ip_tool_command=$( type -p ifconfig )
+	local mac='' state='' speed='' duplex='' network_string=''
+	
+	for (( i=0;i<${#A_PCICONF_DATA[@]};i++ ))
+	do
+		IFS=','
+		a_temp=( ${A_PCICONF_DATA[i]} )
+		IFS="$ORIGINAL_IFS"
+		
+		if [[ ${a_temp[0]} == $1 ]];then
+			# don't print the vendor if it's already in the device name
+			if [[ -z $( grep -i "${a_temp[2]}" <<< "${a_temp[1]}" ) ]];then
+				device_string="${a_temp[2]} ${a_temp[1]}"
+			else
+				device_string=${a_temp[1]}
+			fi
+			case $1 in
+				audio)
+					array_string="$device_string,${a_temp[3]},,,${a_temp[4]},,${a_temp[5]}"
+					A_AUDIO_DATA[j]=$array_string
+					;;
+				display)
+					array_string="$device_string,${a_temp[4]},${a_temp[5]}"
+					A_GFX_CARD_DATA[j]=$array_string
+					;;
+				network)
+					if [[ -n $ip_tool_command && -n ${a_temp[3]} ]];then
+						network_string=$( 	$ip_tool_command ${a_temp[3]} | gawk '
+						BEGIN {
+							IGNORECASE=1
+							mac=""
+							state=""
+							speed=""
+							duplex=""
+						}
+						/^[[:space:]]*ether/ {
+							mac = $2
+						}
+						/^[[:space:]]*media/ {
+							if ( $0 ~ /<.*>/ ) {
+								duplex=gensub(/.*<([^>]+)>.*/,"\\1",$0)
+							}
+							if ( $0 ~ /\(.*\)/ ) {
+								speed=gensub(/.*\(([^<[:space:]]+).*\).*/,"\\1",$0)
+							}
+						}
+						/^[[:space:]]*status/ {
+							sub(/.*status[:]?[[:space:]]*/,"", $0)
+							state=$0
+						}
+						END {
+							print state "~" speed "~" mac "~" duplex
+						}')
+					fi
+					if [[ -n $network_string ]];then
+						mac=$( cut -d '~' -f 3 <<< $network_string )
+						state=$( cut -d '~' -f 1 <<< $network_string )
+						speed=$( cut -d '~' -f 2 <<< $network_string )
+						duplex=$( cut -d '~' -f 4 <<< $network_string )
+					fi
+					array_string="$device_string,${a_temp[3]},,,${a_temp[4]},${a_temp[3]},$state,$speed,$duplex,$mac,${a_temp[5]}"
+					A_NETWORK_DATA[j]=$array_string
+					;;
+			esac
+			((j++))
+		fi
+	done
+	
 	eval $LOGFE
 }
 
@@ -8018,8 +8160,17 @@ print_audio_data()
 	local i='' card_id='' audio_data='' a_audio_data='' port_data='' pci_bus_id='' card_string=''
 	local a_audio_working='' audio_driver='' alsa_data='' port_plural='' module_version=''
 	local bus_usb_text='' bus_usb_id='' line_starter='Audio:' alsa='' alsa_version='' print_data=''
+	local driver=''
 	# set A_AUDIO_DATA and get alsa data
-	get_audio_data
+	if [[ $BSD_TYPE == 'bsd' ]];then
+		if [[ $B_PCICONF_SET == 'false' ]];then
+			get_pciconf_data
+		fi
+		get_pciconf_card_data 'audio'
+	else
+		get_audio_data
+	fi
+	
 	get_audio_alsa_data
 	# alsa driver data now prints out no matter what
 	if [[ -n $A_ALSA_DATA ]];then
@@ -8060,14 +8211,17 @@ print_audio_data()
 			if [[ ${#A_AUDIO_DATA[@]} -gt 1 ]];then
 				card_id="-$(( $i + 1 ))"
 			fi
-			if [[ -n ${a_audio_working[3]} && $B_EXTRA_DATA == 'true' ]];then
-				module_version=$( print_module_version "${a_audio_working[3]}" 'audio' )
-			elif [[ -n ${a_audio_working[1]} && $B_EXTRA_DATA == 'true' ]];then
-				module_version=$( print_module_version "${a_audio_working[1]}" 'audio' )
+			if [[ $BSD_TYPE != 'bsd' ]];then
+				if [[ -n ${a_audio_working[3]} && $B_EXTRA_DATA == 'true' ]];then
+					module_version=$( print_module_version "${a_audio_working[3]}" 'audio' )
+				elif [[ -n ${a_audio_working[1]} && $B_EXTRA_DATA == 'true' ]];then
+					module_version=$( print_module_version "${a_audio_working[1]}" 'audio' )
+				fi
 			fi
 			# we're testing for the presence of the 2nd array item here, which is the driver name
 			if [[ -n ${a_audio_working[1]} ]];then
-				audio_driver="${C1}driver$SEP3${C2} ${a_audio_working[1]} "
+				driver=$( sed 's/[0-9]*$//' <<< ${a_audio_working[1]} )
+				audio_driver="${C1}driver$SEP3${C2} ${driver} "
 			fi
 			if [[ -n ${a_audio_working[2]} && $B_EXTRA_DATA == 'true' ]];then
 				if [[ $( wc -w <<< ${a_audio_working[2]} ) -gt 1 ]];then
@@ -8079,7 +8233,11 @@ print_audio_data()
 				if [[ ${a_audio_working[1]} != 'USB Audio' ]];then
 					bus_usb_text='bus-ID'
 					if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
-						vendor_product=$( get_lspci_vendor_product "${a_audio_working[4]}" )
+						if [[ $BSD_TYPE != 'bsd' ]];then
+							vendor_product=$( get_lspci_vendor_product "${a_audio_working[4]}" )
+						else
+							vendor_product=${a_audio_working[6]}
+						fi
 					fi
 				else
 					bus_usb_text='usb-ID'
@@ -8312,8 +8470,7 @@ print_gfx_data()
 	local loaded='' unloaded='' failed=''
 	local line_starter='Graphics:'
 	local screen_resolution="$( get_graphics_res_data )"
-	# set A_GFX_CARD_DATA
-	get_graphics_card_data
+	
 	# set A_X_DATA
 	get_graphics_x_data
 	local x_vendor=${A_X_DATA[0]}
@@ -8325,7 +8482,16 @@ print_gfx_data()
 	# this can contain a long No case debugging message, so it's being sliced off
 	# note: using grep -ioE '(No|Yes)' <<< ${A_GLX_DATA[2]} did not work in Arch, no idea why
 	local glx_direct_render=$( gawk '{print $1}' <<< "${A_GLX_DATA[2]}" )
-	
+
+	# set A_GFX_CARD_DATA
+	if [[ $BSD_TYPE == 'bsd' ]];then
+		if [[ $B_PCICONF_SET == 'false' ]];then
+			get_pciconf_data
+		fi
+		get_pciconf_card_data 'display'
+	else
+		get_graphics_card_data
+	fi
 	# set A_GRAPHIC_DRIVERS
 	get_graphics_driver
 	
@@ -8411,7 +8577,11 @@ print_gfx_data()
 				if [[ -n ${a_gfx_working[1]} ]];then
 					gfx_bus_id=" ${C1}bus-ID$SEP3${C2} ${a_gfx_working[1]}"
 					if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
-						vendor_product=$( get_lspci_vendor_product "${a_gfx_working[1]}" )
+						if [[ $BSD_TYPE != 'bsd' ]];then
+							vendor_product=$( get_lspci_vendor_product "${a_gfx_working[1]}" )
+						else
+							vendor_product=${a_gfx_working[2]}
+						fi
 					fi
 				else
 					gfx_bus_id=" ${C1}bus-ID$SEP3${C2} N/A"
@@ -8890,8 +9060,16 @@ print_networking_data()
 	local i='' card_id='' network_data='' a_network_working='' port_data='' driver_data=''
 	local card_string='' port_plural='' module_version='' pci_bus_id='' bus_usb_text=''
 	local bus_usb_id='' line_starter='Network:' card_string='' card_data='' vendor_product=''
+	local driver=''
 	# set A_NETWORK_DATA
-	get_networking_data
+	if [[ $BSD_TYPE == 'bsd' ]];then
+		if [[ $B_PCICONF_SET == 'false' ]];then
+			get_pciconf_data
+		fi
+		get_pciconf_card_data 'network'
+	else
+		get_networking_data
+	fi
 
 	# will never be null because null is handled in get_network_data, but in case we change
 	# that leaving this test in place.
@@ -8916,11 +9094,12 @@ print_networking_data()
 			if [[ ${#A_NETWORK_DATA[@]} -gt 1 ]];then
 				card_id="-$(( $i + 1 ))"
 			fi
-			if [[ -n ${a_network_working[1]} && $B_EXTRA_DATA == 'true' ]];then
+			if [[ -n ${a_network_working[1]} && $B_EXTRA_DATA == 'true' && $BSD_TYPE != 'bsd' ]];then
 				module_version=$( print_module_version "${a_network_working[1]}" )
 			fi
 			if [[ -n ${a_network_working[1]} ]];then
-				driver_data="${C1}driver$SEP3${C2} ${a_network_working[1]}$module_version "
+				driver=$( sed 's/[0-9]*$//' <<< ${a_network_working[1]} )
+				driver_data="${C1}driver$SEP3${C2} ${driver}$module_version "
 			fi
 			if [[ -n ${a_network_working[2]} && $B_EXTRA_DATA == 'true' ]];then
 				if [[ $( wc -w <<< ${a_network_working[2]} ) -gt 1 ]];then
@@ -8933,7 +9112,11 @@ print_networking_data()
 					bus_usb_text='bus-ID'
 					bus_usb_id=${a_network_working[4]}
 					if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
-						vendor_product=$( get_lspci_vendor_product "${a_network_working[4]}" )
+						if [[ $BSD_TYPE != 'bsd' ]];then
+							vendor_product=$( get_lspci_vendor_product "${a_network_working[4]}" )
+						else
+							vendor_product=${a_network_working[10]}
+						fi
 					fi
 				else
 					bus_usb_text='usb-ID'
