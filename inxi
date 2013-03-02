@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 1.8.44
-####  Date: February 28 2013
+####  Version: 1.8.45
+####  Date: March 2 2013
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -94,7 +94,7 @@
 ####    It appears that freebsd uses gnu grep but openbsd uses bsd grep, however.
 ####  * BSD ps does not support --without-headers option, and also does not support --sort <option>
 ####    Tests show that -m fails to sort memory as expected, but -r does sort cpu percentage.
-####  * BSD_TYPE is set with values null, dgbsd (debian gnu/kfreebsd), bsd (all other bsds)
+####  * BSD_TYPE is set with values null, debian-bsd (debian gnu/kfreebsd), bsd (all other bsds)
 ####  * Subshell and array closing ) must not be on their own line unless you use an explicit \ 
 ####    to indicate that logic continues to next line where closing ) or )) are located.
 ########################################################################
@@ -191,6 +191,7 @@
 LANG=C
 ### Variable initializations: null values
 BSD_TYPE=''
+BSD_VERSION=
 CMDL_MAX=''
 COLOR_SCHEME=''
 # override in user config if desired, seems like less than .3 doesn't work as reliably
@@ -728,12 +729,13 @@ main()
 initialize_data()
 {
 	eval $LOGFS
-	
+	BSD_VERSION=$( uname -s 2>/dev/null | tr '[A-Z]' '[a-z]' )
+
 	# note: archbsd says they are a freebsd distro, so assuming it's the same as freebsd
-	if [[ -n $( grep -i 'bsd' <<< $( uname -s 2>/dev/null ) ) ]];then
+	if [[ -n $( grep 'bsd' <<< "$BSD_VERSION" ) ]];then
 		# GNU/kfreebsd will by definition have GNU tools like sed/grep
-		if [[ -n $( grep -i 'kfreebsd' <<< $( uname -s 2>/dev/null ) ) ]];then
-			BSD_TYPE='dgbsd' # debian gnu bsd
+		if [[ -n $( grep 'kfreebsd' <<< "$BSD_VERSION" ) ]];then
+			BSD_TYPE='debian-bsd' # debian gnu bsd
 		else
 			BSD_TYPE='bsd' # all other bsds
 			SED_I="-i ''"
@@ -945,8 +947,8 @@ check_required_apps()
 		depends="$depends lspci"
 	elif [[ $BSD_TYPE == 'bsd' ]];then
 		depends="$depends sysctl"
-		# dgbsd has lspci but you must be root to run it
-	elif [[ $BSD_TYPE == 'dgbsd' ]];then
+		# debian-bsd has lspci but you must be root to run it
+	elif [[ $BSD_TYPE == 'debian-bsd' ]];then
 		depends="$depends sysctl lspci"
 	fi
 	# no need to add xprop because it will just give N/A if not there, but if we expand use of xprop,
@@ -3286,7 +3288,17 @@ get_cpu_core_count()
 		# A_CPU_CORE_DATA=( "$cpu_core_count" "$cpu_alpha_count Core$cpu_type" )
 		A_CPU_CORE_DATA=( "$cpu_physical_count" "$cpu_alpha_count" "$cpu_type" "$cpu_core_count" )
 	elif [[ -n $BSD_TYPE ]];then
-		cpu_core_count=$( grep '^hw.ncpu' <<< "$Sysctl_a_Data" | gawk '{print $NF}' )
+		local gawk_fs=': '
+	
+		if [[ $BSD_VERSION == 'openbsd' ]];then
+			gawk_fs='='
+		fi
+		cpu_core_count=$( gawk -F "$gawk_fs" '
+		# note: on openbsd can also be hw.ncpufound so exit after first
+		/^hw.ncpu/ {
+			print $NF
+			exit
+		}' <<< "$Sysctl_a_Data" )
 		if [[ -n $( grep -E '^[0-9]+$' <<< "$cpu_core_count" ) ]];then
 			cpu_alpha_count=$( get_cpu_core_count_alpha "$cpu_core_count" )
 			if [[ $cpu_core_count -gt 1 ]];then
@@ -3436,43 +3448,66 @@ get_cpu_data()
 			}
 		}
  		' $FILE_CPUINFO ) )
+ 		IFS="$ORIGINAL_IFS"
 		log_function_data 'cat' "$FILE_CPUINFO"
 	elif [[ -n $BSD_TYPE ]];then
-		bsd_cpu_flags=$( get_cpu_flags_bsd )
-		IFS=$'\n'
-		A_CPU_DATA=( $( 
-		gawk -F': ' -v cpuFlags="$bsd_cpu_flags" '
-		BEGIN {
-			IGNORECASE=1
-			cpuModel=""
-			cpuClock=""
-			cpuCache=""
-			cpuBogomips=""
-			cpuVendor=""
-		}
-		/^hw.model/ {
-			gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF )
-			gsub(/'"$BAN_LIST_CPU"'/, "", $NF )
-			sub(/[a-z]+-core/, "", $NF )
-			gsub(/^ +| +$/, "", $NF)
-			gsub(/ [ \t]+/, " ", $NF)
-			cpuModel=$NF
-		}
-		/^hw.clock/ {
-			cpuClock=$NF
-		}
-		END {
-			print cpuModel "," cpuClock "," cpuCache "," cpuFlags "," cpuBogomips ","  cpuVendor
-			print "N/A"
-		}' <<< "$Sysctl_a_Data" ) )
-		
+		get_cpu_data_bsd
 	fi
-	IFS="$ORIGINAL_IFS"
+	
 	temp_array=${A_CPU_DATA[@]}
 	log_function_data "A_CPU_DATA: $temp_array"
 # 	echo ta: ${temp_array[@]}
 	eval $LOGFE
 # 	echo getMainCpu: ${[@]}
+}
+
+get_cpu_data_bsd()
+{
+	eval $LOGFS
+
+	local bsd_cpu_flags=$( get_cpu_flags_bsd )
+	local gawk_fs=': '
+	
+	if [[ $BSD_VERSION == 'openbsd' ]];then
+		gawk_fs='='
+	fi
+		
+	IFS=$'\n'
+	A_CPU_DATA=( $( 
+	gawk -F "$gawk_fs" -v cpuFlags="$bsd_cpu_flags" '
+	BEGIN {
+		IGNORECASE=1
+		cpuModel=""
+		cpuClock=""
+		cpuCache=""
+		cpuBogomips=""
+		cpuVendor=""
+	}
+	/^hw.model/ {
+		gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF )
+		gsub(/'"$BAN_LIST_CPU"'/, "", $NF )
+		sub(//,"",$NF)
+		sub(/[a-z]+-core/, "", $NF )
+		gsub(/^ +| +$|\"/, "", $NF)
+		gsub(/ [ \t]+/, " ", $NF)
+		cpuModel=$NF
+		if ( cpuClock != "" ) {
+			exit
+		}
+	}
+	/^hw.(clock|cpuspeed)/ {
+		cpuClock=$NF
+		if ( cpuModel != "" ) {
+			exit
+		}
+	}
+	END {
+		print cpuModel "," cpuClock "," cpuCache "," cpuFlags "," cpuBogomips ","  cpuVendor
+		print "N/A"
+	}' <<< "$Sysctl_a_Data" ) )
+	IFS="$ORIGINAL_IFS"
+	
+	eval $LOGFE
 }
 
 get_cpu_flags_bsd()
@@ -5392,21 +5427,27 @@ get_memory_data()
 		}' $FILE_MEMINFO )
 		log_function_data 'cat' "$FILE_MEMINFO"
 	elif [[ $B_SYSCTL == 'true' && -n $Sysctl_a_Data ]];then
-		memory=$( grep -i 'mem' <<< "$Sysctl_a_Data" | gawk  '
+		local gawk_fs=': '
+	
+		if [[ $BSD_VERSION == 'openbsd' ]];then
+			gawk_fs='='
+		fi
+		memory=$( grep -i 'mem' <<< "$Sysctl_a_Data" | gawk -F "$gawk_fs"  '
 		BEGIN {
 			realMemory=""
 			freeMemory=""
 		}
 		# freebsd seems to use bytes here
-		/^hw.physmem:/ {
+		/^hw.physmem/ {
 			gsub(/^[^0-9]+|[^0-9]+$/,"",$2)
 			realMemory = $2/1024
 			if ( freeMemory != "" ) {
 				exit
 			}
 		}
-		# But, it uses K here
-		/^Free Memory:|^Free Memory Pages:/ {
+		# But, it uses K here. Openbsd does not seem to have this item
+		# this can be either: Free Memory OR Free Memory Pages
+		$1 ~ /^Free Memory/ {
 			gsub(/[^0-9]/,"",$NF)
 			freeMemory = $NF
 			if ( realMemory != "" ) {
@@ -5414,8 +5455,14 @@ get_memory_data()
 			}
 		}
 		END {
-			used = realMemory - freeMemory
-			printf("%.1f/%.1fMB\n", used/1024, realMemory/1024)
+			# hack: temp fix for openbsd: in case no free mem was detected but we have physmem
+			if ( freeMemory == "" && realMemory != "" ) {
+				printf("NA/%.1fMB\n", realMemory/1024)
+			}
+			else if ( freeMemory != "" && realMemory != "" ) {
+				used = realMemory - freeMemory
+				printf("%.1f/%.1fMB\n", used/1024, realMemory/1024)
+			}
 		}' )
 	fi
 	echo "$memory"
@@ -6133,6 +6180,7 @@ get_partition_data()
 	( $1 ~ /^\/dev\/|:\/|\/\// ) && ( devBase == "" ) {
 		devBase=gensub( /^(\/dev\/)(.+)$/, "\\2", 1, $1 )
 	}
+	# this handles zfs type devices/partitions, which do not start with / but contain /
 	( bsdType != "" && devBase == "" && $1 ~ /^[^\/]+\/.+/ ) {
 		devBase=gensub( /^([^\/]+\/)([^\/]+)$/, "non-dev-\\1\\2", 1, $1 )
 	}
@@ -8220,7 +8268,12 @@ print_audio_data()
 			fi
 			# we're testing for the presence of the 2nd array item here, which is the driver name
 			if [[ -n ${a_audio_working[1]} ]];then
-				driver=$( sed 's/[0-9]*$//' <<< ${a_audio_working[1]} )
+				# note: linux drivers can have numbers, like tg3
+				if [[ $BSD_TYPE == 'bsd' ]];then
+					driver=$( sed 's/[0-9]$//' <<< ${a_audio_working[1]} )
+				else
+					driver=${a_audio_working[1]}
+				fi
 				audio_driver="${C1}driver$SEP3${C2} ${driver} "
 			fi
 			if [[ -n ${a_audio_working[2]} && $B_EXTRA_DATA == 'true' ]];then
@@ -9098,7 +9151,12 @@ print_networking_data()
 				module_version=$( print_module_version "${a_network_working[1]}" )
 			fi
 			if [[ -n ${a_network_working[1]} ]];then
-				driver=$( sed 's/[0-9]*$//' <<< ${a_network_working[1]} )
+				# note: linux drivers can have numbers, like tg3
+				if [[ $BSD_TYPE == 'bsd' ]];then
+					driver=$( sed 's/[0-9]*$//' <<< ${a_network_working[1]} )
+				else
+					driver=${a_network_working[1]}
+				fi
 				driver_data="${C1}driver$SEP3${C2} ${driver}$module_version "
 			fi
 			if [[ -n ${a_network_working[2]} && $B_EXTRA_DATA == 'true' ]];then
