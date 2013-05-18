@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 1.8.47
-####  Date: May 3 2013
+####  Version: 1.9.00
+####  Date: May 17 2013
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -236,6 +236,7 @@ A_PS_DATA=''
 A_RAID_DATA=''
 A_SENSORS_DATA=''
 A_UNMOUNTED_PARTITION_DATA=''
+A_WEATHER_DATA=''
 A_X_DATA=''
 
 ### Boolean true/false globals	## usage: 'B_<var>'
@@ -243,7 +244,7 @@ A_X_DATA=''
 # flag to allow distro maintainers to turn off update features. If false, turns off
 # -U and -! testing/advanced update options, as well as removing the -U help menu item
 B_ALLOW_UPDATE='true'
-B_ALLOW_WEATHER='false'
+B_ALLOW_WEATHER='true'
 ## standard boolean flags ##
 B_BSD_RAID='false'
 B_COLOR_SCHEME_SET='false'
@@ -448,6 +449,7 @@ SEP3='' # do not set, will be set dynamically
 ### Script names/paths - must be non root writable
 SCRIPT_DATA_DIR="$HOME/.inxi"
 ALTERNATE_FTP='' # for data uploads
+ALTERNATE_WEATHER_LOCATION='' # weather alternate location
 LOG_FILE="$SCRIPT_DATA_DIR/inxi.log"
 LOG_FILE_1="$SCRIPT_DATA_DIR/inxi.1.log"
 LOG_FILE_2="$SCRIPT_DATA_DIR/inxi.2.log"
@@ -2232,6 +2234,9 @@ get_parameters()
 			V)	print_version_info
 				exit 0
 				;;
+			w)	B_SHOW_WEATHER=true
+				use_short='false'
+				;;
 			# this will trigger either with x, xx, xxx or with Fx but not with xF
 			x)	if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
 					B_EXTRA_EXTRA_EXTRA_DATA='true'
@@ -2350,6 +2355,10 @@ get_parameters()
 					ftp*)
 						ALTERNATE_FTP="$OPTARG"
 						;;
+					# for weather function, allows user to set an alternate weather location
+					location=*)
+						ALTERNATE_WEATHER_LOCATION=$( sed 's/location=//' <<< $OPTARG )
+						;;
 					*)	error_handler 11 "$OPTARG"
 						;;
 				esac
@@ -2466,7 +2475,8 @@ show_options()
 	print_screen_output "    7 - Network IP data (-i); triggers -xxx."
 	# if distro maintainers don't want the weather feature disable it
 	if [[ $B_ALLOW_WEATHER == 'true' ]];then
-		print_screen_output "-w  Local weather data. "
+		print_screen_output "-w  Local weather data/time. To check an alternate location, see: -! location=<location>."
+		print_screen_output "    For extra data options see -x, -xx, and -xxx."
 	fi
 	print_screen_output "-x  Adds the following extra data (only works with verbose or line output, not short form): "
 	print_screen_output "    -C - Bogomips on Cpu;"
@@ -2484,7 +2494,10 @@ show_options()
 	print_screen_output "         blocks; chunk size; bitmap (if present). Resync line, shows blocks synced/total blocks."
 	print_screen_output "       - zfs-raid: Shows raid array full size; available size; portion allocated to RAID"
 	print_screen_output "    -S - Desktop toolkit if avaliable (GNOME/XFCE/KDE only); Kernel gcc version"
-	print_screen_output "    -t - Adds memory use output to cpu (-xt c), and cpu use to memory (-xt m)."
+	print_screen_output "    -t - Memory use output to cpu (-xt c), and cpu use to memory (-xt m)."
+	if [[ $B_ALLOW_WEATHER == 'true' ]];then
+		print_screen_output "    -w - Wind speed and time zone."
+	fi
 	print_screen_output "-xx Show extra, extra data (only works with verbose or line output, not short form): "
 	print_screen_output "    -A - Chip vendor:product ID for each audio device."
 	print_screen_output "    -D - Disk serial number."
@@ -2497,9 +2510,15 @@ show_options()
 	print_screen_output "         (kernel support,read ahead, raid events). If present, adds unused device line. "
 	print_screen_output "         Resync line, shows progress bar."
 	print_screen_output "    -S - Display manager (dm) in desktop output, if in X (like kdm, gdm3, lightdm)."
+	if [[ $B_ALLOW_WEATHER == 'true' ]];then
+		print_screen_output "    -w - Humidity, barometric pressure."
+	fi
 	print_screen_output "    -xx -@ <11-14> - Automatically uploads debugger data tar.gz file to ftp.techpatterns.com."
 	print_screen_output "-xxx Show extra, extra, extra data (only works with verbose or line output, not short form): "
 	print_screen_output "    -S - Panel/shell information in desktop output, if in X (like gnome-shell, cinnamon, mate-panel)."
+	if [[ $B_ALLOW_WEATHER == 'true' ]];then
+		print_screen_output "    -w - Location (uses -z/irc filter), weather observation time, wind chill, heat index," print_screen_output "         dew point (shows extra lines for data where relevant)."
+	fi
 	print_screen_output "-z  Security filters for IP/Mac addresses, and user home directory name. Default on for irc clients."
 	print_screen_output "-Z  Absolute override for output filters. Useful for debugging networking issues in irc for example."
 	print_screen_output " "
@@ -2532,6 +2551,11 @@ show_options()
 	print_screen_output "Advanced Options:"
 	print_screen_output "-! 31  Turns off hostname in output. Useful if showing output from servers etc."
 	print_screen_output "-! 32  Turns on hostname in output. Overrides global B_SHOW_HOST='false'"
+	if [[ $B_ALLOW_WEATHER == 'true' ]];then
+		print_screen_output "-! location=<location> - <location> Supported types: zip (postal) code; city,state; latitude,longtitude"
+		print_screen_output "   Only use if you want the weather somewhere other than the machine running $SCRIPT_NAME."
+		print_screen_output "   Must be used with -w"
+	fi
 	if [[ $1 == 'full' ]];then
 		print_screen_output " "
 		print_screen_output "Developer and Testing Options (Advanced):"
@@ -5800,7 +5824,7 @@ get_networking_wan_ip_data()
 	# awk has bad regex handling so checking it with grep -E instead
 	# ip=$( echo  2001:0db8:85a3:0000:0000:8a2e:0370:7334 | gawk  --re-interval '
 	# ip=$( wget -q -O - $WAN_IP_URL | gawk  --re-interval '
-	ip=$( wget -q -O - $WAN_IP_URL | gawk  --re-interval '
+	ip=$( wget -t 1 -T 4 -q -O - $WAN_IP_URL | gawk  --re-interval '
 	{
 		#gsub("\n","",$2")
 		print $NF
@@ -7937,6 +7961,249 @@ get_uptime()
 	eval $LOGFE
 }
 
+get_weather_data()
+{
+	eval $LOGFS
+	
+	local location_site='http://geoip.ubuntu.com/lookup'
+	local weather_feed='http://api.wunderground.com/auto/wui/geo/WXCurrentObXML/index.xml?query='
+	local weather_spider='http://wunderground.com/'
+	local data_grab_error='' wget_error=0 b_testing=false b_debug=false
+	local location_data='' location='' weather_data='' location_array_value='' a_location=''
+	local weather_array_value='' site_elevation=''
+	local testDir="$HOME/bin/scripts/inxi/data/weather/"
+	
+	# first we get the location data, once that is parsed and handled, we move to getting the 
+	# actual weather data, assuming no errors
+	if [[ -n $ALTERNATE_WEATHER_LOCATION ]];then
+		location=$ALTERNATE_WEATHER_LOCATION
+	else
+		if [[ $b_testing != 'true' ]];then
+			# make sure location site is up
+			wget -q -t 1 -T 5 --spider $location_site || wget_error=$?
+			# grab the location xml file
+			if [[ $wget_error -eq 0 ]];then
+				location_data=$( wget -q -t 1 -T 5 -O- $location_site || wget_error=$? )
+			else
+				data_grab_error="Error: unable to connect to location server - wget: $wget_error"
+			fi
+			if [[ $wget_error -ne 0 ]];then
+				data_grab_error="Error: location server up but download error - wget: $wget_error"
+			fi
+		else
+			if [[ -f $testDir/my-location.xml ]];then
+				location_data="$( cat $testDir/my-location.xml)"
+			else
+				data_grab_error="Error: location xml local file not found."
+			fi
+		fi
+		if [[ -z $( grep -i '<?xml' <<< $location_data ) ]];then
+			data_grab_error="Error: location downloaded but data contains no <?xml statement."
+		else
+			# clean up xml and make easy to process with newlines, note, bsd sed has no support for inserting
+			# \n dircctly so we have to use this hack
+			# location_data="$( sed $SED_RX 's|><|>\n<|g' <<< $location_data )"
+			location_data="$( sed $SED_RX 's|><|>\
+<|g' <<< $location_data )"
+			location_array_value=$( gawk '
+			function clean(data) {
+				returnData=""
+				# some lines might be empty, so ignore those
+				if (data !~ /^<[^>]+>$/ ) {
+					returnData=gensub(/(.*>)([^<]*)(<.*)/, "\\2", 1, data)
+				}
+				return returnData
+			}
+			BEGIN {
+				IGNORECASE=1
+				locationString=""
+				countryCode=""
+				countryCode3=""
+				countryName=""
+				regionCode=""
+				regionName=""
+				city=""
+				postalCode=""
+				latitude=""
+				longitude=""
+				timeZone=""
+				areaCode=""
+			}
+			/CountryCode/ {
+				if ( $0 ~ /CountryCode3/ ){
+					countryCode3=clean($0)
+				}
+				else {
+					countryCode=clean($0)
+				}
+			}
+			/CountryName/ {
+				countryName = clean($0)
+			}
+			/RegionCode/ {
+				regionCode = clean($0)
+			}
+			/RegionName/ {
+				regionName = clean($0)
+			}
+			/City/ {
+				city = clean($0)
+			}
+			/ZipPostalCode/ {
+				postalCode = clean($0)
+			}
+			/Latitude/ {
+				latitude = clean($0)
+			}
+			/Longitude/ {
+				longitude = clean($0)
+			}
+			/TimeZone/ {
+				timeZone = clean($0)
+			}
+			END {
+				locationString = city ";" regionCode ";" regionName ";" countryName ";" countryCode ";" countryCode3 
+				locationString = locationString  ";" latitude "," longitude ";" postalCode ";" timeZone
+				print locationString
+			}' 	<<< "$location_data" )
+		fi
+		A_WEATHER_DATA[0]=$location_array_value
+		IFS=";"
+		a_location=( ${A_WEATHER_DATA[0]} )
+		IFS="$ORIGINAL_IFS"
+		
+		# assign location, cascade from most accurate
+		# latitude,longitude first
+		if [[ -n ${a_location[6]} ]];then
+			location="${a_location[6]}"
+		# city,state next
+		elif [[ -n ${a_location[0]} && -n ${a_location[1]} ]];then
+			location="${a_location[0]},${a_location[1]}"
+		# postal code last, that can be a very large region
+		elif [[ -n ${a_location[7]} ]];then
+			location=${a_location[7]}
+		fi
+	fi
+	if [[ $b_debug == 'true' ]];then
+		echo "${A_WEATHER_DATA[0]}"
+		echo "location: $location"
+	fi
+	
+	if [[ -z $location ]];then
+		data_grab_error="Error: location data downloaded but no location detected."
+	fi
+	
+	# now either dump process or go on to get weather data
+	if [[ -n $data_grab_error ]];then
+		A_WEATHER_DATA=$data_grab_error
+	else
+		if [[ $b_testing != 'true' ]];then
+			wget -q -t 1 -T 5 --spider $weather_spider || wget_error=$?
+			# grab the weather feed xml file
+			if [[ $wget_error -eq 0 ]];then
+				weather_data="$( wget -q -t 1 -T 5 -O- $weather_feed$location || wget_error=$? )"
+			else
+				data_grab_error="Error: unable to connect to weather server - wget: $wget_error"
+			fi
+			if [[ $wget_error -ne 0 ]];then
+				data_grab_error="Error: weather server up but download error - wget: $wget_error"
+			fi
+		else
+			if [[ -f $testDir/weather-feed.xml ]];then
+				weather_data="$( cat $testDir/weather-feed.xml)"
+			else
+				data_grab_error="Error: weather feed xml local file not found."
+			fi
+		fi
+		if [[ -z $( grep -i '<current_observation' <<< $weather_data ) ]];then
+			data_grab_error="Error: weather data downloaded but shows no xml start."
+		fi
+		if [[ -z $data_grab_error ]];then
+			# trim off zeros
+			weather_data=$( sed 's/^[[:space:]]*//' <<< "$weather_data" )
+			site_elevation=$( grep -im 1 '<elevation>' <<< "$weather_data" | sed $SED_RX -e 's/<[^>]*>//g' \
+			-e 's/\.[0-9]*//' )
+			
+			# clean off everything before/after observation_location
+			weather_data=$( sed -e '/<current_observation>/,/<observation_location>/d' \
+			-e '/<icons>/,/<\/current_observation>/d' <<< "$weather_data" -e 's/^[[:space:]]*$//g' -e '/^$/d' )
+			
+			# echo "$weather_data";exit 
+			weather_array_value=$( gawk -v siteElevation="$site_elevation" '
+			function clean(data) {
+				returnData=""
+				# some lines might be empty, so ignore those
+				if (data !~ /^<[^>]+>$/ ) {
+					returnData=gensub(/(.*>)([^<]*)(<.*)/, "\\2", 1, data)
+					gsub(/^[[:space:]]+|[[:space:]]+$|NA|N\/A/, "", returnData)
+				}
+				return returnData
+			}
+			BEGIN {
+				IGNORECASE=1
+				observationTime=""
+				localTime=""
+				weather=""
+				tempString=""
+				humidity=""
+				windString=""
+				pressureString=""
+				dewpointString=""
+				heatIndexString=""
+				windChillString=""
+				weatherString=""
+			}
+			/observation_time>/ {
+				observationTime=clean($0)
+				sub(/Last Updated on /, "", observationTime )
+			}
+			/local_time>/ {
+				localTime=clean($0)
+			}
+			/<weather/ {
+				weather=clean($0)
+			}
+			/temperature_string/ {
+				tempString=clean($0)
+			}
+			/relative_humidity/ {
+				humidity=clean($0)
+			}
+			/wind_string/ {
+				windString=clean($0)
+			}
+			/pressure_string/ {
+				pressureString=clean($0)
+			}
+			/heat_index_string/ {
+				heatIndexString=clean($0)
+			}
+			/windchill_string/ {
+				windChillString=clean($0)
+			}
+			END {
+				weatherString = observationTime ";" localTime ";" weather ";" tempString ";" humidity 
+				weatherString = weatherString ";" windString ";" pressureString ";" dewpointString ";" heatIndexString
+				weatherString = weatherString ";" windChillString ";" siteElevation
+				print weatherString
+			}' <<< "$weather_data" )
+		fi
+		if [[ -z $weather_array_value ]];then
+			A_WEATHER_DATA="Error: weather info downloaded but no data detected."
+		else
+			A_WEATHER_DATA[1]=$weather_array_value
+		fi
+	fi
+	
+	if [[ $b_debug == 'true' ]];then
+		echo "site_elevation: $site_elevation"
+		echo "${A_WEATHER_DATA[1]}"
+	fi
+	
+	eval $LOGFE
+}
+# get_weather_data;exit
+
 #### -------------------------------------------------------------------
 #### special data handling for specific options and conditions
 #### -------------------------------------------------------------------
@@ -8073,6 +8340,9 @@ print_it_out()
 		fi
 		if [[ $B_SHOW_MACHINE == 'true' ]];then
 			print_machine_data
+		fi
+		if [[ $B_SHOW_WEATHER == 'true' ]];then
+			print_weather_data
 		fi
 		if [[ $B_SHOW_BASIC_CPU == 'true' || $B_SHOW_CPU == 'true' ]];then
 			print_cpu_data
@@ -10368,6 +10638,130 @@ print_unmounted_partition_data()
 		print_screen_output "$unmounted_data"
 	fi
 	
+	eval $LOGFE
+}
+
+print_weather_data()
+{
+	eval $LOGFS
+	
+	local weather_data='' location_string='' local_time='' time_string='' pressure=''
+	local a_location='' a_weather='' weather_string='' weather='' temp='' winds='' humidity=''
+	local time_zone='' observation_time='' city='' state='' country='' altitude=''
+	local heat_index="" wind_chill='' dewpoint='' 
+	local openP='(' closeP=')'
+	
+	if [[ $B_RUNNING_IN_SHELL == 'false' ]];then
+		openP=''
+		closeP=''
+	fi
+	
+	get_weather_data
+	
+	# city ";" regionCode ";" regionName ";" countryName ";" countryCode ";" countryCode3 
+	#  ";" latitude "," longitude ";" postalCode ";" timeZone
+	
+	# observationTime ";" localTime ";" weather ";" tempString ";" humidity 
+	# ";" windString ";" pressureString ";" dewpointString ";" heatIndexString
+	# ";" windChillString ";" siteElevation
+
+	if [[ ${#A_WEATHER_DATA[@]} -eq 2 ]];then
+		IFS=";"
+		a_location=(${A_WEATHER_DATA[0]})
+		a_weather=(${A_WEATHER_DATA[1]})
+		IFS="$ORIGINAL_IFS"
+		
+		if [[ -n ${a_weather[3]} ]];then
+			temp=${a_weather[3]}
+		else
+			temp='N/A'
+		fi
+		if [[ -n ${a_weather[2]} ]];then
+			weather=" - ${a_weather[2]}"
+		else
+			weather=''
+		fi
+		if [[ $B_EXTRA_DATA == 'true' ]];then
+			if [[ -n ${a_weather[5]} ]];then
+				winds=" ${C1}wind$SEP3${C2} ${a_weather[5]}"
+			fi
+		fi
+		if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+			if [[ -n ${a_weather[4]} ]];then
+				humidity=" ${C1}humidity$SEP3${C2} ${a_weather[4]}"
+			fi
+			if [[ -n ${a_weather[6]} ]];then
+				pressure="${C1}pressure$SEP3${C2} ${a_weather[6]} "
+			fi
+		fi
+		weather_string="${C1}weather$SEP3${C2} $temp$weather$winds$humidity"
+		
+		if [[ -n ${a_weather[1]} ]];then
+			local_time=" ${a_weather[1]}"
+		else
+			local_time=" $(date)"
+		fi
+		if [[ $B_EXTRA_DATA == 'true' && -n ${a_location[8]} ]];then
+			time_zone=" (${a_location[8]})"
+		fi
+		time_string="$pressure${C1}time$SEP3${C2}$local_time$time_zone"
+
+		if [[ $B_EXTRA_DATA != 'true' ]];then
+			weather_data="$weather_string $time_string"
+			weather_data=$( create_print_line "Weather:" "$weather_data" )
+			print_screen_output "$weather_data"
+		else
+			weather_data="$weather_string"
+			weather_data=$( create_print_line "Weather:" "$weather_data" )
+			print_screen_output "$weather_data"
+			if [[ $B_EXTRA_EXTRA_EXTRA_DATA == 'true' ]];then
+				if [[ -n ${a_weather[8]} ]];then
+					heat_index="${C1}heat index$SEP3${C2} ${a_weather[8]} "
+				fi
+				if [[ -n ${a_weather[9]} ]];then
+					wind_chill="${C1}wind chill$SEP3${C2} ${a_weather[9]} "
+				fi
+				if [[ -n ${a_weather[7]} ]];then
+					dew_point="${C1}dew point$SEP3${C2} ${a_weather[7]} "
+				fi
+				# these were blank in my tests
+				if [[ -n "$heat_index$wind_chill$dew_point" ]];then
+					weather_data=$( create_print_line " " "$heat_index$wind_chill$dew_point" )
+					print_screen_output "$weather_data"
+				fi
+			fi
+			weather_data="$time_string"
+			weather_data=$( create_print_line " " "$weather_data" )
+			print_screen_output "$weather_data"
+			if [[ $B_EXTRA_EXTRA_EXTRA_DATA == 'true' ]];then
+				if [[ -n ${a_weather[0]} ]];then
+					observation_time="${C1}observation time$SEP3${C2} ${a_weather[0]} "
+				fi
+				if [[ $B_OUTPUT_FILTER != 'true' ]];then
+					if [[ -n ${a_location[0]} ]];then
+						city=" ${a_location[0]}"
+					fi
+					if [[ -n ${a_location[1]} ]];then
+						state=" ${a_location[1]}"
+					fi
+					if [[ -n ${a_location[5]} ]];then
+						country=" $openP${a_location[5]}$closeP"
+					fi
+					if [[ -n ${a_weather[10]} ]];then
+						altitude=" ${C1}altitude$SEP3${C2} ${a_weather[10]}"
+					fi
+					location_string="${C1}location$SEP3${C2}$city$state$country$altitude "
+				fi
+				weather_data=$( create_print_line " " "$location_string$observation_time" )
+				print_screen_output "$weather_data"
+			fi
+		fi
+	else
+		weather_data=$( create_print_line "Weather:" "Weather data failure: $(date)" )
+		print_screen_output "$weather_data"
+		weather_data=$( create_print_line " " "${A_WEATHER_DATA}" )
+		print_screen_output "$weather_data"
+	fi
 	eval $LOGFE
 }
 
