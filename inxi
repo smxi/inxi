@@ -3,7 +3,7 @@
 ####  Script Name: inxi
 ####  Version: 1.9.02
 ####  Date: May 17 2013
-####  Patch Number: 01
+####  Patch Number: 02
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -7982,17 +7982,11 @@ get_weather_data()
 		location=$ALTERNATE_WEATHER_LOCATION
 	else
 		if [[ $b_test_loc != 'true' ]];then
-			# make sure location site is up
-			wget -q -t 1 -T 8 --spider $location_site || wget_error=$?
-			# grab the location xml file
-			if [[ $wget_error -eq 0 ]];then
-				location_data=$( wget -q -t 1 -T 8 -O- $location_site || wget_error=$? )
-			else
-				data_grab_error="Error: unable to connect to location server - wget: $wget_error"
-			fi
+			location_data=$( wget -q -t 1 -T 8 -O- $location_site || wget_error=$? )
 			if [[ $wget_error -ne 0 ]];then
 				data_grab_error="Error: location server up but download error - wget: $wget_error"
 			fi
+			wget_error=0
 		else
 			if [[ -f $testDir$test_location ]];then
 				location_data="$( cat $testDir$test_location )"
@@ -8098,19 +8092,11 @@ get_weather_data()
 	if [[ -z $location && -z $data_grab_error ]];then
 		data_grab_error="Error: location data downloaded but no location detected."
 	fi
-	
+
 	# now either dump process or go on to get weather data
-	if [[ -n $data_grab_error ]];then
-		A_WEATHER_DATA=$data_grab_error
-	else
+	if [[ -z $data_grab_error ]];then
 		if [[ $b_test_weather != 'true' ]];then
-			wget -q -t 1 -T 8 --spider $weather_spider || wget_error=$?
-			# grab the weather feed xml file
-			if [[ $wget_error -eq 0 ]];then
-				weather_data="$( wget -q -t 1 -T 8 -O- $weather_feed"$location" || wget_error=$? )"
-			else
-				data_grab_error="Error: unable to connect to weather server - wget: $wget_error"
-			fi
+			weather_data="$( wget -q -t 1 -T 8 -O- $weather_feed"$location" || wget_error=$? )"
 			if [[ $wget_error -ne 0 ]];then
 				data_grab_error="Error: weather server up but download error - wget: $wget_error"
 			fi
@@ -8121,7 +8107,7 @@ get_weather_data()
 				data_grab_error="Error: weather feed xml local file not found."
 			fi
 		fi
-		if [[ -z $( grep -i '<current_observation' <<< $weather_data ) ]];then
+		if [[ -z $data_grab_error && -z $( grep -i '<current_observation' <<< $weather_data ) ]];then
 			data_grab_error="Error: weather data downloaded but shows no xml start."
 		fi
 		if [[ -z $data_grab_error ]];then
@@ -8130,7 +8116,7 @@ get_weather_data()
 			site_elevation=$( grep -im 1 '<elevation>' <<< "$weather_data" | sed $SED_RX -e 's/<[^>]*>//g' \
 			-e 's/\.[0-9]*//' )
 			# we need to grab the location data from the feed for remote checks 
-			if [[ -n $ALTERNATE_WEATHER_LOCATION ]];then
+			if [[ -n $ALTERNATE_WEATHER_LOCATION && -n $weather_data ]];then
 				location_data=$( sed -e '/<current_observation>/,/<display_location>/d' -e '/<\/display_location>/,/<\/current_observation>/d' <<< "$weather_data" )
 				# echo -e "ld1:\n$location_data"
 				A_WEATHER_DATA[0]=$( gawk '
@@ -8229,10 +8215,14 @@ get_weather_data()
 			}' <<< "$weather_data" )
 		fi
 		if [[ -z $weather_array_value ]];then
-			A_WEATHER_DATA="Error: weather info downloaded but no data detected."
+			data_grab_error="Error: weather info downloaded but no data detected."
 		else
 			A_WEATHER_DATA[1]=$weather_array_value
 		fi
+	fi
+	# now either dump process or go on to get weather data
+	if [[ -n $data_grab_error ]];then
+		A_WEATHER_DATA=$data_grab_error
 	fi
 	
 	if [[ $b_debug == 'true' ]];then
