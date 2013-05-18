@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 1.9.00
+####  Version: 1.9.01
 ####  Date: May 17 2013
 ####  Patch Number: 00
 ########################################################################
@@ -2554,7 +2554,8 @@ show_options()
 	if [[ $B_ALLOW_WEATHER == 'true' ]];then
 		print_screen_output "-! location=<location> - <location> Supported types: zip (postal) code; city,state; latitude,longtitude"
 		print_screen_output "   Only use if you want the weather somewhere other than the machine running $SCRIPT_NAME."
-		print_screen_output "   Must be used with -w"
+		print_screen_output "   Must be used with -w. Note: cities/countries with two words in name don't work right,"
+		print_screen_output "   use zipcode or latitude,longitude instead."
 	fi
 	if [[ $1 == 'full' ]];then
 		print_screen_output " "
@@ -8101,7 +8102,7 @@ get_weather_data()
 			wget -q -t 1 -T 5 --spider $weather_spider || wget_error=$?
 			# grab the weather feed xml file
 			if [[ $wget_error -eq 0 ]];then
-				weather_data="$( wget -q -t 1 -T 5 -O- $weather_feed$location || wget_error=$? )"
+				weather_data="$( wget -q -t 1 -T 5 -O- $weather_feed"$location" || wget_error=$? )"
 			else
 				data_grab_error="Error: unable to connect to weather server - wget: $wget_error"
 			fi
@@ -8123,6 +8124,39 @@ get_weather_data()
 			weather_data=$( sed 's/^[[:space:]]*//' <<< "$weather_data" )
 			site_elevation=$( grep -im 1 '<elevation>' <<< "$weather_data" | sed $SED_RX -e 's/<[^>]*>//g' \
 			-e 's/\.[0-9]*//' )
+			# we need to grab the location data from the feed for remote checks 
+			if [[ -n $ALTERNATE_WEATHER_LOCATION ]];then
+				location_data=$( sed -e '/<current_observation>/,/<display_location>/d' -e '/<\/display_location>/,/<\/current_observation>/d' <<< "$weather_data" )
+				# echo "$location_data"
+				A_WEATHER_DATA[0]=$( gawk '
+				function clean(data) {
+					returnData=""
+					# some lines might be empty, so ignore those
+					if (data !~ /^<[^>]+>$/ ) {
+						returnData=gensub(/(.*>)([^<]*)(<.*)/, "\\2", 1, data)
+						gsub(/^[[:space:]]+|[[:space:]]+$|NA|N\/A/, "", returnData)
+					}
+					return returnData
+				}
+				BEGIN {
+					IGNORECASE=1
+					city=""
+					state=""
+					country=""
+				}
+				/<city>/ {
+					city=clean($0)
+				}
+				/<state>/ {
+					state=clean($0)
+				}
+				/<country>/ {
+					country=clean($0)
+				}
+				END {
+					print city ";" state ";;;;" country
+				}' <<< "$location_data" )
+			fi
 			
 			# clean off everything before/after observation_location
 			weather_data=$( sed -e '/<current_observation>/,/<observation_location>/d' \
@@ -8202,6 +8236,7 @@ get_weather_data()
 	
 	eval $LOGFE
 }
+# ALTERNATE_WEATHER_LOCATION='portland,or'
 # get_weather_data;exit
 
 #### -------------------------------------------------------------------
