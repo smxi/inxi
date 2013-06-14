@@ -3,7 +3,7 @@
 ####  Script Name: inxi
 ####  Version: 1.9.8
 ####  Date: June 14 2013
-####  Patch Number: 03-b1
+####  Patch Number: 04-b1
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -3591,7 +3591,8 @@ get_cpu_ht_multicore_smp_data()
 	eval $LOGFS
 	# in /proc/cpuinfo
 	local temp_array=''
-
+	
+	# note: known bug with xeon intel, they show core_id/physical_id as 0 for ht 4 core
 	if [[ $B_CPUINFO_FILE == 'true' ]]; then
 		A_CPU_TYPE_PCNT_CCNT=( $(
 		gawk '
@@ -3611,8 +3612,22 @@ get_cpu_ht_multicore_smp_data()
 			count = 0
 			nr = 0
 			bArm = "false"
+			bXeon = "false"
+			siblings = ""
+		}
+		# hack to handle xeons which can have buggy /proc/cpuinfo files
+		/^model name/ && ( $0 ~ /Xeon/ ) {
+			bXeon = "true"
+		}
+		# only do this once since sibling count does not change
+		/^siblings/ && ( bXeon == "true" ) && ( siblings == "" ) {
+			gsub(/[^0-9]/,"",$NF)
+			if ( $NF != "" ) {
+				siblings = $NF
+			}
 		}
 		# array of logical processors, both HT and physical
+		
 		/^processor/ {
 			gsub(/,/, " ", $NF)
 			gsub(/^ +| +$/, "", $NF)
@@ -3665,17 +3680,21 @@ get_cpu_ht_multicore_smp_data()
 			for ( i in cpu_id ) {
 				cpuHolder[cpu_id[i]] = 1
 			}
-			for ( i in cpuHolder ) {				
+			for ( i in cpuHolder ) {
 				num_of_cpus++
 			}
 			
-			i = 0		
+			i = 0
 			## count unique cores ##
 			for ( i in core_id ) {
 				coreHolder[core_id[i]] = 1
 			}
-			for ( i in coreHolder ) {				
+			for ( i in coreHolder ) {
 				num_of_cores++
+			}
+			# xeon may show wrong core / physical id count, if it does, fix it
+			if ( num_of_cores == 1 && bXeon == "true" && siblings != "" &&  siblings > 1 ) {
+				num_of_cores = siblings/2
 			}
 			# final check, override the num of cores value if it clearly is wrong
 			# and use the raw core count and synthesize the total instead of real count
@@ -3689,25 +3708,24 @@ get_cpu_ht_multicore_smp_data()
 			# if > 1 processor && processor id (physical id) != core id then Multi-Core Processors (MCP)
 			# if > 1 processor && processor ids (physical id) > 1 then Multiple Processors (SMP)
 			# if = 1 processor then single core/processor Uni-Processor (UP)
-			if ( num_of_processors > 1 )
-			{
+			if ( num_of_processors > 1 || ( bXeon == "true" && siblings != "" ) ) {
 				# non-multicore HT
-				if ( num_of_processors == (num_of_cores * 2))
-				{
+				if ( num_of_processors == (num_of_cores * 2) ) {
 					type = type "HT-"
 				}
+				else if ( bXeon == "true" && siblings != "" && siblings > 1 ) {
+					type = type "HT-" # num_of_processors num_of_cores num_of_cpus
+				}
 				# non-HT multi-core or HT multi-core
-				if (( num_of_processors == num_of_cores) ||
-					( num_of_cpus < num_of_cores))
-				{
+				if (( num_of_processors == num_of_cores) || ( num_of_cpus < num_of_cores)) {
 					type = type "MCP-"
 				}
 				# >1 cpu sockets active
-				if ( num_of_cpus > 1 )
-				{
+				if ( num_of_cpus > 1 ) {
 					type = type "SMP-"
 				}
-			} else {
+			} 
+			else {
 				type = type "UP-"
 			}			
 			
@@ -6255,7 +6273,7 @@ get_partition_data()
 	}
 	
 	# next set devBase if it didn not get set above here
-	( $1 ~ /^\/dev\/|:\/|\/\// ) && ( devBase == "" ) {
+	( devBase == "" ) && ( $1 ~ /^\/dev\/|:\/|\/\// ) {
 		devBase=gensub( /^(\/dev\/)(.+)$/, "\\2", 1, $1 )
 	}
 	# this handles zfs type devices/partitions, which do not start with / but contain /
