@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 1.9.8
-####  Date: June 15 2013
-####  Patch Number: 03-b1
+####  Version: 1.9.9
+####  Date: June 16 2013
+####  Patch Number: 01-b1
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -3592,7 +3592,7 @@ get_cpu_ht_multicore_smp_data()
 	# in /proc/cpuinfo
 	local temp_array=''
 	
-	# note: known bug with xeon intel, they show core_id/physical_id as 0 for ht 4 core
+	# note: known bug with xeon intel, they show a_core_id/physical_id as 0 for ht 4 core
 	if [[ $B_CPUINFO_FILE == 'true' ]]; then
 		A_CPU_TYPE_PCNT_CCNT=( $(
 		gawk '
@@ -3601,16 +3601,22 @@ get_cpu_ht_multicore_smp_data()
 			IGNORECASE = 1
 			num_of_cores = 0
 			num_of_processors = 0
-			num_of_cpus = 0
+			num_of_physical_cpus = 0
 			cpu_core_count = 0
 			siblings = 0
-			core_id[0]
-			processor_id[0]
-			cpu_id[0]
-			type = "-"
-			iter = 0
+			# these 3 arrays cannot be declared because that sets the first element
+			# but leaving this here so that we avoid doing that in the future
+			# a_core_id = ""
+			# a_processor_id = ""
+			# a_physical_id = ""
+			cpu_type = "-"
+			# note: we need separate iterators because some cpuinfo data has only
+			# processor, no core id or phys id
+			proc_iter = 0
+			core_iter = "" # set from actual NF data
+			phys_iter = "" # set from actual NF data
 			# needed to handle arm cpu, no processor number cases
-			count = 0
+			arm_count = 0
 			nr = 0
 			bArm = "false"
 			bXeon = "false"
@@ -3619,7 +3625,7 @@ get_cpu_ht_multicore_smp_data()
 		/^model name/ && ( $0 ~ /Xeon/ ) {
 			bXeon = "true"
 		}
-		# only do this once since sibling count does not change
+		# only do this once since sibling count does not change. 
 		/^siblings/ && ( bXeon == "true" ) && ( siblings == 0 ) {
 			gsub(/[^0-9]/,"",$NF)
 			if ( $NF != "" ) {
@@ -3632,30 +3638,34 @@ get_cpu_ht_multicore_smp_data()
 			gsub(/,/, " ", $NF)
 			gsub(/^ +| +$/, "", $NF)
 			if ( $NF ~ "^[0-9]+$" ) {
-				processor_id[iter] = $NF
+				a_processor_id[proc_iter] = $NF
 			}
 			else {
 				if ( $NF ~ "^ARM" ) {
 					bArm = "true"
 				}
-				count += 1
-				nr = count - 1
-				processor_id[iter] = nr
+				arm_count += 1
+				nr = arm_count - 1
+				a_processor_id[proc_iter] = nr
 			}
-			
+			proc_iter++
 		}
-		# array of physical cpus ids
+		
+		# array of physical cpu ids, note, this will be unset for vm cpus in many cases
+		# because they have no physical cpu, so we cannot assume this will be here.
 		/^physical/ {
-			cpu_id[iter] = $NF
+			phys_iter = $NF
+			a_physical_id[phys_iter] = $NF
 		}
-		# array of core ids
+		# array of core ids, again, here we may have HT, so we need to create an array of the
+		# actual core ids. As With physical, we cannot assume this will be here in a vm
 		/^core id/ {
-			core_id[iter] = $NF
-			iter++
+			core_iter = $NF
+			a_core_id[core_iter] = $NF
 		}
 		# this will be used to fix an intel glitch if needed, cause, intel
-		# sometimes reports core id as the same number for each core, 0
-		# so if cpu cores shows greater value than number of cores, use this
+		# sometimes reports core id as the same number for each core, 
+		# so if cpu cores shows greater value than number of cores, use this. 
 		/^cpu cores/ {
 			cpu_core_count = $NF
 		}
@@ -3664,49 +3674,41 @@ get_cpu_ht_multicore_smp_data()
 			##	only unique numbers required
 			## 	this is to get an accurate count
 			##	we are only concerned with array length
-			
 			i = 0
 			## count unique processors ##
 			# note, this fails for intel cpus at times
-			for ( i in processor_id ) {
-				procHolder[processor_id[i]] = 1
-			}
-			for ( i in procHolder ) {
+			for ( i in a_processor_id ) {
 				num_of_processors++
 			}
-			
 			i = 0
 			## count unique physical cpus ##
-			for ( i in cpu_id ) {
-				cpuHolder[cpu_id[i]] = 1
+			for ( i in a_physical_id ) {
+				num_of_physical_cpus++
 			}
-			for ( i in cpuHolder ) {
-				num_of_cpus++
-			}
-			
 			i = 0
 			## count unique cores ##
-			for ( i in core_id ) {
-				coreHolder[core_id[i]] = 1
-			}
-			for ( i in coreHolder ) {
+			for ( i in a_core_id ) {
 				num_of_cores++
 			}
-			# xeon may show wrong core / physical id count, if it does, fix it
-			if ( num_of_cores == 1 && bXeon == "true" && siblings > 1 ) {
+			# xeon may show wrong core / physical id count, if it does, fix it. A xeon
+			# may show a repeated core id : 0 which gives a fake num_of_cores=1
+			if ( bXeon == "true" && num_of_cores == 1 && siblings > 1 ) {
 				num_of_cores = siblings/2
 			}
 			# final check, override the num of cores value if it clearly is wrong
 			# and use the raw core count and synthesize the total instead of real count
-			if ( ( num_of_cores == 1 ) && ( cpu_core_count * num_of_cpus > 1 ) ) {
-				num_of_cores = cpu_core_count * num_of_cpus
+			if ( ( num_of_cores == 0 ) && ( cpu_core_count * num_of_physical_cpus > 1 ) ) {
+				num_of_cores = cpu_core_count * num_of_physical_cpus
 			}
 			# last check, seeing some intel cpus and vms with intel cpus that do not show any
 			# core id data at all, or siblings.
 			if ( num_of_cores == 0 && num_of_processors > 0 ) {
 				num_of_cores = num_of_processors
 			}
-			
+# 			print "NoCpu: " num_of_physical_cpus
+# 			print "NoCores: " num_of_cores
+# 			print "NoProc:" num_of_processors
+# 			print "CpuCoreCount:" cpu_core_count
 			####################################################################
 			# 				algorithm
 			# if > 1 processor && processor id (physical id) == core id then Hyperthreaded (HT)
@@ -3716,25 +3718,25 @@ get_cpu_ht_multicore_smp_data()
 			if ( num_of_processors > 1 || ( bXeon == "true" && siblings > 0 ) ) {
 				# non-multicore HT
 				if ( num_of_processors == (num_of_cores * 2) ) {
-					type = type "HT-"
+					cpu_type = cpu_type "HT-"
 				}
 				else if ( bXeon == "true" && siblings > 1 ) {
-					type = type "HT-" # num_of_processors num_of_cores num_of_cpus
+					cpu_type = cpu_type "HT-"
 				}
 				# non-HT multi-core or HT multi-core
-				if (( num_of_processors == num_of_cores) || ( num_of_cpus < num_of_cores)) {
-					type = type "MCP-"
+				if (( num_of_processors == num_of_cores) || ( num_of_physical_cpus < num_of_cores)) {
+					cpu_type = cpu_type "MCP-"
 				}
 				# >1 cpu sockets active
-				if ( num_of_cpus > 1 ) {
-					type = type "SMP-"
+				if ( num_of_physical_cpus > 1 ) {
+					cpu_type = cpu_type "SMP-"
 				}
 			} 
 			else {
-				type = type "UP-"
+				cpu_type = cpu_type "UP-"
 			}			
 			
-			print type " " num_of_cpus " " num_of_cores
+			print cpu_type " " num_of_physical_cpus " " num_of_cores 
 		}
 		' $FILE_CPUINFO ) )
 	fi
