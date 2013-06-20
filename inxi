@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 1.9.10
+####  Version: 1.9.11
 ####  Date: June 19 2013
 ####  Patch Number: 00
 ########################################################################
@@ -2453,7 +2453,7 @@ show_options()
 	print_screen_output "-C  Full CPU output, including per CPU clockspeed (if available)."
 	print_screen_output "-d  Optical drive data. Same as -Dd. See also -x and -xx."
 	print_screen_output "-D  Full hard Disk info, not only model, ie: /dev/sda ST380817AS 80.0GB. See also -x and -xx."
-	print_screen_output "-f  All cpu flags, triggers -C. Not shown with -F to avoid spamming."
+	print_screen_output "-f  All cpu flags, triggers -C. Not shown with -F to avoid spamming. ARM cpus show 'features'."
 	print_screen_output "-F  Full output for $SCRIPT_NAME. Includes all Upper Case line letters, plus -s and -n."
 	print_screen_output "    Does not show extra verbose options like -x -d -f -u -l -o -p -t -r"
 	print_screen_output "-G  Graphic card information (card, x type, resolution, glx renderer, version)."
@@ -3429,6 +3429,9 @@ get_cpu_data()
 			gsub(/^ +| +$/, "", $NF)
 			gsub(/ [ \t]+/, " ", $NF)
 			cpu[nr, "model"] = $NF
+			if ( $NF ~ "^ARM" ) {
+				bArm = "true"
+			}
 		}
 
 		/^cpu MHz|^clock\t+:/ {
@@ -3455,6 +3458,10 @@ get_cpu_data()
 
 		/^flags|^features/ {
 			cpu[nr, "flags"] = $NF
+			# not all ARM cpus show ARM in model name
+			if ( $1 ~ /^features/ ) {
+				bArm = "true"
+			}
 		}
 
 		/^bogomips/ {
@@ -3475,7 +3482,7 @@ get_cpu_data()
 				if ( cpu[i, "bogomips"] != "" && cpu[i, "speed"] == "" ) {
 					cpu[i, "speed"] = cpu[i, "bogomips"]
 				}
-				print cpu[i, "model"] "," cpu[i, "speed"] "," cpu[i, "cache"] "," cpu[i, "flags"] "," cpu[i, "bogomips"] ","  cpu[nr, "vendor"]
+				print cpu[i, "model"] "," cpu[i, "speed"] "," cpu[i, "cache"] "," cpu[i, "flags"] "," cpu[i, "bogomips"] ","  cpu[nr, "vendor"] "," bArm
 			}
 			# this is / was used in inxi short output only, but when it is N/A, need to use the previous array
 			# value, from above, the actual speed that is, for short output, key 0.
@@ -3639,16 +3646,19 @@ get_cpu_ht_multicore_smp_data()
 			gsub(/^ +| +$/, "", $NF)
 			if ( $NF ~ "^[0-9]+$" ) {
 				a_processor_id[proc_iter] = $NF
+				proc_iter++
 			}
 			else {
+				# note, for dual core, this can be off by one because the first
+				# line says: Processor : Arm.. but subsequent say: processor : 0 and so on as usual
 				if ( $NF ~ "^ARM" ) {
 					bArm = "true"
 				}
 				arm_count += 1
 				nr = arm_count - 1
+				# note: do not iterate because new ARM syntax puts cpu in processsor : 0 syntax
 				a_processor_id[proc_iter] = nr
 			}
-			proc_iter++
 		}
 		
 		# array of physical cpu ids, note, this will be unset for vm cpus in many cases
@@ -3685,6 +3695,7 @@ get_cpu_ht_multicore_smp_data()
 			for ( i in a_physical_id ) {
 				num_of_physical_cpus++
 			}
+			
 			i = 0
 			## count unique cores ##
 			for ( i in a_core_id ) {
@@ -3704,6 +3715,10 @@ get_cpu_ht_multicore_smp_data()
 			# core id data at all, or siblings.
 			if ( num_of_cores == 0 && num_of_processors > 0 ) {
 				num_of_cores = num_of_processors
+			}
+			# ARM/vm cpu fix, if no physical or core found, use count of 1 instead
+			if ( num_of_physical_cpus == 0 ) {
+				num_of_physical_cpus = 1
 			}
 # 			print "NoCpu: " num_of_physical_cpus
 # 			print "NoCores: " num_of_cores
@@ -8761,7 +8776,7 @@ print_cpu_data()
 {
 	eval $LOGFS
 	local cpu_data='' i='' cpu_clock_speed='' cpu_multi_clock_data=''
-	local bmip_data='' cpu_cache='' cpu_vendor='' cpu_flags=''
+	local bmip_data='' cpu_cache='' cpu_vendor='' cpu_flags='' flag_feature='flags'
 	local a_cpu_working='' cpu_model='' cpu_clock='' cpu_null_error=''
 	local cpc_plural='' cpu_count_print='' model_plural='' cpu_data_string=''
 	local cpu_physical_count='' cpu_core_count='' cpu_core_alpha='' cpu_type=''
@@ -8810,6 +8825,8 @@ print_cpu_data()
 			# update for multicore, bogomips x core count.
 			if [[ $B_EXTRA_DATA == 'true' ]];then
 	# 			if [[ $cpu_vendor != 'intel' ]];then
+				# ARM may use the faked 1 cpucorecount to make this work
+				# echo $cpu_core_count $cpu_physical_count
 				if [[ -n ${a_cpu_working[4]} ]];then
 					bmip_data=$( calculate_multicore_data "${a_cpu_working[4]}" "$(( $cpu_core_count * $cpu_physical_count ))" )
 				fi
@@ -8837,11 +8854,19 @@ print_cpu_data()
 			# only print shortened list
 			if [[ $B_CPU_FLAGS_FULL != 'true' ]];then
 				# gawk has already sorted this output, no flags returns -
-				cpu_flags=$( process_cpu_flags "${a_cpu_working[3]}" )
+				cpu_flags=$( process_cpu_flags "${a_cpu_working[3]}" "${a_cpu_working[6]}" )
 				cpu_flags="($cpu_flags)"
-				cpu_flags=" ${C1}flags$SEP3${C2} $cpu_flags"
+				if [[ ${a_cpu_working[6]} == 'true' ]];then
+					flag_feature='features'
+				fi
+				cpu_flags=" ${C1}$flag_feature$SEP3${C2} $cpu_flags"
 			fi
-			cpu_data="$cpu_data${C2} ${C1}cache$SEP3${C2} $cpu_cache$cpu_flags$bmip_data${CN}"
+			# arm cpus do not have flags or cache
+			if [[ ${a_cpu_working[6]} != 'true' ]];then
+				cpu_data="$cpu_data${C2} ${C1}cache$SEP3${C2} $cpu_cache$cpu_flags$bmip_data${CN}"
+			else
+				cpu_data="$cpu_data${C2} (ARM)$bmip_data${CN}"
+			fi
 		fi
 		# we don't this printing out extra line unless > 1 cpu core
 		if [[ ${#A_CPU_DATA[@]} -gt 2 && $B_SHOW_CPU == 'true' ]];then
@@ -8879,13 +8904,13 @@ print_cpu_data()
 		fi
 	fi
 	if [[ $B_CPU_FLAGS_FULL == 'true' ]];then
-		print_cpu_flags_full "${a_cpu_working[3]}"
+		print_cpu_flags_full "${a_cpu_working[3]}" "${a_cpu_working[6]}"
 	fi
 	eval $LOGFE
 }
 
 # takes list of all flags, split them and prints x per line
-# args: $1 - cpu flag string
+# args: $1 - cpu flag string; $2 - arm true/false
 print_cpu_flags_full()
 {
 	eval $LOGFS
@@ -8893,7 +8918,11 @@ print_cpu_flags_full()
 	local cpu_flags_full="$( echo $1 | tr " " "\n" | sort )" 
 	local a_cpu_flags='' line_starter=''
 	local i=0 counter=0 max_length=85 max_length_minus=15 flag='' flag_data=''
-	local line_length_max=''
+	local line_length_max='' flag_feature='Flags'
+	
+	if [[ $2 == 'true' ]];then
+		flag_feature='Features'
+	fi
 	
 
 	# build the flag line array
@@ -8914,7 +8943,7 @@ print_cpu_flags_full()
 	for (( i=0; i < ${#a_cpu_flags[@]};i++ ))
 	do
 		if [[ $i -eq 0 ]];then
-			line_starter="${C1}CPU Flags$SEP3${C2} "
+			line_starter="${C1}CPU $flag_feature$SEP3${C2} "
 		else
 			line_starter=''
 		fi
