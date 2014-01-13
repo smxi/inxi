@@ -1619,6 +1619,12 @@ debug_data_collector()
 			xrandr &> $debug_data_dir/xrandr.txt
 			X -version &> $debug_data_dir/x-version.txt
 			Xorg -version &> $debug_data_dir/xorg-version.txt
+			echo $GNOME_DESKTOP_SESSION_ID &> $debug_data_dir/gnome-desktop-session-id.txt
+			# kde 3 id
+			echo $KDE_FULL_SESSION &> $debug_data_dir/kde3-ful-session.txt
+			echo $KDE_SESSION_VERSION &> $debug_data_dir/kde456-session-version.txt
+			echo "$(kded$KDE_SESSION_VERSION --version )" &> $debug_data_dir/kde-version-data.txt
+			echo $XDG_CURRENT_DESKTOP &> $debug_data_dir/xdg-current-desktop.txt
 		fi
 		if [[ $1 == 'disk' || $1 == 'all' ]];then
 			echo 'Collecting dev, label, disk, uuid data, df...'
@@ -3764,82 +3770,24 @@ get_cpu_ht_multicore_smp_data()
 
 # Detect desktop environment in use, initial rough logic from: compiz-check
 # http://forlong.blogage.de/entries/pages/Compiz-Check
+# NOTE $XDG_CURRENT_DESKTOP envvar is not reliable, but it shows certain desktops better.
+# most desktops are not using it as of 2014-01-13 (KDE, UNITY, LXDE. Not Gnome)
 get_desktop_environment()
 {
 	eval $LOGFS
 	
 	# set the default, this function only runs in X, if null, don't print data out
-	local desktop_environment='' xprop_root='' 
+	local desktop_environment='' xprop_root=''
 	local version='' version_data='' toolkit=''
-	
-	if [[ -n $( type -p xprop ) ]];then
-		xprop_root="$( xprop -root 2>/dev/null )"
-	fi
 
-	# note that cinnamon split from gnome, and and can now be id'ed via xprop,
-	# but it will still trigger the next gnome true case, so this needs to go before gnome test
-	# eventually this needs to be better organized so all the xprop tests are in the same
-	# section, but this is good enough for now.
-	if [[ -n $xprop_root && -n $( grep -is '^_MUFFIN' <<< "$xprop_root" ) ]];then
-		version=$( get_de_app_version 'cinnamon' '^cinnamon' '2' )
-		# not certain cinn will always have version, so keep output right if not
-		if [[ -n $version ]];then
-			version="$version "
-		fi
-		if [[ $B_EXTRA_DATA == 'true' ]];then
-			toolkit=$( get_de_gtk_data )
-			if [[ -n $toolkit ]];then
-				version="${version}(Gtk ${toolkit})"
-			fi
-		fi
-		desktop_environment="Cinnamon"
-	elif [[ -n $xprop_root && -n $( grep -is '^_MARCO' <<< "$xprop_root" ) ]];then
-		version=$( get_de_app_version 'mate-about' '^MATE[[:space:]]DESKTOP' 'NF' )
-		# not certain cinn/mate will always have version, so keep output right if not
-		if [[ -n $version ]];then
-			version="$version "
-		fi
-		if [[ $B_EXTRA_DATA == 'true' ]];then
-			toolkit=$( get_de_gtk_data )
-			if [[ -n $toolkit ]];then
-				version="${version}(Gtk ${toolkit})"
-			fi
-		fi
-		desktop_environment="MATE"
-	# note, GNOME_DESKTOP_SESSION_ID is deprecated so we'll see how that works out
-	# https://bugzilla.gnome.org/show_bug.cgi?id=542880
-	elif [[ -n $GNOME_DESKTOP_SESSION_ID ]]; then
-		if [[ -n $( type -p gnome-shell ) ]];then
-			version=$( get_de_app_version 'gnome-shell' 'gnome' '3' )
-		elif [[ -n $( type -p gnome-about ) ]];then
-			version=$( get_de_app_version 'gnome-about' 'gnome' '3' )
-		fi
-		if [[ $B_EXTRA_DATA == 'true' ]];then
-			toolkit=$( get_de_gtk_data )
-			if [[ -n $toolkit ]];then
-				version="$version (Gtk $toolkit)"
-			fi
-		fi
-		desktop_environment="Gnome"
-	# assume 5 will id the same, why not, no need to update in future
-	elif [[ $KDE_SESSION_VERSION == '5' ]]; then
-		version_data=$( kded5 --version 2>/dev/null )
+	# works on 4, assume 5 will id the same, why not, no need to update in future
+	# KDE_SESSION_VERSION is the integer version of the desktop
+	if [[ $XDG_CURRENT_DESKTOP == 'KDE' || -n $KDE_SESSION_VERSION ]]; then
+		# note the command is actually like, kded4 --version, so we construct it
+		version_data=$( kded$KDE_SESSION_VERSION --version 2>/dev/null )
 		version=$( grep -si '^KDE Development Platform:' <<< "$version_data" | gawk '{print $4}' )
 		if [[ -z $version ]];then
-			version='5'
-		fi
-		if [[ $B_EXTRA_DATA == 'true' ]];then
-			toolkit=$( grep -si '^Qt:' <<< "$version_data" | gawk '{print $2}' )
-			if [[ -n $toolkit ]];then
-				version="$version (Qt $toolkit)"
-			fi
-		fi
-		desktop_environment="KDE"
-	elif [[ $KDE_SESSION_VERSION == '4' ]]; then
-		version_data=$( kded4 --version 2>/dev/null )
-		version=$( grep -si '^KDE Development Platform:' <<< "$version_data" | gawk '{print $4}' )
-		if [[ -z $version ]];then
-			version='4'
+			version=$KDE_SESSION_VERSION
 		fi
 		if [[ $B_EXTRA_DATA == 'true' ]];then
 			toolkit=$( grep -si '^Qt:' <<< "$version_data" | gawk '{print $2}' )
@@ -3864,128 +3812,196 @@ get_desktop_environment()
 			fi
 		fi
 		desktop_environment="KDE"
-	# now that the primary ones have been handled, next is to find the ones with unique
-	# xprop detections possible
-	else
-		if [[ -n $xprop_root ]];then
-			# String: "This is xfdesktop version 4.2.12"
-			if [[ -n $( grep -Eis '\"xfce4\"' <<< "$xprop_root" ) ]];then
-				version=$( get_de_app_version 'xfdesktop' 'xfdesktop[[:space:]]version' '5' )
-				if [[ -z $version ]];then
-					version='4'
-				fi
-				if [[ $B_EXTRA_DATA == 'true' ]];then
-					toolkit=$( get_de_app_version 'xfdesktop' 'Built[[:space:]]with[[:space:]]GTK' '4' )
-					if [[ -n $toolkit ]];then
-						version="$version (Gtk $toolkit)"
-					fi
-				fi
-				desktop_environment="Xfce"
-			# when 5 is released, the string may need updating
-			elif [[ -n $( grep -is '\"xfce5\"' <<< "$xprop_root" ) ]];then
-				version=$( get_de_app_version 'xfdesktop' 'xfdesktop[[:space:]]version' '5' )
-				if [[ -z $version ]];then
-					version='5'
-				fi
-				if [[ $B_EXTRA_DATA == 'true' ]];then
-					toolkit=$( get_de_app_version 'xfdesktop' 'Built[[:space:]]with[[:space:]]GTK' '4' )
-					if [[ -n $toolkit ]];then
-						version="$version (Gtk $toolkit)"
-					fi
-				fi
-				desktop_environment="Xfce"
-			elif [[ -n $( grep -is 'BLACKBOX_PID' <<< "$xprop_root" ) ]];then
-				if [[ -n $( grep -is 'fluxbox' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
-					version=$( get_de_app_version 'fluxbox' '^fluxbox' '2' )
-					desktop_environment='Fluxbox'
-				else
-					desktop_environment='Blackbox'
-				fi
-			elif [[ -n $( grep -is 'OPENBOX_PID' <<< "$xprop_root" ) ]];then
-				version=$( get_de_app_version 'openbox' '^openbox' '2' )
-				if [[ -n $( grep -is 'lxde' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
-					if [[ -n $version ]];then
-						version="(Openbox $version)"
-					fi
-					desktop_environment='LXDE'
-				elif [[ -n $( grep -is 'razor-desktop' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
-					if [[ -n $version ]];then
-						version="(Openbox $version)"
-					fi
-					desktop_environment='Razor-QT'
-				else
-					desktop_environment='Openbox'
-				fi
-			elif [[ -n $( grep -is 'ICEWM' <<< "$xprop_root" ) ]];then
-				version=$( get_de_app_version 'icewm' '^icewm' '2' )
-				desktop_environment='IceWM'
-			elif [[ -n $( grep -is 'ENLIGHTENMENT' <<< "$xprop_root" ) ]];then
-				# no -v or --version but version is in xprop -root
-				# ENLIGHTENMENT_VERSION(STRING) = "Enlightenment 0.16.999.49898"
-				version=$( grep -is 'ENLIGHTENMENT_VERSION' <<< "$xprop_root" | cut -d '"' -f 2 | gawk '{print $2}' )
-				desktop_environment='Enlightenment'
-			elif [[ -n $( grep -is '^I3_' <<< "$xprop_root" ) ]];then
-				version=$( get_de_app_version 'i3' '^i3' '3' )
-				desktop_environment='i3'
-			elif [[ -n $( grep -is 'WINDOWMAKER' <<< "$xprop_root" ) ]];then
-				version=$( get_de_app_version 'wmaker' '^Window[[:space:]]*Maker' 'NF' )
-				if [[ -n $version ]];then
-					version="$version "
-				fi
-				desktop_environment="WindowMaker"
-			elif [[ -n $( grep -is '^_WM2' <<< "$xprop_root" ) ]];then
-				# note; there isn't actually a wm2 version available but error handling should cover it and return null
-				# maybe one day they will add it?
-				version=$( get_de_app_version 'wm2' '^wm2' 'NF' )
-				# not certain will always have version, so keep output right if not
-				if [[ -n $version ]];then
-					version="$version "
-				fi
-				desktop_environment="WM2"
-			elif [[ -n $( grep -is 'herbstluftwm' <<< "$xprop_root" ) ]];then
-				version=$( get_de_app_version 'herbstluftwm' '^herbstluftwm' 'NF' )
-				if [[ -n $version ]];then
-					version="$version "
-				fi
-				desktop_environment="herbstluftwm"
+	elif [[ $XDG_CURRENT_DESKTOP == 'UNITY' ]];then
+		version=$( get_de_app_version 'unity' '^unity' '2' )
+		# not certain cinn will always have version, so keep output right if not
+		if [[ -n $version ]];then
+			version="$version "
+		fi
+		if [[ $B_EXTRA_DATA == 'true' ]];then
+			toolkit=$( get_de_gtk_data )
+			if [[ -n $toolkit ]];then
+				version="${version}(Gtk ${toolkit})"
 			fi
 		fi
-		# a few manual hacks for things that don't id with xprop, these are just good guesses
-		# note that gawk is going to exit after first occurance of search string, so no need for extra
+		desktop_environment="Unity"
+	fi
+	# did we find it? If not, start the xprop tests
+	if [[ -z $desktop_environment ]];then
+		if [[ -n $( type -p xprop ) ]];then
+			xprop_root="$( xprop -root 2>/dev/null )"
+		fi
+		# note that cinnamon split from gnome, and and can now be id'ed via xprop,
+		# but it will still trigger the next gnome true case, so this needs to go before gnome test
+		# eventually this needs to be better organized so all the xprop tests are in the same
+		# section, but this is good enough for now.
+		if [[ -n $xprop_root && -n $( grep -is '^_MUFFIN' <<< "$xprop_root" ) ]];then
+			version=$( get_de_app_version 'cinnamon' '^cinnamon' '2' )
+			# not certain cinn will always have version, so keep output right if not
+			if [[ -n $version ]];then
+				version="$version "
+			fi
+			if [[ $B_EXTRA_DATA == 'true' ]];then
+				toolkit=$( get_de_gtk_data )
+				if [[ -n $toolkit ]];then
+					version="${version}(Gtk ${toolkit})"
+				fi
+			fi
+			desktop_environment="Cinnamon"
+		elif [[ -n $xprop_root && -n $( grep -is '^_MARCO' <<< "$xprop_root" ) ]];then
+			version=$( get_de_app_version 'mate-about' '^MATE[[:space:]]DESKTOP' 'NF' )
+			# not certain cinn/mate will always have version, so keep output right if not
+			if [[ -n $version ]];then
+				version="$version "
+			fi
+			if [[ $B_EXTRA_DATA == 'true' ]];then
+				toolkit=$( get_de_gtk_data )
+				if [[ -n $toolkit ]];then
+					version="${version}(Gtk ${toolkit})"
+				fi
+			fi
+			desktop_environment="MATE"
+		# note, GNOME_DESKTOP_SESSION_ID is deprecated so we'll see how that works out
+		# https://bugzilla.gnome.org/show_bug.cgi?id=542880
+		elif [[ -n $GNOME_DESKTOP_SESSION_ID ]]; then
+			if [[ -n $( type -p gnome-shell ) ]];then
+				version=$( get_de_app_version 'gnome-shell' 'gnome' '3' )
+			elif [[ -n $( type -p gnome-about ) ]];then
+				version=$( get_de_app_version 'gnome-about' 'gnome' '3' )
+			fi
+			if [[ $B_EXTRA_DATA == 'true' ]];then
+				toolkit=$( get_de_gtk_data )
+				if [[ -n $toolkit ]];then
+					version="$version (Gtk $toolkit)"
+				fi
+			fi
+			desktop_environment="Gnome"
+		fi
 		if [[ -z $desktop_environment ]];then
-			if [[ -n $( grep -is 'fvwm-crystal'  <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
-				version=$( get_de_app_version 'fvwm' '^fvwm' '2' )
-				desktop_environment='FVWM-Crystal'
-			elif [[ -n $( grep -is 'fvwm'  <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
-				version=$( get_de_app_version 'fvwm' '^fvwm' '2' )
-				desktop_environment='FVWM'
-			elif [[ -n $( grep -is 'pekwm'  <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
-				version=$( get_de_app_version 'pekwm' '^pekwm' '3' )
-				desktop_environment='pekwm'
-			elif [[ -n $( grep -is 'awesome' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
-				version=$( get_de_app_version 'awesome' '^awesome' '2' )
-				desktop_environment='Awesome'
-			elif [[ -n $( grep -is 'scrotwm' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
-				version=$( get_de_app_version 'scrotwm' '^welcome.*scrotwm' '4' )
-				desktop_environment='Scrotwm' # no --version for this one
-			elif [[ -n $( grep -is 'spectrwm' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
-				version=$( get_de_app_version 'spectrwm' '^spectrwm.*welcome.*spectrwm' '5' )
-				desktop_environment='Spectrwm' # no --version for this one
-			elif [[ -n $( grep -Eis '([[:space:]]|/)twm' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
-				desktop_environment='Twm' # no --version for this one
-			elif [[ -n $( grep -Eis '([[:space:]]|/)dwm' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
-				version=$( get_de_app_version 'dwm' '^dwm' '1' )
-				desktop_environment='dwm'
-			elif [[ -n $( grep -is 'wmii2' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
-				version=$( get_de_app_version 'wmii2' '^wmii2' '1' )
-				desktop_environment='wmii2'
-			# note: in debian at least, wmii is actuall wmii3
-			elif [[ -n $( grep -is 'wmii' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
-				version=$( get_de_app_version 'wmii' '^wmii' '1' )
-				desktop_environment='wmii'
-			elif [[ -n $( grep -Eis '([[:space:]]|/)jwm' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
-				version=$( get_de_app_version 'jwm' '^jwm' '2' )
-				desktop_environment='JWM'
+		# now that the primary ones have been handled, next is to find the ones with unique
+		# xprop detections possible
+			if [[ -n $xprop_root ]];then
+				# String: "This is xfdesktop version 4.2.12"
+				if [[ -n $( grep -Eis '\"xfce4\"' <<< "$xprop_root" ) ]];then
+					version=$( get_de_app_version 'xfdesktop' 'xfdesktop[[:space:]]version' '5' )
+					if [[ -z $version ]];then
+						version='4'
+					fi
+					if [[ $B_EXTRA_DATA == 'true' ]];then
+						toolkit=$( get_de_app_version 'xfdesktop' 'Built[[:space:]]with[[:space:]]GTK' '4' )
+						if [[ -n $toolkit ]];then
+							version="$version (Gtk $toolkit)"
+						fi
+					fi
+					desktop_environment="Xfce"
+				# when 5 is released, the string may need updating
+				elif [[ -n $( grep -is '\"xfce5\"' <<< "$xprop_root" ) ]];then
+					version=$( get_de_app_version 'xfdesktop' 'xfdesktop[[:space:]]version' '5' )
+					if [[ -z $version ]];then
+						version='5'
+					fi
+					if [[ $B_EXTRA_DATA == 'true' ]];then
+						toolkit=$( get_de_app_version 'xfdesktop' 'Built[[:space:]]with[[:space:]]GTK' '4' )
+						if [[ -n $toolkit ]];then
+							version="$version (Gtk $toolkit)"
+						fi
+					fi
+					desktop_environment="Xfce"
+				elif [[ -n $( grep -is 'BLACKBOX_PID' <<< "$xprop_root" ) ]];then
+					if [[ -n $( grep -is 'fluxbox' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
+						version=$( get_de_app_version 'fluxbox' '^fluxbox' '2' )
+						desktop_environment='Fluxbox'
+					else
+						desktop_environment='Blackbox'
+					fi
+				elif [[ -n $( grep -is 'OPENBOX_PID' <<< "$xprop_root" ) ]];then
+					# note: openbox-lxde --version may be present, but returns openbox data
+					version=$( get_de_app_version 'openbox' '^openbox' '2' )
+					if [[ $XDG_CURRENT_DESKTOP == 'LXDE' || \
+							-n $( grep -is 'lxde' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
+						if [[ -n $version ]];then
+							version="(Openbox $version)"
+						fi
+						desktop_environment='LXDE'
+					elif [[ -n $( grep -is 'razor-desktop' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
+						if [[ -n $version ]];then
+							version="(Openbox $version)"
+						fi
+						desktop_environment='Razor-QT'
+					else
+						desktop_environment='Openbox'
+					fi
+				elif [[ -n $( grep -is 'ICEWM' <<< "$xprop_root" ) ]];then
+					version=$( get_de_app_version 'icewm' '^icewm' '2' )
+					desktop_environment='IceWM'
+				elif [[ -n $( grep -is 'ENLIGHTENMENT' <<< "$xprop_root" ) ]];then
+					# no -v or --version but version is in xprop -root
+					# ENLIGHTENMENT_VERSION(STRING) = "Enlightenment 0.16.999.49898"
+					version=$( grep -is 'ENLIGHTENMENT_VERSION' <<< "$xprop_root" | cut -d '"' -f 2 | gawk '{print $2}' )
+					desktop_environment='Enlightenment'
+				elif [[ -n $( grep -is '^I3_' <<< "$xprop_root" ) ]];then
+					version=$( get_de_app_version 'i3' '^i3' '3' )
+					desktop_environment='i3'
+				elif [[ -n $( grep -is 'WINDOWMAKER' <<< "$xprop_root" ) ]];then
+					version=$( get_de_app_version 'wmaker' '^Window[[:space:]]*Maker' 'NF' )
+					if [[ -n $version ]];then
+						version="$version "
+					fi
+					desktop_environment="WindowMaker"
+				elif [[ -n $( grep -is '^_WM2' <<< "$xprop_root" ) ]];then
+					# note; there isn't actually a wm2 version available but error handling should cover it and return null
+					# maybe one day they will add it?
+					version=$( get_de_app_version 'wm2' '^wm2' 'NF' )
+					# not certain will always have version, so keep output right if not
+					if [[ -n $version ]];then
+						version="$version "
+					fi
+					desktop_environment="WM2"
+				elif [[ -n $( grep -is 'herbstluftwm' <<< "$xprop_root" ) ]];then
+					version=$( get_de_app_version 'herbstluftwm' '^herbstluftwm' 'NF' )
+					if [[ -n $version ]];then
+						version="$version "
+					fi
+					desktop_environment="herbstluftwm"
+				fi
+			fi
+			# a few manual hacks for things that don't id with xprop, these are just good guesses
+			# note that gawk is going to exit after first occurance of search string, so no need for extra
+			if [[ -z $desktop_environment ]];then
+				if [[ -n $( grep -is 'fvwm-crystal'  <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
+					version=$( get_de_app_version 'fvwm' '^fvwm' '2' )
+					desktop_environment='FVWM-Crystal'
+				elif [[ -n $( grep -is 'fvwm'  <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
+					version=$( get_de_app_version 'fvwm' '^fvwm' '2' )
+					desktop_environment='FVWM'
+				elif [[ -n $( grep -is 'pekwm'  <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
+					version=$( get_de_app_version 'pekwm' '^pekwm' '3' )
+					desktop_environment='pekwm'
+				elif [[ -n $( grep -is 'awesome' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
+					version=$( get_de_app_version 'awesome' '^awesome' '2' )
+					desktop_environment='Awesome'
+				elif [[ -n $( grep -is 'scrotwm' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
+					version=$( get_de_app_version 'scrotwm' '^welcome.*scrotwm' '4' )
+					desktop_environment='Scrotwm' # no --version for this one
+				elif [[ -n $( grep -is 'spectrwm' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
+					version=$( get_de_app_version 'spectrwm' '^spectrwm.*welcome.*spectrwm' '5' )
+					desktop_environment='Spectrwm' # no --version for this one
+				elif [[ -n $( grep -Eis '([[:space:]]|/)twm' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
+					desktop_environment='Twm' # no --version for this one
+				elif [[ -n $( grep -Eis '([[:space:]]|/)dwm' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
+					version=$( get_de_app_version 'dwm' '^dwm' '1' )
+					desktop_environment='dwm'
+				elif [[ -n $( grep -is 'wmii2' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
+					version=$( get_de_app_version 'wmii2' '^wmii2' '1' )
+					desktop_environment='wmii2'
+				# note: in debian at least, wmii is actuall wmii3
+				elif [[ -n $( grep -is 'wmii' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
+					version=$( get_de_app_version 'wmii' '^wmii' '1' )
+					desktop_environment='wmii'
+				elif [[ -n $( grep -Eis '([[:space:]]|/)jwm' <<< "$Ps_aux_Data" | grep -v 'grep' ) ]];then
+					version=$( get_de_app_version 'jwm' '^jwm' '2' )
+					desktop_environment='JWM'
+				fi
 			fi
 		fi
 	fi
