@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 1.9.17
-####  Date: 2013-12-02
+####  Version: 1.9.18
+####  Date: 2014-01-13
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -20,7 +20,7 @@
 ####  Gaim/Pidgin, Weechat, KVIrc and Kopete.
 ####  Original infobash author and copyright holder:
 ####  Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif
-####  inxi version: Copyright (C) 2008-2013 Scott Rogers & Harald Hope
+####  inxi version: Copyright (C) 2008-2014 Scott Rogers & Harald Hope
 ####  Further fixes (listed as known): Horst Tritremmel <hjt at sidux.com>
 ####  Steven Barrett (aka: damentz) - usb audio patch; swap percent used patch
 ####  Jarett.Stevens - dmidecde -M patch for older systems with the /sys 
@@ -143,6 +143,11 @@
 ####  * In gawk search patterns, . is a wildcard EXCEPT in [0-9.] type containers, then it's a literal
 ####    So outside of bracketed items, it must be escaped, \. but inside, no need. Outside of gawk it should 
 ####    be escaped in search patterns if you are using it as a literal.
+####  
+####  PACKAGE MANAGER DATA (note, while inxi tries to avoid using package managers to get data, sometimes 
+####  it's the only way to get some data):
+####  * dpkg options: http://www.cyberciti.biz/howto/question/linux/dpkg-cheat-sheet.php
+####  * pacman options: https://wiki.archlinux.org/index.php/Pacman_Rosetta
 ####
 ####  As with all 'rules' there are acceptions, these are noted where used.
 ###################################################################################
@@ -2519,7 +2524,8 @@ show_options()
 	print_screen_output "    -G - (for single gpu, nvidia driver) screen number gpu is running on."
 	print_screen_output "    -i - IPv6 as well for LAN interface (IF) devices."
 	print_screen_output "    -I - System GCC, default. With -xx, also show other installed GCC versions."
-	print_screen_output "       - If running in console, not in IRC client, shows shell version number if detected."
+	print_screen_output "         If running in console, not in IRC client, shows shell version number,"
+	print_screen_output "         if detected. Adds current runlevel."
 	print_screen_output "    -N -A - Version/port(s)/driver version (if available) for Network/Audio;"
 	print_screen_output "    -N -A -G - Network, audio, graphics, shows PCI Bus ID/Usb ID number of card;"
 	print_screen_output "    -R - md-raid: Shows component raid id. Adds second RAID Info line: raid level; report on drives (like 5/5);"
@@ -2534,7 +2540,7 @@ show_options()
 	print_screen_output "    -A - Chip vendor:product ID for each audio device."
 	print_screen_output "    -D - Disk serial number."
 	print_screen_output "    -G - Chip vendor:product ID for each video card."
-	print_screen_output "    -I - Other detected installed gcc versions (if present)."
+	print_screen_output "    -I - Other detected installed gcc versions (if present). System default runlevel."
 	print_screen_output "         Adds parent program (or tty) for shell info if not in IRC (like Konsole or Gterm)."
 	print_screen_output "    -M - Chassis information, bios rom size (dmidecode only), if data for either is available."
 	print_screen_output "    -N - Chip vendor:product ID for each nic."
@@ -3882,6 +3888,7 @@ get_desktop_environment()
 		# xprop detections possible
 			if [[ -n $xprop_root ]];then
 				# String: "This is xfdesktop version 4.2.12"
+				# alternate: xfce4-about --version > xfce4-about 4.10.0 (Xfce 4.10)
 				if [[ -n $( grep -Eis '\"xfce4\"' <<< "$xprop_root" ) ]];then
 					version=$( get_de_app_version 'xfdesktop' 'xfdesktop[[:space:]]version' '5' )
 					if [[ -z $version ]];then
@@ -4091,14 +4098,38 @@ get_de_gtk_data()
 	
 	local toolkit=''
 	
-	# this is a hack, and has to be changed with every toolkit version change
-	toolkit=$( pkg-config --modversion gtk+-4.0 2>/dev/null )
-	# note: opensuse gets null output here, we need the command to get version and output sample
-	if [[ -z $toolkit ]];then
-		toolkit=$( pkg-config --modversion gtk+-3.0 2>/dev/null )
+	# this is a hack, and has to be changed with every toolkit version change, and only dev systems
+	# have this installed, but it's a cross distro command so let's test it first
+	if [[ -n $( type -p pkg-config ) ]];then
+		toolkit=$( pkg-config --modversion gtk+-4.0 2>/dev/null )
+		# note: opensuse gets null output here, we need the command to get version and output sample
+		if [[ -z $toolkit ]];then
+			toolkit=$( pkg-config --modversion gtk+-3.0 2>/dev/null )
+		fi
+		if [[ -z $toolkit ]];then
+			toolkit=$( pkg-config --modversion gtk+-2.0 2>/dev/null )
+		fi
 	fi
+	# now let's go to more specific version tests, this will never cover everything and that's fine.
 	if [[ -z $toolkit ]];then
-		toolkit=$( pkg-config --modversion gtk+-2.0 2>/dev/null )
+		# we'll try some known package managers next. dpkg will handle a lot of distros 
+		# this is the most likely order as of: 2014-01-13. Not going to try to support all package managers
+		# too much work, just the very biggest ones.
+		if [[ -n $( type -p dpkg ) ]];then
+			toolkit=$( dpkg -s libgtk-3-0 2>/dev/null | gawk -F ':' '/^Version/ {print $2}' )
+			if [[ -z $toolkit ]];then
+				toolkit=$( dpkg -s libgtk2.0-0 2>/dev/null | gawk -F ':' '/^Version/ {print $2}' )
+			fi
+			# just guessing on gkt 4 package name
+			if [[ -z $toolkit ]];then
+				toolkit=$( dpkg -s libgtk-4-0 2>/dev/null | gawk -F ':' '/^Version/ {print $2}' )
+			fi
+		elif [[ -n $( type -p pacman ) ]];then
+			toolkit=$(  pacman -Qi gtk3 2>/dev/null | gawk -F ':' '/^Version/ {print $2}' )
+			if [[ -z $toolkit ]];then
+				toolkit=$( pacman -Qi gtk2 2>/dev/null | gawk -F ':' '/^Version/ {print $2}' )
+			fi
+		fi
 	fi
 	echo $toolkit
 	
@@ -7562,6 +7593,44 @@ get_runlevel_data()
 	eval $LOGFE
 }
 
+# note: it appears that at least as of 2014-01-13, /etc/inittab is going to be used for
+# default runlevel in upstart/sysvinit. systemd default is not always set so check to see 
+# if it's linked.
+get_runlevel_default()
+{
+	eval $LOGFS
+	local default_runlvl=''
+	local inittab='/etc/inittab'
+	local systemd_default='/etc/systemd/system/default.target'
+	local upstart_default='/etc/init/rc-sysinit.conf'
+	
+	# note: systemd systems do not necessarily have this link created
+	if [[ -L $systemd_default  ]];then
+		default_runlvl=$( readlink $systemd_default )
+		if [[ -n $default_runlvl ]];then
+			default_runlvl=$( basename $default_runlvl )
+		fi
+	# http://askubuntu.com/questions/86483/how-can-i-see-or-change-default-run-level
+	# note that technically default can be changed at boot but for inxi purposes that does
+	# not matter, we just want to know the system default
+	elif [[ -e $upstart_default ]];then
+		# env DEFAULT_RUNLEVEL=2
+		default_runlvl=$( gawk -F '=' '/^env[[:space:]]+DEFAULT_RUNLEVEL/ {
+		print $2
+		}' $systemd_default )
+	fi
+	
+	# handle weird cases where null but inittab exists
+	if [[ -z $default_runlvl && -f $inittab ]];then
+		default_runlvl=$( gawk -F ':' '
+		/^id.*initdefault/ {
+			print $2
+		}' $inittab )
+	fi
+	echo $default_runlvl
+	eval $LOGFE
+}
+
 get_sensors_data()
 {
 	eval $LOGFS
@@ -9348,7 +9417,7 @@ print_info_data()
 {
 	eval $LOGFS
 
-	local info_data='' line_starter='Info:'
+	local info_data='' line_starter='Info:' runlvl_default=''
 	local runlvl='' client_data='' shell_data='' shell_parent='' tty_session=''
 	local memory="$( get_memory_data )"
 	local processes=$(( $( wc -l <<< "$Ps_aux_Data" ) - 1 ))
@@ -9401,29 +9470,49 @@ print_info_data()
 
 	# this only triggers if no X data is present or if extra data switch is on
 	if [[ $B_SHOW_X_DATA != 'true' || $B_EXTRA_DATA == 'true' ]];then
+		if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+			runlvl_default=$( get_runlevel_default )
+			if [[ -n $runlvl_default ]];then
+				runlvl_default=" ${C1}default$SEP3${C2} $runlvl_default"
+			fi
+		fi
 		runlvl="$( get_runlevel_data )"
 		if [[ -n $runlvl ]];then
-			info_data="${info_data}${C1}Runlevel$SEP3${C2} ${runlvl} "
+			info_data="${info_data}${C1}Runlevel$SEP3${C2} $runlvl$runlvl_default "
 		fi
 	fi
 	if [[ $SHOW_IRC -gt 0 ]];then
 		client_data="${C1}Client$SEP3${C2} ${IRC_CLIENT}${IRC_CLIENT_VERSION} "
 	fi
-	info_data="${info_data}$gcc_installed"
+	info_data="${info_data}"
 	closing_data="$client_data${C1}$SCRIPT_NAME$SEP3${C2} $SCRIPT_VERSION_NUMBER$patch_version_number${CN}"
-	if [[ -n $info_data && $( calculate_line_length "$info_data$closing_data" ) -gt $LINE_MAX ]];then
+	
+	# sometimes gcc is very long, and default runlevel can be long with systemd, so create a gcc-less line first
+	if [[ -n $info_data && $( calculate_line_length "${info_data}${gcc_installed}" ) -gt $LINE_MAX ]];then
 		info_data=$( create_print_line "$line_starter" "$info_data" )
 		print_screen_output "$info_data"
-		info_data="$closing_data"
+		info_data="${gcc_installed}${closing_data}"
+		gcc_installed=''
+		closing_data=''
 		line_starter=' '
-	else
-		info_data="${info_data}$closing_data"
+	elif [[ -n $info_data && $( calculate_line_length "${info_data}${gcc_installed}${closing_data}" ) \
+	      -gt $LINE_MAX ]];then
+		info_data=$( create_print_line "$line_starter" "$info_data" )
+		print_screen_output "$info_data"
+		info_data="${gcc_installed}${closing_data}"
+		gcc_installed=''
+		closing_data=''
+		line_starter=' '
+	else 
+		info_data="${info_data}${gcc_installed}${closing_data}"
 	fi
+	
 	info_data=$( create_print_line "$line_starter" "$info_data" )
 	if [[ $SCHEME -gt 0 ]];then
 		info_data="${info_data} ${NORMAL}"
 	fi
 	print_screen_output "$info_data"
+	
 	eval $LOGFE
 }
 
