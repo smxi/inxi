@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.1.0
-####  Date: 2014-03-13
+####  Version: 2.1.1
+####  Date: 2014-03-14
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -193,37 +193,47 @@
 
 ## NOTE: we can use hwinfo if it's available in all systems, or most, to get
 ## a lot more data and verbosity levels going
-# set to default LANG to avoid locales errors with , or .
-LANG=C
-### Variable initializations: null values
-BSD_TYPE=''
-BSD_VERSION=
-CMDL_MAX=''
-COLOR_SCHEME=''
+
+### DISTRO MAINTAINER FLAGS ###
+# flag to allow distro maintainers to turn off update features. If false, turns off
+# -U and -! testing/advanced update options, as well as removing the -U help menu item
+# NOTE: Usually you want to create these in /etc/inxi.conf to avoid having to update each time
+B_ALLOW_UPDATE='true'
+B_ALLOW_WEATHER='true'
+
+### USER CONFIGS: SET IN inxi.conf file see wiki for directions ###
+# http://code.google.com/p/inxi/wiki/script_configuration_files
 # override in user config if desired, seems like less than .3 doesn't work as reliably
 CPU_SLEEP='0.3' 
-DEV_DISK_ID=''
-DEV_DISK_LABEL=''
-DEV_DISK_MAPPER=''
-DEV_DISK_UUID=''
-DMIDECODE_DATA=''
 FILTER_STRING='<filter>'
-IRC_CLIENT=''
-IRC_CLIENT_VERSION=''
-LINE_MAX=''
-# for features like help/version will fit to terminal / console screen width
-LINE_MAX_BASIC='120'
-LINE_MAX_CONSOLE='115'
-LINE_MAX_IRC='105'
+
+# for features like help/version will fit to terminal / console screen width. Console
+# widths will be dynamically set in main() based on cols in term/console
+COLS_MAX_CONSOLE='115'
+COLS_MAX_IRC='105'
 PS_COUNT=5
-PS_THROTTLED=''
-REPO_DATA=''
-SED_I='-i' # for gnu sed, will be set to -i '' for bsd sed
-SED_RX='-r' # for gnu sed, will be set to -E for bsd sed for backward compatibility
 # change to less, or more if you have very slow connection
 WGET_TIMEOUT=8
+### END USER CONFIGS ###
 
-### primary data array holders	## usage: 'A_<var>'
+### LOCALIZATION - DO NOT CHANGE! ###
+# set to default LANG to avoid locales errors with , or .
+LANG=C
+# Make sure every program speaks English.
+LC_ALL="C"
+export LC_ALL
+
+### ARRAYS ###
+## Prep
+# Clear nullglob, because it creates unpredictable situations with IFS=$'\n' ARR=($VAR) IFS="$ORIGINAL_IFS"
+# type constructs. Stuff like [rev a1] is now seen as a glob expansion pattern, and fails, and
+# therefore results in nothing.
+shopt -u nullglob
+## info on bash built in: $IFS - http://tldp.org/LDP/abs/html/internalvariables.html
+# Backup the current Internal Field Separator
+ORIGINAL_IFS="$IFS"
+
+## Initialize
 A_ALSA_DATA=''
 A_AUDIO_DATA=''
 A_CMDL=''
@@ -250,12 +260,7 @@ A_UNMOUNTED_PARTITION_DATA=''
 A_WEATHER_DATA=''
 A_DISPLAY_SERVER_DATA=''
 
-### Boolean true/false globals	## usage: 'B_<var>'
-## Distro maintainer flags ##
-# flag to allow distro maintainers to turn off update features. If false, turns off
-# -U and -! testing/advanced update options, as well as removing the -U help menu item
-B_ALLOW_UPDATE='true'
-B_ALLOW_WEATHER='true'
+### BOOLEANS ###
 ## standard boolean flags ##
 B_BSD_RAID='false'
 B_COLOR_SCHEME_SET='false'
@@ -292,10 +297,10 @@ B_RAID_SET='false'
 B_ROOT='false'
 B_RUN_COLOR_SELECTOR='false'
 B_RUNNING_IN_DISPLAY='false' # in x type display server
-# Running in a shell? Defaults to false, and is determined later.
-B_RUNNING_IN_SHELL='false'
 if tty >/dev/null;then
 	B_RUNNING_IN_SHELL='true'
+else
+	B_RUNNING_IN_SHELL='false'
 fi
 # this sets the debug buffer
 B_SCRIPT_UP='false'
@@ -348,7 +353,7 @@ B_USE_LOGGING='false'
 B_UUID_SET='false'
 B_XORG_LOG='false'
 
-### Directory/file exist flags; test as [[ $(boolean) ]] not [[ $boolean ]]
+## Directory/file exist flags; test as [[ $(boolean) ]] not [[ $boolean ]]
 B_ASOUND_DEVICE_FILE='false'
 B_ASOUND_VERSION_FILE='false'
 B_BASH_ARRAY='false'
@@ -364,64 +369,21 @@ B_PARTITIONS_FILE='false' #
 B_PROC_DIR='false'
 B_SCSI_FILE='false'
 
-### File's used when present
-FILE_ASOUND_DEVICE='/proc/asound/cards'
-FILE_ASOUND_MODULES='/proc/asound/modules' # not used but maybe for -A?
-FILE_ASOUND_VERSION='/proc/asound/version'
-FILE_CPUINFO='/proc/cpuinfo'
-FILE_DMESG_BOOT='/var/run/dmesg.boot'
-FILE_LSB_RELEASE='/etc/lsb-release'
-FILE_MDSTAT='/proc/mdstat'
-FILE_MEMINFO='/proc/meminfo'
-FILE_MODULES='/proc/modules'
-FILE_MOUNTS='/proc/mounts'
-FILE_OS_RELEASE='/etc/os-release'
-FILE_PARTITIONS='/proc/partitions'
-FILE_SCSI='/proc/scsi/scsi'
-FILE_XORG_LOG='/var/log/Xorg.0.log' # if not found, search and replace with actual location
-
 ## app tested for and present, to avoid repeat tests
 B_FILE_TESTED='false'
 B_HDDTEMP_TESTED='false'
 B_MODINFO_TESTED='false'
 B_SUDO_TESTED='false'
-FILE_PATH=''
-HDDTEMP_PATH=''
-MODINFO_PATH=''
-SUDO_PATH=''
 
-### Variable initializations: constants
+### CONSTANTS/INITIALIZE - SOME MAY BE RESET LATER ###
 DCOPOBJ="default"
 DEBUG=0 # Set debug levels from 1-10 (8-10 trigger logging levels)
 # Debug Buffer Index, index into a debug buffer storing debug messages until inxi is 'all up'
 DEBUG_BUFFER_INDEX=0
 ## note: the debugger rerouting to /dev/null has been moved to the end of the get_parameters function
 ## so -@[number] debug levels can be set if there is a failure, otherwise you can't even see the errors
-
-# Defaults to 2, make this 1 for normal, 0 for no colorcodes at all. Use following variables in config 
-# files to change defaults for each type, or global
-# Same as runtime parameter.
-DEFAULT_COLOR_SCHEME=2
-# Always leave these blank, these are only going to be set in inxi.conf files, that makes testing
-# for user changes easier after sourcing the files
-GLOBAL_COLOR_SCHEME=''
-IRC_COLOR_SCHEME=''
-IRC_CONS_COLOR_SCHEME=''
-IRC_X_TERM_COLOR_SCHEME=''
-CONSOLE_COLOR_SCHEME=''
-VIRT_TERM_COLOR_SCHEME=''
-
-# Default indentation level
-INDENT=10
-
-# logging eval variables, start and end function: Insert to LOGFS LOGFE when debug level >= 8
-LOGFS_STRING='log_function_data fs $FUNCNAME "$( echo $@ )"'
-LOGFE_STRING='log_function_data fe $FUNCNAME'
-LOGFS=''
-LOGFE=''
-# uncomment for debugging from script start
-# LOGFS=$LOGFS_STRING
-# LOGFE=$LOGFE_STRING
+SED_I='-i' # for gnu sed, will be set to -i '' for bsd sed
+SED_RX='-r' # for gnu sed, will be set to -E for bsd sed for backward compatibility
 
 # default to false, no konversation found, 1 is native konvi (qt3/KDE3) script mode, 2 is /cmd inxi start,
 ##	3 is Konversation > 1.2 (qt4/KDE4) 
@@ -440,24 +402,38 @@ VERBOSITY_LEVEL=0
 # Supported number of verbosity levels, including 0
 VERBOSITY_LEVELS=7
 
-# Clear nullglob, because it creates unpredictable situations with IFS=$'\n' ARR=($VAR) IFS="$ORIGINAL_IFS"
-# type constructs. Stuff like [rev a1] is now seen as a glob expansion pattern, and fails, and
-# therefore results in nothing.
-shopt -u nullglob
-## info on bash built in: $IFS - http://tldp.org/LDP/abs/html/internalvariables.html
-# Backup the current Internal Field Separator
-ORIGINAL_IFS="$IFS"
+### LOGGING ###
+## logging eval variables, start and end function: Insert to LOGFS LOGFE when debug level >= 8
+LOGFS_STRING='log_function_data fs $FUNCNAME "$( echo $@ )"'
+LOGFE_STRING='log_function_data fe $FUNCNAME'
+LOGFS=''
+LOGFE=''
+# uncomment for debugging from script start
+# LOGFS=$LOGFS_STRING
+# LOGFE=$LOGFE_STRING
 
-# These two determine separators in single line output, to force irc clients not to break off sections
-SEP1='~'
-SEP2=' '
-# these will assign a separator to non irc states. Important! Using ':' can trigger stupid emoticon
-# behaviors in output on IRC, so do not use those.
-SEP3_IRC=''
-SEP3_CONSOLE=':'
-SEP3='' # do not set, will be set dynamically
+### FILE NAMES/PATHS/URLS - must be non root writable ###
+# File's used when present
+FILE_ASOUND_DEVICE='/proc/asound/cards'
+FILE_ASOUND_MODULES='/proc/asound/modules' # not used but maybe for -A?
+FILE_ASOUND_VERSION='/proc/asound/version'
+FILE_CPUINFO='/proc/cpuinfo'
+FILE_DMESG_BOOT='/var/run/dmesg.boot'
+FILE_LSB_RELEASE='/etc/lsb-release'
+FILE_MDSTAT='/proc/mdstat'
+FILE_MEMINFO='/proc/meminfo'
+FILE_MODULES='/proc/modules'
+FILE_MOUNTS='/proc/mounts'
+FILE_OS_RELEASE='/etc/os-release'
+FILE_PARTITIONS='/proc/partitions'
+FILE_SCSI='/proc/scsi/scsi'
+FILE_XORG_LOG='/var/log/Xorg.0.log' # if not found, search and replace with actual location
 
-### Script names/paths - must be non root writable
+FILE_PATH=''
+HDDTEMP_PATH=''
+MODINFO_PATH=''
+SUDO_PATH=''
+
 SCRIPT_DATA_DIR="$HOME/.inxi"
 ALTERNATE_FTP='' # for data uploads
 ALTERNATE_WEATHER_LOCATION='' # weather alternate location
@@ -483,25 +459,76 @@ SCRIPT_DOWNLOAD_DEV='http://smxi.org/test/'
 WAN_IP_URL='http://smxi.org/opt/ip.php'
 KONVI_CFG="konversation/scripts/$SCRIPT_NAME.conf" # relative path to $(kde-config --path data)
 
-TERM_LINES=100
+### INITIALIZE VARIABLES NULL ###
+BSD_TYPE=''
+BSD_VERSION=
+CMDL_MAX=''
+
+DEV_DISK_ID=''
+DEV_DISK_LABEL=''
+DEV_DISK_MAPPER=''
+DEV_DISK_UUID=''
+DMIDECODE_DATA=''
+IRC_CLIENT=''
+IRC_CLIENT_VERSION=''
+PS_THROTTLED=''
+REPO_DATA=''
+
+### LAYOUT ###
+# These two determine separators in single line output, to force irc clients not to break off sections
+SEP1='~'
+SEP2=' '
+# these will assign a separator to non irc states. Important! Using ':' can trigger stupid emoticon
+# behaviors in output on IRC, so do not use those.
+SEP3_IRC=''
+SEP3_CONSOLE=':'
+SEP3='' # do not set, will be set dynamically
+
+# Default indentation level. NOTE: actual indent is 1 greater to allow for spacing
+INDENT=10
+
+### COLUMN WIDTHS ###
+COLS_INNER='' ## for width minus INDENT
+COLS_MAX=''
+
 TERM_COLUMNS=80
+TERM_LINES=100
+
 # http://stackoverflow.com/questions/1780483/lines-and-columns-environmental-variables-lost-in-a-script
 if [[ -n $( type -p tput ) ]];then
-	TERM_LINES=$(tput lines)
 	TERM_COLUMNS=$(tput cols)
+	TERM_LINES=$(tput lines)
 fi
 # double check, just in case it's missing functionality or whatever
 if [[ -n ${TERM_COLUMNS##[0-9]*} ]];then
-	TERM_LINES=100
 	TERM_COLUMNS=80
+	TERM_LINES=100
 fi
 
-### Script Localization
-# Make sure every program speaks English.
-LC_ALL="C"
-export LC_ALL
+# Only for legacy user config files se we can test and convert the var name
+LINE_MAX_CONSOLE=''
+LINE_MAX_IRC=''
 
-### Output Colors
+### COLORS ###
+# Defaults to 2, make this 1 for normal, 0 for no colorcodes at all. Use following variables in config 
+# files to change defaults for each type, or global
+# Same as runtime parameter.
+DEFAULT_COLOR_SCHEME=2
+## color variables - set dynamically
+COLOR_SCHEME=''
+C1=''
+C2=''
+CN=''
+## Always leave these blank, these are only going to be set in inxi.conf files, that makes testing
+## for user changes easier after sourcing the files
+GLOBAL_COLOR_SCHEME=''
+IRC_COLOR_SCHEME=''
+IRC_CONS_COLOR_SCHEME=''
+IRC_X_TERM_COLOR_SCHEME=''
+CONSOLE_COLOR_SCHEME=''
+VIRT_TERM_COLOR_SCHEME=''
+
+## Output colors
 # A more elegant way to have a scheme that doesn't print color codes (neither ANSI nor mIRC) at all. See below.
 unset EMPTY
 #             DGREY   BLACK   RED     DRED    GREEN   DGREEN  YELLOW  DYELLOW
@@ -558,12 +585,12 @@ RED,WHITE,NORMAL
 BLUE,WHITE,NORMAL
 )
 
-## Actual color variables
-C1=''
-C2=''
-CN=''
+# WARNING: In the main part below (search for 'KONVI')
+# there's a check for Konversation-specific config files.
+# Any one of these can override the above if inxi is run
+# from Konversation!
 
-### Distro Data
+## DISTRO DATA/ID ##
 # In cases of derived distros where the version file of the base distro can also be found under /etc,
 # the derived distro's version file should go first. (Such as with Sabayon / Gentoo)
 DISTROS_DERIVED="antix-version aptosid-version kanotix-version knoppix-version mandrake-release pardus-release sabayon-release siduction-version sidux-version solusos-release turbolinux-release zenwalk-version"
@@ -578,7 +605,7 @@ DISTROS_OS_RELEASE_GOOD="arch-release SuSE-release"
 # DSL (Bash 2.05b: grep -m doesn't work; arrays won't work) --> unusable output
 # Puppy Linux 4.1.2 (Bash 3.0: arrays won't work) --> works partially
 
-### Bans Data
+## OUTPUT FILTERS/SEARCH ##
 # Note that \<ltd\> bans only words, not parts of strings; in \<corp\> you can't use punctuation characters like . or ,
 # we're saving about 10+% of the total script exec time by hand building the ban lists here, using hard quotes.
 BAN_LIST_NORMAL='chipset|components|computing|computer|corporation|communications|electronics|electrical|electric|gmbh|group|industrial|international|revision|semiconductor|software|technologies|technology|ltd\.|\<ltd\>|inc\.|\<inc\>|intl\.|co\.|\<co\>|corp\.|\<corp\>|\(tm\)|\(r\)|®|\(rev ..\)'
@@ -594,11 +621,6 @@ USB_NETWORK_SEARCH="$USB_NETWORK_SEARCH|Actiontec.*Wireless|Actiontec.*Network|A
 # then a few known hard to ID ones added 
 # belkin=050d; d-link=07d1; netgear=0846; ralink=148f; realtek=0bda; 
 USB_NETWORK_SEARCH="$USB_NETWORK_SEARCH|050d:935b|0bda:8189|0bda:8197"
-
-# WARNING: In the main part below (search for 'KONVI')
-# there's a check for Konversation-specific config files.
-# Any one of these can override the above if inxi is run
-# from Konversation!
 
 ########################################################################
 #### MAIN: Where it all begins
@@ -623,6 +645,34 @@ main()
 	if [[ -s $HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf ]];then
 		source $HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf
 	fi
+	# Convert to new variable names if set in config files, legacy test
+	if [[ -n $LINE_MAX_CONSOLE ]];then
+		COLS_MAX_CONSOLE=$LINE_MAX_CONSOLE
+	fi
+	if [[ -n $LINE_MAX_IRC ]];then
+		COLS_MAX_IRC=$LINE_MAX_IRC
+	fi
+	# TERM_COLUMNS is set in top globals, using tput cols
+	if [[ $TERM_COLUMNS -lt $COLS_MAX_CONSOLE ]];then
+		COLS_MAX_CONSOLE=$TERM_COLUMNS
+	fi
+	# adjust, some terminals will wrap if output cols == term cols
+	COLS_MAX_CONSOLE=$(( $COLS_MAX_CONSOLE - 2 ))
+	
+	# comes after source for user set stuff
+	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
+		COLS_MAX=$COLS_MAX_CONSOLE
+		SEP3=$SEP3_CONSOLE
+	else
+		# too hard to read if no colors, so force that for users on irc
+		if [[ $SCHEME == 0 ]];then
+			SEP3=$SEP3_CONSOLE
+		else
+			SEP3=$SEP3_IRC
+		fi
+		COLS_MAX=$COLS_MAX_IRC
+	fi
+	COLS_INNER=$(( $COLS_MAX - $INDENT - 4 ))
 
 	# Check for dependencies BEFORE running ANYTHING else except above functions
 	# Not all distro's have these depends installed by default. Don't want to run
@@ -716,19 +766,7 @@ main()
 			set_color_scheme $color_scheme
 		fi
 	fi
-	if [[ $B_RUNNING_IN_SHELL == 'true' ]];then
-		LINE_MAX=$LINE_MAX_CONSOLE
-		SEP3=$SEP3_CONSOLE
-	else
-		# too hard to read if no colors, so force that for users on irc
-		if [[ $SCHEME == 0 ]];then
-			SEP3=$SEP3_CONSOLE
-		else
-			SEP3=$SEP3_IRC
-		fi
-		LINE_MAX=$LINE_MAX_IRC
-	fi
-
+	
 	# all the pre-start stuff is in place now
 	B_SCRIPT_UP='true'
 	script_debugger "Debugger: $SCRIPT_NAME is up and running..."
@@ -759,7 +797,7 @@ initialize_data()
 {
 	eval $LOGFS
 	BSD_VERSION=$( uname -s 2>/dev/null | tr '[A-Z]' '[a-z]' )
-
+	
 	# note: archbsd says they are a freebsd distro, so assuming it's the same as freebsd
 	if [[ -n $( grep 'bsd' <<< "$BSD_VERSION" ) ]];then
 		# GNU/kfreebsd will by definition have GNU tools like sed/grep
@@ -2487,7 +2525,7 @@ show_options()
 	print_lines_basic "2" "97" "Console IRC running in X - like irssi in xTerm"
 	print_lines_basic "2" "98" "Console IRC not in  X"
 	print_lines_basic "2" "99" "Global - Overrides/removes all settings. Setting specific removes global."
-	print_lines_basic "1" "-C" "Full CPU output, including per CPU clockspeed (if available)."
+	print_lines_basic "1" "-C" "CPU output, including per CPU clockspeed (if available)."
 	print_lines_basic "1" "-d" "Optical drive data. Same as -Dd. See also -x and -xx."
 	print_lines_basic "1" "-D" "Full hard Disk info, not only model, ie: /dev/sda ST380817AS 80.0GB. See also -x and -xx."
 	print_lines_basic "1" "-f" "All cpu flags, triggers -C. Not shown with -F to avoid spamming. ARM cpus show 'features'."
@@ -2526,7 +2564,7 @@ show_options()
 		print_lines_basic "1" "-W" "<location> Supported options for <location>: postal code; city, state/country; latitude/longitude. Only use if you want the weather somewhere other than the machine running $SCRIPT_NAME. Use only ascii characters, replace spaces in city/state/country names with '+'. Example:^$SCRIPT_NAME^-W^new+york,ny"
 	fi
 	print_lines_basic "1" "-x" "Adds the following extra data (only works with verbose or line output, not short form):"
-	print_lines_basic "2" "-C" "Bogomips on Cpu;"
+	print_lines_basic "2" "-C" "CPU Flags, Bogomips on Cpu;"
 	print_lines_basic "2" "-d" "Extra optical drive data; adds rev version to optical drive."
 	print_lines_basic "2" "-D" "Hdd temp with disk data if you have hddtemp installed, if you are root OR if you have added to /etc/sudoers (sudo v. 1.7 or newer) Example:^<username>^ALL^=^NOPASSWD:^/usr/sbin/hddtemp"
 	print_lines_basic "2" "-G" "Direct rendering status for Graphics (in X)."
@@ -2611,25 +2649,18 @@ show_options()
 	print_screen_output " "
 }
 
-# uses $TERM_COLUMNS global in terminal to set width using $LINE_MAX_BASIC
+# uses $TERM_COLUMNS to set width using $COLS_MAX as max width
 # IMPORTANT: minimize use of subshells here or the output is too slow
 # args: $1 - 0 1 2 3 4 for indentation level; $2 -line starter, like -m; $3 - content of block.
 print_lines_basic()
 {
-	local line_width=$LINE_MAX_BASIC
-	local line_starter=$2
+	local line_width=$COLS_MAX
 	local print_string='' indent_inner='' indent_full='' indent_x='' 
 	local indent_working='' indent_working_full=''
 	local line_starter='' line_1_starter='' line_x_starter='' 
 	# note: to create a padded string below
 	local fake_string=' ' temp_count='' line_count='' spacer=''
-	
 	local indent_main=6 indent_x='' b_indent_x='true' 
-	
-	# TERM_COLUMNS is set in top globals, using tput cols
-	if [[ $TERM_COLUMNS -lt $LINE_MAX_BASIC ]];then
-		line_width=$TERM_COLUMNS
-	fi
 	
 	case $1 in
 		# for no options, start at left edge
@@ -2639,7 +2670,6 @@ print_lines_basic()
 			b_indent_x='false'
 			;;
 		1)	indent_full=$indent_main
-			# temp_count=$( wc -c <<< $2 )
 			temp_count=${#2}
 			if [[ $temp_count -le $indent_full ]];then
 				indent_working=$indent_full
@@ -2692,19 +2722,13 @@ print_lines_basic()
 	
 	line_count=$(( $line_width - $indent_full ))
 	
-	# bash loop is so slow, only run this if required
-	# temp_count=$( wc -c <<< $3 )
-	temp_count=${#3}
-	# line_count=1000
-	if [[ $temp_count -gt $line_count ]];then
+	# bash loop is slow, only run this if required
+	if [[ ${#3} -gt $line_count ]];then
 		for word in $3
 		do
 			temp_string="$print_string$spacer$word"
 			spacer=' '
-			# note: wc -c here will return +1 actual string length
-			#temp_count=$( wc -c <<< $temp_string )
-			temp_count=${#temp_string}
-			if [[ $temp_count -lt $line_count ]];then
+			if [[ ${#temp_string} -lt $line_count ]];then
 				print_string=$temp_string # lose any white space start/end
 				# echo -n $(( $line_width - $indent_full ))
 			else
@@ -8731,7 +8755,6 @@ calculate_line_length()
 	local string="$1"
 	# ansi: [1;34m irc: \x0312
 	string=$( sed -e "s/\x1b\[[0-9]\{1,2\}\(;[0-9]\{1,2\}\)\{0,2\}m//g" -e "s/\\\x0[0-9]\{1,3\}//g" <<< $string )
-	# count=$( wc -c <<< $string )
 	count=${#string}
 	echo $count
 }
@@ -9110,13 +9133,13 @@ print_audio_data()
 			fi
 			# only print alsa on last line if short enough, otherwise print on its own line
 			if [[ $i -eq 0 ]];then
-				if [[ -n $alsa_data && $( calculate_line_length "$card_string${audio_data}$alsa_data" ) -lt $LINE_MAX ]];then
+				if [[ -n $alsa_data && $( calculate_line_length "$card_string${audio_data}$alsa_data" ) -lt $COLS_INNER ]];then
 					audio_data="$audio_data$alsa_data"
 					alsa_data=''
 				fi
 			fi
 			if [[ -n $audio_data ]];then
-				if [[ $( calculate_line_length "$card_string$audio_data" ) -lt $LINE_MAX ]];then
+				if [[ $( calculate_line_length "$card_string$audio_data" ) -lt $COLS_INNER ]];then
 					print_data=$( create_print_line "$line_starter" "$card_string$audio_data" )
 					print_screen_output "$print_data"
 				# print the line
@@ -9153,6 +9176,7 @@ print_cpu_data()
 	local a_cpu_working='' cpu_model='' cpu_clock='' cpu_null_error=''
 	local cpc_plural='' cpu_count_print='' model_plural='' cpu_data_string=''
 	local cpu_physical_count='' cpu_core_count='' cpu_core_alpha='' cpu_type=''
+	local cpu_2_data=''
 
 	##print_screen_output "A_CPU_DATA[0]=\"${A_CPU_DATA[0]}\""
 	# Array A_CPU_DATA always has one extra element: max clockfreq found.
@@ -9210,7 +9234,7 @@ print_cpu_data()
 				if [[ $BSD_TYPE == 'bsd' && -z $bmip_data ]];then
 					bmip_data=''
 				else
-					bmip_data=" ${C1}bmips$SEP3${C2} $bmip_data"
+					bmip_data="${C1}bmips$SEP3${C2} $bmip_data "
 				fi
 			fi
 			## note: this handles how intel reports L2, total instead of per core like AMD does
@@ -9227,16 +9251,19 @@ print_cpu_data()
 			# only print shortened list
 			if [[ $B_CPU_FLAGS_FULL != 'true' ]];then
 				# gawk has already sorted this output, no flags returns -
-				cpu_flags=$( process_cpu_flags "${a_cpu_working[3]}" "${a_cpu_working[6]}" )
-				cpu_flags="($cpu_flags)"
-				if [[ ${a_cpu_working[6]} == 'true' ]];then
-					flag_feature='features'
+				if [[ $B_EXTRA_DATA == 'true' ]];then
+					cpu_flags=$( process_cpu_flags "${a_cpu_working[3]}" "${a_cpu_working[6]}" )
+					cpu_flags="($cpu_flags)"
+					if [[ ${a_cpu_working[6]} == 'true' ]];then
+						flag_feature='features'
+					fi
+					cpu_flags="${C1}$flag_feature$SEP3${C2} $cpu_flags "
 				fi
-				cpu_flags=" ${C1}$flag_feature$SEP3${C2} $cpu_flags"
 			fi
 			# arm cpus do not have flags or cache
 			if [[ ${a_cpu_working[6]} != 'true' ]];then
-				cpu_data="$cpu_data${C2} ${C1}cache$SEP3${C2} $cpu_cache$cpu_flags$bmip_data${CN}"
+				cpu_data="$cpu_data${C2} ${C1}cache$SEP3${C2} $cpu_cache${CN}"
+				cpu_2_data="$cpu_flags$bmip_data${CN}"
 			else
 				cpu_data="$cpu_data${C2} (ARM)$bmip_data${CN}"
 			fi
@@ -9247,14 +9274,24 @@ print_cpu_data()
 		else
 			cpu_data="$cpu_data ${C1}clocked at${C2} ${a_cpu_working[1]} MHz${CN}"
 		fi
-		cpu_data="$cpu_data $cpu_clock_speed"
+		cpu_2_data="$cpu_2_data$cpu_clock_speed"
 	else
 		if [[ $BSD_TYPE == 'bsd' && $B_ROOT != 'true' ]];then
 			cpu_null_error=' No permissions for sysctl use?'
 		fi
 		cpu_data=$( create_print_line "CPU:" "${C2}No CPU data available.$cpu_null_error" )
 	fi
-	print_screen_output "$cpu_data"	
+	# echo ln: $( calculate_line_length "$cpu_data $cpu_2_data" )
+	# echo icols: $COLS_INNER
+	# echo tc: $TERM_COLUMNS
+	# echo :$cpu_2_data:
+	if [[ -n $cpu_2_data && $( calculate_line_length "$cpu_data $cpu_2_data" ) -gt $COLS_INNER ]];then
+		print_screen_output "$cpu_data"
+		cpu_data=$( create_print_line " " "$cpu_2_data" )
+		print_screen_output "$cpu_data"
+	else
+		print_screen_output "$cpu_data $cpu_2_data"
+	fi
 	# we don't this printing out extra line unless > 1 cpu core
 	# note the numbering, the last array item is the min/max/not found for cpu speeds
 	if [[ ${#A_CPU_DATA[@]} -gt 2 && $B_SHOW_CPU == 'true' ]];then
@@ -9289,30 +9326,37 @@ print_cpu_flags_full()
 	eval $LOGFS
 	# note: sort only sorts lines, not words in a string, so convert to lines
 	local cpu_flags_full="$( echo $1 | tr " " "\n" | sort )" 
-	local a_cpu_flags='' line_starter='' temp_count=''
-	local i=0 counter=0 max_length=85 max_length_minus=15 flag='' flag_data=''
-	local line_length_max='' flag_feature='Flags'
+	local a_cpu_flags='' line_starter='' temp_string=''
+	local i=0 counter=0 starter_length=15 flag='' flag_data=''
+	local line_length='' flag_feature='Flags' spacer='' flag_string=''
 	
 	if [[ $2 == 'true' ]];then
 		flag_feature='Features'
 	fi
-	
-
 	# build the flag line array
 	for flag in $cpu_flags_full
 	do
-		a_cpu_flags[$counter]="${a_cpu_flags[$counter]}$flag "
+		temp_string="$flag_string$spacer$flag"
+		spacer=' '
+		# handle inner line starter
 		if [[ $counter -eq 0 ]];then
-			line_length_max=$(( $max_length - $max_length_minus ))
+			line_length=$(( $COLS_INNER - $starter_length ))
 		else
-			line_length_max=$max_length
+			line_length=$COLS_INNER
 		fi
-		# temp_count=$( wc -c <<< ${a_cpu_flags[$counter]} )
-		temp_count=${#a_cpu_flags[$counter]}
-		if [[ $temp_count -gt $line_length_max ]];then
+		if [[ ${#temp_string} -gt $line_length ]];then
+			a_cpu_flags[$counter]=$temp_string
+			flag_string=''
+			spacer=''
 			(( counter++ ))
+		else
+			flag_string=$temp_string
 		fi
+		temp_string=''
 	done
+	if [[ -n $flag_string ]];then
+		a_cpu_flags[$counter]=$flag_string
+	fi
 	# then print it out
 	for (( i=0; i < ${#a_cpu_flags[@]};i++ ))
 	do
@@ -9476,7 +9520,7 @@ print_graphics_data()
 	else
 		graphics_data="${C1}Card:${C2} Failed to Detect Video Card! "
 	fi
-	if [[ -n $graphics_data && $( calculate_line_length "${graphics_data}$display_full_string" ) -lt $LINE_MAX ]];then
+	if [[ -n $graphics_data && $( calculate_line_length "${graphics_data}$display_full_string" ) -lt $COLS_INNER ]];then
 		graphics_data=$( create_print_line "$line_starter" "${graphics_data}$display_full_string" )
 	else
 		if [[ -n $graphics_data ]];then
@@ -9741,7 +9785,7 @@ print_info_data()
 	closing_data="$client_data${C1}$SCRIPT_NAME$SEP3${C2} $SCRIPT_VERSION_NUMBER$patch_version_number${CN}"
 	
 	# sometimes gcc is very long, and default runlevel can be long with systemd, so create a gcc-less line first
-	if [[ $( calculate_line_length "${info_data}${init_data}${gcc_installed}${closing_data}" ) -gt $LINE_MAX ]];then
+	if [[ $( calculate_line_length "${info_data}${init_data}${gcc_installed}${closing_data}" ) -gt $COLS_INNER ]];then
 		info_data=${info_data}${init_data}
 		info_data=$( create_print_line "$line_starter" "$info_data" )
 		print_screen_output "$info_data"
@@ -9751,7 +9795,7 @@ print_info_data()
 		line_starter=' '
 		#echo 1
 	fi
-	if [[ $( calculate_line_length "${info_data}${init_data}${gcc_installed}${closing_data}" ) -gt $LINE_MAX ]];then
+	if [[ $( calculate_line_length "${info_data}${init_data}${gcc_installed}${closing_data}" ) -gt $COLS_INNER ]];then
 		info_data=${info_data}${init_data}${gcc_installed}
 		info_data=$( create_print_line "$line_starter" "$info_data" )
 		print_screen_output "$info_data"
@@ -9882,7 +9926,7 @@ print_machine_data()
 		fi
 		mobo_line="${C1}Mobo$SEP3${C2} $mobo_vendor ${C1}model$SEP3${C2} $mobo_model$mobo_version$mobo_serial"
 		bios_line="${C1}Bios$SEP3${C2} $bios_vendor ${C1}version$SEP3${C2} $bios_version ${C1}date$SEP3${C2} $bios_date$bios_rom"
-		if [[ $( calculate_line_length "$mobo_line$bios_line" ) -lt $LINE_MAX ]];then
+		if [[ $( calculate_line_length "$mobo_line$bios_line" ) -lt $COLS_INNER ]];then
 			mobo_line="$mobo_line $bios_line"
 			bios_line=''
 		fi
@@ -9907,7 +9951,7 @@ print_machine_data()
 				product_serial=" ${C1}serial$SEP3${C2} ${A_MACHINE_DATA[3]} "
 			fi
 			system_line="${C1}System$SEP3${C2} $system_vendor ${C1}product$SEP3${C2} $product_name$product_version$product_serial"
-			if [[ -n $chassis_line && $( calculate_line_length "$system_line$chassis_line" ) -lt $LINE_MAX ]];then
+			if [[ -n $chassis_line && $( calculate_line_length "$system_line$chassis_line" ) -lt $COLS_INNER ]];then
 				system_line="$system_line $chassis_line"
 				chassis_line=''
 			fi
@@ -10064,7 +10108,7 @@ print_networking_data()
 			fi
 			card_string="${C1}Card$card_id:${C2} ${a_network_working[0]} "
 			card_data="$driver_data$port_data$pci_bus_id$chip_id"
-			if [[ $( calculate_line_length "$card_string$card_data" ) -gt $LINE_MAX ]];then
+			if [[ $( calculate_line_length "$card_string$card_data" ) -gt $COLS_INNER ]];then
 				network_data=$( create_print_line "$line_starter" "$card_string" )
 				line_starter=' '
 				card_string=''
@@ -10143,7 +10187,7 @@ print_networking_ip_data()
 	local wan_ip_data='' a_interfaces_working='' interfaces='' i=''
 	local if_id='' if_ip='' if_ipv6='' if_ipv6_string='' full_string='' if_string=''
 	local if_id_string='' if_ip_string=''
-	local line_max=$(( $LINE_MAX - 50 ))
+	local line_max=$(( $COLS_INNER - 40 ))
 
 	# set A_INTERFACES_DATA
 	get_networking_local_ip_data
@@ -10364,9 +10408,9 @@ print_partition_data()
 {
 	eval $LOGFS
 	local a_partition_working='' partition_used='' partition_data=''
-	local counter=0 i=0 a_partition_data='' line_starter='' line_max=$(( $LINE_MAX - 35 ))
+	local counter=0 i=0 a_partition_data='' line_starter='' line_max=$(( $COLS_INNER - 25 ))
 	local partitionIdClean='' part_dev='' full_dev='' part_label='' full_label=''
-	local part_uuid='' full_uuid='' dev_remote='' full_fs='' line_max_label_uuid=$(( $LINE_MAX - 10 ))
+	local part_uuid='' full_uuid='' dev_remote='' full_fs='' line_max_label_uuid=$COLS_INNER
 	local b_non_dev='false' holder=''
 
 	# set A_PARTITION_DATA
@@ -10473,7 +10517,7 @@ print_program_version()
 	# left pad: sed -e :a -e 's/^.\{1,80\}$/& /;ta'
 	# right pad: sed -e :a -e 's/^.\{1,80\}$/ &/;ta'
 	# center pad: sed -e :a -e 's/^.\{1,80\}$/ & /;ta'
-	#local line_max=$(( $LINE_MAX - 10 ))
+	#local line_max=$COLS_INNER
 	#program_version="$( sed -e :a -e "s/^.\{1,$line_max\}$/ &/;ta" <<< $program_version )" # use to create padding if needed
 	# program_version=$( create_print_line "Version:" "$program_version" )
 	print_screen_output "$program_version"
@@ -11154,7 +11198,7 @@ print_system_data()
 		system_data=$( create_print_line "System:" "$host_string$host_name ${C1}Kernel$SEP3${C2}" )
 	fi
 	host_kernel_string="$host_string${C1}Kernel$SEP3${C2} $current_kernel$bits "
-	if [[ $( calculate_line_length "$host_kernel_string$de_distro_string" ) -lt $LINE_MAX ]];then
+	if [[ $( calculate_line_length "$host_kernel_string$de_distro_string" ) -lt $COLS_INNER ]];then
 		system_data="$host_kernel_string$de_distro_string"
 		system_data=$( create_print_line "System:" "$system_data" )
 	else
