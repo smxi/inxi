@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.1.8
+####  Version: 2.1.9
 ####  Date: 2014-03-24
-####  Patch Number: 07-b2
+####  Patch Number: 01-b1
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -108,6 +108,7 @@
 ####  * Note: [[ -n $something ]] - double brackets does not require quotes for variables: ie, "$something".
 ####  * Always use quotes, double or single, for all string values.
 ####  * All new code/methods must be in a function.
+
 ####  * For all boolean tests, use 'true' / 'false'.
 ####    !! Do NOT use 0 or 1 unless it's a function return. 
 ####  * Avoid complicated tests in the if condition itself.
@@ -3134,18 +3135,18 @@ get_irc_client_version()
 					;;
 			esac
 			;;
-		supybot|limnoria)
-			# ff=$(nano --version);ff=( $ff );time for ((i=0;i<1000;i++)); do ff=${ff[3]};done;echo $ff
-			# time for ((i=0;i<1000;i++)); do ff=$(nano --version| gawk 'NR == 1 {print $4}' );done;echo $ff
-			# ff=$(nano --version);time for ((i=0;i<1000;i++)); do ff=$(gawk 'NR == 1 {print $4}' <<< $ff );done;echo $ff
+		gribble|limnoria|supybot)
 			IRC_CLIENT_VERSION=" $( $Irc_Client_Path --version | gawk 'NR == 1 {
 				print $2
 			}' )"
-			if [[ -n $IRC_CLIENT_VERSION ]] && \
-			[[ -n $( grep 'limnoria' <<< $IRC_CLIENT_VERSION ) || $App_Working_Name == 'limnoria' ]];then
-				IRC_CLIENT="Limnoria"
-			else
-				IRC_CLIENT="Supybot"
+			if [[ -n $IRC_CLIENT_VERSION ]];then
+				if [[ -n ${IRC_CLIENT_VERSION/*gribble*/} || $App_Working_Name == 'gribble' ]];then
+					IRC_CLIENT="Gribble"
+				elif [[ -n ${IRC_CLIENT_VERSION/*limnoria*/} || $App_Working_Name == 'limnoria' ]];then
+					IRC_CLIENT="Limnoria"
+				else
+					IRC_CLIENT="Supybot"
+				fi
 			fi
 			;;
 		weechat|weechat-curses)
@@ -3193,11 +3194,11 @@ get_irc_client_version()
 				esac
 			done
 			B_CONSOLE_IRC='true'
-			set_perl_python_konvi "$App_Working_Name"
+			set_perl_python_client_data "$App_Working_Name"
 			;;
 		python*)
 			# B_CONSOLE_IRC='true' # are there even any python type console irc clients? check.
-			set_perl_python_konvi "$App_Working_Name"
+			set_perl_python_client_data "$App_Working_Name"
 			;;
 		# then unset, set unknown data
 		*)	
@@ -3211,23 +3212,43 @@ get_irc_client_version()
 }
 
 # args: $1 - App_Working_Name
-set_perl_python_konvi()
+set_perl_python_client_data()
 {
 	if [[ -z $IRC_CLIENT_VERSION ]];then
+		local version=''
 		# this is a hack to try to show konversation if inxi is running but started via /cmd
-		if [[ -n $( grep -i 'konversation' <<< "$Ps_aux_Data" ) && $B_RUNNING_IN_DISPLAY == 'true' ]];then
+		# OR via script shortcuts, both cases in fact now
+		if [[  $B_RUNNING_IN_DISPLAY == 'true' && -z ${Ps_aux_Data/*konversation*/} ]];then
 			IRC_CLIENT='Konversation'
-			IRC_CLIENT_VERSION=" $( konversation --version 2>/dev/null | gawk '/^Konversation/ {print $2}' )"
+			version=$( get_de_app_version 'konversation' '^konversation' '2' )
 			B_CONSOLE_IRC='false'
+		elif [[ $B_RUNNING_IN_DISPLAY == 'false' && \
+		        -n $( grep -Ei 'gribble|limnoria|supybot' <<< "$Ps_aux_Data" ) ]];then
+			if [[ -z ${Ps_aux_Data/*gribble*/} ]];then
+				IRC_CLIENT='Gribble'
+			elif [[ -z ${Ps_aux_Data/*limnoria*/} ]];then
+				IRC_CLIENT='Limnoria'
+			elif [[ -z ${Ps_aux_Data/*supybot*/} ]];then
+				IRC_CLIENT='Supybot'
+			fi
+			# currently all use the same actual app name, this will probably change.
+			if [[ -n $IRC_CLIENT ]];then
+				version=$( get_de_app_version 'supybot' '^Supybot' '2' )
+			fi
+			B_CONSOLE_IRC='true'
 		else
 			IRC_CLIENT="Unknown $1 client"
+		fi
+		
+		if [[ -n $version ]];then
+			IRC_CLIENT_VERSION=" $version"
 		fi
 	fi
 }
 
 ## try to infer the use of Konversation >= 1.2, which shows $PPID improperly
 ## no known method of finding Kovni >= 1.2 as parent process, so we look to see if it is running,
-## and all other irc clients are not running.  
+## and all other irc clients are not running. As of 2014-03-25 this isn't used in my cases
 is_this_qt4_konvi()
 {
 	local konvi_qt4_client='' konvi_dbus_exist='' konvi_pid='' konvi_home_dir='' 
@@ -3696,6 +3717,7 @@ get_cpu_data()
 				}
 				print cpu[i, "model"] "," cpu[i, "speed"] "," cpu[i, "cache"] "," cpu[i, "flags"] "," cpu[i, "bogomips"] ","  cpu[nr, "vendor"] "," bArm
 			}
+			
 			# this is / was used in inxi short output only, but when it is N/A, need to use the previous array
 			# value, from above, the actual speed that is, for short output, key 0.
 			if (!min) {
@@ -9259,7 +9281,7 @@ print_cpu_data()
 	local a_cpu_working='' cpu_model='' cpu_clock='' cpu_null_error=''
 	local cpc_plural='' cpu_count_print='' model_plural='' cpu_data_string=''
 	local cpu_physical_count='' cpu_core_count='' cpu_core_alpha='' cpu_type=''
-	local cpu_2_data=''
+	local cpu_2_data='' working_cpu=''
 	local line_starter='' multi_cpu_starter="${C1}Clock Speeds$SEP3${C2} "
 
 	##print_screen_output "A_CPU_DATA[0]=\"${A_CPU_DATA[0]}\""
@@ -9397,14 +9419,16 @@ print_cpu_data()
 			#if [[ $i -gt 10 ]];then
 			#	break
 			#fi
+			# echo $(calculate_line_length "$multi_cpu_starter$SEP3 $cpu_multi_clock_data" )
+			working_cpu="${C1}$(( i + 1 ))$SEP3${C2} ${a_cpu_working[1]%.*} MHz "
 			if [[ -n $cpu_multi_clock_data && \
-			$( calculate_line_length "$multi_cpu_starter$cpu_multi_clock_data" ) -gt $COLS_INNER ]];then
+			$( calculate_line_length "$multi_cpu_starter$cpu_multi_clock_data$working_cpu" ) -gt $COLS_INNER ]];then
 				cpu_multi_clock_data=$( create_print_line " " "$multi_cpu_starter$cpu_multi_clock_data" )
 				print_screen_output "$cpu_multi_clock_data"
 				multi_cpu_starter=''
-				cpu_multi_clock_data="${C1}$(( i + 1 ))$SEP3${C2} ${a_cpu_working[1]%.*} MHz "
+				cpu_multi_clock_data="$working_cpu"
 			else
-				cpu_multi_clock_data="$cpu_multi_clock_data${C1}$(( i + 1 ))$SEP3${C2} ${a_cpu_working[1]%.*} MHz "
+				cpu_multi_clock_data="$cpu_multi_clock_data$working_cpu"
 			fi
 		done
 	fi
@@ -9637,12 +9661,10 @@ print_graphics_data()
 			print_screen_output "$graphics_data"
 			part_1_data=''
 			line_starter=' '
-			echo 1
 		fi
 		if [[ -n $( grep -vE '^[[:space:]]*$' <<< $part_1_data$part_2_data ) ]];then
 			graphics_data=$( create_print_line "$line_starter" "$part_1_data$part_2_data" )
 			print_screen_output "$graphics_data"
-			echo 2
 		fi
 	fi
 	line_starter=' '
@@ -9658,13 +9680,11 @@ print_graphics_data()
 		line_starter=' '
 		part_1_data=''
 		graphics_data=$part_2_data
-		echo 3
 	fi
 	if [[ -n $( grep -vE '^[[:space:]]*$' <<< $part_1_data$part_2_data ) ]];then
 		graphics_data=$( create_print_line "$line_starter" "$part_1_data$part_2_data" )
 		print_screen_output "$graphics_data"
 		line_starter=' '
-		echo 4
 	fi
 	# if [[ -z $glx_renderer || -z $glx_version ]];then
 	# 	b_is_mesa='true'
@@ -9693,12 +9713,10 @@ print_graphics_data()
 			print_screen_output "$graphics_data"
 			part_1_data=''
 			line_starter=' '
-			echo 5
 		fi
 		if [[ -n $part_1_data$part_2_data ]];then
 			graphics_data=$( create_print_line "$line_starter" "$part_1_data$part_2_data" )
 			print_screen_output "$graphics_data"
-			echo 6
 		fi
 	fi
 	eval $LOGFE
@@ -10563,7 +10581,7 @@ print_partition_data()
 	local a_partition_working='' partition_used='' partition_data=''
 	local counter=0 i=0 a_partition_data='' line_starter='' line_max=$(( $COLS_INNER - 25 ))
 	local partitionIdClean='' part_dev='' full_dev='' part_label='' full_label=''
-	local part_uuid='' full_uuid='' dev_remote='' full_fs='' line_max_label_uuid=$COLS_INNER
+	local part_uuid='' full_uuid='' dev_remote='' full_fs='' 
 	local b_non_dev='false' holder=''
 
 	# set A_PARTITION_DATA
@@ -10634,17 +10652,25 @@ print_partition_data()
 			id_size_fs="${C1}ID$SEP3${C2} $partitionIdClean ${C1}size$SEP3${C2} ${a_partition_working[1]} $partition_used$full_fs$full_dev"
 			label_uuid="$full_label$full_uuid"
 			# label/uuid always print one per line, so only wrap if it's very long
-			if [[ $B_SHOW_UUIDS == 'true' && $B_SHOW_LABELS == 'true' && $( calculate_line_length "$id_size_fs$label_uuid" ) -gt $line_max_label_uuid ]];then
+			if [[ $B_SHOW_UUIDS == 'true' || $B_SHOW_LABELS == 'true' ]] && \
+			   [[ $( calculate_line_length "${a_partition_data[$counter]}$id_size_fs$label_uuid" ) -gt $COLS_INNER ]];then
 				a_partition_data[$counter]="$id_size_fs"
 				((counter++))
 				a_partition_data[$counter]="$label_uuid"
 			else
-				a_partition_data[$counter]="${a_partition_data[$counter]}$id_size_fs$label_uuid"
+				if [[ $( calculate_line_length "${a_partition_data[$counter]}$id_size_fs$label_uuid" ) -gt $COLS_INNER ]];then
+					a_partition_data[$counter]="${a_partition_data[$counter]}"
+					((counter++))
+					a_partition_data[$counter]="$id_size_fs$label_uuid"
+				else
+					a_partition_data[$counter]="${a_partition_data[$counter]}$id_size_fs$label_uuid"
+				fi
 			fi
-			# because these lines can vary widely, using dynamic length handling here
-			if [[ $B_SHOW_LABELS == 'true' || $B_SHOW_UUIDS == 'true' ]] || [[ $( calculate_line_length "${a_partition_data[$counter]}" ) -gt $line_max ]];then
-				((counter++))
-			fi
+			((counter++))
+# 			# because these lines can vary widely, using dynamic length handling here
+# 			if [[ $B_SHOW_LABELS == 'true' || $B_SHOW_UUIDS == 'true' ]] || [[ $( calculate_line_length "${a_partition_data[$counter]}" ) -gt $line_max ]];then
+# 				((counter++))
+# 			fi
 		fi
 	done
 	# print out all lines, line starter on first line
@@ -10783,14 +10809,14 @@ print_raid_data()
 	local empty_raid_data='' report_size='report' blocks_avail='blocks' chunk_raid_usage='chunk size'
 	
 	if [[ -n $BSD_TYPE ]];then
-		no_raid_detected='No zfs software RAID detected - other types not yet supported.'
-		empty_raid_data='No zfs RAID data available - other types not yet supported.'
+		no_raid_detected='No zfs software RAID detected-other types not yet supported.'
+		empty_raid_data='No zfs RAID data available-other types not yet supported.'
 		report_size='full size'
 		blocks_avail='available size'
 		chunk_raid_usage='raid allocated'
 	else
-		no_raid_detected="No RAID data available - $FILE_MDSTAT is missing - is md_mod kernel module loaded?"
-		empty_raid_data="No RAID devices detected - $FILE_MDSTAT and md_mod kernel raid module present"
+		no_raid_detected="No RAID data: $FILE_MDSTAT missing-is md_mod kernel module loaded?"
+		empty_raid_data="No RAID devices: $FILE_MDSTAT, md_mod kernel module present"
 	fi
 	
 	if [[ $BSD_TYPE == 'bsd' ]];then
