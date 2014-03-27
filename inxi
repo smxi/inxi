@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.1.11
-####  Date: 2014-03-26
+####  Version: 2.1.12
+####  Date: 2014-03-27
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -7613,7 +7613,7 @@ get_raid_data_bsd()
 {
 	eval $LOGFS
 	local zpool_path=$( type -p zpool 2>/dev/null )
-	local zpool_data=''
+	local zpool_data='' zpool_arg='v'
 	
 	if [[ -n $zpool_path ]];then
 		B_BSD_RAID='true'
@@ -7625,6 +7625,7 @@ get_raid_data_bsd()
 		else
 			zpool_data="$( $zpool_path list 2>/dev/null | sed $SED_RX 's/^([^[:space:]])/\
 \1/' )"
+			zpool_arg='no-v'
 		fi
 # 		echo "$zpool_data"
 		IFS=$'\n'
@@ -7673,12 +7674,14 @@ get_raid_data_bsd()
 			print raidString
 		}' <<< "$zpool_data" ) )
 		IFS="$ORIGINAL_IFS"
-		get_raid_component_data_bsd
+		# pass the zpool type, so we know how to get the components
+		get_raid_component_data_bsd "$zpool_arg"
 	fi
 	eval $LOGFE
 }
 
 # note, we've already tested for zpool so no further tests required
+# args: $1 - zpool type, v will have a single row output, no-v has stacked for components
 get_raid_component_data_bsd()
 {
 	eval $LOGFS
@@ -7699,24 +7702,53 @@ get_raid_component_data_bsd()
 		# we will remove ONLINE for status and only use OFFLINE/DEGRADED as tests
 		# for print output display of issues with components
 		# note: different zfs outputs vary, some have the components listed by line
-		for component in ${a_raid_data[3]}
-		do
-			component_status=$( gawk '
+		if [[ $1 == 'v' ]];then
+			for component in ${a_raid_data[3]}
+			do
+				component_status=$( gawk '
+				BEGIN {
+					IGNORECASE=1
+					separator=""
+				}
+				$1 ~ /^'$component'$/ {
+					sub( /ONLINE/, "", $2 )
+					print "'$component'" $2
+					exit
+				}' <<< "$zpool_status" )
+				component_string="$component_string$separator$component_status"
+				separator=' '
+			done
+			array_string="$device,${a_raid_data[1]},${a_raid_data[2]},$component_string,${a_raid_data[4]}"
+			array_string="$array_string,${a_raid_data[5]},${a_raid_data[6]},${a_raid_data[7]},${a_raid_data[8]}"
+			array_string="$array_string,${a_raid_data[9]},${a_raid_data[10]},${a_raid_data[11]},${a_raid_data[12]},"
+			array_string="$array_string${a_raid_data[13]},${a_raid_data[14]},${a_raid_data[15]}"
+		else
+			component_string=$( gawk '
 			BEGIN {
 				IGNORECASE=1
+				separator=""
+				components=""
+				raidLevel=""
 			}
-			$1 ~ /^'$component'$/ {
-				sub( /ONLINE/, "", $2 )
-				print "'$component'" $2
-				exit
+			$1 ~ /^'$device'$/ {
+				while ( getline && !/^$/ ) {
+					# raid level is the second item in the output
+					if ( $1 != "" && raidLevel == "" ) {
+						raidLevel="zfs " $1
+						getline
+					}
+					sub( /ONLINE/, "", $2 )
+					components=components separator $1 separator $2
+					separator=" "
+				}
+				print raidLevel "," components
 			}' <<< "$zpool_status" )
-			component_string="$component_string$separator$component_status"
-			separator=' '
-		done
-		array_string="$device,${a_raid_data[1]},${a_raid_data[2]},$component_string,${a_raid_data[4]}"
-		array_string="$array_string,${a_raid_data[5]},${a_raid_data[6]},${a_raid_data[7]},${a_raid_data[8]}"
-		array_string="$array_string,${a_raid_data[9]},${a_raid_data[10]},${a_raid_data[11]},${a_raid_data[12]},"
-		array_string="$array_string${a_raid_data[13]},${a_raid_data[14]},${a_raid_data[15]}"
+			# note: component_string is raid type AND components
+			array_string="$device,${a_raid_data[1]},$component_string,${a_raid_data[4]}"
+			array_string="$array_string,${a_raid_data[5]},${a_raid_data[6]},${a_raid_data[7]},${a_raid_data[8]}"
+			array_string="$array_string,${a_raid_data[9]},${a_raid_data[10]},${a_raid_data[11]},${a_raid_data[12]},"
+			array_string="$array_string${a_raid_data[13]},${a_raid_data[14]},${a_raid_data[15]}"
+		fi
 		IFS=","
 		A_RAID_DATA[i]=$array_string
 		IFS="$ORIGINAL_IFS"
@@ -9743,7 +9775,6 @@ print_hard_disk_data()
 	local hdd_serial=''
 	local dev_data='' size_data='' hdd_model='' usb_data='' hdd_name='' divisor=5
 	local Line_Starter='Drives:' # inherited by print_optical_drives
-
 	# load A_HDD_DATA
 	get_hdd_data_basic
 	## note: if hdd_model is declared prior to use, whatever string you want inserted will
@@ -9755,10 +9786,11 @@ print_hard_disk_data()
 	local hdd_capacity="${a_hdd_basic_working[0]}"
 	local hdd_used=${a_hdd_basic_working[1]}
 	local bsd_unsupported='Hard drive data not yet supported for BSD systems.'
-	local hdd_name_temp=''
+	local hdd_name_temp='' part_1_data='' part_2_data=''
+	local row_starter="${C1}HDD Total Size$SEP3${C2} $hdd_capacity ($hdd_used) "
 
 	if [[ $B_SHOW_BASIC_DISK == 'true' || $B_SHOW_DISK == 'true' ]];then
-	## note: the output part of this should be in the print hdd data function, not here
+		## note: the output part of this should be in the print hdd data function, not here
 		get_hard_drive_data_advanced
 		for (( i=0; i < ${#A_HDD_DATA[@]} - 1; i++ ))
 		do
@@ -9800,41 +9832,63 @@ print_hard_disk_data()
 			else
 				hdd_name_temp='N/A'
 			fi
+			# echo "loop: $i"
 			hdd_name="${C1}model$SEP3${C2} $hdd_name_temp"
 			hdd_string="$usb_data$dev_data$hdd_name$size_data$hdd_serial$hdd_temp_data"
-			hdd_model="$hdd_model${C1}$(($i+1))$SEP3${C2} $hdd_string "
+			#hdd_model="$hdd_model${C1}$(($i+1))$SEP3${C2} $hdd_string "
+			part_1_data="$hdd_model${C1}$(($i+1))$SEP3${C2} $hdd_string "
 			# printing line one, then new lines according to $divisor setting, and after, if leftovers, print that line.
-			case $i in 
-				0)
-					if [[ $divisor -eq 1 ]];then
-						hdd_data=$( create_print_line "$Line_Starter" "${C1}HDD Total Size$SEP3${C2} $hdd_capacity ($hdd_used)" )
-						print_screen_output "$hdd_data"
-						Line_Starter=' '
-						hdd_data=$( create_print_line "$Line_Starter" "$hdd_model" )
-						print_screen_output "$hdd_data"
-						hdd_model=''
-					else
-						hdd_data=$( create_print_line "$Line_Starter" "${C1}HDD Total Size$SEP3${C2} $hdd_capacity ($hdd_used) $hdd_model" )
-						print_screen_output "$hdd_data"
-						hdd_model=''
-						Line_Starter=' '
-					fi
-					;;
-				*)
-					# using modulus here, if divisible by $divisor, print line, otherwise skip
-					if [[ $(( $i % $divisor )) -eq 0 ]];then
-						hdd_data=$( create_print_line "$Line_Starter" "$hdd_model" )
-						print_screen_output "$hdd_data"
-						hdd_model=''
-						Line_Starter=' '
-					fi
-					;;
-			esac
+			if [[ $i -eq 0 ]];then
+				if [[ $( calculate_line_length "$row_starter$part_1_data" ) -gt $COLS_INNER ]];then
+					hdd_data=$( create_print_line "$Line_Starter" "$row_starter" )
+					print_screen_output "$hdd_data"
+					#echo 0
+					Line_Starter=' '
+					row_starter=''
+					hdd_data=$( create_print_line "$Line_Starter" "$part_1_data" )
+					print_screen_output "$hdd_data"
+					part_1_data=''
+					#echo 1
+				else
+					hdd_data=$( create_print_line "$Line_Starter" "$row_starter$part_1_data" )
+					print_screen_output "$hdd_data"
+					Line_Starter=' '
+					row_starter=''
+					part_1_data=''
+					#echo 2
+				fi
+			fi
+			if [[ $( calculate_line_length "$row_starter$part_2_data$part_1_data" ) -gt $COLS_INNER ]];then
+				if [[ -n $( grep -vE '^[[:space:]]*$' <<< $part_2_data ) ]];then
+					hdd_data=$( create_print_line "$Line_Starter" "$row_starter$part_2_data" )
+					print_screen_output "$hdd_data"
+					#echo 3
+					Line_Starter=' '
+					row_starter=''
+					part_2_data=''
+				fi
+				hdd_data=$( create_print_line "$Line_Starter" "$row_starter$part_1_data" )
+				print_screen_output "$hdd_data"
+				part_1_data=''
+				#echo 4
+			elif [[ -n $part_2_data && \
+			        $( calculate_line_length "$row_starter$part_2_data$part_1_data" ) -le $COLS_INNER ]];then
+				hdd_data=$( create_print_line "$Line_Starter" "$row_starter$part_2_data$part_1_data" )
+				print_screen_output "$hdd_data"
+				#echo 3
+				Line_Starter=' '
+				row_starter=''
+				part_1_data=''
+				part_2_data=''
+			else
+				part_2_data=$part_1_data
+			fi
 		done
 		# then print any leftover items
-		if [[ -n $hdd_model ]];then
-			hdd_data=$( create_print_line "$Line_Starter" "$hdd_model${CN}" )
+		if [[ -n $part_2_data ]];then
+			hdd_data=$( create_print_line "$Line_Starter" "$part_2_data" )
 			print_screen_output "$hdd_data"
+			#echo 5
 		fi
 		# temporary message to indicate not yet supported
 		if [[ $BSD_TYPE == 'bsd' ]];then
@@ -9845,7 +9899,7 @@ print_hard_disk_data()
 		fi
 	else
 		# temporary message to indicate not yet supported
-		hdd_data="${C1}HDD Total Size$SEP3${C2} $hdd_capacity ($hdd_used)"
+		hdd_data="$row_starter"
 		if [[ $BSD_TYPE == 'bsd' ]];then
 			hdd_data=$bsd_unsupported
 		fi
