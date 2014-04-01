@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.1.14
-####  Date: 2014-03-31
+####  Version: 2.1.15
+####  Date: 2014-04-01
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -9306,14 +9306,14 @@ print_audio_data()
 				# print the line
 				else
 					# keep the driver on the same line no matter what, looks weird alone on its own line
-					if [[ $B_EXTRA_DATA != 'true' ]];then
-						print_data=$( create_print_line "$line_starter" "$card_string$audio_data${CN}" )
-						print_screen_output "$print_data"
-					else
+					if [[ $( calculate_line_length "$card_string$audio_data" ) -gt $COLS_INNER ]];then
 						print_data=$( create_print_line "$line_starter" "$card_string${CN}" )
 						print_screen_output "$print_data"
 						line_starter=' '
 						print_data=$( create_print_line "$line_starter" "$audio_data${CN}" )
+						print_screen_output "$print_data"
+					else
+						print_data=$( create_print_line "$line_starter" "$card_string$audio_data${CN}" )
 						print_screen_output "$print_data"
 					fi
 				fi
@@ -9322,7 +9322,10 @@ print_audio_data()
 		done
 	fi
 	if [[ -n $alsa_data ]];then
-		alsa_data=$( sed 's/ALSA/Advanced Linux Sound Architecture/' <<< $alsa_data )
+		if [[ $( calculate_line_length "${alsa_data/ALSA/Advanced Linux Sound Architecture}" ) -lt $COLS_INNER ]];then
+			# alsa_data=$( sed 's/ALSA/Advanced Linux Sound Architecture/' <<< $alsa_data )
+			alsa_data=${alsa_data/ALSA/Advanced Linux Sound Architecture}
+		fi
 		alsa_data=$( create_print_line "$line_starter" "$alsa_data${CN}" )
 		print_screen_output "$alsa_data"
 	fi
@@ -10280,7 +10283,7 @@ print_networking_data()
 	local i='' card_id='' network_data='' a_network_working='' port_data='' driver_data=''
 	local card_string='' port_plural='' module_version='' pci_bus_id='' bus_usb_text=''
 	local bus_usb_id='' line_starter='Network:' card_string='' card_data='' chip_id=''
-	local driver=''
+	local driver='' part_2_data=''
 	# set A_NETWORK_DATA
 	if [[ $BSD_TYPE == 'bsd' ]];then
 		if [[ $B_PCICONF_SET == 'false' ]];then
@@ -10310,6 +10313,7 @@ print_networking_data()
 			port_data=''
 			port_plural=''
 			chip_id=''
+			part_2_data=''
 
 			if [[ ${#A_NETWORK_DATA[@]} -gt 1 ]];then
 				card_id="-$(( $i + 1 ))"
@@ -10356,16 +10360,30 @@ print_networking_data()
 				fi
 			fi
 			card_string="${C1}Card$card_id$SEP3${C2} ${a_network_working[0]} "
-			card_data="$driver_data$port_data$pci_bus_id$chip_id"
-			if [[ $( calculate_line_length "$card_string$card_data" ) -gt $COLS_INNER ]];then
-				network_data=$( create_print_line "$line_starter" "$card_string${CN}" )
+			card_data="$driver_data$port_data"
+			part_2_data="$pci_bus_id$chip_id"
+			if [[ $( calculate_line_length "$card_string$card_data$part_2_data" ) -gt $COLS_INNER ]];then
+				network_data=$( create_print_line "$line_starter" "$card_string" )
 				line_starter=' '
 				card_string=''
 				print_screen_output "$network_data"
 			fi
-			network_data=$( create_print_line "$line_starter" "$card_string$card_data${CN}" )
-			line_starter=' '
-			print_screen_output "$network_data"
+			if [[ $( calculate_line_length "$card_string$card_data$part_2_data" ) -gt $COLS_INNER ]];then
+				network_data=$( create_print_line "$line_starter" "$card_string$card_data" )
+				print_screen_output "$network_data"
+				line_starter=' '
+				card_data=''
+				card_string=''
+				
+			fi
+			if [[ -n $card_string$card_data$part_2_data ]];then
+				network_data=$( create_print_line "$line_starter" "$card_string$card_data$part_2_data" )
+				print_screen_output "$network_data"
+				line_starter=' '
+				card_data=''
+				card_string=''
+				part_2_data=''
+			fi
 			if [[ $B_SHOW_ADVANCED_NETWORK == 'true' ]];then
 				print_network_advanced_data
 			fi
@@ -10385,7 +10403,7 @@ print_network_advanced_data()
 {
 	eval $LOGFS
 	local network_data='' if_id='N/A' duplex='N/A' mac_id='N/A' speed='N/A' oper_state='N/A'
-	local b_is_wifi='false' speed_string='' duplex_string=''
+	local b_is_wifi='false' speed_string='' duplex_string='' part_2_data=''
 	
 		# first check if it's a known wifi id'ed card, if so, no print of duplex/speed
 	if [[ -n $( grep -Esi '(wireless|wifi|wi-fi|wlan|802\.11|centrino)' <<< ${a_network_working[0]} ) ]];then
@@ -10422,9 +10440,18 @@ print_network_advanced_data()
 			mac_id=${a_network_working[9]}
 		fi
 	fi
-	network_data="${C1}IF$SEP3${C2} $if_id ${C1}state$SEP3${C2} $oper_state $speed_string$duplex_string${C1}mac$SEP3${C2} $mac_id"
-	network_data=$( create_print_line " " "$network_data${CN}" )
-	print_screen_output "$network_data"
+	network_data="${C1}IF$SEP3${C2} $if_id ${C1}state$SEP3${C2} $oper_state $speed_string$duplex_string"
+	part_2_data="${C1}mac$SEP3${C2} $mac_id"
+	if [[ $( calculate_line_length "$network_data$part_2_data" ) -gt $COLS_INNER ]];then
+		network_data=$( create_print_line " " "$network_data${CN}" )
+		print_screen_output "$network_data"
+		network_data=''
+	fi
+	if [[ -n $network_data$part_2_data ]];then
+		network_data=$( create_print_line " " "$network_data$part_2_data${CN}" )
+		print_screen_output "$network_data"
+		network_data=''
+	fi
 	
 	eval $LOGFE
 }
@@ -10433,10 +10460,9 @@ print_networking_ip_data()
 {
 	eval $LOGFS
 	local ip=$( get_networking_wan_ip_data )
-	local wan_ip_data='' a_interfaces_working='' interfaces='' i=''
+	local wan_ip_data='' a_interfaces_working='' interfaces='' i=0
 	local if_id='' if_ip='' if_ipv6='' if_ipv6_string='' full_string='' if_string=''
-	local if_id_string='' if_ip_string=''
-	local line_max=$(( $COLS_INNER - 40 ))
+	local if_id_string='' if_ip_string='' if_string_holding=''
 
 	# set A_INTERFACES_DATA
 	get_networking_local_ip_data
@@ -10483,19 +10509,37 @@ print_networking_ip_data()
 		if [[ -n ${a_interfaces_working[0]} ]];then
 			if_id=${a_interfaces_working[0]}
 		fi
-		if_string="$wan_ip_data$if_string${C1}IF$SEP3${C2} $if_id$if_ip_string$if_ipv6_string "
-		wan_ip_data=''
-		if [[ $( calculate_line_length "$if_string" ) -gt $line_max ]];then
-			full_string=$( create_print_line " " "$if_string${CN}" )
-			print_screen_output "$full_string"
-			if_string=''
+		if_string="${C1}IF$SEP3${C2} $if_id$if_ip_string$if_ipv6_string "
+		# first line, print wan on its own line if too long
+		if [[ $i -eq 0 ]];then
+			if [[ $( calculate_line_length "$wan_ip_data$if_string" ) -gt $COLS_INNER ]];then
+				full_string=$( create_print_line " " "$wan_ip_data${CN}" )
+				print_screen_output "$full_string"
+				wan_ip_data=''
+				full_string=$( create_print_line " " "$if_string${CN}" )
+				print_screen_output "$full_string"
+				if_string=''
+			else
+				full_string=$( create_print_line " " "$wan_ip_data$if_string${CN}" )
+				print_screen_output "$full_string"
+				wan_ip_data=''
+				if_string=''
+			fi
+		else 
+			if [[ $( calculate_line_length "$if_string_holding$if_string" ) -lt $COLS_INNER ]];then
+				if_string_holding="$if_string_holding$if_string"
+			else
+				full_string=$( create_print_line " " "$if_string_holding${CN}" )
+				print_screen_output "$full_string"
+				if_string_holding="$if_string"
+			fi
 		fi
 		((i++))
 	done
 	
 	# then print out anything not printed already
-	if [[ -n $if_string ]];then
-		full_string=$( create_print_line " " "$if_string${CN}" )
+	if [[ -n $if_string_holding ]];then
+		full_string=$( create_print_line " " "$if_string_holding${CN}" )
 		print_screen_output "$full_string"
 	fi
 	eval $LOGFE
@@ -10506,7 +10550,7 @@ print_optical_drive_data()
 	eval $LOGFS
 	local a_drives='' drive_data='' counter='' 
 	local drive_id='' drive_links='' vendor='' speed='' multisession='' mcn='' audio=''
-	local dvd='' state='' rw_support='' rev='' separator='' drive_string=''
+	local dvd='' state='' rw_support='' rev='' separator='' drive_string='' part_2_data=''
 	get_optical_drive_data
 	# 0 - true dev path, ie, sr0, hdc
 	# 1 - dev links to true path
@@ -10567,14 +10611,43 @@ print_optical_drive_data()
 					else
 						rev='N/A'
 					fi
-					rev=" ${C1}rev$SEP3${C2} $rev"
+					rev="${C1}rev$SEP3${C2} $rev "
 				fi
-				drive_string="$drive_id ${C1}model$SEP3${C2} $vendor$rev ${C1}dev-links$SEP3${C2} $drive_links"
+				drive_string="$drive_id ${C1}model$SEP3${C2} $vendor "
+				part_2_data="$rev${C1}dev-links$SEP3${C2} $drive_links"
 			fi
 			drive_data="${C1}Optical${counter}$SEP3${C2} $drive_string"
-			drive_data=$( create_print_line "$Line_Starter" "$drive_data${CN}" )
-			print_screen_output "$drive_data"
-			Line_Starter=' '
+			if [[ $( calculate_line_length "$drive_data$part_2_data" ) -lt $COLS_INNER ]];then
+				drive_data=$( create_print_line "$Line_Starter" "$drive_data$part_2_data${CN}" )
+				print_screen_output "$drive_data"
+				Line_Starter=' '
+				drive_data=''
+				part_2_data=''
+			else
+				if [[ $( calculate_line_length "$drive_data" ) -gt $COLS_INNER ]];then
+					drive_data=$( create_print_line "$Line_Starter" "$drive_data${CN}" )
+					print_screen_output "$drive_data"
+					Line_Starter=' '
+					drive_data=''
+				fi
+				if [[ $( calculate_line_length "$drive_data$part_2_data" ) -lt $COLS_INNER ]];then
+					drive_data=$( create_print_line "$Line_Starter" "$drive_data$part_2_data${CN}" )
+					print_screen_output "$drive_data"
+					Line_Starter=' '
+					part_2_data=''
+					drive_data=''
+				else
+					drive_data=$( create_print_line "$Line_Starter" "$drive_data${CN}" )
+					print_screen_output "$drive_data"
+					drive_data=''
+					Line_Starter=' '
+					drive_data=$( create_print_line "$Line_Starter" "$part_2_data${CN}" )
+					print_screen_output "$drive_data"
+					Line_Starter=' '
+					part_2_data=''
+				fi
+			fi
+			
 			# 5 - speed
 			# 6 - multisession support
 			# 7 - MCN support
@@ -10598,7 +10671,7 @@ print_optical_drive_data()
 				else
 					audio='no'
 				fi
-				audio=" ${C1}audio$SEP3${C2} $audio"
+				audio="${C1}audio$SEP3${C2} $audio "
 				if [[ -z ${a_drives[6]} ]];then
 					multisession='N/A'
 				elif [[ ${a_drives[6]} == 1 ]];then
@@ -10641,10 +10714,19 @@ print_optical_drive_data()
 				if [[ -z $rw_support ]];then
 					rw_support='none'
 				fi
-				
-				drive_data="${C1}Features: speed$SEP3${C2} $speed$multisession$audio ${C1}dvd$SEP3${C2} $dvd ${C1}rw$SEP3${C2} $rw_support$state"
-				drive_data=$( create_print_line "$Line_Starter" "$drive_data${CN}" )
-				print_screen_output "$drive_data"
+				drive_data="${C1}Features: speed$SEP3${C2} $speed$multisession "
+				part_2_data="$audio ${C1}dvd$SEP3${C2} $dvd ${C1}rw$SEP3${C2} $rw_support$state"
+				if [[ $( calculate_line_length "$drive_data$part_2_data" ) -lt $COLS_INNER ]];then
+					drive_data=$( create_print_line "$Line_Starter" "$drive_data$part_2_data${CN}" )
+					print_screen_output "$drive_data"
+					Line_Starter=' '
+				else
+					drive_data=$( create_print_line "$Line_Starter" "$drive_data" )
+					print_screen_output "$drive_data"
+					drive_data=$( create_print_line "$Line_Starter" "$part_2_data${CN}" )
+					print_screen_output "$drive_data"
+					Line_Starter=' '
+				fi
 			fi
 		done
 	else
