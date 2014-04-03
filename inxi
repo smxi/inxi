@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.1.16
-####  Date: 2014-04-02
+####  Version: 2.1.17
+####  Date: 2014-04-03
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -646,48 +646,11 @@ main()
 	if [[ -s $HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf ]];then
 		source $HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf
 	fi
-	## sometimes tput will trigger an error (mageia) if irc client
-	if [[ $B_IRC == 'false' ]];then
-		if type -p tput &>/dev/null;then
-			TERM_COLUMNS=$(tput cols)
-			TERM_LINES=$(tput lines)
-		fi
-		# double check, just in case it's missing functionality or whatever
-		if [[ -n ${TERM_COLUMNS##[0-9]*} ]];then
-			TERM_COLUMNS=80
-			TERM_LINES=100
-		fi
-	fi
-	# Convert to new variable names if set in config files, legacy test
-	if [[ -n $LINE_MAX_CONSOLE ]];then
-		COLS_MAX_CONSOLE=$LINE_MAX_CONSOLE
-	fi
-	if [[ -n $LINE_MAX_IRC ]];then
-		COLS_MAX_IRC=$LINE_MAX_IRC
-	fi
-	# this lets you set different widths for in or out of display server
-# 	if [[ $B_RUNNING_IN_DISPLAY == 'false' && -n $COLS_MAX_NO_DISPLAY ]];then
-# 		COLS_MAX_CONSOLE=$COLS_MAX_NO_DISPLAY
-# 	fi
-	# TERM_COLUMNS is set in top globals, using tput cols
-	# echo tc: $TERM_COLUMNS cmc: $COLS_MAX_CONSOLE
-	if [[ $TERM_COLUMNS -lt $COLS_MAX_CONSOLE ]];then
-		COLS_MAX_CONSOLE=$TERM_COLUMNS
-	fi
-	# adjust, some terminals will wrap if output cols == term cols
-	COLS_MAX_CONSOLE=$(( $COLS_MAX_CONSOLE - 2 ))
-	# echo cmc: $COLS_MAX_CONSOLE
-	# comes after source for user set stuff
-	if [[ $B_IRC == 'false' ]];then
-		COLS_MAX=$COLS_MAX_CONSOLE
-	else
-		COLS_MAX=$COLS_MAX_IRC
-	fi
-# 	echo SCHEME $SCHEME
-# 	echo B_IRC $B_IRC
-# 	echo sep3: $SEP3
-	COLS_INNER=$(( $COLS_MAX - $INDENT - 1 ))
-	# echo cm: $COLS_MAX ci: $COLS_INNER
+	set_display_width 'live' # can be reset with -y
+	
+	# echo SCHEME $SCHEME
+	# echo B_IRC $B_IRC
+	# echo sep3: $SEP3
 	# Check for dependencies BEFORE running ANYTHING else except above functions
 	# Not all distro's have these depends installed by default. Don't want to run
 	# this if the user is requesting to see this information in the first place
@@ -906,6 +869,56 @@ initialize_data()
 		B_ROOT='true'
 	fi
 	eval $LOGFE
+}
+
+# args: $1 - default OR override default cols max integer count
+set_display_width()
+{
+	local cols_max_override=$1
+	
+	if [[ $cols_max_override == 'live' ]];then
+		## sometimes tput will trigger an error (mageia) if irc client
+		if [[ $B_IRC == 'false' ]];then
+			if type -p tput &>/dev/null;then
+				TERM_COLUMNS=$(tput cols)
+				TERM_LINES=$(tput lines)
+			fi
+			# double check, just in case it's missing functionality or whatever
+			if [[ -z $TERM_COLUMNS || -n ${TERM_COLUMNS//[0-9]/} ]];then
+				TERM_COLUMNS=80
+				TERM_LINES=100
+			fi
+		fi
+		# Convert to new variable names if set in config files, legacy test
+		if [[ -n $LINE_MAX_CONSOLE ]];then
+			COLS_MAX_CONSOLE=$LINE_MAX_CONSOLE
+		fi
+		if [[ -n $LINE_MAX_IRC ]];then
+			COLS_MAX_IRC=$LINE_MAX_IRC
+		fi
+		# this lets you set different widths for in or out of display server
+	# 	if [[ $B_RUNNING_IN_DISPLAY == 'false' && -n $COLS_MAX_NO_DISPLAY ]];then
+	# 		COLS_MAX_CONSOLE=$COLS_MAX_NO_DISPLAY
+	# 	fi
+		# TERM_COLUMNS is set in top globals, using tput cols
+		# echo tc: $TERM_COLUMNS cmc: $COLS_MAX_CONSOLE
+		if [[ $TERM_COLUMNS -lt $COLS_MAX_CONSOLE ]];then
+			COLS_MAX_CONSOLE=$TERM_COLUMNS
+		fi
+		# adjust, some terminals will wrap if output cols == term cols
+		COLS_MAX_CONSOLE=$(( $COLS_MAX_CONSOLE - 2 ))
+		# echo cmc: $COLS_MAX_CONSOLE
+		# comes after source for user set stuff
+		if [[ $B_IRC == 'false' ]];then
+			COLS_MAX=$COLS_MAX_CONSOLE
+		else
+			COLS_MAX=$COLS_MAX_IRC
+		fi
+	else
+		COLS_MAX=$cols_max_override
+	fi
+	COLS_INNER=$(( $COLS_MAX - $INDENT - 1 ))
+	# echo cm: $COLS_MAX ci: $COLS_INNER
 }
 
 # arg: $1 - version number: main/patch/date
@@ -1334,6 +1347,9 @@ error_handler()
 		20)
 			error_message="The option you selected has been deprecated. $2\nSee the -h (help) menu for currently supported options."
 			;;
+		21)
+			error_message="Width option requires an integer value of 80 or more.\nYou entered: $2"
+			;;
 		*)	error_message="error unknown: $@"
 			set -- 99
 			;;
@@ -1630,6 +1646,7 @@ debug_data_collector()
 		cat /proc/net/arp &> $debug_data_dir/proc-net-arp.txt 
 		# bsd data
 		cat /var/run/dmesg.boot &> $debug_data_dir/bsd-var-run-dmesg.boot.txt 
+		echo $COLS_INNER &> $debug_data_dir/cols-inner.txt
 		
 		check_recommends_user_output &> $debug_data_dir/check-recommends-user-output.txt
 		# first download and verify xiin
@@ -1766,7 +1783,7 @@ debug_data_collector()
 		echo 'Creating inxi output file now. This can take a few seconds...'
 		echo "Starting $SCRIPT_NAME from: $start_directory"
 		cd $start_directory
-		$SCRIPT_PATH/$SCRIPT_NAME -FRploudxxx -c 0 -@ 8 > $SCRIPT_DATA_DIR/$debug_data_dir/inxi-FRploudxxx.txt
+		$SCRIPT_PATH/$SCRIPT_NAME -FRfrploudxxx -c 0 -@ 8 -y 120 > $SCRIPT_DATA_DIR/$debug_data_dir/inxi-FRfrploudxxxy120.txt
 		cp $LOG_FILE $SCRIPT_DATA_DIR/$debug_data_dir
 		if [[ -f $SCRIPT_DATA_DIR/$debug_data_dir.tar.gz ]];then
 			echo "Found and removing previous tar.gz data file: $debug_data_dir.tar.gz"
@@ -2158,7 +2175,7 @@ get_parameters()
 	# no need to run through these if there are no args
 	# reserved for future use: -g for extra Graphics; -m for extra Machine; -d for extra Disk
 	elif [[ -n $1 ]];then
-		while getopts Abc:CdDfFGhHiIlMnNopPrRsSt:uUv:V${weather_flag}xzZ%@:!: opt
+		while getopts Abc:CdDfFGhHiIlMnNopPrRsSt:uUv:V${weather_flag}xy:zZ%@:!: opt
 		do
 			case $opt in
 			A)	B_SHOW_AUDIO='true'
@@ -2388,6 +2405,12 @@ get_parameters()
 					B_EXTRA_EXTRA_DATA='true'
 				else
 					B_EXTRA_DATA='true'
+				fi
+				;;
+			y)	if [[ -z ${OPTARG//[0-9]/} && $OPTARG -ge 80 ]];then
+					set_display_width "$OPTARG"
+				else
+					error_handler 21 "$OPTARG"
 				fi
 				;;
 			z)	B_OUTPUT_FILTER='true'
@@ -2645,6 +2668,7 @@ show_options()
 	if [[ $B_ALLOW_WEATHER == 'true' ]];then
 		print_lines_basic "2" "-w -W" "Location (uses -z/irc filter), weather observation time, wind chill, heat index, dew point (shows extra lines for data where relevant)."
 	fi
+	print_lines_basic "1" "-y" "Required extra option: integer, 80 or greater. Set the output line width max. Overrides IRC/Terminal settings or actual widths. If used with --help or --recommends, put -y option first. Example:^inxi^-y^130"
 	print_lines_basic "1" "-z" "Security filters for IP/Mac addresses, location, user home directory name. Default on for irc clients."
 	print_lines_basic "1" "-Z" "Absolute override for output filters. Useful for debugging networking issues in irc for example."
 	print_screen_output " "
