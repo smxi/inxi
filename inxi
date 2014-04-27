@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.1.21
-####  Date: 2014-04-24
+####  Version: 2.1.22
+####  Date: 2014-04-27
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -1770,8 +1770,11 @@ debug_data_collector()
 			readlink /dev/root &> $debug_data_dir/dev-root.txt
 			df -h -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs &> $debug_data_dir/df-h-T-P-excludes.txt
 			df -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs &> $debug_data_dir/df-T-P-excludes.txt
+			df -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs --total &> $debug_data_dir/df-T-P-excludes-total.txt
 			df -H -T &> $debug_data_dir/bsd-df-H-T-no-excludes.txt
 			df -H &> $debug_data_dir/bsd-df-H-no-excludes.txt
+			df -k -T &> $debug_data_dir/bsd-df-k-T-no-excludes.txt
+			df -k &> $debug_data_dir/bsd-df-k-no-excludes.txt
 			# bsd tool
 			mount &> $debug_data_dir/mount.txt
 			gpart list &> $debug_data_dir/bsd-gpart-list.txt
@@ -5403,20 +5406,26 @@ get_graphics_display_server_version()
 get_hdd_data_basic()
 {
 	eval $LOGFS
-	local hdd_used='' a_temp='' df_string=''
-	local hdd_data='' df_test=''
+	local hdd_used='' a_temp='' df_string='' df_total=''
+	local hdd_data='' df_test='' b_total='false'
 	
 	if [[ -z $BSD_TYPE ]];then
-		df_string='df -P -T --exclude-type=aufs --exclude-type=devfs --exclude-type=devtmpfs 
+		## NOTE: older df do not have --total (eg: v: 6.10 2008)
+		## keep in mind the only value of use with --total is 'used' in blocks, which
+		## we can use later to calculate the real percentags based on disk sizes, not
+		## mounted partitions
+		if df -P -T --total &>/dev/null;then
+			b_total='true'
+			df_total=' --total'
+		fi
+		df_string="df -P -T --exclude-type=aufs --exclude-type=devfs --exclude-type=devtmpfs 
 		--exclude-type=fdescfs --exclude-type=iso9660 --exclude-type=linprocfs --exclude-type=procfs
-		--exclude-type=squashfs --exclude-type=sysfs --exclude-type=tmpfs --exclude-type=unionfs'
+		--exclude-type=squashfs --exclude-type=sysfs --exclude-type=tmpfs --exclude-type=unionfs $df_total"
 	else
-		# default size is 512, so use -k for 1024
-		df_string='df -T -k'
-		# default size is 512, -H only for size in human readable format
+		# default size is 512, , so use -k for 1024 -H only for size in human readable format
 		# older bsds don't support -T, pain, so we'll use partial output there
-		df_test=$( df -H -T 2>/dev/null )
-		if [[ -n $df_test ]];then
+		df_test=$( df -k -T 2>/dev/null )
+		if df -H -T &>/dev/null;then
 			df_string='df -k -T'
 		else
 			df_string='df -k'
@@ -5424,7 +5433,7 @@ get_hdd_data_basic()
 	fi
 	hdd_data="$( eval $df_string )"
 	log_function_data 'raw' "hdd_data:\n$hdd_data"
-	hdd_used=$( 	echo "$hdd_data" | gawk -v bsdType=$BSD_TYPE '
+	hdd_used=$( echo "$hdd_data" | gawk -v bsdType=$BSD_TYPE -v bTotal=$b_total '
 	BEGIN {
 		# this is used for specific cases where bind, or incorrect multiple mounts to same partitions,
 		# is present. The value is searched for an earlier appearance of that partition and if it is 
@@ -5435,6 +5444,17 @@ get_hdd_data_basic()
 		devWorking=""
 		mountWorking=""
 	}
+	# do this first to skip the other tests, if we have the totals, we do not need to calculate them
+	# note there is a risk to this because if a new fs to exclude is present but not excluded
+	# this will include that size data. So far bsd df does not support --exculde-type
+	( bsdType == "" ) && ( bTotal == "true" ) {
+		while ( $1 !~ /^total/ ) {
+			next 
+		}
+		if ($1 ~ /^total/ && $4 ~ /^[0-9]+$/ ) {
+			used = $4
+		}
+	}
 	# using $1, not $2, because older bsd df do not have -T, filesystem type
 	( bsdType != "" ) && $1 ~ /^(aufs|devfs|devtmpfs|fdescfs|filesystem|iso9660|linprocfs|procfs|squashfs|sysfs|tmpfs|type|unionfs)$/ {
 		# note use next, not getline or it does not work right
@@ -5442,7 +5462,8 @@ get_hdd_data_basic()
 	}
 	# also handles odd dm-1 type, from lvm, and mdraid, and some other bsd partition syntax
 	# note that linux 3.2.45-grsec-9th types kernels have this type of partition name: /dev/xvdc (no number, letter)
-	/^\/dev\/(mapper\/|[hsv]d[a-z][0-9]+|dm[-]?[0-9]+|ada[0-9]+p[0-9]+.*|md[0-9]+|[aw]d[0-9]+s.*|xvd[a-z])/ {
+	# note: btrfs does not seem to use partition integers, just the primary /dev/sdx identifier
+	( bTotal == "false" ) && /^\/dev\/(mapper\/|[hsv]d[a-z][0-9]*|dm[-]?[0-9]+|ada[0-9]+p[0-9]+.*|md[0-9]+|[aw]d[0-9]+s.*|xvd[a-z])[[:space:]]/ {
 		# this handles the case where the first item is too long
 		# and makes df wrap output to next line, so here we advance
 		# it to the next line for that single case. Using df -P should
@@ -5486,7 +5507,7 @@ get_hdd_data_basic()
 	END {
 		print used
 	}' )
-
+	# echo hdu:$hdd_used
 	if [[ -z $hdd_used ]];then
 		hdd_used='na'
 	fi
@@ -5498,7 +5519,7 @@ get_hdd_data_basic()
 
 	if [[ $B_PARTITIONS_FILE == 'true' ]];then
 		A_HDD_DATA=( $(
-		gawk -v hddused="$hdd_used" '
+		gawk -v hddUsed="$hdd_used" '
 		/[hsv]d[a-z]$/ {
 			driveSize = $(NF - 1)*1024/1000**3
 			gsub(/,/, " ", driveSize)
@@ -5514,12 +5535,11 @@ get_hdd_data_basic()
 		$1 ~ /^(3|8|22|33|202|252|253|254)$/ && $NF ~ /[hsv]d[a-z]$/ && ( $2 % 16 == 0 || $2 % 16 == 8 ) {
 			size += $3
 		}
-
 		END {
 			size = size*1024/1000**3                   # calculate size in GB size
-			workingUsed = hddused*1024/1000**3         # calculate workingUsed in GB used
+			workingUsed = hddUsed*1024/1000**3         # calculate workingUsed in GB used
 			# this handles a special case with livecds where no hdd_used is detected
-			if ( size > 0 && hddused == "na" ) {
+			if ( size > 0 && hddUsed == "na" ) {
 				size = sprintf( "%.1f", size )
 				print size "GB,-"
 			}
