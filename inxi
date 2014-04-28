@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.1.20
-####  Date: 2014-04-08
+####  Version: 2.1.23
+####  Date: 2014-04-27
 ####  Patch Number: 01-b1
 ########################################################################
 ####  SPECIAL THANKS
@@ -75,6 +75,7 @@
 ####       xrandr (x11-xserver-utils)
 ####  -i - IP information, local/wan - ip (iproute) legacy, not used if ip present: ifconfig (net-tools)
 ####  -Ix - view current runlevel while not in X window system (or with -x): runlevel (sysvinit)
+####  -m - all systems, dmidecode, unless someone can find a better way.
 ####  -M - for older systems whose kernel does not have /sys data for machine, dmidecode (dmidecode)
 ####  -o - for unmounted file system information in unmounted drives (root only default): file (file)
 ####       Note: requires user action for this feature to run as user (edit /etc/sudoers file)
@@ -257,6 +258,7 @@ A_HDD_DATA=''
 A_INIT_DATA=''
 A_INTERFACES_DATA=''
 A_MACHINE_DATA=''
+A_MEMORY_DATA=''
 A_NETWORK_DATA=''
 A_OPTICAL_DRIVE_DATA=''
 A_PARTITION_DATA=''
@@ -286,6 +288,7 @@ B_DMIDECODE_SET='false'
 B_EXTRA_DATA='false'
 # triggered by -xx
 B_EXTRA_EXTRA_DATA='false'
+B_FORCE_DMIDECODE='false'
 B_ID_SET='false'
 # override certain errors due to currupted data
 B_HANDLE_CORRUPT_DATA='false'
@@ -333,6 +336,7 @@ B_SHOW_INFO='false'
 B_SHOW_IP='false'
 B_SHOW_LABELS='false'
 B_SHOW_MACHINE='false'
+B_SHOW_MEMORY='false'
 B_SHOW_NETWORK='false'
 # either -v > 3 or -P will show partitions
 B_SHOW_PARTITIONS='false'
@@ -1759,15 +1763,25 @@ debug_data_collector()
 			ls -l /dev/disk/by-id &> $debug_data_dir/dev-disk-id-data.txt
 			ls -l /dev/disk/by-label &> $debug_data_dir/dev-disk-label-data.txt
 			ls -l /dev/disk/by-uuid &> $debug_data_dir/dev-disk-uuid-data.txt
+			# http://comments.gmane.org/gmane.linux.file-systems.zfs.user/2032
+			ls -l /dev/disk/by-wwn &> $debug_data_dir/dev-disk-wwn-data.txt
 			ls -l /dev/disk/by-path &> $debug_data_dir/dev-disk-path-data.txt
 			ls -l /dev/mapper &> $debug_data_dir/dev-disk-mapper-data.txt
 			readlink /dev/root &> $debug_data_dir/dev-root.txt
 			df -h -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs &> $debug_data_dir/df-h-T-P-excludes.txt
 			df -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs &> $debug_data_dir/df-T-P-excludes.txt
+			df -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs --total &> $debug_data_dir/df-T-P-excludes-total.txt
 			df -H -T &> $debug_data_dir/bsd-df-H-T-no-excludes.txt
 			df -H &> $debug_data_dir/bsd-df-H-no-excludes.txt
+			df -k -T &> $debug_data_dir/bsd-df-k-T-no-excludes.txt
+			df -k &> $debug_data_dir/bsd-df-k-no-excludes.txt
+			atacontrol list &> $debug_data_dir/bsd-atacontrol-list.txt
+			camcontrol devlist &> $debug_data_dir/bsd-camcontrol-devlist.txt
 			# bsd tool
 			mount &> $debug_data_dir/mount.txt
+			btrfs filesystem show  &> $debug_data_dir/btrfs-filesystem-show.txt
+			btrfs filesystem show --mounted  &> $debug_data_dir/btrfs-filesystem-show-mounted.txt
+			# btrfs filesystem show --all-devices  &> $debug_data_dir/btrfs-filesystem-show-all-devices.txt
 			gpart list &> $debug_data_dir/bsd-gpart-list.txt
 			gpart show &> $debug_data_dir/bsd-gpart-show.txt
 			gpart status &> $debug_data_dir/bsd-gpart-status.txt
@@ -1935,7 +1949,7 @@ check_recommends_items()
 	xrandr:x11-xserver-utils~xrandr~x11-server-utils~:-G_single_screen_resolution
 	'
 	local recommended_apps='
-	dmidecode:dmidecode~dmidecode~dmidecode~:-M_if_no_sys_machine_data 
+	dmidecode:dmidecode~dmidecode~dmidecode~:-M_if_no_sys_machine_data;_-m_memory 
 	file:file~file~file~:-o_unmounted_file_system
 	hddtemp:hddtemp~hddtemp~hddtemp~:-Dx_show_hdd_temp 
 	ifconfig:net-tools~net-tools~net-tools~:-i_ip_lan-deprecated
@@ -2185,7 +2199,7 @@ get_parameters()
 	# no need to run through these if there are no args
 	# reserved for future use: -g for extra Graphics; -m for extra Machine; -d for extra Disk
 	elif [[ -n $1 ]];then
-		while getopts Abc:CdDfFGhHiIlMnNopPrRsSt:uUv:V${weather_flag}xy:zZ%@:!: opt
+		while getopts Abc:CdDfFGhHiIlmMnNopPrRsSt:uUv:V${weather_flag}xy:zZ%@:!: opt
 		do
 			case $opt in
 			A)	B_SHOW_AUDIO='true'
@@ -2284,6 +2298,9 @@ get_parameters()
 				;;
 			l)	B_SHOW_LABELS='true'
 				B_SHOW_PARTITIONS='true'
+				use_short='false'
+				;;
+			m)	B_SHOW_MEMORY='true'
 				use_short='false'
 				;;
 			M)	B_SHOW_MACHINE='true'
@@ -2529,6 +2546,9 @@ get_parameters()
 					32)
 						B_SHOW_HOST='true'
 						;;
+					33)
+						B_FORCE_DMIDECODE='true'
+						;;
 					ftp*)
 						ALTERNATE_FTP="$OPTARG"
 						;;
@@ -2607,7 +2627,7 @@ show_options()
 	print_lines_basic "2" "99" "Global - Overrides/removes all settings. Setting specific removes global."
 	print_lines_basic "1" "-C" "CPU output, including per CPU clockspeed (if available)."
 	print_lines_basic "1" "-d" "Optical drive data. Same as -Dd. See also -x and -xx."
-	print_lines_basic "1" "-D" "Full hard Disk info, not only model, ie: /dev/sda ST380817AS 80.0GB. See also -x and -xx."
+	print_lines_basic "1" "-D" "Full hard Disk info, not only model, ie: /dev/sda ST380817AS 80.0GB. See also -x and -xx. Disk total used percentage includes swap partition size(s)."
 	print_lines_basic "1" "-f" "All cpu flags, triggers -C. Not shown with -F to avoid spamming. ARM cpus show 'features'."
 	print_lines_basic "1" "-F" "Full output for $SCRIPT_NAME. Includes all Upper Case line letters, plus -s and -n. Does not show extra verbose options like -x -d -f -u -l -o -p -t -r"
 	print_lines_basic "1" "-G" "Graphic card information (card, display server type/version, resolution, glx renderer, version)."
@@ -2615,7 +2635,7 @@ show_options()
 	network tool). Same as -Nni. Not shown with -F for user security reasons, you shouldn't paste your local/wan IP."
 	print_lines_basic "1" "-I" "Information: processes, uptime, memory, irc client (or shell type), $SCRIPT_NAME version."
 	print_lines_basic "1" "-l" "$partition_string_u labels. Default: short $partition_string -P. For full -p output, use: -pl (or -plu)."
-	print_lines_basic "1" "-M" "Machine data. Motherboard, Bios, and if present, System Builder (Like Lenovo). Older systems/kernels without the required /sys data can use dmidecode instead, run as root."
+	print_lines_basic "1" "-M" "Machine data. Motherboard, Bios, and if present, System Builder (Like Lenovo). Older systems/kernels without the required /sys data can use dmidecode instead, run as root. Dmidecode can be forced with -! 33"
 	print_lines_basic "1" "-n" "Advanced Network card information. Same as -Nn. Shows interface, speed, mac id, state, etc."
 	print_lines_basic "1" "-N" "Network card information. With -x, shows PCI BusID, Port number."
 	print_lines_basic "1" "-o" "Unmounted $partition_string information (includes UUID and LABEL if available). Shows file system type if you have file installed, if you are root OR if you have added to /etc/sudoers (sudo v. 1.7 or newer) Example:^<username>^ALL^=^NOPASSWD:^/usr/bin/file^"
@@ -2708,6 +2728,7 @@ show_options()
 	print_screen_output "Advanced Options:"
 	print_lines_basic "1" "-! 31" "Turns off hostname in output. Useful if showing output from servers etc."
 	print_lines_basic "1" "-! 32" "Turns on hostname in output. Overrides global B_SHOW_HOST='false'"
+	print_lines_basic "1" "-! 33" "Forces use of dmidecode data instead of /sys where relevant (-M)."
 	
 	if [[ $1 == 'full' ]];then
 		print_screen_output " "
@@ -2723,9 +2744,10 @@ show_options()
 			print_lines_basic "1" "-! 14" "Triggers an update from svn branch four - if present, of course."
 			print_lines_basic "1" "-! 15" "Triggers an update from svn branch BSD - if present, of course."
 			print_lines_basic "1" "-! 16" "Triggers an update from svn branch GNUBSD - if present, of course."
-			print_lines_basic "1" "-! <http://......>" "Triggers an update from whatever server you list."
+			print_lines_basic "1" "-! " "<http://......> Triggers an update from whatever server you list."
+			print_lines_basic "1" "" "Example: inxi^-!^http://yourserver.com/testing/inxi"
 		fi
-		print_lines_basic "1" "-! <ftp.......>" "Changes debugging data ftp upload location to whatever you enter here. Only used together with -xx@^11-14, and must be used in front of that."
+		print_lines_basic "1" "-! " "<ftp.......> Changes debugging data ftp upload location to whatever you enter here. Only used together with -xx@^11-14, and must be used in front of that."
 		print_lines_basic "1" "" "Example: inxi^-!^ftp.yourserver.com/incoming^-xx@^14"
 	fi
 	print_screen_output " "
@@ -3300,7 +3322,7 @@ set_perl_python_client_data()
 is_this_qt4_konvi()
 {
 	local konvi_qt4_client='' konvi_dbus_exist='' konvi_pid='' konvi_home_dir='' 
-	local konvi='' konvi_qt4_ver='' b_is_qt4=''
+	local konvi='' b_is_qt4=''
 	
 	# fringe cases can throw error, always if untested app, use 2>/dev/null after testing if present
 	if [[ $B_QDBUS == 'true' ]];then
@@ -3313,11 +3335,10 @@ is_this_qt4_konvi()
 		konvi=$( echo $konvi_home_dir | sed "s/\// /g" )
 		konvi=($konvi)
 
-		if [[ ${konvi[2]} == 'konversation' ]];then	
-			konvi_qt4_ver=$( konversation -v | grep -i 'konversation' )
+		if [[ ${konvi[2]} == 'konversation' ]];then
 			# note: we need to change this back to a single dot number, like 1.3, not 1.3.2
-			konvi_qt4_client=$( echo "$konvi_qt4_ver" | gawk '{ print $2 }' | cut -d '.' -f 1,2 )
-
+			konvi_qt4_client=$( konversation -v | grep -i 'konversation' | \
+			gawk '{ print $2 }' | cut -d '.' -f 1,2 )
 			if [[ $konvi_qt4_client > 1.1 ]]; then
 				b_is_qt4='true'
 			fi
@@ -4807,7 +4828,7 @@ get_dmidecode_data()
 				gsub(/'"$BAN_LIST_NORMAL"'/, "", twoData)
 				gsub(/,/, " ", $0)
 				# clean out Handle line
-				sub(/^Handle.*/,"", $0)
+				# sub(/^Handle.*/,"", $0)
 				sub(/^[[:space:]]*Inactive.*/,"",$0)
 				# yes, there is a typo in a user data set, unknow
 				# Base Board Version|Base Board Serial Number
@@ -4817,6 +4838,7 @@ get_dmidecode_data()
 				# strip out starting white space so that the following stuff will clear properly
 				sub(/^[[:space:]]+/, "", twoData)
 				sub(/^Base Board .*|^Chassis .*|.*O\.E\.M\..*|.*OEM.*|^Not .*|^System .*|.*unknow.*|.*N\/A.*|none|^To be filled.*/, "", twoData) 
+				sub(/(AssetTagNum|Manufacturer| Or Motherboard|PartNum|SerNum).*/, "", twoData)
 				gsub(/bios|acpi/, "", twoData)
 				sub(/http:\/\/www.abit.com.tw\//, "Abit", twoData)
 				
@@ -5389,28 +5411,66 @@ get_graphics_display_server_version()
 get_hdd_data_basic()
 {
 	eval $LOGFS
-	local hdd_used='' a_temp='' df_string=''
-	local hdd_data='' df_test=''
+	local hdd_used='' a_temp='' df_string='' df_total=''
+	local hdd_data='' df_test='' b_total='false' swap_size=0
 	
 	if [[ -z $BSD_TYPE ]];then
-		df_string='df -P -T --exclude-type=aufs --exclude-type=devfs --exclude-type=devtmpfs 
+		## NOTE: older df do not have --total (eg: v: 6.10 2008)
+		## keep in mind the only value of use with --total is 'used' in blocks, which
+		## we can use later to calculate the real percentags based on disk sizes, not
+		## mounted partitions
+		if df -P -T --total &>/dev/null;then
+			b_total='true'
+			df_total=' --total'
+		fi
+		df_string="df -P -T --exclude-type=aufs --exclude-type=devfs --exclude-type=devtmpfs 
 		--exclude-type=fdescfs --exclude-type=iso9660 --exclude-type=linprocfs --exclude-type=procfs
-		--exclude-type=squashfs --exclude-type=sysfs --exclude-type=tmpfs --exclude-type=unionfs'
+		--exclude-type=squashfs --exclude-type=sysfs --exclude-type=tmpfs --exclude-type=unionfs $df_total"
+		if swapon -s &>/dev/null;then
+			swap_size=$( swapon -s 2>/dev/null | gawk '
+			BEGIN { 
+			swapSize=0
+			total=0
+			}
+			( $2 == "partition" ) && ( $3 ~ /^[0-9]+$/ ) {
+				total += ( 1000 / 1024 ) * $3
+			}
+			END {
+				# result in kB, change to 1024 Byte blocks
+				total = total * 1000 / 1024
+				total = sprintf( "%.1f", total )
+				print total
+			}' )
+		fi
 	else
-		# default size is 512, so use -k for 1024
-		df_string='df -T -k'
-		# default size is 512, -H only for size in human readable format
+		# default size is 512, , so use -k for 1024 -H only for size in human readable format
 		# older bsds don't support -T, pain, so we'll use partial output there
-		df_test=$( df -H -T 2>/dev/null )
-		if [[ -n $df_test ]];then
+		if df -k -T &>/dev/null;then
 			df_string='df -k -T'
 		else
 			df_string='df -k'
 		fi
+		if swapctl -l &>/dev/null;then
+			swap_size=$( swapctl -l 2>/dev/null | gawk '
+			BEGIN { 
+			swapSize=0
+			total=0
+			}
+			( $1 ~ /^\/dev/ ) && ( $2 ~ /^[0-9]+$/ ) {
+				total += $2
+			}
+			END {
+				# result in blocks already
+				print total
+			}' )
+		fi
 	fi
+	
+	# echo ss: $swap_size
 	hdd_data="$( eval $df_string )"
+	# eval $df_string | awk 'BEGIN{tot=0} !/total/ {tot+=$4} END{print tot}'
 	log_function_data 'raw' "hdd_data:\n$hdd_data"
-	hdd_used=$( 	echo "$hdd_data" | gawk -v bsdType=$BSD_TYPE '
+	hdd_used=$( echo "$hdd_data" | gawk -v bsdType=$BSD_TYPE -v bTotal=$b_total -v swapSize=$swap_size '
 	BEGIN {
 		# this is used for specific cases where bind, or incorrect multiple mounts to same partitions,
 		# is present. The value is searched for an earlier appearance of that partition and if it is 
@@ -5420,6 +5480,18 @@ get_hdd_data_basic()
 		devSet=""
 		devWorking=""
 		mountWorking=""
+		used=0
+	}
+	# do this first to skip the other tests, if we have the totals, we do not need to calculate them
+	# note there is a risk to this because if a new fs to exclude is present but not excluded
+	# this will include that size data. So far bsd df does not support --exculde-type
+	( bsdType == "" ) && ( bTotal == "true" ) {
+		while ( $1 !~ /^total/ ) {
+			next 
+		}
+		if ($1 ~ /^total/ && $4 ~ /^[0-9]+$/ ) {
+			used = $4
+		}
 	}
 	# using $1, not $2, because older bsd df do not have -T, filesystem type
 	( bsdType != "" ) && $1 ~ /^(aufs|devfs|devtmpfs|fdescfs|filesystem|iso9660|linprocfs|procfs|squashfs|sysfs|tmpfs|type|unionfs)$/ {
@@ -5428,7 +5500,9 @@ get_hdd_data_basic()
 	}
 	# also handles odd dm-1 type, from lvm, and mdraid, and some other bsd partition syntax
 	# note that linux 3.2.45-grsec-9th types kernels have this type of partition name: /dev/xvdc (no number, letter)
-	/^\/dev\/(mapper\/|[hsv]d[a-z][0-9]+|dm[-]?[0-9]+|ada[0-9]+p[0-9]+.*|md[0-9]+|[aw]d[0-9]+s.*|xvd[a-z])/ {
+	# note: btrfs does not seem to use partition integers, just the primary /dev/sdx identifier
+	# df can also show /dev/disk/(by-label|by-uuid etc)
+	( bTotal == "false" ) && /^\/dev\/(disk\/|mapper\/|[hsv]d[a-z][0-9]*|dm[-]?[0-9]+|ada[0-9]+p[0-9]+.*|md[0-9]+|[aw]d[0-9]+s.*|xvd[a-z])/ {
 		# this handles the case where the first item is too long
 		# and makes df wrap output to next line, so here we advance
 		# it to the next line for that single case. Using df -P should
@@ -5470,9 +5544,11 @@ get_hdd_data_basic()
 		}
 	}
 	END {
-		print used
+		used=used + swapSize
+		used = sprintf( "%.1f", used )
+		print used 
 	}' )
-
+	# echo hdu:$hdd_used
 	if [[ -z $hdd_used ]];then
 		hdd_used='na'
 	fi
@@ -5484,7 +5560,7 @@ get_hdd_data_basic()
 
 	if [[ $B_PARTITIONS_FILE == 'true' ]];then
 		A_HDD_DATA=( $(
-		gawk -v hddused="$hdd_used" '
+		gawk -v hddUsed=$hdd_used '
 		/[hsv]d[a-z]$/ {
 			driveSize = $(NF - 1)*1024/1000**3
 			gsub(/,/, " ", driveSize)
@@ -5500,12 +5576,11 @@ get_hdd_data_basic()
 		$1 ~ /^(3|8|22|33|202|252|253|254)$/ && $NF ~ /[hsv]d[a-z]$/ && ( $2 % 16 == 0 || $2 % 16 == 8 ) {
 			size += $3
 		}
-
 		END {
 			size = size*1024/1000**3                   # calculate size in GB size
-			workingUsed = hddused*1024/1000**3         # calculate workingUsed in GB used
+			workingUsed = hddUsed*1024/1000**3         # calculate workingUsed in GB used
 			# this handles a special case with livecds where no hdd_used is detected
-			if ( size > 0 && hddused == "na" ) {
+			if ( size > 0 && hddUsed == "na" ) {
 				size = sprintf( "%.1f", size )
 				print size "GB,-"
 			}
@@ -5523,6 +5598,7 @@ get_hdd_data_basic()
 	fi
 	IFS="$ORIGINAL_IFS"
 	a_temp=${A_HDD_DATA[@]}
+	# echo ${a_temp[@]}
 	log_function_data "A_HDD_DATA: $a_temp"
 	eval $LOGFE
 }
@@ -5532,7 +5608,8 @@ get_hard_drive_data_advanced()
 {
 	eval $LOGFS
 	local a_temp_working='' a_temp_scsi='' temp_holder='' temp_name='' i='' j=''
-	local sd_ls_by_id='' ls_disk_by_id='' usb_exists='' a_temp=''
+	local sd_ls_by_id='' ls_disk_by_id='' ls_disk_by_path='' usb_exists='' a_temp=''
+	local firewire_exists='' thunderbolt_exists=''
 
 	## check for all ide type drives, non libata, only do it if hdx is in array
 	## this is now being updated for new /sys type paths, this may handle that ok too
@@ -5602,6 +5679,7 @@ get_hard_drive_data_advanced()
 		# first pack the main ls variable so we don't have to keep using ls /dev...
 		# not all systems have /dev/disk/by-id
 		ls_disk_by_id="$( ls -l /dev/disk/by-id 2>/dev/null )"
+		ls_disk_by_path="$( ls -l /dev/disk/by-path 2>/dev/null )"
 		for (( i=0; i < ${#A_HDD_DATA[@]} - 1; i++ ))
 		do
 			if [[ -n $( grep -E '^sd[a-z]' <<< ${A_HDD_DATA[$i]} ) ]];then
@@ -5621,7 +5699,6 @@ get_hard_drive_data_advanced()
 						# get rid of whitespace for some drive names and ids, and extra data after - in name
 						temp_name=$( cut -d '-' -f 1 <<< ${a_temp_scsi[$j]// /_} )
 						sd_ls_by_id=$( grep -Em1 ".*$temp_name.*${a_temp_working[0]}$" <<< "$ls_disk_by_id" )
-
 						if [[ -n $sd_ls_by_id ]];then
 							temp_name=${a_temp_scsi[$j]}
 							break
@@ -5636,10 +5713,22 @@ get_hard_drive_data_advanced()
 				
 				if [[ -z $temp_name ]];then
 					temp_name="Name n/a"
-				else 
+				# maybe remove this from the conditional, detection of usb may not depend on the name
+				else # 
 					usb_exists=$( grep -Em1 "usb-.*$temp_name.*${a_temp_working[0]}$" <<< "$ls_disk_by_id" )
+					firewire_exists=$( grep -Em1 "ieee1394-.*$temp_name.*${a_temp_working[0]}$" <<< "$ls_disk_by_id" )
+					# note: sometimes with wwn- numbering usb does not appear in by-id but it does in by-path
+					if [[ -z $usb_exists ]];then
+						usb_exists=$( grep -Em1 "usb-.*${a_temp_working[0]}$" <<< "$ls_disk_by_path" )
+					fi
 					if [[ -n $usb_exists ]];then
 						a_temp_working[3]='USB'
+					fi
+					if [[ -z $firewire_exists ]];then
+						firewire_exists=$( grep -Em1 "ieee1394-.*${a_temp_working[0]}$" <<< "$ls_disk_by_path" )
+					fi
+					if [[ -n $firewire_exists ]];then
+						a_temp_working[3]='FireWire'
 					fi
 				fi
 				a_temp_working[2]=$temp_name
@@ -5878,7 +5967,7 @@ get_machine_data()
 		chassis_vendor chassis_type chassis_version chassis_serial
 		"
 	fi
-	if [[ -d $id_dir ]];then
+	if [[ -d $id_dir && $B_FORCE_DMIDECODE == 'false' ]];then
 		for id_file in $machine_files
 		do
 			file_data=''
@@ -8105,7 +8194,9 @@ get_sensors_data()
   		gawk -F ':' -v userCpuNo="$SENSORS_CPU_NO" '
 		BEGIN {
 			IGNORECASE=1
+			bCputin="false" # issue 58
 			core0Temp="" # only if all else fails...
+			cpuPeciTemp="" # use if temps are missing or wrong
 			cpuTemp=""
 			cpuTempReal=""
 			fanWorking=""
@@ -8148,8 +8239,17 @@ get_sensors_data()
 				tempUnit=tempWorkingUnit
 			}
 		}
+		# issue 58 msi/asus show wrong for CPUTIN so overwrite it if PECI 0 is present
+		# http://www.spinics.net/lists/lm-sensors/msg37308.html
 		/^CPU(.*)\+([0-9]+)(.*)[ \t°](C|F)/ && $2 ~ /^[ \t]*\+([0-9]+)/ {
 			cpuTemp=gensub( /[ \t]+\+([0-9\.]+)(.*)/, "\\1", 1, $2 )
+			tempWorkingUnit=gensub( /[ \t]+\+([0-9\.]+)[ \t°]+([CF])(.*)/, "\\2", 1, $2 )
+			if ( tempWorkingUnit ~ /^C|F$/ && tempUnit == "" ){
+				tempUnit=tempWorkingUnit
+			}
+		}
+		/^PECI[[:space:]]Agent[[:space:]]0(.*)\+([0-9]+)(.*)[ \t°](C|F)/ && $2 ~ /^[ \t]*\+([0-9]+)/ {
+			cpuPeciTemp=gensub( /[ \t]+\+([0-9\.]+)(.*)/, "\\1", 1, $2 )
 			tempWorkingUnit=gensub( /[ \t]+\+([0-9\.]+)[ \t°]+([CF])(.*)/, "\\2", 1, $2 )
 			if ( tempWorkingUnit ~ /^C|F$/ && tempUnit == "" ){
 				tempUnit=tempWorkingUnit
@@ -8182,7 +8282,6 @@ get_sensors_data()
 				tempUnit=tempWorkingUnit
 			}
 		}
-		
 		# final fallback if all else fails, funtoo user showed sensors putting
 		# temp on wrapped second line, not handled
 		/^(core0|core 0)(.*)\+([0-9]+)(.*)[ \t°](C|F)/ && $2 ~ /^[ \t]*\+([0-9]+)/ {
@@ -8253,7 +8352,6 @@ get_sensors_data()
 				}
 			}
 		}
-		
 		END {
 			# first we need to handle the case where we have to determine which temp/fan to use for cpu and mobo:
 			# note, for rare cases of weird cool cpus, user can override in their prefs and force the assignment
@@ -8291,10 +8389,15 @@ get_sensors_data()
 					tempFanType=1
 				}
 			}
-			
-			# then get the real cpu temp, best guess is hottest is real
-			if ( cpuTemp != "" ){
-				cpuTempReal=cpuTemp
+			if ( cpuTemp != "" ) {
+				# specific hack to handle broken CPUTIN temps with PECI
+				if ( cpuPeciTemp != "" && ( cpuTemp - cpuPeciTemp ) > 20 ){
+					cpuTempReal=cpuPeciTemp
+				}
+				# then get the real cpu temp, best guess is hottest is real
+				else {
+					cpuTempReal=cpuTemp
+				}
 			}
 			else if ( tempFanType != "" ){
 				if ( tempFanType == 1 ){
@@ -8307,11 +8410,18 @@ get_sensors_data()
 			else {
 				cpuTempReal=temp1
 			}
-			# if all else fails, use core0 temp if it is present and cpu is null
-			if ( cpuTempReal == "" && core0Temp != "" ) {
-				cpuTempReal=core0Temp
+			# if all else fails, use core0/peci temp if present and cpu is null
+			if ( cpuTempReal == "" ) {
+				if ( core0Temp != "" ) {
+					cpuTempReal=core0Temp
+				}
+				# note that peci temp is known to be colder than the actual system
+				# sometimes so it is the last fallback we want to use even though in theory
+				# it is more accurate, but fact suggests theory wrong.
+				else if ( cpuPeciTemp != "" ) {
+					cpuTempReal=cpuPeciTemp
+				}
 			}
-
 			# then the real mobo temp
 			if ( moboTemp != "" ){
 				moboTempReal=moboTemp
@@ -8340,7 +8450,6 @@ get_sensors_data()
 					aFanDefault[2]=""
 				}
 			}
-
 			# then we need to get the actual numeric max array count for both fan arrays
 			for (i = 0; i <= 29; i++) {
 				if ( i in aFanMain && i > indexCountaFanMain ) {
@@ -8352,7 +8461,6 @@ get_sensors_data()
 					indexCountaFanDefault=i
 				}
 			}
-			
 			# clear out any duplicates. Primary fan real trumps fan working always if same speed
 			for (i = 1; i <= indexCountaFanMain; i++) {
 				if ( i in aFanMain && aFanMain[i] != "" && aFanMain[i] != 0 ) {
@@ -8363,7 +8471,6 @@ get_sensors_data()
 					}
 				}
 			}
-
 			# now see if you can find the fast little mobo fan, > 5000 rpm and put it as mobo
 			# note that gawk is returning true for some test cases when aFanDefault[j] < 5000
 			# which has to be a gawk bug, unless there is something really weird with arrays
@@ -8382,7 +8489,6 @@ get_sensors_data()
 					}
 				}
 			}
-
 			# then construct the sys_fan string for echo, note that iteration 1
 			# makes: fanDefaultString separator null, ie, no space or ,
 			for (j = 1; j <= indexCountaFanDefault; j++) {
@@ -9096,11 +9202,11 @@ print_it_out()
 		if [[ $B_SHOW_MACHINE == 'true' ]];then
 			print_machine_data
 		fi
-		if [[ $B_SHOW_WEATHER == 'true' ]];then
-			print_weather_data
-		fi
 		if [[ $B_SHOW_BASIC_CPU == 'true' || $B_SHOW_CPU == 'true' ]];then
 			print_cpu_data
+		fi
+		if [[ $B_SHOW_MEMORY == 'true' ]];then
+			print_memory_data
 		fi
 		if [[ $B_SHOW_GRAPHICS == 'true' ]];then
 			print_graphics_data
@@ -9131,6 +9237,9 @@ print_it_out()
 		fi
 		if [[ $B_SHOW_PS_CPU_DATA == 'true' || $B_SHOW_PS_MEM_DATA == 'true' ]];then
 			print_ps_data
+		fi
+		if [[ $B_SHOW_WEATHER == 'true' ]];then
+			print_weather_data
 		fi
 		if [[ $B_SHOW_INFO == 'true' ]];then
 			print_info_data
@@ -9451,7 +9560,7 @@ print_cpu_data()
 				# echo $cpu_core_count $cpu_physical_count
 				if [[ -n ${a_cpu_working[4]} ]];then
 					# new arm shows bad bogomip value, so don't use it
-					if [[ ${a_cpu_working[4]} > 50 ]];then
+					if [[ ${a_cpu_working[4]%.*} -gt 50 ]];then
 						bmip_data=$( calculate_multicore_data "${a_cpu_working[4]}" "$(( $cpu_core_count * $cpu_physical_count ))" )
 					fi
 					bmip_data=${bmip_data%.*}
@@ -9904,7 +10013,7 @@ print_hard_disk_data()
 					fi
 					hdd_serial=" ${C1}serial$SEP3${C2} $hdd_serial"
 				fi
-				dev_data="${C1}ID-$((i+1))$SEP3${C2} /dev/${a_hdd_working[0]} "
+				dev_data="/dev/${a_hdd_working[0]} "
 			fi
 			if [[ -n ${a_hdd_working[2]} ]];then
 				hdd_name_temp=${a_hdd_working[2]}
@@ -9913,7 +10022,7 @@ print_hard_disk_data()
 			fi
 			# echo "loop: $i"
 			hdd_name="${C1}model$SEP3${C2} $hdd_name_temp"
-			hdd_string="$usb_data$dev_data$hdd_name$size_data$hdd_serial$hdd_temp_data"
+			hdd_string="${C1}ID-$((i+1))$SEP3${C2} $usb_data$dev_data$hdd_name$size_data$hdd_serial$hdd_temp_data"
 			part_1_data="$hdd_model$hdd_string "
 			
 			if [[ $i -eq 0 ]];then
@@ -10149,7 +10258,7 @@ print_machine_data()
 	# set A_MACHINE_DATA
 	get_machine_data
 	
-	if [[ -n $BSD_TYPE ]];then
+	if [[ -n $BSD_TYPE || $B_FORCE_DMIDECODE == 'true' ]];then
 		sysDmiError=''
 		sysDmiNull='No machine data available. Is dmidecode installed?'
 	fi
@@ -10279,7 +10388,8 @@ print_machine_data()
 		system_line="${C2}$sysDmiNull"
 	fi
 	# patch to dump all of above if dmidecode was data source and non root user
-	if [[ ${A_MACHINE_DATA[0]} == 'dmidecode-non-root-user' || ${A_MACHINE_DATA[0]} == 'dmidecode-no-smbios-dmi-data' ]];then
+	if [[ ${A_MACHINE_DATA[0]} == 'dmidecode-non-root-user' || \
+	${A_MACHINE_DATA[0]} == 'dmidecode-no-smbios-dmi-data' ]];then
 		if [[ ${A_MACHINE_DATA[0]} == 'dmidecode-non-root-user' ]];then
 			system_line="${C2}${sysDmiError}dmidecode: you must be root to run dmidecode"
 		elif [[ ${A_MACHINE_DATA[0]} == 'dmidecode-no-smbios-dmi-data' ]];then
@@ -10302,6 +10412,26 @@ print_machine_data()
 	if [[ -n $chassis_line ]];then
 		chassis_line=$( create_print_line " " "$chassis_line${CN}" )
 		print_screen_output "$chassis_line"
+	fi
+	
+	eval $LOGFE
+}
+
+print_memory_data()
+{
+	eval $LOGFS
+	local memory_line="${C1}Placeholder$SEP3${C2} Feature not yet developed"
+	
+	memory_line=$( create_print_line "Memory:" "$memory_line${CN}" )
+	print_screen_output "$memory_line"
+	
+	if [[ ${A_MEMORY_DATA[0]} == 'dmidecode-non-root-user' || \
+	${A_MEMORY_DATA[0]} == 'dmidecode-no-smbios-dmi-data' ]];then
+		if [[ ${A_MEMORY_DATA[0]} == 'dmidecode-non-root-user' ]];then
+			memory_line="${C2}${sysDmiError}dmidecode: you must be root to run dmidecode"
+		elif [[ ${A_MEMORY_DATA[0]} == 'dmidecode-no-smbios-dmi-data' ]];then
+			memory_line="${C2}${sysDmiError}dmidecode: no machine data available"
+		fi
 	fi
 	
 	eval $LOGFE
@@ -11341,7 +11471,7 @@ print_repo_data()
 			# use bots that show page title for urls, so need to break the url by adding 
 			# a white space.
 			if [[ $B_IRC == 'true' ]];then
-				file_content=$( echo $file_content | sed 's|://|: //|' )
+				file_content=$( echo ${file_content/:\/\//: \/\/} )
 			else
 				file_content=$( echo $file_content )
 			fi
@@ -11707,7 +11837,7 @@ print_weather_data()
 	local weather_data='' location_string='' local_time='' time_string='' pressure=''
 	local a_location='' a_weather='' weather_string='' weather='' temp='' winds='' humidity=''
 	local time_zone='' observation_time='' city='' state='' country='' altitude=''
-	local heat_index="" wind_chill='' dewpoint='' xxx_humidity=''
+	local heat_index='' wind_chill='' dewpoint='' xxx_humidity=''
 	local openP='(' closeP=')'
 	
 	if [[ $B_IRC == 'true' ]];then
