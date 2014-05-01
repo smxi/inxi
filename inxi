@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.1.25
+####  Version: 2.1.26
 ####  Date: 2014-05-01
 ####  Patch Number: 00
 ########################################################################
@@ -614,7 +614,7 @@ DISTROS_OS_RELEASE_GOOD="arch-release SuSE-release"
 # Note that \<ltd\> bans only words, not parts of strings; in \<corp\> you can't use punctuation characters like . or ,
 # we're saving about 10+% of the total script exec time by hand building the ban lists here, using hard quotes.
 BAN_LIST_NORMAL='chipset|components|computing|computer|corporation|communications|electronics|electrical|electric|gmbh|group|incorporation|industrial|international|nee|revision|semiconductor|software|technologies|technology|ltd\.|\<ltd\>|inc\.|\<inc\>|intl\.|co\.|\<co\>|corp\.|\<corp\>|\(tm\)|\(r\)|®|\(rev ..\)'
-BAN_LIST_CPU='@|cpu deca|dual core|dual-core|tri core|tri-core|quad core|quad-core|ennea|genuine|hepta|hexa|multi|octa|penta|processor|single|triple|[0-9\.]+ *[MmGg][Hh][Zz]'
+BAN_LIST_CPU='@||cpu |cpu deca|dual core|dual-core|tri core|tri-core|quad core|quad-core|ennea|genuine|hepta|hexa|multi|octa|penta|processor|single|triple|[0-9\.]+ *[MmGg][Hh][Zz]'
 
 SENSORS_GPU_SEARCH='intel|radeon|nouveau'
 
@@ -799,10 +799,12 @@ initialize_data()
 		# GNU/kfreebsd will by definition have GNU tools like sed/grep
 		if [[ -z ${BSD_VERSION/*kfreebsd*/} ]];then
 			BSD_TYPE='debian-bsd' # debian gnu bsd
-		elif [[ -z ${BSD_VERSION/*darwin*/} ]];then
-			BSD_TYPE='darwin-bsd' # debian gnu bsd
 		else
-			BSD_TYPE='bsd' # all other bsds
+			if [[ -z ${BSD_VERSION/*darwin*/} ]];then
+				BSD_TYPE='darwin-bsd' # debian gnu bsd
+			else
+				BSD_TYPE='bsd' # all other bsds
+			fi
 			SED_I="-i ''"
 			SED_RX='-E'
 			ESC=$(echo | tr '\n' '\033')
@@ -1047,7 +1049,7 @@ check_required_apps()
 	
 	if [[ -z $BSD_TYPE  ]];then
 		depends="$depends lspci"
-	elif [[ $BSD_TYPE == 'bsd' ]];then
+	elif [[ $BSD_TYPE == 'bsd' || $BSD_TYPE == 'darwin-bsd' ]];then
 		depends="$depends sysctl"
 		# debian-bsd has lspci but you must be root to run it
 	elif [[ $BSD_TYPE == 'debian-bsd' ]];then
@@ -1894,7 +1896,7 @@ check_recommends_user_output()
 	echo "Python version: $python_version"
 	echo $Line
 	
-	echo "Test One: Required System Directories."
+	echo "Test One: Required System Directories (Linux Only)."
 	print_lines_basic "0" "" "If one of these system directories is missing, $SCRIPT_NAME cannot operate:"
 	echo 
 	check_recommends_items 'required-dirs'
@@ -3620,7 +3622,7 @@ get_audio_alsa_data()
 get_cpu_core_count()
 {
 	eval $LOGFS
-	local cpu_physical_count='' cpu_core_count='' cpu_type='' cpu_alpha_count=''
+	local cpu_physical_count='' cpu_core_count='' cpu_type='' cpu_alpha_count='' cores_per_cpu=''
 	if [[ $B_CPUINFO_FILE == 'true' ]]; then
 		# load the A_CPU_TYPE_PCNT_CCNT core data array
 		get_cpu_ht_multicore_smp_data
@@ -3642,19 +3644,38 @@ get_cpu_core_count()
 		if [[ $BSD_VERSION == 'openbsd' ]];then
 			gawk_fs='='
 		fi
-		cpu_core_count=$( gawk -F "$gawk_fs" '
+		cpu_core_count=$( gawk -F "$gawk_fs" -v bsdType=$BSD_TYPE '
 		# note: on openbsd can also be hw.ncpufound so exit after first
-		/^hw.ncpu/ {
-			print $NF
-			exit
+		BEGIN {
+			coreCount=""
+		}
+		/^hw.ncpu$/ {
+			coreCount=$NF
+			# incredibly, they actually change field separators on some systems. 
+			FS = ":"
+		}
+		/^machdep.cpu.core_count/ {
+			coreCount=$NF
+		}
+		END {
+			print coreCount
 		}' <<< "$Sysctl_a_Data" )
+		cores_per_cpu=$( gawk -F "$gawk_fs" '
+		/^machdep.cpu.cores_per_package/ {
+			print $NF
+		}' <<< "$Sysctl_a_Data" )
+		
 		if [[ -n $( grep -E '^[0-9]+$' <<< "$cpu_core_count" ) ]];then
 			cpu_alpha_count=$( get_cpu_core_count_alpha "$cpu_core_count" )
 			if [[ $cpu_core_count -gt 1 ]];then
 				cpu_type='SMP'
 			fi
 		fi
-		cpu_physical_count=1
+		if [[ -n $cores_per_cpu ]];then
+			cpu_physical_count=$(( $cpu_core_count / $cores_per_cpu ))
+		else
+			cpu_physical_count=1
+		fi
 		A_CPU_CORE_DATA=( "$cpu_physical_count" "$cpu_alpha_count" "$cpu_type" "$cpu_core_count" )
 	fi
 	a_temp=${A_CPU_CORE_DATA[@]}
@@ -3844,7 +3865,8 @@ get_cpu_data_bsd()
 	local bsd_cpu_flags=$( get_cpu_flags_bsd )
 	local gawk_fs=': '
 	
-	if [[ $BSD_VERSION == 'openbsd' ]];then
+	# note, in darwin, they switch fs from = to : ... sigh
+	if [[ $BSD_VERSION == 'openbsd' || $BSD_VERSION == 'darwin-bsd' ]];then
 		gawk_fs='='
 	fi
 	# avoid setting this for systems where you have no read/execute permissions
@@ -3852,7 +3874,7 @@ get_cpu_data_bsd()
 	if [[ -n $Sysctl_a_Data || -n $bsd_cpu_flags ]];then
 		IFS=$'\n'
 		A_CPU_DATA=( $( 
-		gawk -F "$gawk_fs" -v cpuFlags="$bsd_cpu_flags" '
+		gawk -F "$gawk_fs" -v bsdType=$BSD_TYPE -v cpuFlags="$bsd_cpu_flags" '
 		BEGIN {
 			IGNORECASE=1
 			cpuModel=""
@@ -3860,8 +3882,9 @@ get_cpu_data_bsd()
 			cpuCache=""
 			cpuBogomips=""
 			cpuVendor=""
+			bMach="false"
 		}
-		/^hw.model/ {
+		( bsdType != "darwin-bsd" ) && /^hw.model/ {
 			gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF )
 			gsub(/'"$BAN_LIST_CPU"'/, "", $NF )
 			sub(//,"",$NF)
@@ -3873,12 +3896,36 @@ get_cpu_data_bsd()
 				exit
 			}
 		}
-		/^hw.(clock|cpuspeed)/ {
+		/^hw.(clock|cpufrequency)$/ {
 			cpuClock=$NF
 			if ( cpuModel != "" ) {
 				exit
 			}
 		}
+		/^machdep/ {
+			FS=":"
+		}
+		/^hw.cpufrequency/ {
+			cpuClock = $NF / 1000000
+		}
+		/^hw.l2cachesize/ {
+			cpuCache=$NF/1000
+			cpuCache=cpuCache " kB"
+		}
+		/^machdep.cpu.vendor/ {
+			cpuVendor=$NF
+		}
+		/^machdep.cpu.brand_string/ {
+			gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF )
+			gsub(/'"$BAN_LIST_CPU"'/, "", $NF )
+			sub(//,"",$NF)
+			sub(/[a-z]+-core/, "", $NF )
+			gsub(/^ +| +$|\"/, "", $NF)
+			gsub(/ [ \t]+/, " ", $NF)
+			sub(/[[:space:]]*@.*/,"",$NF)
+			cpuModel=$NF
+		}
+		
 		END {
 			print cpuModel "," cpuClock "," cpuCache "," cpuFlags "," cpuBogomips ","  cpuVendor
 			print "N/A"
@@ -3894,9 +3941,13 @@ get_cpu_flags_bsd()
 	eval $LOGFS
 	
 	local cpu_flags=''
+	local gawk_fs=':'
+	if [[ $BSD_VERSION == 'openbsd' ]];then
+		gawk_fs='='
+	fi
 	
 	if [[ -n $Dmesg_Boot_Data ]];then
-		cpu_flags=$( gawk -F '=' '
+		cpu_flags=$( gawk -F "=" '
 		BEGIN {
 			IGNORECASE=1
 			cpuFlags=""
@@ -3916,6 +3967,17 @@ get_cpu_flags_bsd()
 			print cpuFlags
 			exit
 		}' <<< "$Dmesg_Boot_Data" )
+	elif [[ -n $Sysctl_a_Data ]];then
+		cpu_flags=$( gawk -F "$gawk_fs" '
+		BEGIN {
+			IGNORECASE=1
+			cpuFlags=""
+		}
+		/^machdep.cpu.features/ {
+			cpuFlags=tolower($NF)
+			print cpuFlags
+			exit
+		}' <<< "$Sysctl_a_Data" )
 	fi
 	echo $cpu_flags
 	log_function_data "$cpu_flags"
@@ -4505,7 +4567,16 @@ get_distro_data()
 	
 	# may need modification if archbsd / debian can be id'ed with /etc files
 	if [[ -n $BSD_TYPE ]];then
-		distro=$( uname -sr )
+		if [[ $BSD_TYPE != 'darwin-bsd' ]];then
+			distro=$( uname -sr )
+		else
+			if [[ -f /System/Library/CoreServices/SystemVersion.plist ]];then
+				distro=$( grep -A1 -E '(ProductName|ProductVersion)' /System/Library/CoreServices/SystemVersion.plist  | grep '<string>' | sed -E 's/<[\/]?string>//g' )
+				distro=$( echo $distro )
+			else
+				distro='Mac OS X'
+			fi
+		fi
 		echo "$distro"
 		log_function_data "distro: $distro"
 		eval $LOGFE
@@ -5825,6 +5896,10 @@ get_init_data()
 			init_type='Epoch'
 			# epoch version == Epoch Init System 1.0.1 "Sage"
 			init_version=$( get_program_version 'epoch' '^Epoch' '4' )
+		elif type -p launchctl &>/dev/null;then
+			init_type='Launchctl'
+			# epoch version == Epoch Init System 1.0.1 "Sage"
+			# init_version=$( get_program_version 'Launchctl' '^Launchctl' '4' )
 		# missing data: 
 		# http://smarden.org/runit/sv.8.html
 		elif [[ -e /sbin/runit-init || -e /etc/runit || -n $( type -p sv ) ]];then
@@ -9610,7 +9685,7 @@ print_cpu_data()
 	# 				bmip_data="${a_cpu_working[4]}"
 	# 			fi
 				# bogomips are a linux thing, but my guess is over time bsds will use them somewhere anyway
-				if [[ $BSD_TYPE == 'bsd' && -z $bmip_data ]];then
+				if [[ -n $BSD_TYPE && -z $bmip_data ]];then
 					bmip_data=''
 				else
 					bmip_data="${C1}bmips$SEP3${C2} $bmip_data "
@@ -9619,10 +9694,14 @@ print_cpu_data()
 			## note: this handles how intel reports L2, total instead of per core like AMD does
 			# note that we need to multiply by number of actual cpus here to get true cache size
 			if [[ -n ${a_cpu_working[2]} ]];then
-				if [[ $cpu_vendor != 'intel' ]];then
-					cpu_cache=$( calculate_multicore_data "${a_cpu_working[2]}" "$(( $cpu_core_count * $cpu_physical_count ))"  )
+				if [[ -z $BSD_TYPE ]];then
+					if [[ $cpu_vendor != 'intel' ]];then
+						cpu_cache=$( calculate_multicore_data "${a_cpu_working[2]}" "$(( $cpu_core_count * $cpu_physical_count ))"  )
+					else
+						cpu_cache=$( calculate_multicore_data "${a_cpu_working[2]}" "$cpu_physical_count"  )
+					fi
 				else
-					cpu_cache=$( calculate_multicore_data "${a_cpu_working[2]}" "$cpu_physical_count"  )
+					cpu_cache=${a_cpu_working[2]}
 				fi
 			else
 				cpu_cache='N/A'
