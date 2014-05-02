@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.1.26
-####  Date: 2014-05-01
+####  Version: 2.1.27
+####  Date: 2014-05-02
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -973,7 +973,7 @@ initialize_paths()
 {
 	local path='' added_path='' b_path_found='' sys_path=''
 	# Extra path variable to make execute failures less likely, merged below
-	local extra_paths="/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin"
+	local extra_paths="/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:/opt/local/bin"
 	
 	# this needs to be set here because various options call the parent initialize function directly.
 	SCRIPT_PATH=$( dirname $0 )
@@ -1668,6 +1668,7 @@ debug_data_collector()
 		head -n 1 /proc/asound/card*/codec* &> $debug_data_dir/proc-asound-card-codec.txt
 		ls /usr/bin/gcc* &> $debug_data_dir/gcc-sys-versions.txt
 		gcc --version &> $debug_data_dir/gcc-version.txt
+		clang --version &> $debug_data_dir/clang-version.txt
 		cat /etc/issue &> $debug_data_dir/etc-issue.txt
 		cat $FILE_LSB_RELEASE &> $debug_data_dir/lsb-release.txt
 		cat $FILE_OS_RELEASE &> $debug_data_dir/os-release.txt
@@ -3666,8 +3667,6 @@ get_cpu_core_count()
 		}
 		/^hw.ncpu$/ {
 			coreCount=$NF
-			# incredibly, they actually change field separators on some systems. 
-			FS = ":"
 		}
 		/^machdep.cpu.core_count/ {
 			coreCount=$NF
@@ -3880,8 +3879,7 @@ get_cpu_data_bsd()
 	local bsd_cpu_flags=$( get_cpu_flags_bsd )
 	local gawk_fs=': '
 	
-	# note, in darwin, they switch fs from = to : ... sigh
-	if [[ $BSD_VERSION == 'openbsd' || $BSD_VERSION == 'darwin' ]];then
+	if [[ $BSD_VERSION == 'openbsd' ]];then
 		gawk_fs='='
 	fi
 	# avoid setting this for systems where you have no read/execute permissions
@@ -3897,9 +3895,9 @@ get_cpu_data_bsd()
 			cpuCache=""
 			cpuBogomips=""
 			cpuVendor=""
-			bMach="false"
+			bSwitchFs="false"
 		}
-		( bsdVersion != "darwin" ) && /^hw.model/ {
+		 /^hw.model/ && ( bsdVersion != "darwin" ) {
 			gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF )
 			gsub(/'"$BAN_LIST_CPU"'/, "", $NF )
 			sub(//,"",$NF)
@@ -3911,15 +3909,11 @@ get_cpu_data_bsd()
 				exit
 			}
 		}
-		/^hw.(clock|cpufrequency)$/ {
+		/^hw.clock/ {
 			cpuClock=$NF
 			if ( cpuModel != "" ) {
 				exit
 			}
-		}
-		( bMach != "true" ) && /^machdep/ {
-			FS=":"
-			bMach="true"
 		}
 		/^hw.cpufrequency/ {
 			cpuClock = $NF / 1000000
@@ -3984,7 +3978,6 @@ get_cpu_flags_bsd()
 	elif [[ -n $Sysctl_a_Data ]];then
 		cpu_flags=$( gawk -F "$gawk_fs" '
 		BEGIN {
-			IGNORECASE=1
 			cpuFlags=""
 		}
 		/^machdep.cpu.features/ {
@@ -5992,7 +5985,7 @@ get_kernel_compiler_version()
 		fi
 	fi
 	if [[ -n $compiler_version ]];then
-		compiler_version="$compiler_type-$compiler_version"
+		compiler_version="$compiler_type^$compiler_version"
 	fi
 	echo $compiler_version
 }
@@ -6244,7 +6237,7 @@ get_memory_data()
 		log_function_data 'cat' "$FILE_MEMINFO"
 	elif [[ $B_SYSCTL == 'true' && -n $Sysctl_a_Data ]];then
 		local gawk_fs=': '
-	
+		# darwin sysctl is broken and uses both : and = and repeats these items
 		if [[ $BSD_VERSION == 'openbsd' ]];then
 			gawk_fs='='
 		fi
@@ -6254,7 +6247,7 @@ get_memory_data()
 			freeMemory=""
 		}
 		# freebsd seems to use bytes here
-		/^hw.physmem/ {
+		/^hw.physmem/ && ( realMemory == "" ) {
 			gsub(/^[^0-9]+|[^0-9]+$/,"",$2)
 			realMemory = $2/1024
 			if ( freeMemory != "" ) {
@@ -6271,7 +6264,7 @@ get_memory_data()
 			}
 		}
 		END {
-			# hack: temp fix for openbsd: in case no free mem was detected but we have physmem
+			# hack: temp fix for openbsd/darwin: in case no free mem was detected but we have physmem
 			if ( freeMemory == "" && realMemory != "" ) {
 				printf("NA/%.1fMB\n", realMemory/1024)
 			}
@@ -8779,7 +8772,12 @@ get_sysctl_data()
 	local sysctl_data=''
 	
 	if [[ $B_SYSCTL ]];then
-		sysctl_data="$( sysctl -$1 )"
+		# darwin sysctl has BOTH = and : separators, and repeats data. Why? No bsd discipline, that's for sure
+		if [[ $BSD_VERSION == 'darwin' ]];then
+			sysctl_data="$( sysctl -$1 | sed 's/[[:space:]]*=[[:space:]]*/: /' )"
+		else
+			sysctl_data="$( sysctl -$1 )"
+		fi
 	fi
 	# log_function_data "sysctl_data: $sysctl_data"
 	echo "$sysctl_data"
@@ -11871,7 +11869,7 @@ print_system_data()
 	if [[ $B_EXTRA_DATA == 'true' ]];then
 		compiler_string=$( get_kernel_compiler_version )
 		if [[ -n $compiler_string ]];then
-			compiler_string=" ${C1}${compiler_string%%-*}$SEP3${C2} ${compiler_string#*-}"
+			compiler_string=" ${C1}${compiler_string%^*}$SEP3${C2} ${compiler_string#*^}"
 		fi
 	fi
 	# check for 64 bit first
