@@ -3,7 +3,7 @@
 ####  Script Name: inxi
 ####  Version: 2.1.28
 ####  Date: 2014-08-07
-####  Patch Number: 07-b1
+####  Patch Number: 08-b1
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -6332,53 +6332,58 @@ get_networking_data()
 	IFS=$'\n'
 	A_NETWORK_DATA=( $( 
 	echo "$Lspci_v_Data" | gawk '
+	# NOTE: see version 2.1.28 or earlier for old logic if for some reason it is needed again
+	# that used a modified string made from nic name, why, I have no idea, makes no sense and leads
+	# to wrong ordered output as well.
 	BEGIN {
 		IGNORECASE=1
-		counter=0 # required to handle cases of > 1 instance of the same chipset
+		counter=0 
 	}
 	/^[0-9a-f:\.]+ ((ethernet|network) (controller|bridge)|infiniband)/ || /^[0-9a-f:\.]+ [^:]+: .*(ethernet|infiniband|network).*$/ {
-		nic=gensub(/^[0-9a-f:\.]+ [^:]+: (.+)$/,"\\1","g",$0)
-		#gsub(/realtek semiconductor/, "Realtek", nic)
-		#gsub(/davicom semiconductor/, "Davicom", nic)
+		aNic[counter]=gensub(/^[0-9a-f:\.]+ [^:]+: (.+)$/,"\\1","g",$0)
+		#gsub(/realtek semiconductor/, "Realtek", aNic[counter])
+		#gsub(/davicom semiconductor/, "Davicom", aNic[counter])
 		# The doublequotes are necessary because of the pipes in the variable.
-		gsub(/'"$BAN_LIST_NORMAL"'/, "", nic)
-		gsub(/,/, " ", nic)
-		gsub(/^ +| +$/, "", nic)
-		gsub(/ [ \t]+/, " ", nic)
-		# construct a unique string ending for each chipset detected, this allows for
-		# multiple instances of the same exact chipsets, ie, dual gigabit 
-		nic = nic "~~" counter++
-		aPciBusId[nic] = gensub(/(^[0-9a-f:\.]+) [^:]+: .+$/,"\\1","g",$0)
-		# I do not understand why incrementing a string index makes sense? 
-		eth[nic]++ 
+		gsub(/'"$BAN_LIST_NORMAL"'/, "", aNic[counter])
+		gsub(/,/, " ", aNic[counter])
+		gsub(/^ +| +$/, "", aNic[counter])
+		gsub(/ [ \t]+/, " ", aNic[counter])
+		# NOT USED: construct a unique string ending for each device type detected, this allows for
+		# multiple instances of the same exact devices, ie, dual gigabit, virtual devices, etc
+		# nic = counter "*" nic "~~" counter++
+		aPciBusId[counter] = gensub(/(^[0-9a-f:\.]+) [^:]+: .+$/,"\\1","g",$0)
+		# NOT USED: I do not understand why incrementing a string index makes sense? 
+		# eth[nic]++ 
 		while ( getline && !/^$/ ) {
 			gsub(/,/, "", $0)
 			if ( /^[[:space:]]*I\/O/ ) {
-				ports[nic] = ports[nic] $4 " "
+				ports[counter] = ports[counter] $4 " "
 			}
 			if ( /driver in use/ ) {
-				drivers[nic] = drivers[nic] gensub( /(.*): (.*)/ ,"\\2" ,"g" ,$0 ) ""
+				drivers[counter] = drivers[counter] gensub( /(.*): (.*)/ ,"\\2" ,"g" ,$0 ) ""
 			}
 			else if ( /kernel modules/ ) {
-				modules[nic] = modules[nic] gensub( /(.*): (.*)/ ,"\\2" ,"g" ,$0 ) ""
+				modules[counter] = modules[counter] gensub( /(.*): (.*)/ ,"\\2" ,"g" ,$0 ) ""
 			}
 		}
+		counter++
 	}
 
 	END {
 		j=0
-		for (i in eth) {
+		for (i=0;i<counter;i++) {
 			useDrivers=""
 			usePorts=""
 			useModules=""
+			useNic=""
 			usePciBusId=""
-
-			if ( eth[i] > 1 ) {
-				a[j] = eth[i] "x " i
-			}
-			else {
-				a[j] = i
-			}	
+			# NOT USED: first condition should almost never/never happen
+# 			if ( eth[i] > 1 ) {
+# 				a[j] = eth[i] "x " i
+# 			}
+# 			else {
+# 				a[j] = i
+# 			}
 			## note: this loses the plural ports case, is it needed anyway?
 			if ( ports[i] != "" ) {
 				usePorts = ports[i]
@@ -6389,15 +6394,18 @@ get_networking_data()
 			if ( modules[i] != "" ) {
 				useModules = modules[i]
 			}
+			if ( aNic[i] != "" ) {
+				useNic=aNic[i]
+			}
 			if ( aPciBusId[i] != "" ) {
 				usePciBusId = aPciBusId[i]
 			}
 			# create array primary item for master array
-			# and strip out the counter again, this handled dual cards with same chipset
-			sub( /~~[0-9]+$/, "", a[j] )
+			# NOT USED: and strip out the counter again, this handled dual cards with same chipset
+			# sub( /~~[0-9]+$/, "", a[j] )
 			sub( / $/, "", usePorts ) # clean off trailing whitespace
-			print a[j] "," useDrivers "," usePorts "," useModules, "," usePciBusId
-			j++
+			print useNic "," useDrivers "," usePorts "," useModules, "," usePciBusId
+			# j++
 		}
 	}' ) )
 	IFS="$ORIGINAL_IFS"
@@ -6430,6 +6438,7 @@ get_network_advanced_data()
 		IFS="$ORIGINAL_IFS"
 		# reset these every go round
 		driver_test=''
+		if_data=''
 		if_id='' 
 		speed='' 
 		duplex='' 
@@ -6437,6 +6446,7 @@ get_network_advanced_data()
 		oper_state=''
 		usb_data=''
 		chip_id=''
+		working_path=''
 		if [[ -z $( grep '^usb-' <<< ${a_network_adv_working[4]} ) ]];then
 			# note although this may exist technically don't use it, it's a virtual path
 			# and causes weird cat errors when there's a missing file as well as a virtual path
@@ -6509,7 +6519,10 @@ get_network_advanced_data()
 		fi
 		#echo wp: $working_path
 		log_function_data "PRE: working_path: $working_path\nworking_uevent_path: $working_uevent_path"
-		
+		# some cases of failure will return root / instead of null
+		if [[ $working_path == '/' ]];then
+			working_path=''
+		fi
 		# this applies in two different cases, one, default, standard, two, for usb, this is actually
 		# the short path, minus the last longer numeric directory name, ie: 
 		# from debian squeeze 2.6.32-5-686: 
@@ -6526,11 +6539,12 @@ get_network_advanced_data()
 			if_id=$if_data
 			working_path=$working_uevent_path/net/$if_data
 		# 2.6.32 debian lenny kernel shows not: /net/eth0 but /net:eth0
-		else
+		elif [[ -n $working_path ]];then
 			if_data=$( ls $working_path 2>/dev/null | grep 'net:' )
 			if_id=$( cut -d ':' -f 2 <<< "$if_data" )
 			working_path=$working_path/$if_data
 		fi
+		
 		#echo id: $if_data
 		log_function_data "POST: working_path: $working_path\nif_data: $if_data - if_id: $if_id"
 		## note: in cases of dual ports with different ids, this loop will create extra array items
@@ -6538,22 +6552,27 @@ get_network_advanced_data()
 # eth2
 # ib1"
 		# echo if_data $if_data
-		if [[ -n $if_data ]];then
-			# if_data=$(tr '\n' ' ' <<< $if_data)
-			#if_data=$(echo $if_data)
-			for if_item in $if_data
-			do
-				chip_id=
-				duplex=''
-				full_path=''
-				if_id=''
-				mac_id=''
-				oper_state=''
-				speed=''
+		# there are virtual devices that will have no if data but which we still want in the array
+		# as it loops. These will also have null working_path as well since no /net is found
+		if [[ -z $if_data ]];then
+			if_data='null-if-id'
+		fi
+		# if_data=$(tr '\n' ' ' <<< $if_data)
+		#if_data=$(echo $if_data)
+		for if_item in $if_data
+		do
+			chip_id=
+			duplex=''
+			full_path=''
+			if_id=''
+			mac_id=''
+			oper_state=''
+			speed=''
+			
+			if [[ $working_path != '' ]];then
+				#echo wp1: $working_path
 				# strip out trailing spaces
 				if_item=${if_item%% }
-				
-				#echo wp1: $working_path
 				if [[ $b_path_made == 'false' ]];then
 					full_path=$working_path/net/$if_item
 					if_id=$if_item
@@ -6579,11 +6598,13 @@ get_network_advanced_data()
 					chip_id=${a_network_adv_working[10]}
 				fi
 				# now we create one array index per id found, note that one pcibusid device can have > 1 id
-				A_NETWORK_DATA[$array_counter]=${a_network_adv_working[0]}","${a_network_adv_working[1]}","${a_network_adv_working[2]}","${a_network_adv_working[3]}","${a_network_adv_working[4]}","$if_id","$oper_state","$speed","$duplex","$mac_id","$chip_id
-				
-				((array_counter++))
-			done
-		fi
+			else
+				if_id=''
+			fi
+			A_NETWORK_DATA[$array_counter]=${a_network_adv_working[0]}","${a_network_adv_working[1]}","${a_network_adv_working[2]}","${a_network_adv_working[3]}","${a_network_adv_working[4]}","$if_id","$oper_state","$speed","$duplex","$mac_id","$chip_id
+			
+			((array_counter++))
+		done
 	done
 	a_temp=${A_NETWORK_DATA[@]}
 	log_function_data "A_NETWORK_DATA (advanced): $a_temp"
