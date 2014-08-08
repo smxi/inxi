@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.1.28
-####  Date: 2014-05-21
+####  Version: 2.1.29
+####  Date: 2014-08-08
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -1832,7 +1832,7 @@ debug_data_collector()
 		echo 'Creating inxi output file now. This can take a few seconds...'
 		echo "Starting $SCRIPT_NAME from: $start_directory"
 		cd $start_directory
-		$SCRIPT_PATH/$SCRIPT_NAME -FRfrploudxxx -c 0 -@ 8 -y 120 > $SCRIPT_DATA_DIR/$debug_data_dir/inxi-FRfrploudxxxy120.txt
+		$SCRIPT_PATH/$SCRIPT_NAME -FRfrploudixxx -c 0 -@ 8 -y 120 > $SCRIPT_DATA_DIR/$debug_data_dir/inxi-FRfrploudixxxy120.txt
 		cp $LOG_FILE $SCRIPT_DATA_DIR/$debug_data_dir
 		if [[ -f $SCRIPT_DATA_DIR/$debug_data_dir.tar.gz ]];then
 			echo "Found and removing previous tar.gz data file: $debug_data_dir.tar.gz"
@@ -3467,7 +3467,7 @@ get_audio_data()
 			else if (/kernel modules:/) {
 				modules[audioCard] = modules[audioCard] gensub( /(.*): (.*)/ ,"\\2" ,"g" ,$0 ) ""
 			}
-			else if (/I\/O/) {
+			else if (/^[[:space:]]*I\/O/) {
 				portsTemp = gensub(/\t*I\/O ports at (.*) \[.*\]/,"\\1","g",$0)
 				ports[audioCard] = ports[audioCard] portsTemp " "
 			}
@@ -6321,6 +6321,7 @@ get_module_version_number()
 	eval $LOGFE
 }
 
+
 ## create array of network cards
 get_networking_data()
 {
@@ -6331,72 +6332,64 @@ get_networking_data()
 	IFS=$'\n'
 	A_NETWORK_DATA=( $( 
 	echo "$Lspci_v_Data" | gawk '
+	# NOTE: see version 2.1.28 or earlier for old logic if for some reason it is needed again
+	# that used a modified string made from nic name for index, why, I have no idea, makes no sense and leads
+	# to wrong ordered output as well. get_audio_data uses the old logic for now too.
 	BEGIN {
 		IGNORECASE=1
-		counter=0 # required to handle cases of > 1 instance of the same chipset
+		counter=0 
 	}
-	/^[0-9a-f:\.]+ (ethernet|network) (controller|bridge)/ || /^[0-9a-f:\.]+ [^:]+: .*(ethernet|network).*$/ {
-		nic=gensub(/^[0-9a-f:\.]+ [^:]+: (.+)$/,"\\1","g",$0)
-		#gsub(/realtek semiconductor/, "Realtek", nic)
-		#gsub(/davicom semiconductor/, "Davicom", nic)
+	/^[0-9a-f:\.]+ ((ethernet|network) (controller|bridge)|infiniband)/ || /^[0-9a-f:\.]+ [^:]+: .*(ethernet|infiniband|network).*$/ {
+		aNic[counter]=gensub(/^[0-9a-f:\.]+ [^:]+: (.+)$/,"\\1","g",$0)
+		#gsub(/realtek semiconductor/, "Realtek", aNic[counter])
+		#gsub(/davicom semiconductor/, "Davicom", aNic[counter])
 		# The doublequotes are necessary because of the pipes in the variable.
-		gsub(/'"$BAN_LIST_NORMAL"'/, "", nic)
-		gsub(/,/, " ", nic)
-		gsub(/^ +| +$/, "", nic)
-		gsub(/ [ \t]+/, " ", nic)
-		# construct a unique string ending for each chipset detected, this allows for
-		# multiple instances of the same exact chipsets, ie, dual gigabit 
-		nic = nic "~~" counter++
-		aPciBusId[nic] = gensub(/(^[0-9a-f:\.]+) [^:]+: .+$/,"\\1","g",$0)
-		# I do not understand why incrementing a string index makes sense? 
-		eth[nic]++ 
+		gsub(/'"$BAN_LIST_NORMAL"'/, "", aNic[counter])
+		gsub(/,/, " ", aNic[counter])
+		gsub(/^ +| +$/, "", aNic[counter])
+		gsub(/ [ \t]+/, " ", aNic[counter])
+		aPciBusId[counter] = gensub(/(^[0-9a-f:\.]+) [^:]+: .+$/,"\\1","g",$0)
 		while ( getline && !/^$/ ) {
 			gsub(/,/, "", $0)
-			if ( /I\/O/ ) {
-				ports[nic] = ports[nic] $4 " "
+			if ( /^[[:space:]]*I\/O/ ) {
+				aPorts[counter] = aPorts[counter] $4 " "
 			}
 			if ( /driver in use/ ) {
-				drivers[nic] = drivers[nic] gensub( /(.*): (.*)/ ,"\\2" ,"g" ,$0 ) ""
+				aDrivers[counter] = aDrivers[counter] gensub( /(.*): (.*)/ ,"\\2" ,"g" ,$0 ) ""
 			}
 			else if ( /kernel modules/ ) {
-				modules[nic] = modules[nic] gensub( /(.*): (.*)/ ,"\\2" ,"g" ,$0 ) ""
+				aModules[counter] = aModules[counter] gensub( /(.*): (.*)/ ,"\\2" ,"g" ,$0 ) ""
 			}
 		}
+		counter++
 	}
-
 	END {
-		j=0
-		for (i in eth) {
+		for (i=0;i<counter;i++) {
 			useDrivers=""
 			usePorts=""
 			useModules=""
+			useNic=""
 			usePciBusId=""
 
-			if ( eth[i] > 1 ) {
-				a[j] = eth[i] "x " i
-			}
-			else {
-				a[j] = i
-			}	
 			## note: this loses the plural ports case, is it needed anyway?
-			if ( ports[i] != "" ) {
-				usePorts = ports[i]
+			if ( aPorts[i] != "" ) {
+				usePorts = aPorts[i]
 			}
-			if ( drivers[i] != "" ) {
-				useDrivers = drivers[i]
+			if ( aDrivers[i] != "" ) {
+				useDrivers = aDrivers[i]
 			}
-			if ( modules[i] != "" ) {
-				useModules = modules[i]
+			if ( aModules[i] != "" ) {
+				useModules = aModules[i]
+			}
+			if ( aNic[i] != "" ) {
+				useNic=aNic[i]
 			}
 			if ( aPciBusId[i] != "" ) {
 				usePciBusId = aPciBusId[i]
 			}
 			# create array primary item for master array
-			# and strip out the counter again, this handled dual cards with same chipset
-			sub( /~~[0-9]+$/, "", a[j] )
 			sub( / $/, "", usePorts ) # clean off trailing whitespace
-			print a[j] "," useDrivers "," usePorts "," useModules, "," usePciBusId
-			j++
+			print useNic "," useDrivers "," usePorts "," useModules, "," usePciBusId
 		}
 	}' ) )
 	IFS="$ORIGINAL_IFS"
@@ -6413,42 +6406,59 @@ get_networking_data()
 get_network_advanced_data()
 {
 	eval $LOGFS
-	local a_network_adv_working='' if_path='' working_path='' working_uevent_path='' dir_path=''
-	local if_id='' speed='' duplex='' mac_id='' oper_state=''  chip_id=''
-	local usb_data='' usb_vendor='' usb_product='' product_path='' driver_test=''
+	local a_network_adv_working='' if_data='' working_path='' working_uevent_path='' dir_path=''
+	local if_id='' speed='' duplex='' mac_id='' oper_state=''  chip_id='' b_path_made='true'
+	local usb_data='' usb_vendor='' usb_product='' product_path='' driver_test='' array_counter=0
+	local full_path=''
+	# we need to change to holder since we are updating the main array
+	IFS=$'\n'
+	local a_main_working=(${A_NETWORK_DATA[@]})
+	IFS="$ORIGINAL_IFS"
 	
-	for (( i=0; i < ${#A_NETWORK_DATA[@]}; i++ ))
+	for (( i=0; i < ${#a_main_working[@]}; i++ ))
 	do
 		IFS=","
-		a_network_adv_working=( ${A_NETWORK_DATA[i]} )
+		a_network_adv_working=( ${a_main_working[i]} )
+		IFS="$ORIGINAL_IFS"
 		# reset these every go round
 		driver_test=''
-		if_id='' 
-		speed='' 
-		duplex='' 
-		mac_id='' 
-		oper_state=''
+		if_data=''
+		product_path=''
 		usb_data=''
-		chip_id=''
+		usb_product=''
+		usb_vendor=''
+		working_path=''
+		working_uevent_path=''
 		if [[ -z $( grep '^usb-' <<< ${a_network_adv_working[4]} ) ]];then
 			# note although this may exist technically don't use it, it's a virtual path
 			# and causes weird cat errors when there's a missing file as well as a virtual path
 			# /sys/bus/pci/devices/0000:02:02.0/net/eth1
 			# real paths are: /sys/devices/pci0000:00/0000:00:1e/0/0000:02:02.0/net/eth1/uevent
 			# and on older debian kernels: /sys/devices/pci0000:00/0000:02:02.0/net:eth1/uevent
-			# but broadcom shows this sometimes:
+			# but broadcom shows this sometimes, and older kernels maybe:
+			# /sys/devices/pci0000:00/0000:00:01.0/0000:05:00.0/net/eth0/
 			# /sys/devices/pci0000:00/0000:00:03.0/0000:03:00.0/ssb0:0/uevent:['DRIVER=b43', 'MODALIAS=ssb:v4243id0812rev0D']:
-			working_path="/sys/bus/pci/devices/0000:${a_network_adv_working[4]}"
+			# echo a ${a_network_adv_working[4]}
+			if [[ -d /sys/bus/pci/devices/ ]];then
+				working_path="/sys/bus/pci/devices/0000:${a_network_adv_working[4]}"
+			elif [[ -d /sys/devices/pci0000:00/ ]];then
+				working_path="/sys/devices/pci0000:00/0000:00:01.0/0000:${a_network_adv_working[4]}"
+			fi
+			#echo wp ${a_network_adv_working[4]} $i
 			# now we want the real one, that xiin also displays, without symbolic links.
-			if [[ -e $working_path ]];then
+			if [[ -n $working_path && -e $working_path ]];then
 				working_path=$( readlink -f $working_path 2>/dev/null )
-				# sometimes there is another directory between the path and /net
-				if [[ ! -e $working_path/net ]];then
-					# using find here, probably will need to also use it in usb part since the grep
-					# method seems to not be working now. Slice off the rest, which leaves the basic path
-					working_path=$( find $working_path/*/net/*/uevent 2>/dev/null | \
-					sed 's|/net.*||' )
-				fi
+			else
+				working_path=$( find -P /sys/ -type d -name "*:${a_network_adv_working[4]}" 2>/dev/null )
+				# just on off chance we get two returns, just one one
+				working_path=${working_path%% *}
+			fi
+			# sometimes there is another directory between the path and /net
+			if [[ -n $working_path && ! -e $working_path/net ]];then
+				# using find here, probably will need to also use it in usb part since the grep
+				# method seems to not be working now. Slice off the rest, which leaves the basic path
+				working_path=$( find $working_path/*/net/*/uevent 2>/dev/null | \
+				sed 's|/net.*||' )
 			fi
 			# working_path=$( ls /sys/devices/pci*/*/0000:${a_network_adv_working[4]}/net/*/uevent  )
 		else
@@ -6471,7 +6481,6 @@ get_network_advanced_data()
 				product_path=$( grep -s "$usb_product" /sys/devices/pci*/*/usb*/*/*/idProduct | \
 				sed -e "s/idProduct:$usb_product//" -e '/driver/d' )
 			fi
-			
 			# make sure it's the right product/vendor match here, it will almost always be but let's be sure
 			if [[ -n $working_path && -n $product_path ]] && [[ $working_path == $product_path ]];then
 			#if [[ -n $working_path ]];then
@@ -6489,50 +6498,89 @@ get_network_advanced_data()
 				a_network_adv_working[1]=$driver_test
 			fi
 		fi
+		#echo wp: $working_path
 		log_function_data "PRE: working_path: $working_path\nworking_uevent_path: $working_uevent_path"
-		
 		# this applies in two different cases, one, default, standard, two, for usb, this is actually
 		# the short path, minus the last longer numeric directory name, ie: 
 		# from debian squeeze 2.6.32-5-686: 
 		# /sys/devices/pci0000:00/0000:00:0b.1/usb1/1-1/net/wlan0/address
 		if [[ -e $working_path/net ]];then
-			if_path=$( ls $working_path/net 2>/dev/null )
-			if_id=$if_path
-			working_path=$working_path/net/$if_path
+			# in cases like infiniband dual port devices, there can be two ids, like ib0 ib1, 
+			# with line break in output
+			if_data=$( ls $working_path/net 2>/dev/null )
+			b_path_made='false'
 		# this is the normal usb detection if the first one didn't work
 		elif [[ -n $usb_data && -e $working_uevent_path/net ]];then
-			if_path=$( ls $working_uevent_path/net 2>/dev/null )
-			if_id=$if_path
-			working_path=$working_uevent_path/net/$if_path
+			if_data=$( ls $working_uevent_path/net 2>/dev/null )
+			working_path=$working_uevent_path/net/$if_data
 		# 2.6.32 debian lenny kernel shows not: /net/eth0 but /net:eth0
-		else
-			if_path=$( ls $working_path 2>/dev/null | grep 'net:' )
-			if_id=$( cut -d ':' -f 2 <<< "$if_path" )
-			working_path=$working_path/$if_path
-		fi
-		log_function_data "POST: working_path: $working_path\nif_path: $if_path - if_id: $if_id"
-		
-		if [[ -n $if_path ]];then
-			if [[ -r $working_path/speed ]];then
-				speed=$( cat $working_path/speed 2>/dev/null )
-			fi
-			if [[ -r $working_path/duplex ]];then
-				duplex=$( cat $working_path/duplex 2>/dev/null )
-			fi
-			if [[ -r $working_path/address ]];then
-				mac_id=$( cat $working_path/address 2>/dev/null )
-			fi
-			if [[ -r $working_path/operstate ]];then
-				oper_state=$( cat $working_path/operstate 2>/dev/null )
+		elif [[ -n ${working_path/\/sys*/} ]];then
+			if_data=$( ls $working_path 2>/dev/null | grep 'net:' )
+			if [[ -n $if_data ]];then
+				working_path=$working_path/$if_data
+				# we won't be using this for path any more, just the actual if id output
+				# so prep it for the loop below
+				if_data=$( cut -d ':' -f 2 <<< "$if_data" )
 			fi
 		fi
-		
-		if [[ -n ${a_network_adv_working[10]} ]];then
-			chip_id=${a_network_adv_working[10]}
+		# just in case we got a failed path, like /net or /, clear it out for tests below
+		if [[ -n ${working_path/\/sys*/} ]];then
+			working_path=''
 		fi
-		A_NETWORK_DATA[i]=${a_network_adv_working[0]}","${a_network_adv_working[1]}","${a_network_adv_working[2]}","${a_network_adv_working[3]}","${a_network_adv_working[4]}","$if_id","$oper_state","$speed","$duplex","$mac_id","$chip_id
-		IFS="$ORIGINAL_IFS"
+		#echo id: $if_data
+		log_function_data "POST: working_path: $working_path\nif_data: $if_data - if_id: $if_id"
+		# there are virtual devices that will have no if data but which we still want in the array
+		# as it loops. These will also have null working_path as well since no **/net is found
+		# echo if_data: $if_data
+		if [[ -z $if_data ]];then
+			if_data='null-if-id'
+		fi
+		## note: in cases of dual ports with different ids, this loop will create extra array items
+		for if_item in $if_data
+		do
+			chip_id=
+			duplex=''
+			full_path=''
+			if_id=''
+			mac_id=''
+			oper_state=''
+			speed=''
+			# strip out trailing spaces
+			if_item=${if_item%% }
+			if_id=$if_item
+			#echo wp1: $working_path
+			if [[ $working_path != '' ]];then
+				if [[ $b_path_made == 'false' ]];then
+					full_path=$working_path/net/$if_item
+				else
+					full_path=$working_path
+				fi
+				if [[ -r $full_path/speed ]];then
+					speed=$( cat $full_path/speed 2>/dev/null )
+				fi
+				if [[ -r $full_path/duplex ]];then
+					duplex=$( cat $full_path/duplex 2>/dev/null )
+				fi
+				if [[ -r $full_path/address ]];then
+					mac_id=$( cat $full_path/address 2>/dev/null )
+				fi
+				if [[ -r $full_path/operstate ]];then
+					oper_state=$( cat $full_path/operstate 2>/dev/null )
+				fi
+				if [[ -n ${a_network_adv_working[10]} ]];then
+					chip_id=${a_network_adv_working[10]}
+				fi
+			fi
+			#echo fp: $full_path 
+			#echo id: $if_id
+			# echo "$if_data ii:  $if_item $array_counter i: $i"
+			A_NETWORK_DATA[$array_counter]=${a_network_adv_working[0]}","${a_network_adv_working[1]}","${a_network_adv_working[2]}","${a_network_adv_working[3]}","${a_network_adv_working[4]}","$if_id","$oper_state","$speed","$duplex","$mac_id","$chip_id
+			
+			((array_counter++))
+		done
 	done
+	a_temp=${A_NETWORK_DATA[@]}
+	log_function_data "A_NETWORK_DATA (advanced): $a_temp"
 
 	eval $LOGFE
 }
@@ -6609,7 +6657,7 @@ get_networking_wan_ip_data()
 	# awk has bad regex handling so checking it with grep -E instead
 	# ip=$( echo  2001:0db8:85a3:0000:0000:8a2e:0370:7334 | gawk  --re-interval '
 	# ip=$( wget -q -O - $WAN_IP_URL | gawk  --re-interval '
-	ip=$( wget -t 1 -T $WGET_TIMEOUT -q -O - $WAN_IP_URL | gawk  --re-interval '
+	ip=$( wget -t 4 -T $WGET_TIMEOUT -q -O - $WAN_IP_URL | gawk  --re-interval '
 	{
 		#gsub("\n","",$2")
 		print $NF
