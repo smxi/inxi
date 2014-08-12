@@ -3,7 +3,7 @@
 ####  Script Name: inxi
 ####  Version: 2.1.29
 ####  Date: 2014-08-11
-####  Patch Number: 01-b3
+####  Patch Number: 02-b3
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -4888,7 +4888,9 @@ get_dmidecode_data()
 
 	if [[ $B_DMIDECODE_SET != 'true' ]];then
 		dmidecodePath=$( type -p dmidecode 2>/dev/null )
-		if [[ -n $dmidecodePath ]];then
+		if [[ -z $dmidecodePath ]];then
+			DMIDECODE_DATA='dmidecode-error-not-installed'
+		else
 			# note stripping out these lines: Handle 0x0016, DMI type 17, 27 bytes
 			# but NOT deleting them, in case the dmidecode data is missing empty lines which will be
 			# used to separate results. Then we remove the doubled empty lines to keep it clean and
@@ -4959,12 +4961,14 @@ N
 }' \
 			)"
 			log_function_data "DMIDECODE_DATA (PRE): $DMIDECODE_DATA"
-			if [[ ${#DMIDECODE_DATA} -lt 60  ]];then
+			if [[ ${#DMIDECODE_DATA} -lt 100  ]];then
 				if [[ -z ${DMIDECODE_DATA/*Permission denied*/} ]];then
 					DMIDECODE_DATA='dmidecode-error-requires-root'
 				# this handles very old systems, like Lenny 2.6.26, with dmidecode, but no data
 				elif [[ -n $( grep -i 'no smbios ' <<< "$DMIDECODE_DATA" ) ]];then
 					DMIDECODE_DATA='dmidecode-error-no-smbios-dmi-data'
+				else
+					DMIDECODE_DATA='dmidecode-error-unknown-error'
 				fi
 			fi
 		fi
@@ -9969,6 +9973,21 @@ print_cpu_flags_full()
 	done
 	eval $LOGFE
 }
+# args: $1 - get_dmidecode_data error return
+print_dmidecode_error()
+{
+	eval $LOGFS
+	local error_message='Unknown dmidecode error.'
+	if [[ ${A_MACHINE_DATA[0]} == 'dmidecode-error-requires-root' ]];then
+		error_message="dmidecode: you must be root to run dmidecode"
+	elif [[ ${A_MACHINE_DATA[0]} == 'dmidecode-error-not-installed' ]];then
+		error_message="dmidecode: dmidecode is not installed."
+	elif [[ ${A_MACHINE_DATA[0]} == 'dmidecode-error-no-smbios-dmi-data' ]];then
+		error_message="dmidecode: no machine data available"
+	fi
+	echo $error_message
+	eval $LOGFE
+}
 
 print_graphics_data()
 {
@@ -10487,7 +10506,7 @@ print_machine_data()
 	
 	local system_line='' mobo_line='' bios_line='' chassis_line=''
 	local mobo_vendor='' mobo_model='' mobo_version='' mobo_serial=''
-	local bios_vendor='' bios_version='' bios_date='' bios_rom=''
+	local bios_vendor='' bios_version='' bios_date='' bios_rom='' error_string=''
 	local system_vendor='' product_name='' product_version='' product_serial='' product_uuid=''
 	local chassis_vendor='' chassis_type='' chassis_version='' chassis_serial='' 
 	local b_skip_system='false' b_skip_chassis='false'
@@ -10625,13 +10644,10 @@ print_machine_data()
 	else
 		system_line="${C2}$sysDmiNull"
 	fi
-	# patch to dump all of above if dmidecode was data source and non root user
+	# patch to dump all of above if dmidecode was data source and a dmidecode error is present
 	if [[ ${A_MACHINE_DATA[0]} == 'dmidecode-error-'* ]];then
-		if [[ ${A_MACHINE_DATA[0]} == 'dmidecode-error-requires-root' ]];then
-			system_line="${C2}${sysDmiError}dmidecode: you must be root to run dmidecode"
-		elif [[ ${A_MACHINE_DATA[0]} == 'dmidecode-error-no-smbios-dmi-data' ]];then
-			system_line="${C2}${sysDmiError}dmidecode: no machine data available"
-		fi
+		error_string=$( print_dmidecode_error "${A_MACHINE_DATA[0]}" )
+		system_line=${C2}$sysDmiError$error_string
 		mobo_line=''
 		bios_line=''
 		chassis_line=''
