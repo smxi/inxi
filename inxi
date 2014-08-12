@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.1.29
-####  Date: 2014-08-08
+####  Version: 2.1.90
+####  Date: 2014-08-11
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -2410,6 +2410,7 @@ get_parameters()
 					if [[ $OPTARG -ge 5 ]];then
 						B_SHOW_AUDIO='true'
 						B_SHOW_BASIC_OPTICAL='true'
+						B_SHOW_MEMORY='true'
 						B_SHOW_SENSORS='true'
 						B_SHOW_LABELS='true'
 						B_SHOW_UUIDS='true'
@@ -2660,6 +2661,7 @@ show_options()
 	network tool). Same as -Nni. Not shown with -F for user security reasons, you shouldn't paste your local/wan IP."
 	print_lines_basic "1" "-I" "Information: processes, uptime, memory, irc client (or shell type), $SCRIPT_NAME version."
 	print_lines_basic "1" "-l" "$partition_string_u labels. Default: short $partition_string -P. For full -p output, use: -pl (or -plu)."
+	print_lines_basic "1" "-m" "Memory (RAM) data. Shows physical system memory arrays, and individual memory devices (sticks of memory). Shows physical memory array(s) capacity, and number of devices. For devices, shows bank, slot, size, speed, type (DDR3)."
 	print_lines_basic "1" "-M" "Machine data. Motherboard, Bios, and if present, System Builder (Like Lenovo). Older systems/kernels without the required /sys data can use dmidecode instead, run as root. Dmidecode can be forced with -! 33"
 	print_lines_basic "1" "-n" "Advanced Network card information. Same as -Nn. Shows interface, speed, mac id, state, etc."
 	print_lines_basic "1" "-N" "Network card information. With -x, shows PCI BusID, Port number."
@@ -2680,7 +2682,7 @@ show_options()
 	print_lines_basic "2" "2" "Networking card (-N), Machine (-M) data, shows basic hard disk data (names only), and, if present, basic raid (devices only, and if inactive, notes that). similar to: $SCRIPT_NAME^-b"
 	print_lines_basic "2" "3" "Advanced CPU (-C), network (-n) data, and switches on -x advanced data option."
 	print_lines_basic "2" "4" "$partition_string_u size/filled data (-P) for (if present): /, /home, /var/, /boot. Shows full disk data (-D)."
-	print_lines_basic "2" "5" "Audio card (-A); sensors^(-s), $partition_string label^(-l) and UUID^(-u), short form of optical drives, standard raid data (-R)."
+	print_lines_basic "2" "5" "Audio card (-A); sensors^(-s), memory/ram^(-m), $partition_string label^(-l) and UUID^(-u), short form of optical drives, standard raid data (-R)."
 	print_lines_basic "2" "6" "Full $partition_string (-p), unmounted $partition_string (-o), optical drive (-d), full raid; triggers -xx."
 	print_lines_basic "2" "7" "Network IP data (-i); triggers -xxx."
 	
@@ -4884,17 +4886,22 @@ get_dmidecode_data()
 {
 	eval $LOGFS
 	
+	local dmiData="
+"
 	local dmidecodePath=''
 
 	if [[ $B_DMIDECODE_SET != 'true' ]];then
 		dmidecodePath=$( type -p dmidecode 2>/dev/null )
-		if [[ -n $dmidecodePath ]];then
+		if [[ -z $dmidecodePath ]];then
+			DMIDECODE_DATA='dmidecode-error-not-installed'
+		else
 			# note stripping out these lines: Handle 0x0016, DMI type 17, 27 bytes
 			# but NOT deleting them, in case the dmidecode data is missing empty lines which will be
 			# used to separate results. Then we remove the doubled empty lines to keep it clean and
-			# strip out all the stuff we don't want to see in the results.
-			DMIDECODE_DATA="$( $dmidecodePath 2>/dev/null \
-			| gawk -F ':' '
+			# strip out all the stuff we don't want to see in the results. We want the error data in 
+			# stdout for error handling
+			# DMIDECODE_DATA="$( echo "$dmiData" | gawk -F ':' '
+			DMIDECODE_DATA="$( $dmidecodePath 2>&1 | gawk -F ':' '
 			BEGIN {
 				IGNORECASE=1
 				cutExtraTab="false"
@@ -4958,9 +4965,23 @@ N
 /^\n$/D
 }' \
 			)"
+			# echo ":${DMIDECODE_DATA/*Permission denied*/}:"
+			log_function_data "DMIDECODE_DATA (PRE): $DMIDECODE_DATA"
+			if [[ ${#DMIDECODE_DATA} -lt 100  ]];then
+				if [[ -z ${DMIDECODE_DATA/*Permission denied*/} ]];then
+				# if [[ -n $( grep -i 'Permission denied' <<< "$DMIDECODE_DATA" ) ]];then
+					DMIDECODE_DATA='dmidecode-error-requires-root'
+				# this handles very old systems, like Lenny 2.6.26, with dmidecode, but no data
+				elif [[ -n $( grep -i 'no smbios ' <<< "$DMIDECODE_DATA" ) ]];then
+					DMIDECODE_DATA='dmidecode-error-no-smbios-dmi-data'
+				else
+					echo $DMIDECODE_DATA
+					DMIDECODE_DATA='dmidecode-error-unknown-error'
+				fi
+			fi
 		fi
 		B_DMIDECODE_SET='true'
-		log_function_data "DMIDECODE_DATA: $DMIDECODE_DATA"
+		log_function_data "DMIDECODE_DATA (POST): $DMIDECODE_DATA"
 	fi
 
 	eval $LOGFE
@@ -6111,112 +6132,107 @@ get_machine_data()
 	else
 		get_dmidecode_data
 		if [[ -n $DMIDECODE_DATA ]];then
-			if [[ $B_ROOT == 'true' ]];then
-				# this handles very old systems, like Lenny 2.6.26, with dmidecode, but no data
-				if [[ -n $( grep -i 'no smbios ' <<< "$DMIDECODE_DATA" ) ]];then
-					array_string='dmidecode-no-smbios-dmi-data'
-				# please note: only dmidecode version 2.11 or newer supports consistently the -s flag
-				else
-					array_string=$( gawk -F ':' '
-					BEGIN {
-						IGNORECASE=1
-						baseboardManufacturer=""
-						baseboardProductName=""
-						baseboardSerialNumber=""
-						baseboardVersion=""
-						biosReleaseDate=""
-						biosRevision="" # only available from dmidecode
-						biosRomSize="" # only available from dmidecode
-						biosVendor=""
-						biosVersion=""
-						chassisManufacturer=""
-						chassisSerialNumber=""
-						chassisType=""
-						chassisVersion=""
-						systemManufacturer=""
-						systemProductName=""
-						systemVersion=""
-						systemSerialNumber=""
-						systemUuid=""
-						bItemFound="" # we will only output if at least one item was found
-						fullString=""
-						testString=""
-						bSys=""
-						bCha=""
-						bBio=""
-						bBas=""
-					}
-					/^Bios Information/ {
-						while ( getline && !/^$/ ) {
-							if ( $1 ~ /^Release Date/ ) { biosReleaseDate=$2 }
-							if ( $1 ~ /^BIOS Revision/ ) { biosRevision=$2 }
-							if ( $1 ~ /^ROM Size/ ) { biosRomSize=$2 }
-							if ( $1 ~ /^Vendor/ ) { biosVendor=$2 }
-							if ( $1 ~ /^Version/ ) { biosVersion=$2 }
-						}
-						testString=biosReleaseDate biosRevision biosRomSize biosVendor biosVersion
-						if ( testString != ""  ) {
-							bItemFound="true"
-						}
-						bBio="true"
-					}
-					/^Base Board Information/ {
-						while ( getline && !/^$/ ) {
-							if ( $1 ~ /^Manufacturer/ ) { baseboardManufacturer=$2 }
-							if ( $1 ~ /^Product Name/ ) { baseboardProductName=$2 }
-							if ( $1 ~ /^Serial Number/ ) { baseboardSerialNumber=$2 }
-						}
-						testString=baseboardManufacturer baseboardProductName baseboardSerialNumber
-						if ( testString != ""  ) {
-							bItemFound="true"
-						}
-						bBas="true"
-					}
-					/^Chassis Information/ {
-						while ( getline && !/^$/ ) {
-							if ( $1 ~ /^Manufacturer/ ) { chassisManufacturer=$2 }
-							if ( $1 ~ /^Serial Number/ ) { chassisSerialNumber=$2 }
-							if ( $1 ~ /^Type/ ) { chassisType=$2 }
-							if ( $1 ~ /^Version/ ) { chassisVersion=$2 }
-						}
-						testString=chassisManufacturer chassisSerialNumber chassisType chassisVersion
-						if ( testString != ""  ) {
-							bItemFound="true"
-						}
-						bCha="true"
-					}
-					/^System Information/ {
-						while ( getline && !/^$/ ) {
-							if ( $1 ~ /^Manufacturer/ ) { systemManufacturer=$2 }
-							if ( $1 ~ /^Product Name/ ) { systemProductName=$2 }
-							if ( $1 ~ /^Version/ ) { systemVersion=$2 }
-							if ( $1 ~ /^Serial Number/ ) { systemSerialNumber=$2 }
-							if ( $1 ~ /^UUID/ ) { systemUuid=$2 }
-						}
-						testString=systemManufacturer systemProductName systemVersion systemSerialNumber systemUuid
-						if ( testString != ""  ) {
-							bItemFound="true"
-						}
-						bSys="true"
-					}
-					( bSys == "true" && bCha="true" && bBio == "true" && bBas == "true" ) {
-						exit # stop the loop
-					}
-					END {
-						if ( bItemFound == "true" ) {
-							fullString = systemManufacturer "," systemProductName "," systemVersion "," systemSerialNumber 
-							fullString = fullString "," systemUuid "," baseboardManufacturer "," baseboardProductName 
-							fullString = fullString "," baseboardVersion "," baseboardSerialNumber "," biosVendor
-							fullString = fullString "," biosVersion "," biosReleaseDate "," chassisManufacturer
-							fullString = fullString "," chassisType "," chassisVersion "," chassisSerialNumber 
-							fullString = fullString ","  biosRevision "," biosRomSize
-							
-							print fullString
-						}
-					}' <<< "$DMIDECODE_DATA" )
-				fi
+			if [[ $DMIDECODE_DATA == 'dmidecode-error-'* ]];then
+				array_string=$DMIDECODE_DATA
+			# please note: only dmidecode version 2.11 or newer supports consistently the -s flag
 			else
-				array_string='dmidecode-non-root-user'
+				array_string=$( gawk -F ':' '
+				BEGIN {
+					IGNORECASE=1
+					baseboardManufacturer=""
+					baseboardProductName=""
+					baseboardSerialNumber=""
+					baseboardVersion=""
+					biosReleaseDate=""
+					biosRevision="" # only available from dmidecode
+					biosRomSize="" # only available from dmidecode
+					biosVendor=""
+					biosVersion=""
+					chassisManufacturer=""
+					chassisSerialNumber=""
+					chassisType=""
+					chassisVersion=""
+					systemManufacturer=""
+					systemProductName=""
+					systemVersion=""
+					systemSerialNumber=""
+					systemUuid=""
+					bItemFound="" # we will only output if at least one item was found
+					fullString=""
+					testString=""
+					bSys=""
+					bCha=""
+					bBio=""
+					bBas=""
+				}
+				/^Bios Information/ {
+					while ( getline && !/^$/ ) {
+						if ( $1 ~ /^Release Date/ ) { biosReleaseDate=$2 }
+						if ( $1 ~ /^BIOS Revision/ ) { biosRevision=$2 }
+						if ( $1 ~ /^ROM Size/ ) { biosRomSize=$2 }
+						if ( $1 ~ /^Vendor/ ) { biosVendor=$2 }
+						if ( $1 ~ /^Version/ ) { biosVersion=$2 }
+					}
+					testString=biosReleaseDate biosRevision biosRomSize biosVendor biosVersion
+					if ( testString != ""  ) {
+						bItemFound="true"
+					}
+					bBio="true"
+				}
+				/^Base Board Information/ {
+					while ( getline && !/^$/ ) {
+						if ( $1 ~ /^Manufacturer/ ) { baseboardManufacturer=$2 }
+						if ( $1 ~ /^Product Name/ ) { baseboardProductName=$2 }
+						if ( $1 ~ /^Serial Number/ ) { baseboardSerialNumber=$2 }
+					}
+					testString=baseboardManufacturer baseboardProductName baseboardSerialNumber
+					if ( testString != ""  ) {
+						bItemFound="true"
+					}
+					bBas="true"
+				}
+				/^Chassis Information/ {
+					while ( getline && !/^$/ ) {
+						if ( $1 ~ /^Manufacturer/ ) { chassisManufacturer=$2 }
+						if ( $1 ~ /^Serial Number/ ) { chassisSerialNumber=$2 }
+						if ( $1 ~ /^Type/ ) { chassisType=$2 }
+						if ( $1 ~ /^Version/ ) { chassisVersion=$2 }
+					}
+					testString=chassisManufacturer chassisSerialNumber chassisType chassisVersion
+					if ( testString != ""  ) {
+						bItemFound="true"
+					}
+					bCha="true"
+				}
+				/^System Information/ {
+					while ( getline && !/^$/ ) {
+						if ( $1 ~ /^Manufacturer/ ) { systemManufacturer=$2 }
+						if ( $1 ~ /^Product Name/ ) { systemProductName=$2 }
+						if ( $1 ~ /^Version/ ) { systemVersion=$2 }
+						if ( $1 ~ /^Serial Number/ ) { systemSerialNumber=$2 }
+						if ( $1 ~ /^UUID/ ) { systemUuid=$2 }
+					}
+					testString=systemManufacturer systemProductName systemVersion systemSerialNumber systemUuid
+					if ( testString != ""  ) {
+						bItemFound="true"
+					}
+					bSys="true"
+				}
+				( bSys == "true" && bCha="true" && bBio == "true" && bBas == "true" ) {
+					exit # stop the loop
+				}
+				END {
+					if ( bItemFound == "true" ) {
+						fullString = systemManufacturer "," systemProductName "," systemVersion "," systemSerialNumber 
+						fullString = fullString "," systemUuid "," baseboardManufacturer "," baseboardProductName 
+						fullString = fullString "," baseboardVersion "," baseboardSerialNumber "," biosVendor
+						fullString = fullString "," biosVersion "," biosReleaseDate "," chassisManufacturer
+						fullString = fullString "," chassisType "," chassisVersion "," chassisSerialNumber 
+						fullString = fullString ","  biosRevision "," biosRomSize
+						
+						print fullString
+					}
+				}' <<< "$DMIDECODE_DATA" )
 			fi
 		fi
 	fi
@@ -8084,6 +8100,171 @@ get_raid_component_data_bsd()
 }
 # get_raid_data_bsd;exit
 
+get_ram_data()
+{
+	eval $LOGFS
+	
+	local a_temp='' array_string=''
+	
+	get_dmidecode_data
+	
+	if [[ -n $DMIDECODE_DATA ]];then
+		if [[ $DMIDECODE_DATA == 'dmidecode-error-'* ]];then
+			A_MEMORY_DATA[0]=$DMIDECODE_DATA
+		# please note: only dmidecode version 2.11 or newer supports consistently the -s flag
+		else
+			IFS=$'\n'
+			A_MEMORY_DATA=( $( 
+			gawk -F ':' '
+			BEGIN {
+				IGNORECASE=1
+				arrayHandle=""
+				bankLocator=""
+				clockSpeed=""
+				configuredClockSpeed=""
+				dataWidth=""
+				deviceManufacturer=""
+				devicePartNumber=""
+				deviceSerialNumber=""
+				deviceSpeed=""
+				deviceType=""
+				deviceTypeDetail=""
+				deviceSize=""
+				errorCorrection=""
+				formFactor=""
+				handle=""
+				location=""
+				locator=""
+				maxCapacity=""
+				numberOfDevices=""
+				primaryType=""
+				totalWidth=""
+				use=""
+			}
+			/^Handle .* DMI type 16/ {
+				primaryType="memory-array"
+				arrayHandle=gensub(/Handle[[:space:]]([0-9a-zA-Z]+)([[:space:]]|,).*/,"\\1",$0)
+				while ( getline && !/^$/ ) {
+					# print $0
+					if ( $1 == "Maximum Capacity") {
+						maxCapacity=$2
+					}
+					# note: these 3 have cleaned data in get_dmidecode_data, so replace stuff manually
+					if ( $1 == "Location") {
+						sub(/[[:space:]]Or[[:space:]]Motherboard/,"",$2)
+						location=$2
+						if ( location == "" ){
+							location="System Board"
+						}
+					}
+					if ( $1 == "Use") {
+						use=$2
+						if ( use == "" ){
+							use="System Memory"
+						}
+					}
+					if ( $1 == "Error Correction Type") {
+						errorCorrection=$2
+						if ( errorCorrection == "" ){
+							errorCorrection="None"
+						}
+					}
+					if ( $1 == "Number of Devices") {
+						numberOfDevices=$2
+					}
+				}
+				print primaryType "," arrayHandle "," location "," maxCapacity "," numberOfDevices "," use "," errorCorrection
+				# reset
+				primaryType=""
+				arrayHandle=""
+				location=""
+				maxCapacity=""
+				numberOfDevices=""
+				use=""
+				errorCorrection=""
+			}
+			/^Handle .* DMI type 17/ {
+				primaryType="memory-device"
+				while ( getline && !/^$/ ) {
+					if ( $1 == "Array Handle") {
+						arrayHandle=$2
+					}
+					if ( $1 == "Data Width") {
+						dataWidth=$2
+					}
+					if ( $1 == "Total Width") {
+						totalWidth=$2
+					}
+					if ( $1 == "Size") {
+						deviceSize=$2
+					}
+					if ( $1 == "Locator") {
+						sub(/.*_/,"",$2)
+						locator=toupper($2)
+					}
+					if ( $1 == "Bank Locator") {
+						sub(/_.*/,"",$2)
+						sub(/Channel/,"bank",$2)
+						bankLocator=toupper($2)
+					}
+					if ( $1 == "Form Factor") {
+						formFactor=$2
+					}
+					if ( $1 == "Type") {
+						deviceType=$2
+					}
+					if ( $1 == "Type Detail") {
+						deviceTypeDetail=$2
+					}
+					if ( $1 == "Speed") {
+						deviceSpeed=$2
+					}
+					if ( $1 == "Configured Clock Speed") {
+						configuredClockSpeed=$2
+					}
+					if ( $1 == "Manufacturer") {
+						sub(/([0]+|Undefined.*|Manufacturer.*)/,"",$2)
+						deviceManufacturer=$2
+					}
+					if ( $1 == "Part Number") {
+						sub(/([0]+|PartNum.*|Undefined.*)/,"",$2)
+						devicePartNumber=$2
+					}
+					if ( $1 == "Serial Number") {
+						sub(/([0]+|SerNum.*|Undefined.*)/,"",$2)
+						deviceSerialNumber=$2
+					}
+				}
+				print primaryType "," arrayHandle "," deviceSize "," bankLocator "," locator "," formFactor "," deviceType "," deviceTypeDetail "," deviceSpeed "," configuredClockSpeed "," dataWidth "," totalWidth "," deviceManufacturer "," devicePartNumber "," deviceSerialNumber
+				
+				primaryType=""
+				arrayHandle=""
+				deviceSize=""
+				bankLocator=""
+				locator=""
+				formFactor=""
+				deviceType=""
+				deviceTypeDetail=""
+				deviceSpeed=""
+				configuredClockSpeed=""
+				dataWidth=""
+				totalWidth=""
+				deviceManufacturer=""
+				devicePartNumber=""
+				deviceSerialNumber=""
+				
+			} ' <<< "$DMIDECODE_DATA" ) )
+		fi
+	fi
+	IFS="$ORIGINAL_IFS"
+	a_temp=${A_MEMORY_DATA[@]}
+	
+ 	# echo "${a_temp[@]}"
+	log_function_data "A_MEMORY_DATA: $a_temp"
+	
+	eval $LOGFE
+}
+
 # Repos will be added as we get distro package manager data to create the repo data. 
 # This method will output the file name also, which is useful to create output that's 
 # neat and readable. Each line of the total number contains the following sections,
@@ -9436,7 +9617,7 @@ print_it_out()
 			print_cpu_data
 		fi
 		if [[ $B_SHOW_MEMORY == 'true' ]];then
-			print_memory_data
+			print_ram_data
 		fi
 		if [[ $B_SHOW_GRAPHICS == 'true' ]];then
 			print_graphics_data
@@ -9966,6 +10147,32 @@ print_cpu_flags_full()
 	eval $LOGFE
 }
 
+# args: $1 - type [sys/default]; $2 - get_dmidecode_data error return
+print_dmidecode_error()
+{
+	eval $LOGFS
+	local error_message='Unknown dmidecode error.'
+	local sysDmiError='Using '
+	
+	if [[ $1 == 'sys' ]];then
+		sysDmiError='No /sys/class/dmi; using '
+	fi
+	if [[ $B_FORCE_DMIDECODE == 'true' && $1 == 'sys' ]];then
+		sysDmiError='Forcing '
+	fi
+	if [[ $2 == 'dmidecode-error-requires-root' ]];then
+		error_message="${sysDmiError}dmidecode: you must be root to run dmidecode"
+	elif [[ $2 == 'dmidecode-error-not-installed' ]];then
+		error_message="${sysDmiError}dmidecode: dmidecode is not installed."
+	elif [[ $2 == 'dmidecode-error-no-smbios-dmi-data' ]];then
+		error_message="${sysDmiError}dmidecode: no smbios data available. Old system?"
+	elif [[ $2 == 'dmidecode-error-unknown-error' ]];then
+		error_message="${sysDmiError}dmidecode: unknown error occured"
+	fi
+	echo $error_message
+	eval $LOGFE
+}
+
 print_graphics_data()
 {
 	eval $LOGFS
@@ -10483,20 +10690,14 @@ print_machine_data()
 	
 	local system_line='' mobo_line='' bios_line='' chassis_line=''
 	local mobo_vendor='' mobo_model='' mobo_version='' mobo_serial=''
-	local bios_vendor='' bios_version='' bios_date='' bios_rom=''
+	local bios_vendor='' bios_version='' bios_date='' bios_rom='' error_string=''
 	local system_vendor='' product_name='' product_version='' product_serial='' product_uuid=''
 	local chassis_vendor='' chassis_type='' chassis_version='' chassis_serial='' 
 	local b_skip_system='false' b_skip_chassis='false'
-	local sysDmiError='No /sys/class/dmi, using '
 	local sysDmiNull='No /sys/class/dmi machine data: try newer kernel, or install dmidecode'
 	# set A_MACHINE_DATA
 	get_machine_data
 	
-	if [[ -n $BSD_TYPE || $B_FORCE_DMIDECODE == 'true' ]];then
-		sysDmiError=''
-		sysDmiNull='No machine data available. Is dmidecode installed?'
-	fi
-
 	IFS=','
 	## keys for machine data are:
 	# 0-sys_vendor 1-product_name 2-product_version 3-product_serial 4-product_uuid 
@@ -10617,18 +10818,14 @@ print_machine_data()
 				chassis_line=''
 			fi
 		fi
-		IFS="$ORIGINAL_IFS"
 	else
 		system_line="${C2}$sysDmiNull"
 	fi
-	# patch to dump all of above if dmidecode was data source and non root user
-	if [[ ${A_MACHINE_DATA[0]} == 'dmidecode-non-root-user' || \
-	${A_MACHINE_DATA[0]} == 'dmidecode-no-smbios-dmi-data' ]];then
-		if [[ ${A_MACHINE_DATA[0]} == 'dmidecode-non-root-user' ]];then
-			system_line="${C2}${sysDmiError}dmidecode: you must be root to run dmidecode"
-		elif [[ ${A_MACHINE_DATA[0]} == 'dmidecode-no-smbios-dmi-data' ]];then
-			system_line="${C2}${sysDmiError}dmidecode: no machine data available"
-		fi
+	IFS="$ORIGINAL_IFS"
+	# patch to dump all of above if dmidecode was data source and a dmidecode error is present
+	if [[ ${A_MACHINE_DATA[0]} == 'dmidecode-error-'* ]];then
+		error_string=$( print_dmidecode_error 'sys' "${A_MACHINE_DATA[0]}" )
+		system_line=${C2}$error_string
 		mobo_line=''
 		bios_line=''
 		chassis_line=''
@@ -10646,26 +10843,6 @@ print_machine_data()
 	if [[ -n $chassis_line ]];then
 		chassis_line=$( create_print_line " " "$chassis_line${CN}" )
 		print_screen_output "$chassis_line"
-	fi
-	
-	eval $LOGFE
-}
-
-print_memory_data()
-{
-	eval $LOGFS
-	local memory_line="${C1}Placeholder$SEP3${C2} Feature not yet developed"
-	
-	memory_line=$( create_print_line "Memory:" "$memory_line${CN}" )
-	print_screen_output "$memory_line"
-	
-	if [[ ${A_MEMORY_DATA[0]} == 'dmidecode-non-root-user' || \
-	${A_MEMORY_DATA[0]} == 'dmidecode-no-smbios-dmi-data' ]];then
-		if [[ ${A_MEMORY_DATA[0]} == 'dmidecode-non-root-user' ]];then
-			memory_line="${C2}${sysDmiError}dmidecode: you must be root to run dmidecode"
-		elif [[ ${A_MEMORY_DATA[0]} == 'dmidecode-no-smbios-dmi-data' ]];then
-			memory_line="${C2}${sysDmiError}dmidecode: no machine data available"
-		fi
 	fi
 	
 	eval $LOGFE
@@ -11682,6 +11859,114 @@ print_raid_data()
 	
 	eval $LOGFE
 }
+
+print_ram_data()
+{
+	eval $LOGFS
+	local memory_line="${C1}Placeholder$SEP3${C2} Feature not yet developed"
+	local error_string='' a_memory_item='' line_starter='Memory:' array_counter=0
+	local dmidecodeNull='No dmidecode memory data: try newer kernel.'
+	
+	local manufacturer='' part_nu='' serial_nu='' device_speed='' configured_speed='' 
+	local data_width='' total_width='' device_type='' device_type_detail='' bank='' slot='' form_factor=''
+	local device_size='' array_use='' location='' error_correction='' max_capacity='' nu_of_devices=''
+	
+	get_ram_data
+
+	#echo ${#A_MEMORY_DATA[@]}
+	# echo ${A_MEMORY_DATA[0]}
+	if [[ ${#A_MEMORY_DATA[@]} -gt 0 ]];then
+		if [[ ${A_MEMORY_DATA[0]} == 'dmidecode-error-'* ]];then
+			error_string=$( print_dmidecode_error 'default' "${A_MEMORY_DATA[0]}" )
+			memory_line="${C2}$error_string"
+		else
+			for (( i=0;i<${#A_MEMORY_DATA[@]};i++ ))
+			do
+				IFS=','
+				a_memory_item=(${A_MEMORY_DATA[i]})
+				IFS="$ORIGINAL_IFS"
+				# memory-array,0x0012,System Board,8 GB,4,System Memory,None
+				# memory-device,0x002C,8192 MB,ChannelD,ChannelD_Dimm2,DIMM,DDR3,Synchronous,2400 MHz,2400 MHz,64 bits,64 bits,Undefined,F3-19200C10-8GBZH,00000000
+
+				if [[ ${a_memory_item[0]} == 'memory-array' ]];then
+					if [[ -n ${a_memory_item[4]} ]];then
+						nu_of_devices=${a_memory_item[4]}
+					else
+						nu_of_devices='N/A'
+					fi
+					if [[ -n ${a_memory_item[3]} ]];then
+						max_capacity=${a_memory_item[3]}
+					else
+						max_capacity='N/A'
+					fi
+					if [[ -n ${a_memory_item[6]} ]];then
+						error_correction=${a_memory_item[6]}
+					else
+						error_correction='N/A'
+					fi
+					memory_line="${C1}Array$SEP3${C2} $array_counter ${C1}Capacity$SEP3${C2} $max_capacity ${C1}Devices$SEP3${C2} $nu_of_devices ${C1}EC$SEP3${C2} $error_correction"
+					(( array_counter++ ))
+				else
+					if [[ -n ${a_memory_item[3]} ]];then
+						if [[ -z ${a_memory_item[3]/BANK*/} ]];then
+							bank=${a_memory_item[3]#BANK}
+							bank=${bank## }
+						else
+							bank=${a_memory_item[3]}
+						fi
+					else
+						bank='N/A'
+					fi
+					if [[ -n ${a_memory_item[4]} ]];then
+						if [[ -z ${a_memory_item[4]/DIMM*/} ]];then
+							slot=${a_memory_item[4]#DIMM}
+							slot=${slot## }
+						else
+							slot=${a_memory_item[4]}
+						fi
+					else
+						slot='N/A'
+					fi
+					if [[ -n ${a_memory_item[2]} ]];then
+						device_size=${a_memory_item[2]}
+					else
+						device_size='N/A'
+					fi
+					if [[ -n ${a_memory_item[6]} ]];then
+						device_type=${a_memory_item[6]}
+					else
+						device_type='N/A'
+					fi
+					if [[ -n ${a_memory_item[8]} ]];then
+						if [[ -n ${a_memory_item[9]} ]];then
+							device_speed=${a_memory_item[9]}
+						else
+							device_speed=${a_memory_item[8]}
+						fi
+					else
+						device_speed='N/A'
+					fi
+					memory_line="${C1}Bank$SEP3${C2} $bank ${C1}Slot$SEP3${C2} $slot ${C1}size$SEP3${C2} $device_size ${C1}speed$SEP3${C2} $device_speed ${C1}type$SEP3${C2} $device_type "
+				fi
+				memory_line=$( create_print_line "$line_starter" "$memory_line${CN}" )
+				print_screen_output "$memory_line"
+				line_starter=''
+			done
+			memory_line=' '
+		fi
+	else
+		memory_line="${C2}$dmidecodeNull"
+	fi
+	IFS="$ORIGINAL_IFS"
+	memory_line=${memory_line## }
+	if [[ -n $memory_line ]];then
+		memory_line=$( create_print_line "$line_starter" "$memory_line${CN}" )
+		print_screen_output "$memory_line"
+	fi
+
+	eval $LOGFE
+}
+
 
 # currently only apt using distros support this feature, but over time we can add others
 print_repo_data()
