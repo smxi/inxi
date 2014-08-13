@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.1.93
+####  Version: 2.1.94
 ####  Date: 2014-08-13
 ####  Patch Number: 00
 ########################################################################
@@ -2699,7 +2699,7 @@ show_options()
 	print_lines_basic "2" "-G" "(for single gpu, nvidia driver) screen number gpu is running on."
 	print_lines_basic "2" "-i" "IPv6 as well for LAN interface (IF) devices."
 	print_lines_basic "2" "-I" "System GCC, default. With -xx, also show other installed GCC versions. If running in console, not in IRC client, shows shell version number, if detected. Init/RC Type and runlevel (if available)."
-	print_lines_basic "2" "-m" "Part number."
+	print_lines_basic "2" "-m" "Part number; Max memory module size (if available)."
 	print_lines_basic "2" "-N -A" "Version/port(s)/driver version (if available) for Network/Audio;"
 	print_lines_basic "2" "-N -A -G" "Network, audio, graphics, shows PCI Bus ID/Usb ID number of card."
 	print_lines_basic "2" "-R" "md-raid: Shows component raid id. Adds second RAID Info line: raid level; report on drives (like 5/5); blocks; chunk size; bitmap (if present). Resync line, shows blocks synced/total blocks. zfs-raid:	Shows raid array full size; available size; portion allocated to RAID"
@@ -2723,7 +2723,7 @@ show_options()
 	fi
 	print_lines_basic "2" "-@ 11-14" "Automatically uploads debugger data tar.gz file to ftp.techpatterns.com. EG: $SCRIPT_NAME^-xx@14"
 	print_lines_basic "1" "-xxx" "Show extra, extra, extra data (only works with verbose or line output, not short form):"
-	print_lines_basic "2" "-m" "Width of memory bus, data and total (if present and greater than data). Detail, if present, for Type."
+	print_lines_basic "2" "-m" "Width of memory bus, data and total (if present and greater than data); Detail, if present, for Type; module voltage, if available."
 	print_lines_basic "2" "-S" "Panel/shell information in desktop output, if in X (like gnome-shell, cinnamon, mate-panel)."
 	if [[ $B_ALLOW_WEATHER == 'true' ]];then
 		print_lines_basic "2" "-w -W" "Location (uses -z/irc filter), weather observation time, wind chill, heat index, dew point (shows extra lines for data where relevant)."
@@ -8141,10 +8141,22 @@ get_ram_data()
 				location=""
 				locator=""
 				maxCapacity=""
+				maxModuleSize=""
+				moduleVoltage=""
 				numberOfDevices=""
 				primaryType=""
 				totalWidth=""
 				use=""
+			}
+			/^Handle .* DMI type 5(,|[[:space:]])/ {
+				while ( getline && !/^$/ ) {
+					if ( $1 == "Maximum Memory Module Size" ) {
+						maxModuleSize=$2
+					}
+					if ( $1 == "Memory Module Voltage" ) {
+						moduleVoltage=$2
+					}
+				}
 			}
 			/^Handle .* DMI type 16/ {
 				primaryType="memory-array"
@@ -8178,7 +8190,7 @@ get_ram_data()
 						numberOfDevices=$2
 					}
 				}
-				print primaryType "," arrayHandle "," location "," maxCapacity "," numberOfDevices "," use "," errorCorrection
+				print primaryType "," arrayHandle "," location "," maxCapacity "," numberOfDevices "," use "," errorCorrection "," maxModuleSize "," moduleVoltage
 				# reset
 				primaryType=""
 				arrayHandle=""
@@ -8187,6 +8199,8 @@ get_ram_data()
 				numberOfDevices=""
 				use=""
 				errorCorrection=""
+				maxModuleSize=""
+				moduleVoltage=""
 			}
 			/^Handle .* DMI type 17/ {
 				primaryType="memory-device"
@@ -11903,6 +11917,7 @@ print_ram_data()
 	local manufacturer='' part_nu='' serial_nu='' device_speed='' configured_speed='' bus_width=
 	local data_width='' total_width='' device_type='' device_type_detail='' bank='' slot='' form_factor=''
 	local device_size='' array_use='' location='' error_correction='' max_capacity='' nu_of_devices=''
+	local max_module_size='' module_voltage=''
 	
 	get_ram_data
 	#echo ${#A_MEMORY_DATA[@]}
@@ -11926,7 +11941,9 @@ print_ram_data()
 				part_nu=''
 				serial_nu=''
 				manufacturer=''
-				# memory-array,0x0012,System Board,8 GB,4,System Memory,None
+				max_module_size='' 
+				module_voltage=''
+				# memory-array,0x0012,System Board,8 GB,4,System Memory,None,max size,moudule voltage
 				if [[ ${a_memory_item[0]} == 'memory-array' ]];then
 					if [[ -n ${a_memory_item[4]} ]];then
 						nu_of_devices=${a_memory_item[4]}
@@ -11943,7 +11960,28 @@ print_ram_data()
 					else
 						error_correction='N/A'
 					fi
-					memory_line="${C1}Array-$array_counter capacity$SEP3${C2} $max_capacity ${C1}devices$SEP3${C2} $nu_of_devices ${C1}EC$SEP3${C2} $error_correction"
+					if [[ $B_EXTRA_DATA == 'true' ]];then
+						if [[ -n ${a_memory_item[7]} ]];then
+							max_module_size="${C1}max module size${SEP3}${C2} ${a_memory_item[7]}"
+						fi
+					fi
+					if [[ $B_EXTRA_EXTRA_EXTRA_DATA == 'true' ]];then
+						if [[ -n ${a_memory_item[8]} ]];then
+							module_voltage=" ${C1}module voltage$SEP3${C2} ${a_memory_item[8]}"
+						fi
+					fi
+					memory_line="${C1}Array-$array_counter capacity$SEP3${C2} $max_capacity ${C1}devices$SEP3${C2} $nu_of_devices ${C1}EC$SEP3${C2} $error_correction "
+					line_2="$max_module_size$module_voltage"
+					if [[ -n $line_2 && $( calculate_line_length "$memory_line$line_2" ) -gt $COLS_INNER ]];then
+						memory_line=$( create_print_line "$line_starter" "$memory_line${CN}" )
+						print_screen_output "$memory_line"
+						memory_line="$line_2"
+						line_starter=' '
+						line_2=''
+					else
+						memory_line="$memory_line$line_2"
+						line_2=''
+					fi
 					(( array_counter++ ))
 					device_counter=1 # reset so device matches device count per array
 				else
@@ -12066,12 +12104,12 @@ print_ram_data()
 						print_screen_output "$memory_line"
 						memory_line="$line_2"
 						line_starter=' '
-						if [[ -n $line_3 && $( calculate_line_length "$memory_line$line_3" ) -gt $COLS_INNER ]];then
+						if [[ -n $memory_line && -n $line_3 && $( calculate_line_length "$memory_line$line_3" ) -gt $COLS_INNER ]];then
 							memory_line=$( create_print_line "$line_starter" "$memory_line${CN}" )
 							print_screen_output "$memory_line"
 							memory_line="$line_3"
 						else
-							memory_line="$line_2$line_3"
+							memory_line="$memory_line$line_3"
 						fi
 					else
 						memory_line="$memory_line$line_2$line_3"
