@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.1.96
-####  Date: 2014-08-15
-####  Patch Number: 02
+####  Version: 2.1.97
+####  Date: 2014-08-16
+####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -2713,7 +2713,7 @@ show_options()
 	print_lines_basic "2" "-D" "Disk serial number."
 	print_lines_basic "2" "-G" "Chip vendor:product ID for each video card."
 	print_lines_basic "2" "-I" "Other detected installed gcc versions (if present). System default runlevel. Adds parent program (or tty) for shell info if not in IRC (like Konsole or Gterm). Adds Init/RC (if found) version number."
-	print_lines_basic "2" "-m" "Manufacturer, Serial Number."
+	print_lines_basic "2" "-m" "Manufacturer, Serial Number, single/double bank (if found)."
 	print_lines_basic "2" "-M" "Chassis information, bios rom size (dmidecode only), if data for either is available."
 	print_lines_basic "2" "-N" "Chip vendor:product ID for each nic."
 	print_lines_basic "2" "-R" "md-raid: Superblock (if present); algorythm, U data. Adds system info line (kernel support,read ahead, raid events). If present, adds unused device line. Resync line, shows progress bar."
@@ -4900,7 +4900,7 @@ get_dmidecode_data()
 			# used to separate results. Then we remove the doubled empty lines to keep it clean and
 			# strip out all the stuff we don't want to see in the results. We want the error data in 
 			# stdout for error handling
-			if [[ $b_debugger == 'true' ]];then
+			if [[ $b_debugger == 'true' && $HOSTNAME == 'yawn' ]];then
 				dmiData="$( cat ~/bin/scripts/inxi/data/dmidecode/dmidecode-memory-variants-2.txt )"
 			else 
 				dmiData="$( $dmidecodePath 2>&1 )"
@@ -4953,14 +4953,17 @@ get_dmidecode_data()
 				else {
 					sub(/^\t\t+/, "~", oneData)
 				}
+				gsub(/ [ \t]+/, " ", twoData)
 				gsub(/^[[:space:]]+|[[:space:]]+$/, "", twoData)
 				gsub(/^[[:space:]]+|[[:space:]]+$/, "", oneData)
-				gsub(/ [ \t]+/, " ", twoData)
+				
 				# reconstructing the line for processing so gawk can use -F : again
 				if ( oneData != "" && twoHolder == "true" ) {
 					print oneData ":" twoData
 				}
 				else {
+					# make sure all null lines have no spaces in them!
+					gsub(/^[[:space:]]+|[[:space:]]+$/,"",$0)
 					print $0
 				}
 			}' \
@@ -8142,21 +8145,28 @@ get_ram_data()
 				handle=""
 				location=""
 				locator=""
-				aDerivedModuleSize[0]=0
-				aFoundModules[0]=0
-				aMaxCapacity1[0]=0
-				aMaxCapacity2[0]=0
-				aMaxModuleSize[0]=0
-				aUsedCapacity[0]=0
+				aArrayData[0,"maxCapacity5"]=0
+				aArrayData[0,"maxCapacity16"]=0
+				aArrayData[0,"usedCapacity"]=0
+				aArrayData[0,"maxModuleSize"]=0
+				aArrayData[0,"derivedModuleSize"]=0
+				aArrayData[0,"deviceCount5"]=0
+				aArrayData[0,"deviceCount16"]=0
+				aArrayData[0,"deviceCountFound"]=0
+				aArrayData[0,"moduleVoltage5"]=""
+				
 				moduleVoltage=""
 				numberOfDevices=""
 				primaryType=""
 				totalWidth=""
 				use=""
 				i=0
+				j=0
 				k=0
+				
 				bDebugger1="false"
 				dDebugger2="false"
+				bType5="false"
 			}
 			function calculateSize(data,size) {
 				if ( data ~ /^[0-9]+[[:space:]]*[GMTP]B/) {
@@ -8178,28 +8188,54 @@ get_ram_data()
 				}
 				return size
 			}
-			/^Handle .* DMI type 5(,|[[:space:]])/ {
+			/^Handle .* DMI[[:space:]]+type[[:space:]]+[0](,|[[:space:]])/ {
+				bType5="false"
+				# we need to start count here because for testing > 1 array, and we want always to have
+				# the actual module data assigned to the right primary array, even when it is out of
+				# position in dmidecode output
+				i=0
+				j=0
+				k++
+			}
+			# {print k ":k:" $0}
+			/^Handle .* DMI[[:space:]]+type[[:space:]]+5(,|[[:space:]])/ {
 				while ( getline && !/^$/ ) {
 					if ( $1 == "Maximum Memory Module Size" ) {
-						aMaxModuleSize[k]=calculateSize($2,aMaxModuleSize[k])
-						# print "mms:" aMaxModuleSize[k] ":" $2
+						aArrayData[k,"maxModuleSize"]=calculateSize($2,aArrayData[k,"maxModuleSize"])
+						# print "mms:" aArrayData[k,"maxModuleSize"] ":" $2
 					}
 					if ($1 == "Maximum Total Memory Size") {
-						aMaxCapacity1[k]=calculateSize($2,aMaxCapacity1[k])
+						aArrayData[k,"maxCapacity5"]=calculateSize($2,aArrayData[k,"maxCapacity5"])
 					}
 					if ( $1 == "Memory Module Voltage" ) {
-						moduleVoltage=$2
+						aArrayData[k,"moduleVoltage5"]=$2
 					}
 				}
+				aArrayData[k,"data-type"]="memory-array"
+				# print k ":data5:"aArrayData[k,"data-type"]
+				bType5="true"
 			}
-			/^Handle .* DMI type 16/ {
-				primaryType="memory-array"
+			/^Handle .* DMI[[:space:]]+type[[:space:]]+6(,|[[:space:]])/ {
+				while ( getline && !/^$/ ) {
+					if ( $1 == "Installed Size" ) {
+						sub(/ Connection/,"",$2)
+						sub(/^[0-9]+[[:space:]]*[MGTP]B[[:space:]]*/,"",$2)
+						aMemory[k,j,16]=$2
+					}
+					if ( $1 == "Current Speed" ) {
+						aMemory[k,j,17]=$2
+					}
+				}
+				j++
+			}
+			
+			/^Handle .* DMI[[:space:]]+type[[:space:]]+16/ {
 				arrayHandle=gensub(/Handle[[:space:]]([0-9a-zA-Z]+)([[:space:]]|,).*/,"\\1",$0)
 				while ( getline && !/^$/ ) {
 					# print $0
 					if ( $1 == "Maximum Capacity") {
-						aMaxCapacity2[k]=calculateSize($2,aMaxCapacity2[k])
-						#print "mc:" aMaxCapacity2[k] ":" $2
+						aArrayData[k,"maxCapacity16"]=calculateSize($2,aArrayData[k,"maxCapacity16"])
+						#print "mc:" aArrayData[k,"maxCapacity16"] ":" $2
 					}
 					# note: these 3 have cleaned data in get_dmidecode_data, so replace stuff manually
 					if ( $1 == "Location") {
@@ -8225,16 +8261,14 @@ get_ram_data()
 						numberOfDevices=$2
 					}
 				}
-				aMemory[i,0]=primaryType
-				aMemory[i,1]=arrayHandle
-				aMemory[i,2]=location
-				aMemory[i,3]=aMaxCapacity2[k]
-				aMemory[i,4]=numberOfDevices
-				aMemory[i,5]=use
-				aMemory[i,6]=errorCorrection
-				aMemory[i,7]=aMaxModuleSize[k]
-				aMemory[i,8]=moduleVoltage
-
+				aArrayData[k,"data-type"]="memory-array"
+				# print k ":data16:"aArrayData[k,"data-type"]
+				aArrayData[k,"handle"]=arrayHandle
+				aArrayData[k,"location"]=location
+				aArrayData[k,"deviceCount16"]=numberOfDevices
+				aArrayData[k,"use"]=use
+				aArrayData[k,"errorCorrection"]=errorCorrection
+				
 				# reset
 				primaryType=""
 				arrayHandle=""
@@ -8243,16 +8277,14 @@ get_ram_data()
 				use=""
 				errorCorrection=""
 				moduleVoltage=""
-				i++
-				k++
-				aDerivedModuleSize[k]=0
-				aFoundModules[k]=0
-				aMaxCapacity1[k]=0
-				aMaxCapacity2[k]=0
-				aMaxModuleSize[k]=0
+				
+				aDerivedModuleSize[k+1]=0
+				aArrayData[k+1,"deviceCountFound"]=0
+				aArrayData[k+1,"maxCapacity5"]=0
+				aArrayData[k+1,"maxCapacity16"]=0
+				aArrayData[k+1,"maxModuleSize"]=0
 			}
-			/^Handle .* DMI type 17/ {
-				primaryType="memory-device"
+			/^Handle .* DMI[[:space:]]+type[[:space:]]+17/ {
 				while ( getline && !/^$/ ) {
 					if ( $1 == "Array Handle") {
 						arrayHandle=$2
@@ -8265,14 +8297,14 @@ get_ram_data()
 					}
 					if ( $1 == "Size") {
 						# do not try to guess from installed modules, only use this to correct type 5 data
-						aDerivedModuleSize[k-1]=calculateSize($2,aDerivedModuleSize[k-1])
+						aArrayData[k,"derivedModuleSize"]=calculateSize($2,aArrayData[k,"derivedModuleSize"])
 						workingSize=calculateSize($2,0)
 						if ( workingSize ~ /^[0-9][0-9]+$/ ){
-							aFoundModules[k-1]++
+							aArrayData[k,"deviceCountFound"]++
 							# build up actual capacity found for override tests
-							aUsedCapacity[k-1]=workingSize + aUsedCapacity[k-1]
+							aArrayData[k,"usedCapacity"]=workingSize + aArrayData[k,"usedCapacity"]
 						}
-						# print aDerivedModuleSize[k-1] " dm:" k-1 ":mm " aMaxModuleSize[k-1] " uc:" aUsedCapacity[k-1]
+						# print aArrayData[k,"derivedModuleSize"] " dm:" k ":mm " aMaxModuleSize[k] " uc:" aArrayData[k,"usedCapacity"]
 						deviceSize=$2
 					}
 					if ( $1 == "Locator") {
@@ -8338,22 +8370,23 @@ get_ram_data()
 					dataWidth=totalWidth
 					totalWidth=tempWidth
 				}
-				aMemory[i,0]=primaryType
-				aMemory[i,1]=arrayHandle
-				aMemory[i,2]=deviceSize
-				aMemory[i,3]=bankLocator
-				aMemory[i,4]=locator
-				aMemory[i,5]=formFactor
-				aMemory[i,6]=deviceType
-				aMemory[i,7]=deviceTypeDetail
-				aMemory[i,8]=deviceSpeed
-				aMemory[i,9]=configuredClockSpeed
-				aMemory[i,10]=dataWidth
-				aMemory[i,11]=totalWidth
-				aMemory[i,12]=deviceManufacturer
-				aMemory[i,13]=devicePartNumber
-				aMemory[i,14]=deviceSerialNumber
-				aMemory[i,15]=mainLocator
+				
+				aMemory[k,i,0]="memory-device"
+				aMemory[k,i,1]=arrayHandle
+				aMemory[k,i,2]=deviceSize
+				aMemory[k,i,3]=bankLocator
+				aMemory[k,i,4]=locator
+				aMemory[k,i,5]=formFactor
+				aMemory[k,i,6]=deviceType
+				aMemory[k,i,7]=deviceTypeDetail
+				aMemory[k,i,8]=deviceSpeed
+				aMemory[k,i,9]=configuredClockSpeed
+				aMemory[k,i,10]=dataWidth
+				aMemory[k,i,11]=totalWidth
+				aMemory[k,i,12]=deviceManufacturer
+				aMemory[k,i,13]=devicePartNumber
+				aMemory[k,i,14]=deviceSerialNumber
+				aMemory[k,i,15]=mainLocator
 				
 				primaryType=""
 				arrayHandle=""
@@ -8379,160 +8412,169 @@ get_ram_data()
 				# print primaryType "," arrayHandle "," location "," maxCapacity "," numberOfDevices "," use "," errorCorrection "," maxModuleSize "," moduleVoltage
 				
 				# print primaryType "," arrayHandle "," deviceSize "," bankLocator "," locator "," formFactor "," deviceType "," deviceTypeDetail "," deviceSpeed "," configuredClockSpeed "," dataWidth "," totalWidth "," deviceManufacturer "," devicePartNumber "," deviceSerialNumber "," mainLocator
-				m=0
-				for ( j=0;j<i;j++ ) {
+				
+				for ( m=1;m<=k;m++ ) {
 					estCap=""
 					estMod=""
 					unit=""
 					altCap=0
+					workingMaxCap=int(aArrayData[m,"maxCapacity16"])
 					
-					if (aMemory[j,0] == "memory-array" ) {
-						if ( bDebugger1 == "true" ){
-							print ""
-							print "count: " m+1
-							print "1: mmods: " aMaxModuleSize[m] " :dmmods: " aDerivedModuleSize[m] " :mcap: " aMemory[j,3] " :ucap: " aUsedCapacity[m] 
+					if ( bDebugger1 == "true" ){
+						print ""
+						print "count: " m
+						print "1: mmods: " aArrayData[m,"maxModuleSize"] " :dmmods: " aArrayData[m,"derivedModuleSize"] " :mcap: " workingMaxCap " :ucap: " aArrayData[m,"usedCapacity"] 
+					}
+					# 1: if max cap 1 is null, and max cap 2 not null, use 2
+					if ( workingMaxCap == 0 ) {
+						if ( aArrayData[m,"maxCapacity5"] != 0 ) {
+							workingMaxCap=aArrayData[m,"maxCapacity5"]
 						}
-						# 1: if max cap 1 is null, and max cap 2 not null, use 2
-						if ( aMemory[j,3] == 0 ) {
-							if ( aMaxCapacity2[m] != 0 ) {
-								aMemory[j,3]=aMaxCapacity2[m]
-							}
-						}
-						if ( aMemory[j,4] == "" ) {
-							aMemory[j,4] = 0
-						}
-						if ( bDebugger1 == "true" ){
-							print "2: mmods: " aMaxModuleSize[m] " :dmmods: " aDerivedModuleSize[m] " :mcap: " aMemory[j,3] " :ucap: " aUsedCapacity[m]
-						}
-						# 2: now check to see if actually found module sizes are > than listed max module, replace if >
-						if (aMaxModuleSize[m] != 0 && aDerivedModuleSize[m] != 0 && int(aDerivedModuleSize[m]) > int(aMaxModuleSize[m]) ) {
-							aMaxModuleSize[m]=aDerivedModuleSize[m]
-							estMod=" (est)"
-						}
-						aMaxModuleSize[m]=int(aMaxModuleSize[m])
-						aDerivedModuleSize[m]=int(aDerivedModuleSize[m])
-						aUsedCapacity[m]=int(aUsedCapacity[m])
-						aMemory[j,3]=int(aMemory[j,3]) 
-						
-						# note: some cases memory capacity == max module size, so one stick will fill it
-						# but I think only with cases of 2 slots does this happen, so if > 2, use the count of slots.
-						if ( bDebugger1 == "true" ){
-							print "3: fmod: " aFoundModules[m] " :modc: " aMemory[j,4] " :maxc1: " aMaxCapacity1[m] " :maxc2: " aMaxCapacity2[m]
-						}
-						if (aMemory[j,3] != 0 && ( aFoundModules[m] != 0 || aMemory[j,4] != 0 ) ) {
-							aMemory[j,4]=int(aMemory[j,4])
-							## first check that actual memory found is not greater than listed max cap, or
-							## checking to see module count * max mod size is not > used capacity
-							if ( aUsedCapacity[m] != 0 && aMaxCapacity2[m] != 0 ) {
-								if ( aUsedCapacity[m] > aMemory[j,3] ) {
-									if ( aMaxModuleSize[m] != 0 && 
-									     aUsedCapacity[m] < aMemory[j,4] * aMaxModuleSize[m] ) {
-										aMemory[j,3]=aMemory[j,4] * aMaxModuleSize[m]
-										estCap=" (est)"
-										if ( bDebugger1 == "true" ){
-											print "A"
-										}
-									}
-									else if ( aDerivedModuleSize[m] != 0 && 
-									          aUsedCapacity[m] < aMemory[j,4] * aDerivedModuleSize[m] ) {
-										aMemory[j,3]=aMemory[j,4] *  aDerivedModuleSize[m]
-										estCap=" (est)"
-										if ( bDebugger1 == "true" ){
-											print "B"
-										}
-									}
-									else {
-										aMemory[j,3]=aUsedCapacity[m]
-										estCap=" (est)"
-										if ( bDebugger1 == "true" ){
-											print "C"
-										}
-									}
-								}
-							}
-							# note that second case will never really activate except on virtual machines and maybe
-							# mobile devices
-							if ( estCap == "" ) {
-								# do not do this for only single modules found, max mod size can be equal to the array size
-								if ( ( aMemory[j,4] > 1 && aFoundModules[m] > 1 ) && 
-								     ( aMemory[j,3] < aDerivedModuleSize[m] * aMemory[j,4] ) ) {
-									aMemory[j,3] = aDerivedModuleSize[m] * aMemory[j,4]
+					}
+					if ( aArrayData[m,"deviceCount16"] == "" ) {
+						aArrayData[m,"deviceCount16"] = 0
+					}
+					if ( bDebugger1 == "true" ){
+						print "2: mmods: " aArrayData[m,"maxModuleSize"] " :dmmods: " aArrayData[m,"derivedModuleSize"] " :mcap: " workingMaxCap " :ucap: " aArrayData[m,"usedCapacity"]
+					}
+					# 2: now check to see if actually found module sizes are > than listed max module, replace if >
+					if (aArrayData[m,"maxModuleSize"] != 0 && aArrayData[m,"derivedModuleSize"] != 0 && int(aArrayData[m,"derivedModuleSize"]) > int(aArrayData[m,"maxModuleSize"]) ) {
+						aArrayData[m,"maxModuleSize"]=aArrayData[m,"derivedModuleSize"]
+						estMod=" (est)"
+					}
+					aArrayData[m,"maxModuleSize"]=int(aArrayData[m,"maxModuleSize"])
+					aArrayData[m,"derivedModuleSize"]=int(aArrayData[m,"derivedModuleSize"])
+					aArrayData[m,"usedCapacity"]=int(aArrayData[m,"usedCapacity"])
+					workingMaxCap=int(workingMaxCap) 
+					 
+					# note: some cases memory capacity == max module size, so one stick will fill it
+					# but I think only with cases of 2 slots does this happen, so if > 2, use the count of slots.
+					if ( bDebugger1 == "true" ){
+						print "3: fmod: " aArrayData[m,"deviceCountFound"] " :modc: " aArrayData[m,"deviceCount16"] " :maxc1: " aArrayData[m,"maxCapacity5"] " :maxc2: " aArrayData[m,"maxCapacity16"]
+					}
+					if (workingMaxCap != 0 && ( aArrayData[m,"deviceCountFound"] != 0 || aArrayData[m,"deviceCount16"] != 0 ) ) {
+						aArrayData[m,"deviceCount16"]=int(aArrayData[m,"deviceCount16"])
+						## first check that actual memory found is not greater than listed max cap, or
+						## checking to see module count * max mod size is not > used capacity
+						if ( aArrayData[m,"usedCapacity"] != 0 && aArrayData[m,"maxCapacity16"] != 0 ) {
+							if ( aArrayData[m,"usedCapacity"] > workingMaxCap ) {
+								if ( aArrayData[m,"maxModuleSize"] != 0 && 
+									aArrayData[m,"usedCapacity"] < aArrayData[m,"deviceCount16"] * aArrayData[m,"maxModuleSize"] ) {
+									workingMaxCap=aArrayData[m,"deviceCount16"] * aArrayData[m,"maxModuleSize"]
 									estCap=" (est)"
 									if ( bDebugger1 == "true" ){
-										print "D"
+										print "A"
 									}
 								}
-								else if ( ( aFoundModules[m] > 0 ) && 
-								          ( aMemory[j,3] < aDerivedModuleSize[m] * aFoundModules[m] ) ) {
-									aMemory[j,3] = aDerivedModuleSize[m] * aFoundModules[m]
+								else if ( aArrayData[m,"derivedModuleSize"] != 0 && 
+											aArrayData[m,"usedCapacity"] < aArrayData[m,"deviceCount16"] * aArrayData[m,"derivedModuleSize"] ) {
+									workingMaxCap=aArrayData[m,"deviceCount16"] *  aArrayData[m,"derivedModuleSize"]
 									estCap=" (est)"
 									if ( bDebugger1 == "true" ){
-										print "E"
+										print "B"
 									}
 								}
-								## handle cases where we have type 5 data: mms x device count equals type 5 max cap
-								# however do not use it if cap / devices equals the derived module size
-								else if ( aMaxModuleSize[m] > 0 && 
-								          ( aMaxModuleSize[m] * aMemory[j,4] == aMaxCapacity1[m] ) && 
-								          aMaxCapacity1[m] != aMaxCapacity2[m] && 
-								          aMaxCapacity2[m] / aMemory[j,4] != aDerivedModuleSize[m] ) {
-									aMemory[j,3] = aMaxCapacity1[m]
-									altCap=aMaxCapacity1[m] # not used
-									estCap=" (check)"
+								else {
+									workingMaxCap=aArrayData[m,"usedCapacity"]
+									estCap=" (est)"
 									if ( bDebugger1 == "true" ){
-										print "F"
+										print "C"
 									}
 								}
 							}
-						}
-						altCap=int(altCap)
-						aMemory[j,3]=int(aMemory[j,3])
-						if ( bDebugger1 == "true" ){
-							print "4: mmods: " aMaxModuleSize[m] " :dmmods: " aDerivedModuleSize[m] " :mcap: " aMemory[j,3] " :ucap: " aUsedCapacity[m]
-						}
-						# some cases of type 5 have too big module max size, just dump the data then since
-						# we cannot know if it is valid or not, and a guess can be wrong easily
-						if ( aMaxModuleSize[m] != 0 && aMemory[j,3] != "" && 
-						     ( aMaxModuleSize[m] > aMemory[j,3] ) ){
-							aMaxModuleSize[m] = 0
-							# print "yes"
-						}
-						
-						## prep for output ##
-						if (aMaxModuleSize[m] == 0 ){
-							aMaxModuleSize[m]=""
-						}
-						else {
-							aMaxModuleSize[m]=aMaxModuleSize[m] " MB"
-						}
-						if ( aMemory[j,4] == 0 ) {
-							aMemory[j,4] = ""
-						}
-						if (aMemory[j,3] != 0 ) {
-							if ( aMemory[j,3] < 1024 ) {
-								aMemory[j,3] = aMemory[j,3]
-								unit=" MB"
+						} 
+						# note that second case will never really activate except on virtual machines and maybe
+						# mobile devices
+						if ( estCap == "" ) {
+							# do not do this for only single modules found, max mod size can be equal to the array size
+							if ( ( aArrayData[m,"deviceCount16"] > 1 && aArrayData[m,"deviceCountFound"] > 1 ) && 
+								( workingMaxCap < aArrayData[m,"derivedModuleSize"] * aArrayData[m,"deviceCount16"] ) ) {
+								workingMaxCap = aArrayData[m,"derivedModuleSize"] * aArrayData[m,"deviceCount16"]
+								estCap=" (est)"
+								if ( bDebugger1 == "true" ){
+									print "D"
+								}
 							}
-							else if ( aMemory[j,3] < 1024000 ) {
-								aMemory[j,3] = aMemory[j,3] / 1024
-								unit=" GB"
+							else if ( ( aArrayData[m,"deviceCountFound"] > 0 ) && 
+										( workingMaxCap < aArrayData[m,"derivedModuleSize"] * aArrayData[m,"deviceCountFound"] ) ) {
+								workingMaxCap = aArrayData[m,"derivedModuleSize"] * aArrayData[m,"deviceCountFound"]
+								estCap=" (est)"
+								if ( bDebugger1 == "true" ){
+									print "E"
+								}
 							}
-							else if ( aMemory[j,3] < 1024000000 ) {
-								aMemory[j,3] = aMemory[j,3] / 1024000
-								unit=" TB"
+							## handle cases where we have type 5 data: mms x device count equals type 5 max cap
+							# however do not use it if cap / devices equals the derived module size
+							else if ( aArrayData[m,"maxModuleSize"] > 0 && 
+										( aArrayData[m,"maxModuleSize"] * aArrayData[m,"deviceCount16"] == aArrayData[m,"maxCapacity5"] ) && 
+										aArrayData[m,"maxCapacity5"] != aArrayData[m,"maxCapacity16"] && 
+										aArrayData[m,"maxCapacity16"] / aArrayData[m,"deviceCount16"] != aArrayData[m,"derivedModuleSize"] ) {
+								workingMaxCap = aArrayData[m,"maxCapacity5"]
+								altCap=aArrayData[m,"maxCapacity5"] # not used
+								estCap=" (check)"
+								if ( bDebugger1 == "true" ){
+									print "F"
+								}
 							}
-							# we only want a max 2 decimal places, this trick gives 0 to 2
-							aMemory[j,3]=gensub(/([0-9]+\.[0-9][0-9]).*/,"\\1",1,aMemory[j,3])
-							aMemory[j,3] = aMemory[j,3] unit estCap
 						}
-						else {
-							aMemory[j,3] == ""
-						}
-						print aMemory[j,0] "," aMemory[j,1] "," aMemory[j,2] "," aMemory[j,3] "," aMemory[j,4] "," aMemory[j,5] "," aMemory[j,6] "," aMaxModuleSize[m] estMod "," aMemory[j,8] 
-						m++
+					}
+					altCap=int(altCap)
+					workingMaxCap=int(workingMaxCap)
+					if ( bDebugger1 == "true" ){
+						print "4: mmods: " aArrayData[m,"maxModuleSize"] " :dmmods: " aArrayData[m,"derivedModuleSize"] " :mcap: " workingMaxCap " :ucap: " aArrayData[m,"usedCapacity"]
+					}
+					# some cases of type 5 have too big module max size, just dump the data then since
+					# we cannot know if it is valid or not, and a guess can be wrong easily
+					if ( aArrayData[m,"maxModuleSize"] != 0 && workingMaxCap != "" && 
+						( aArrayData[m,"maxModuleSize"] > workingMaxCap ) ){
+						aArrayData[m,"maxModuleSize"] = 0
+						# print "yes"
+					}
+					
+					## prep for output ##
+					if (aArrayData[m,"maxModuleSize"] == 0 ){
+						aArrayData[m,"maxModuleSize"]=""
 					}
 					else {
-						print aMemory[j,0] "," aMemory[j,1] "," aMemory[j,2] "," aMemory[j,3] "," aMemory[j,4] "," aMemory[j,5] "," aMemory[j,6] "," aMemory[j,7] "," aMemory[j,8]  "," aMemory[j,9] "," aMemory[j,10] "," aMemory[j,11] "," aMemory[j,12] "," aMemory[j,13] "," aMemory[j,14] "," aMemory[j,15]
+						if (aArrayData[m,"maxModuleSize"] > 1023 ) {
+							aArrayData[m,"maxModuleSize"]=aArrayData[m,"maxModuleSize"] / 1024 " GB"
+						}
+						else {
+							aArrayData[m,"maxModuleSize"]=aArrayData[m,"maxModuleSize"] " MB"
+						}
+					}
+					if ( aArrayData[m,"deviceCount16"] == 0 ) {
+						aArrayData[m,"deviceCount16"] = ""
+					}
+					if (workingMaxCap != 0 ) {
+						if ( workingMaxCap < 1024 ) {
+							workingMaxCap = workingMaxCap
+							unit=" MB"
+						}
+						else if ( workingMaxCap < 1024000 ) {
+							workingMaxCap = workingMaxCap / 1024
+							unit=" GB"
+						}
+						else if ( workingMaxCap < 1024000000 ) {
+							workingMaxCap = workingMaxCap / 1024000
+							unit=" TB"
+						}
+						# we only want a max 2 decimal places, this trick gives 0 to 2
+						workingMaxCap=gensub(/([0-9]+\.[0-9][0-9]).*/,"\\1",1,workingMaxCap)
+						workingMaxCap = workingMaxCap unit estCap
+					}
+					else {
+						workingMaxCap == ""
+					}
+					print aArrayData[m,"data-type"] "," aArrayData[m,"handle"] "," aArrayData[m,"location"] "," workingMaxCap "," aArrayData[m,"deviceCount16"] "," aArrayData[m,"use"] "," aArrayData[m,"errorCorrection"] "," aArrayData[m,"maxModuleSize"] estMod "," aArrayData[m,"voltage5"] 
+					# print device rows next
+					for ( j=0;j<=100;j++ ) {
+						if (aMemory[m,j,0] != "" ) {
+							print aMemory[m,j,0] "," aMemory[m,j,1] "," aMemory[m,j,2] "," aMemory[m,j,3] "," aMemory[m,j,4] "," aMemory[m,j,5] "," aMemory[m,j,6] "," aMemory[m,j,7] "," aMemory[m,j,8]  "," aMemory[m,j,9] "," aMemory[m,j,10] "," aMemory[m,j,11] "," aMemory[m,j,12] "," aMemory[m,j,13] "," aMemory[m,j,14] "," aMemory[m,j,15] "," aMemory[m,j,16] "," aMemory[m,j,17]
+						}
+						else {
+							break
+						}
 					}
 				}
 			}' <<< "$DMIDECODE_DATA" ) )
@@ -12152,7 +12194,7 @@ print_ram_data()
 	local manufacturer='' part_nu='' serial_nu='' device_speed='' configured_speed='' bus_width=
 	local data_width='' total_width='' device_type='' device_type_detail='' bank='' slot='' form_factor=''
 	local device_size='' array_use='' location='' error_correction='' max_capacity='' nu_of_devices=''
-	local max_module_size='' module_voltage=''
+	local max_module_size='' module_voltage='' bank_connection=''
 	
 	get_ram_data
 	#echo ${#A_MEMORY_DATA[@]}
@@ -12178,6 +12220,7 @@ print_ram_data()
 				manufacturer=''
 				max_module_size='' 
 				module_voltage=''
+				bank_connection=''
 				# memory-array,0x0012,System Board,8 GB,4,System Memory,None,max size,moudule voltage
 				if [[ ${a_memory_item[0]} == 'memory-array' ]];then
 					if [[ -n ${a_memory_item[4]} ]];then
@@ -12307,6 +12350,10 @@ print_ram_data()
 								serial_nu='N/A'
 							fi
 							serial_nu="${C1}serial$SEP3${C2} $serial_nu "
+							
+							if [[ $device_size != 'N/A' && -n ${a_memory_item[16]} ]];then
+								bank_connection=" ${a_memory_item[16]}"
+							fi
 						fi
 					fi
 					if [[ $B_EXTRA_EXTRA_EXTRA_DATA == 'true' ]];then
@@ -12325,7 +12372,7 @@ print_ram_data()
 							bus_width="${C1}bus width$SEP3${C2} $data_width$total_width "
 						fi
 					fi
-					memory_line="${C1}Device-$device_counter$SEP3${C2} $locator ${C1}size$SEP3${C2} $device_size $device_speed"
+					memory_line="${C1}Device-$device_counter$SEP3${C2} $locator ${C1}size$SEP3${C2} $device_size$bank_connection $device_speed"
 					if [[ $( calculate_line_length "$memory_line$device_type" ) -le $COLS_INNER ]];then
 						memory_line="$memory_line$device_type"
 						device_type=''
