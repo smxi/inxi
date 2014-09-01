@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.2.1
-####  Date: 2014-08-20
+####  Version: 2.2.2
+####  Date: 2014-09-01
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -1617,9 +1617,16 @@ debug_data_collector()
 		echo 'also checking for dmidecode data: note, you must be root to have dmidecode work.'
 		echo "Data going into: $SCRIPT_DATA_DIR/$debug_data_dir"
 		# bsd tools http://cb.vu/unixtoolbox.xhtml
+		# freebsd
 		pciconf -l -cv &> $debug_data_dir/bsd-pciconf-cvl.txt
 		pciconf -vl &> $debug_data_dir/bsd-pciconf-vl.txt
 		pciconf -l &> $debug_data_dir/bsd-pciconf-l.txt
+		# openbsd
+		pcidump &> $debug_data_dir/bsd-pcidump.txt
+		pcidump -v &> $debug_data_dir/bsd-pcidump-v.txt
+		# netbsd
+		pcictl list &> $debug_data_dir/bsd-pcictl-list.txt
+		pcictl list -n &> $debug_data_dir/bsd-pcictl-list-n.txt
 		sysctl -a &> $debug_data_dir/bsd-sysctl-a.txt
 		usbdevs -v  &> $debug_data_dir/bsd-usbdevs-v.txt
 		kldstat  &> $debug_data_dir/bsd-kldstat.txt
@@ -1796,8 +1803,8 @@ debug_data_collector()
 			df -h -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs &> $debug_data_dir/df-h-T-P-excludes.txt
 			df -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs &> $debug_data_dir/df-T-P-excludes.txt
 			df -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs --total &> $debug_data_dir/df-T-P-excludes-total.txt
-			df -H -T &> $debug_data_dir/bsd-df-H-T-no-excludes.txt
-			df -H &> $debug_data_dir/bsd-df-H-no-excludes.txt
+			df -h -T &> $debug_data_dir/bsd-df-h-T-no-excludes.txt
+			df -h &> $debug_data_dir/bsd-df-h-no-excludes.txt
 			df -k -T &> $debug_data_dir/bsd-df-k-T-no-excludes.txt
 			df -k &> $debug_data_dir/bsd-df-k-no-excludes.txt
 			atacontrol list &> $debug_data_dir/bsd-atacontrol-list.txt
@@ -2166,8 +2173,9 @@ print_screen_output()
 create_print_line()
 {
 	eval $LOGFS
-	local line=${2% } #trim off trailing space if present, note: ${CN} may hide the actual trailing end space
-	printf "${C1}%-${INDENT}s${C2} %s" "$1" "$line"
+	# convoluted, yes, but it works to trim spaces off end
+	local line=${2%${2##*[![:space:]]}}
+	printf "${C1}%-${INDENT}s${C2} %s" "$1" "$line${CN}"
 	eval $LOGFE
 }
 
@@ -4926,75 +4934,8 @@ get_dmidecode_data()
 			else 
 				dmiData="$( $dmidecodePath 2>&1 )"
 			fi
-			DMIDECODE_DATA="$( echo "$dmiData" | gawk -F ':' '
-			BEGIN {
-				IGNORECASE=1
-				cutExtraTab="false"
-				twoData=""
-				oneData=""
-			}
-			{
-				# no idea why, but freebsd gawk does not do this right
-				oneData=$1
-				twoData=$2
-				if ( twoData != "" ) {
-					twoHolder="true"
-				}
-				else {
-					twoHolder="false"
-				}
-				if ( $0 ~ /^\tDMI type/ ) {
-					sub(/^\tDMI type.*/, "", $0)
-					cutExtraTab="true"
-				}
-				
-				gsub(/'"$BAN_LIST_NORMAL"'/, "", twoData)
-				gsub(/,/, " ", twoData)
-				# clean out Handle line
-				# sub(/^Handle.*/,"", $0)
-				sub(/^[[:space:]]*Inactive.*/,"",twoData)
-				# yes, there is a typo in a user data set, unknow
-				# Base Board Version|Base Board Serial Number
-				# Chassis Manufacturer|Chassis Version|Chassis Serial Number
-				# System manufacturer|System Product Name|System Version
-				# To Be Filled By O.E.M.
-				# strip out starting white space so that the following stuff will clear properly
-				sub(/^[[:space:]]+/, "", twoData)
-				sub(/^Base Board .*|^Chassis .*|.*O\.E\.M\..*|.*OEM.*|^Not .*|^System .*|.*unknow.*|.*N\/A.*|none|^To be filled.*|^0x[0]+$|\[Empty\]|<Bad Index>|^\.\.$/, "", twoData) 
-				sub(/.*(AssetTagNum|Manufacturer| Or Motherboard|PartNum.*|SerNum).*/, "", twoData)
-				gsub(/bios|acpi/, "", twoData)
-				sub(/http:\/\/www.abit.com.tw\//, "Abit", twoData)
-				
-				# for double indented values replace with ~ so later can test for it, we are trusting that
-				# indentation will be tabbed in this case
-				# special case, dmidecode 2.2 has an extra tab and a DMI type line
-				if ( cutExtraTab == "true" ) {
-					sub(/^\t\t\t+/, "~", oneData)
-				}
-				else {
-					sub(/^\t\t+/, "~", oneData)
-				}
-				gsub(/ [ \t]+/, " ", twoData)
-				gsub(/^[[:space:]]+|[[:space:]]+$/, "", twoData)
-				gsub(/^[[:space:]]+|[[:space:]]+$/, "", oneData)
-				
-				# reconstructing the line for processing so gawk can use -F : again
-				if ( oneData != "" && twoHolder == "true" ) {
-					print oneData ":" twoData
-				}
-				else {
-					# make sure all null lines have no spaces in them!
-					gsub(/^[[:space:]]+|[[:space:]]+$/,"",$0)
-					print $0
-				}
-			}' \
-			| sed '/^$/{
-N
-/^\n$/D
-}' \
-			)"
-			# echo ":${DMIDECODE_DATA}:"
-			log_function_data "DMIDECODE_DATA (PRE): $DMIDECODE_DATA"
+			# these tests first, because bsd error messages like this (note how many : are in the string)
+			# inxi: line 4928: /usr/local/sbin/dmidecode: Permission denied
 			if [[ ${#DMIDECODE_DATA} -lt 100  ]];then
 				if [[ -z ${DMIDECODE_DATA/*Permission denied*/} ]];then
 				# if [[ -n $( grep -i 'Permission denied' <<< "$DMIDECODE_DATA" ) ]];then
@@ -5003,10 +4944,79 @@ N
 				elif [[ -n $( grep -i 'no smbios ' <<< "$DMIDECODE_DATA" ) ]];then
 					DMIDECODE_DATA='dmidecode-error-no-smbios-dmi-data'
 				else
-					echo $DMIDECODE_DATA
 					DMIDECODE_DATA='dmidecode-error-unknown-error'
 				fi
+			else
+				DMIDECODE_DATA="$( echo "$dmiData" | gawk -F ':' '
+				BEGIN {
+					IGNORECASE=1
+					cutExtraTab="false"
+					twoData=""
+					oneData=""
+				}
+				{
+					# no idea why, but freebsd gawk does not do this right
+					oneData=$1
+					twoData=$2
+					if ( twoData != "" ) {
+						twoHolder="true"
+					}
+					else {
+						twoHolder="false"
+					}
+					if ( $0 ~ /^\tDMI type/ ) {
+						sub(/^\tDMI type.*/, "", $0)
+						cutExtraTab="true"
+					}
+					gsub(/'"$BAN_LIST_NORMAL"'/, "", twoData)
+					gsub(/,/, " ", twoData)
+					# clean out Handle line
+					# sub(/^Handle.*/,"", $0)
+					sub(/^[[:space:]]*Inactive.*/,"",twoData)
+					# yes, there is a typo in a user data set, unknow
+					# Base Board Version|Base Board Serial Number
+					# Chassis Manufacturer|Chassis Version|Chassis Serial Number
+					# System manufacturer|System Product Name|System Version
+					# To Be Filled By O.E.M.
+					# strip out starting white space so that the following stuff will clear properly
+					sub(/^[[:space:]]+/, "", twoData)
+					sub(/^Base Board .*|^Chassis .*|.*O\.E\.M\..*|.*OEM.*|^Not .*|^System .*|.*unknow.*|.*N\/A.*|none|^To be filled.*|^0x[0]+$|\[Empty\]|<Bad Index>|^\.\.$/, "", twoData) 
+					sub(/.*(AssetTagNum|Manufacturer| Or Motherboard|PartNum.*|SerNum).*/, "", twoData)
+					gsub(/bios|acpi/, "", twoData)
+					sub(/http:\/\/www.abit.com.tw\//, "Abit", twoData)
+					
+					# for double indented values replace with ~ so later can test for it, we are trusting that
+					# indentation will be tabbed in this case
+					# special case, dmidecode 2.2 has an extra tab and a DMI type line
+					if ( cutExtraTab == "true" ) {
+						sub(/^\t\t\t+/, "~", oneData)
+					}
+					else {
+						sub(/^\t\t+/, "~", oneData)
+					}
+					gsub(/ [ \t]+/, " ", twoData)
+					gsub(/^[[:space:]]+|[[:space:]]+$/, "", twoData)
+					gsub(/^[[:space:]]+|[[:space:]]+$/, "", oneData)
+					
+					# reconstructing the line for processing so gawk can use -F : again
+					if ( oneData != "" && twoHolder == "true" ) {
+						print oneData ":" twoData
+					}
+					else {
+						# make sure all null lines have no spaces in them!
+						gsub(/^[[:space:]]+|[[:space:]]+$/,"",$0)
+						print $0
+					}
+				}' \
+				| sed '/^$/{
+N
+/^\n$/D
+}' \
+				)"
 			fi
+			# echo ":${DMIDECODE_DATA}:"
+			log_function_data "DMIDECODE_DATA (PRE): $DMIDECODE_DATA"
+			
 		fi
 		B_DMIDECODE_SET='true'
 		log_function_data "DMIDECODE_DATA (POST): $DMIDECODE_DATA"
@@ -7050,10 +7060,10 @@ get_partition_data()
 		swap_data="$( swapctl -l 2>/dev/null )"
 		# default size is 512, -H only for size in human readable format
 		# older bsds don't support -T, pain, so we'll use partial output there
-		if df -H -T &>/dev/null;then
-			df_string='df -H -T'
+		if df -h -T &>/dev/null;then
+			df_string='df -h -T'
 		else
-			df_string='df -H'
+			df_string='df -h'
 		fi
 	fi
 	main_partition_data="$( eval $df_string )"
@@ -10277,19 +10287,19 @@ print_audio_data()
 			fi
 			if [[ -n $audio_data ]];then
 				if [[ $( calculate_line_length "$card_string$audio_data" ) -lt $COLS_INNER ]];then
-					print_data=$( create_print_line "$line_starter" "$card_string$audio_data${CN}" )
+					print_data=$( create_print_line "$line_starter" "$card_string$audio_data" )
 					print_screen_output "$print_data"
 				# print the line
 				else
 					# keep the driver on the same line no matter what, looks weird alone on its own line
 					if [[ $( calculate_line_length "$card_string$audio_data" ) -gt $COLS_INNER ]];then
-						print_data=$( create_print_line "$line_starter" "$card_string${CN}" )
+						print_data=$( create_print_line "$line_starter" "$card_string" )
 						print_screen_output "$print_data"
 						line_starter=' '
-						print_data=$( create_print_line "$line_starter" "$audio_data${CN}" )
+						print_data=$( create_print_line "$line_starter" "$audio_data" )
 						print_screen_output "$print_data"
 					else
-						print_data=$( create_print_line "$line_starter" "$card_string$audio_data${CN}" )
+						print_data=$( create_print_line "$line_starter" "$card_string$audio_data" )
 						print_screen_output "$print_data"
 					fi
 				fi
@@ -10302,7 +10312,7 @@ print_audio_data()
 			# alsa_data=$( sed 's/ALSA/Advanced Linux Sound Architecture/' <<< $alsa_data )
 			alsa_data=${alsa_data/ALSA/Advanced Linux Sound Architecture}
 		fi
-		alsa_data=$( create_print_line "$line_starter" "$alsa_data${CN}" )
+		alsa_data=$( create_print_line "$line_starter" "$alsa_data" )
 		print_screen_output "$alsa_data"
 	fi
 	eval $LOGFE
@@ -10438,21 +10448,21 @@ print_cpu_data()
 	fi
 # 	echo $cpu_data $cpu_2_data
 # 	echo ln: $( calculate_line_length "$cpu_data $cpu_2_data" )
-# 	echo cpl: $( create_print_line "$line_starter" "$cpu_2_data${CN}" ):
+# 	echo cpl: $( create_print_line "$line_starter" "$cpu_2_data" ):
 # 	echo icols: $COLS_INNER
 # 	echo tc: $TERM_COLUMNS
 	# echo :${cpu_2_data}:
 	if [[ -n $cpu_2_data && $( calculate_line_length "$cpu_data $cpu_2_data" ) -gt $COLS_INNER ]];then
-		cpu_data=$( create_print_line "$line_starter" "$cpu_data${CN}" )
+		cpu_data=$( create_print_line "$line_starter" "$cpu_data" )
 		line_starter=' '
 		print_screen_output "$cpu_data"
-		cpu_data=$( create_print_line " " "$cpu_2_data${CN}" )
+		cpu_data=$( create_print_line " " "$cpu_2_data" )
 		print_screen_output "$cpu_data"
 	else
-		cpu_data=$( create_print_line "$line_starter" "$cpu_data${CN}" )
+		cpu_data=$( create_print_line "$line_starter" "$cpu_data" )
 		print_screen_output "$cpu_data $cpu_2_data"
 	fi
-	# we don't this printing out extra line unless > 1 cpu core
+	# we don't do this printing out extra line unless > 1 cpu core
 	# note the numbering, the last array item is the min/max/not found for cpu speeds
 	if [[ ${#A_CPU_DATA[@]} -gt 2 && $B_SHOW_CPU == 'true' ]];then
 		for (( i=0; i < ${#A_CPU_DATA[@]}-1; i++ ))
@@ -10549,10 +10559,13 @@ print_dmidecode_error()
 	local sysDmiError='Using '
 	
 	if [[ $1 == 'sys' ]];then
-		sysDmiError='No /sys/class/dmi; using '
-	fi
-	if [[ $B_FORCE_DMIDECODE == 'true' && $1 == 'sys' ]];then
-		sysDmiError='Forcing '
+		if [[ $B_FORCE_DMIDECODE == 'true' ]];then
+			sysDmiError='Forcing '
+		elif [[ $BSD_TYPE == '' || -d /sys ]];then
+			sysDmiError='No /sys/class/dmi; using '
+		else
+			sysDmiError='Using '
+		fi
 	fi
 	if [[ $2 == 'dmidecode-error-requires-root' ]];then
 		error_message="${sysDmiError}dmidecode: you must be root to run dmidecode"
@@ -10915,7 +10928,7 @@ print_hard_disk_data()
 		# temporary message to indicate not yet supported
 		if [[ $BSD_TYPE == 'bsd' ]];then
 			hdd_data=$bsd_unsupported
-			hdd_data=$( create_print_line "$Line_Starter" "$hdd_data${CN}" )
+			hdd_data=$( create_print_line "$Line_Starter" "$hdd_data" )
 			print_screen_output "$hdd_data"
 			Line_Starter=' '
 		fi
@@ -10925,7 +10938,7 @@ print_hard_disk_data()
 		if [[ $BSD_TYPE == 'bsd' ]];then
 			hdd_data=$bsd_unsupported
 		fi
-		hdd_data=$( create_print_line "$Line_Starter" "$hdd_data${CN}" )
+		hdd_data=$( create_print_line "$Line_Starter" "$hdd_data" )
 		print_screen_output "$hdd_data"
 		Line_Starter=' '
 	fi
@@ -11041,7 +11054,7 @@ print_info_data()
 	# sometimes gcc is very long, and default runlevel can be long with systemd, so create a gcc-less line first
 	if [[ $( calculate_line_length "$info_data$init_data$gcc_installed" ) -gt $COLS_INNER ]];then
 		# info_data=$info_data
-		info_data=$( create_print_line "$line_starter" "$info_data${CN}" )
+		info_data=$( create_print_line "$line_starter" "$info_data" )
 		print_screen_output "$info_data"
 		info_data=''
 		# closing_data=''
@@ -11050,7 +11063,7 @@ print_info_data()
 	fi
 	if [[ $( calculate_line_length "$init_data$gcc_installed" ) -gt $COLS_INNER ]];then
 		info_data=$init_data
-		info_data=$( create_print_line "$line_starter" "$info_data${CN}" )
+		info_data=$( create_print_line "$line_starter" "$info_data" )
 		print_screen_output "$info_data"
 		info_data=''
 		init_data=''
@@ -11059,7 +11072,7 @@ print_info_data()
 	fi
 	if [[ $( calculate_line_length "$info_data$init_data$gcc_installed$closing_data" ) -gt $COLS_INNER ]];then
 		info_data=$info_data$init_data$gcc_installed
-		info_data=$( create_print_line "$line_starter" "$info_data${CN}" )
+		info_data=$( create_print_line "$line_starter" "$info_data" )
 		print_screen_output "$info_data"
 		info_data=''
 		gcc_installed=''
@@ -11069,7 +11082,7 @@ print_info_data()
 	fi
 	info_data="$info_data$init_data$gcc_installed$closing_data"
 	
-	info_data=$( create_print_line "$line_starter" "$info_data${CN}" )
+	info_data=$( create_print_line "$line_starter" "$info_data" )
 	if [[ $SCHEME -gt 0 ]];then
 		info_data="$info_data ${NORMAL}"
 	fi
@@ -11224,18 +11237,18 @@ print_machine_data()
 		bios_line=''
 		chassis_line=''
 	fi
-	system_line=$( create_print_line "Machine:" "$system_line${CN}" )
+	system_line=$( create_print_line "Machine:" "$system_line" )
 	print_screen_output "$system_line"
 	if [[ -n $mobo_line ]];then
-		mobo_line=$( create_print_line " " "$mobo_line${CN}" )
+		mobo_line=$( create_print_line " " "$mobo_line" )
 		print_screen_output "$mobo_line"
 	fi
 	if [[ -n $bios_line ]];then
-		bios_line=$( create_print_line " " "$bios_line${CN}" )
+		bios_line=$( create_print_line " " "$bios_line" )
 		print_screen_output "$bios_line"
 	fi
 	if [[ -n $chassis_line ]];then
-		chassis_line=$( create_print_line " " "$chassis_line${CN}" )
+		chassis_line=$( create_print_line " " "$chassis_line" )
 		print_screen_output "$chassis_line"
 	fi
 	
@@ -11390,7 +11403,7 @@ print_networking_data()
 		done
 	else
 		network_data="${C1}Card$SEP3${C2} Failed to Detect Network Card! "
-		network_data=$( create_print_line "$line_starter" "$network_data${CN}" )
+		network_data=$( create_print_line "$line_starter" "$network_data" )
 		print_screen_output "$network_data"
 	fi
 	if [[ $B_SHOW_IP == 'true' ]];then
@@ -11443,12 +11456,12 @@ print_network_advanced_data()
 	network_data="${C1}IF$SEP3${C2} $if_id ${C1}state$SEP3${C2} $oper_state $speed_string$duplex_string"
 	part_2_data="${C1}mac$SEP3${C2} $mac_id"
 	if [[ $( calculate_line_length "$network_data$part_2_data" ) -gt $COLS_INNER ]];then
-		network_data=$( create_print_line " " "$network_data${CN}" )
+		network_data=$( create_print_line " " "$network_data" )
 		print_screen_output "$network_data"
 		network_data=''
 	fi
 	if [[ -n $network_data$part_2_data ]];then
-		network_data=$( create_print_line " " "$network_data$part_2_data${CN}" )
+		network_data=$( create_print_line " " "$network_data$part_2_data" )
 		print_screen_output "$network_data"
 		network_data=''
 	fi
@@ -11513,14 +11526,14 @@ print_networking_ip_data()
 		# first line, print wan on its own line if too long
 		if [[ $i -eq 0 ]];then
 			if [[ $( calculate_line_length "$wan_ip_data$if_string" ) -gt $COLS_INNER ]];then
-				full_string=$( create_print_line " " "$wan_ip_data${CN}" )
+				full_string=$( create_print_line " " "$wan_ip_data" )
 				print_screen_output "$full_string"
 				wan_ip_data=''
-				full_string=$( create_print_line " " "$if_string${CN}" )
+				full_string=$( create_print_line " " "$if_string" )
 				print_screen_output "$full_string"
 				if_string=''
 			else
-				full_string=$( create_print_line " " "$wan_ip_data$if_string${CN}" )
+				full_string=$( create_print_line " " "$wan_ip_data$if_string" )
 				print_screen_output "$full_string"
 				wan_ip_data=''
 				if_string=''
@@ -11528,7 +11541,7 @@ print_networking_ip_data()
 		else 
 			if [[ $( calculate_line_length "$if_string_holding$if_string" ) -gt $COLS_INNER ]];then
 				if [[ -n $if_string_holding ]];then
-					full_string=$( create_print_line " " "$if_string_holding${CN}" )
+					full_string=$( create_print_line " " "$if_string_holding" )
 					print_screen_output "$full_string"
 				fi
 				if_string_holding="$if_string"
@@ -11541,7 +11554,7 @@ print_networking_ip_data()
 	
 	# then print out anything not printed already
 	if [[ -n $if_string_holding ]];then
-		full_string=$( create_print_line " " "$if_string_holding${CN}" )
+		full_string=$( create_print_line " " "$if_string_holding" )
 		print_screen_output "$full_string"
 	fi
 	eval $LOGFE
@@ -11620,30 +11633,30 @@ print_optical_drive_data()
 			fi
 			drive_data="${C1}Optical${counter}$SEP3${C2} $drive_string"
 			if [[ $( calculate_line_length "$drive_data$part_2_data" ) -lt $COLS_INNER ]];then
-				drive_data=$( create_print_line "$Line_Starter" "$drive_data$part_2_data${CN}" )
+				drive_data=$( create_print_line "$Line_Starter" "$drive_data$part_2_data" )
 				print_screen_output "$drive_data"
 				Line_Starter=' '
 				drive_data=''
 				part_2_data=''
 			else
 				if [[ $( calculate_line_length "$drive_data" ) -gt $COLS_INNER ]];then
-					drive_data=$( create_print_line "$Line_Starter" "$drive_data${CN}" )
+					drive_data=$( create_print_line "$Line_Starter" "$drive_data" )
 					print_screen_output "$drive_data"
 					Line_Starter=' '
 					drive_data=''
 				fi
 				if [[ $( calculate_line_length "$drive_data$part_2_data" ) -lt $COLS_INNER ]];then
-					drive_data=$( create_print_line "$Line_Starter" "$drive_data$part_2_data${CN}" )
+					drive_data=$( create_print_line "$Line_Starter" "$drive_data$part_2_data" )
 					print_screen_output "$drive_data"
 					Line_Starter=' '
 					part_2_data=''
 					drive_data=''
 				else
-					drive_data=$( create_print_line "$Line_Starter" "$drive_data${CN}" )
+					drive_data=$( create_print_line "$Line_Starter" "$drive_data" )
 					print_screen_output "$drive_data"
 					drive_data=''
 					Line_Starter=' '
-					drive_data=$( create_print_line "$Line_Starter" "$part_2_data${CN}" )
+					drive_data=$( create_print_line "$Line_Starter" "$part_2_data" )
 					print_screen_output "$drive_data"
 					Line_Starter=' '
 					part_2_data=''
@@ -11719,13 +11732,13 @@ print_optical_drive_data()
 				drive_data="${C1}Features: speed$SEP3${C2} $speed $multisession"
 				part_2_data="$audio${C1}dvd$SEP3${C2} $dvd ${C1}rw$SEP3${C2} $rw_support $state"
 				if [[ $( calculate_line_length "$drive_data$part_2_data" ) -lt $COLS_INNER ]];then
-					drive_data=$( create_print_line "$Line_Starter" "$drive_data$part_2_data${CN}" )
+					drive_data=$( create_print_line "$Line_Starter" "$drive_data$part_2_data" )
 					print_screen_output "$drive_data"
 					Line_Starter=' '
 				else
 					drive_data=$( create_print_line "$Line_Starter" "$drive_data" )
 					print_screen_output "$drive_data"
-					drive_data=$( create_print_line "$Line_Starter" "$part_2_data${CN}" )
+					drive_data=$( create_print_line "$Line_Starter" "$part_2_data" )
 					print_screen_output "$drive_data"
 					Line_Starter=' '
 				fi
@@ -11840,7 +11853,7 @@ print_partition_data()
 			line_starter=' '
 		fi
 		if [[ -n ${a_partition_data[$i]} ]];then
-			partition_data=$( create_print_line "$line_starter" "${a_partition_data[$i]}${CN}" )
+			partition_data=$( create_print_line "$line_starter" "${a_partition_data[$i]}" )
 			print_screen_output "$partition_data"
 		fi
 	done
@@ -11908,7 +11921,7 @@ print_ps_item()
 	fi
 	
 	# appName, appPath, appStarterName, appStarterPath, cpu, mem, pid, vsz, user
-	ps_data=$( create_print_line "$line_starter" "$line_start_data${CN}" )
+	ps_data=$( create_print_line "$line_starter" "$line_start_data" )
 	print_screen_output "$ps_data"
 
 	for (( i=0; i < ${#A_PS_DATA[@]}; i++ ))
@@ -11947,7 +11960,7 @@ print_ps_item()
 		(( line_counter++ ))
 		count_nu="${C1}$line_counter$SEP3${C2}"
 		full_line="$count_nu$app_cpu$app_mem$app_name$app_pid$extra_data"
-		ps_data=$( create_print_line " " "$full_line${CN}" )
+		ps_data=$( create_print_line " " "$full_line" )
 		print_screen_output "$ps_data"
 	done
 	
@@ -12235,7 +12248,7 @@ print_raid_data()
 			fi
 			if [[ $B_EXTRA_EXTRA_DATA == 'true' && $array_count != '' ]];then
 				if [[ $i == 0 ]];then
-					raid_data=$( create_print_line "$line_starter" "${a_raid_data[array_count]}${CN}" )
+					raid_data=$( create_print_line "$line_starter" "${a_raid_data[array_count]}" )
 					print_screen_output "$raid_data"
 					line_starter=' '
 				fi
@@ -12244,7 +12257,7 @@ print_raid_data()
 			print_screen_output "$raid_data"
 			if [[ $B_EXTRA_EXTRA_DATA == 'true' && $array_count_unused != '' ]];then
 				if [[ $i == $(( array_count_unused - 2 )) ]];then
-					raid_data=$( create_print_line "$line_starter" "${a_raid_data[array_count_unused]}${CN}" )
+					raid_data=$( create_print_line "$line_starter" "${a_raid_data[array_count_unused]}" )
 					print_screen_output "$raid_data"
 				fi
 			fi
@@ -12321,7 +12334,7 @@ print_ram_data()
 					memory_line="${C1}Array-$array_counter capacity$SEP3${C2} $max_capacity ${C1}devices$SEP3${C2} $nu_of_devices ${C1}EC$SEP3${C2} $error_correction "
 					line_2="$max_module_size$module_voltage"
 					if [[ -n $line_2 && $( calculate_line_length "$memory_line$line_2" ) -gt $COLS_INNER ]];then
-						memory_line=$( create_print_line "$line_starter" "$memory_line${CN}" )
+						memory_line=$( create_print_line "$line_starter" "$memory_line" )
 						print_screen_output "$memory_line"
 						memory_line="$line_2"
 						line_starter=' '
@@ -12452,12 +12465,12 @@ print_ram_data()
 					# echo $( calculate_line_length "$memory_line" )
 					# echo $( calculate_line_length "$memory_line$line_2" )
 					if [[ $( calculate_line_length "$memory_line$line_2$line_3" ) -gt $COLS_INNER ]];then
-						memory_line=$( create_print_line "$line_starter" "$memory_line${CN}" )
+						memory_line=$( create_print_line "$line_starter" "$memory_line" )
 						print_screen_output "$memory_line"
 						memory_line="$line_2"
 						line_starter=' '
 						if [[ -n $memory_line && -n $line_3 && $( calculate_line_length "$memory_line$line_3" ) -gt $COLS_INNER ]];then
-							memory_line=$( create_print_line "$line_starter" "$memory_line${CN}" )
+							memory_line=$( create_print_line "$line_starter" "$memory_line" )
 							print_screen_output "$memory_line"
 							memory_line="$line_3"
 						else
@@ -12468,7 +12481,7 @@ print_ram_data()
 					fi
 					(( device_counter++ ))
 				fi
-				memory_line=$( create_print_line "$line_starter" "$memory_line${CN}" )
+				memory_line=$( create_print_line "$line_starter" "$memory_line" )
 				print_screen_output "$memory_line"
 				line_starter=' '
 			done
@@ -12480,7 +12493,7 @@ print_ram_data()
 	IFS="$ORIGINAL_IFS"
 	memory_line=${memory_line## }
 	if [[ -n $memory_line ]];then
-		memory_line=$( create_print_line "$line_starter" "$memory_line${CN}" )
+		memory_line=$( create_print_line "$line_starter" "$memory_line" )
 		print_screen_output "$memory_line"
 	fi
 
@@ -12524,13 +12537,13 @@ print_repo_data()
 				file_name_holder=$file_name
 				b_print_next_line='true'
 			else
-				repo_full=$file_content
+				repo_full="${C2}$file_content"
 			fi
 			# first line print Repos: 
 			if [[ $repo_count -eq 1 ]];then
-				repo_full=$( create_print_line "Repos:" "$repo_full${CN}" )
+				repo_full=$( create_print_line "Repos:" "$repo_full" )
 			else
-				repo_full=$( create_print_line " " "$repo_full${CN}" )
+				repo_full=$( create_print_line " " "$repo_full" )
 			fi
 			print_screen_output "$repo_full"
 			# this prints the content of the file as well as the file name
@@ -12675,16 +12688,16 @@ print_sensors_data()
 	# unless -s used explicitly. So for -F type output won't show unless valid or -! 1 used
 	if [[ $b_is_error != 'true' || $B_SHOW_SENSORS == 'true' || $B_TESTING_1 == 'true' ]];then
 		temp_data="$cpu_temp$mobo_temp$psu_temp$gpu_temp"
-		temp_data=$( create_print_line "Sensors:" "$temp_data${CN}" )
+		temp_data=$( create_print_line "Sensors:" "$temp_data" )
 		print_screen_output "$temp_data"
 		# don't print second or subsequent lines if error data
 		fan_data="$cpu_fan$mobo_fan$ps_fan$sys_fans"
 		if [[ $b_is_error != 'true' && -n $fan_data ]];then
-			fan_data=$( create_print_line " " "$fan_data${CN}" )
+			fan_data=$( create_print_line " " "$fan_data" )
 			print_screen_output "$fan_data"
 			# and then second wrapped fan line if needed
 			if [[ -n $sys_fans2 ]];then
-				fan_data2=$( create_print_line " " "$sys_fans2${CN}" )
+				fan_data2=$( create_print_line " " "$sys_fans2" )
 				print_screen_output "$fan_data2"
 			fi
 		fi
@@ -12770,13 +12783,13 @@ print_system_data()
 	distro_string="${C1}Distro$SEP3${C2} $distro "
 	
 	if [[ $( calculate_line_length "$host_kernel_string$de_string" ) -gt $COLS_INNER ]];then
-		system_data=$( create_print_line "$line_starter" "$host_kernel_string${CN}" )
+		system_data=$( create_print_line "$line_starter" "$host_kernel_string" )
 		print_screen_output "$system_data"
 		host_kernel_string=''
 		line_starter=' '
 	fi
 	if [[ $( calculate_line_length "$host_kernel_string$de_string$distro_string" ) -gt $COLS_INNER ]];then
-		system_data=$( create_print_line "$line_starter" "$host_kernel_string$de_string${CN}" )
+		system_data=$( create_print_line "$line_starter" "$host_kernel_string$de_string" )
 		print_screen_output "$system_data"
 		host_kernel_string=''
 		de_string=''
@@ -12785,7 +12798,7 @@ print_system_data()
 	system_data="$host_kernel_string$de_string$distro_string"
 	if [[ -n $system_data ]];then
 		system_data="$host_kernel_string$de_string$distro_string"
-		system_data=$( create_print_line "$line_starter" "$system_data${CN}" )
+		system_data=$( create_print_line "$line_starter" "$system_data" )
 		print_screen_output "$system_data"
 	fi
 	
@@ -12849,19 +12862,19 @@ print_unmounted_partition_data()
 				part_2_data="$full_fs$full_label$full_uuid"
 			fi
 			if [[ $( calculate_line_length "$full_string$part_2_data" ) -gt $COLS_INNER ]];then
-				unmounted_data=$( create_print_line "$line_starter" "$full_string${CN}" )
+				unmounted_data=$( create_print_line "$line_starter" "$full_string" )
 				print_screen_output "$unmounted_data"
 				line_starter=' '
-				unmounted_data=$( create_print_line "$line_starter" "$part_2_data${CN}" )
+				unmounted_data=$( create_print_line "$line_starter" "$part_2_data" )
 				print_screen_output "$unmounted_data"
 			else
-				unmounted_data=$( create_print_line "$line_starter" "$full_string$part_2_data${CN}" )
+				unmounted_data=$( create_print_line "$line_starter" "$full_string$part_2_data" )
 				print_screen_output "$unmounted_data"
 				line_starter=' '
 			fi
 		done
 	else
-		unmounted_data=$( create_print_line "$line_starter" "No unmounted partitions detected${CN}" )
+		unmounted_data=$( create_print_line "$line_starter" "No unmounted partitions detected" )
 		print_screen_output "$unmounted_data"
 	fi
 	
@@ -12935,11 +12948,11 @@ print_weather_data()
 
 		if [[ $B_EXTRA_DATA != 'true' ]];then
 			weather_data="$weather_string $time_string"
-			weather_data=$( create_print_line "Weather:" "$weather_data${CN}" )
+			weather_data=$( create_print_line "Weather:" "$weather_data" )
 			print_screen_output "$weather_data"
 		else
 			weather_data="$weather_string"
-			weather_data=$( create_print_line "Weather:" "$weather_data${CN}" )
+			weather_data=$( create_print_line "Weather:" "$weather_data" )
 			print_screen_output "$weather_data"
 			if [[ $B_EXTRA_EXTRA_EXTRA_DATA == 'true' ]];then
 				if [[ -n ${a_weather[8]} ]];then
@@ -12975,10 +12988,10 @@ print_weather_data()
 				fi
 				# the last three are oftenblank
 				if [[ -z "$heat_index$wind_chill$dew_point" ]];then
-					weather_data=$( create_print_line " " "$pressure$location_string${CN}" )
+					weather_data=$( create_print_line " " "$pressure$location_string" )
 					print_screen_output "$weather_data"
 				else
-					weather_data=$( create_print_line " " "$pressure$heat_index$wind_chill$dew_point${CN}" )
+					weather_data=$( create_print_line " " "$pressure$heat_index$wind_chill$dew_point" )
 					print_screen_output "$weather_data"
 					if [[ $B_OUTPUT_FILTER != 'true' ]];then
 						weather_data=$( create_print_line " " "$location_string" )
@@ -12986,21 +12999,21 @@ print_weather_data()
 					fi
 				fi
 				if [[ -n $time_string$observation_time ]];then
-					weather_data=$( create_print_line " " "$time_string$observation_time${CN}" )
+					weather_data=$( create_print_line " " "$time_string$observation_time" )
 					print_screen_output "$weather_data"
 				fi
 			else
 				if [[ -n $pressure$time_string ]];then
 					weather_data="$pressure$time_string"
-					weather_data=$( create_print_line " " "$weather_data${CN}" )
+					weather_data=$( create_print_line " " "$weather_data" )
 					print_screen_output "$weather_data"
 				fi
 			fi
 		fi
 	else
-		weather_data=$( create_print_line "Weather:" "Weather data failure: $(date)" )
+		weather_data=$( create_print_line "Weather:" "${C2}Weather data failure: $(date)" )
 		print_screen_output "$weather_data"
-		weather_data=$( create_print_line " " "${A_WEATHER_DATA}${CN}" )
+		weather_data=$( create_print_line " " "${C2}${A_WEATHER_DATA}" )
 		print_screen_output "$weather_data"
 	fi
 	eval $LOGFE
