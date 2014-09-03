@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.2.2
-####  Date: 2014-09-01
+####  Version: 2.2.3
+####  Date: 2014-09-03
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -481,6 +481,7 @@ DEV_DISK_LABEL=''
 DEV_DISK_MAPPER=''
 DEV_DISK_UUID=''
 DMIDECODE_DATA=''
+DOWNLOADER='wget'
 IRC_CLIENT=''
 IRC_CLIENT_VERSION=''
 PS_THROTTLED=''
@@ -822,6 +823,10 @@ initialize_data()
 	fi
 	
 	initialize_paths
+	
+	if [[ -z $( type -p wget ) && -n $( type -p curl ) ]];then
+		DOWNLOADER='curl'
+	fi
 	
 	if [[ -n $BSD_TYPE ]];then
 		if [[ -e $FILE_DMESG_BOOT ]];then
@@ -1329,7 +1334,7 @@ error_handler()
 			;;
 		7)	error_message="One of the options you entered in your script parameters: $2\nis not supported.The option may require extra arguments to work.\nFor supported options (and their arguments), check the help menu: $SCRIPT_NAME -h"
 			;;
-		8)	error_message="the self-updater failed, wget exited with error: $2.\nYou probably need to be root.\nHint, to make for easy updates without being root, do: chown <user name> $SCRIPT_PATH/$SCRIPT_NAME"
+		8)	error_message="the self-updater failed, $DOWNLOADER exited with error: $2.\nYou probably need to be root.\nHint, to make for easy updates without being root, do: chown <user name> $SCRIPT_PATH/$SCRIPT_NAME"
 			;;
 		9)	error_message="unsupported debugging level: $2"
 			;;
@@ -1494,7 +1499,7 @@ create_rotate_logfiles()
 script_self_updater()
 {
 	eval $LOGFS
-	local wget_error=0 file_contents='' wget_man_error=0 
+	local downloader_error=0 file_contents='' downloader_man_error=0 
 	local man_file_path="$MAN_FILE_LOCATION/inxi.1.gz"
 	
 	if [[ $B_IRC == 'true' ]];then
@@ -1506,10 +1511,13 @@ script_self_updater()
 	print_screen_output "Currently running $SCRIPT_NAME version number: $SCRIPT_VERSION_NUMBER"
 	print_screen_output "Current version patch number: $SCRIPT_PATCH_NUMBER"
 	print_screen_output "Updating $SCRIPT_NAME in $SCRIPT_PATH using $2 as download source..."
-
-	file_contents="$( wget -q -O - $1$SCRIPT_NAME )" || wget_error=$?
+	if [[ $DOWNLOADER != 'curl' ]];then
+		file_contents="$( wget -q -O - $1$SCRIPT_NAME )" || downloader_error=$?
+	else
+		file_contents="$( curl -s $1$SCRIPT_NAME )" || downloader_error=$?
+	fi
 	# then do the actual download
-	if [[  $wget_error -eq 0 ]];then
+	if [[  $downloader_error -eq 0 ]];then
 		# make sure the whole file got downloaded and is in the variable
 		if [[ -n $( grep '###\*\*EOF\*\*###' <<< "$file_contents" ) ]];then
 			echo "$file_contents" > $SCRIPT_PATH/$SCRIPT_NAME || error_handler 14 "$?"
@@ -1533,14 +1541,22 @@ script_self_updater()
 							exec $( type -p mandb ) -q 
 						fi
 					fi
-					wget -q --spider $MAN_FILE_DOWNLOAD || wget_man_error=$?
-					if [[ $wget_man_error -eq 0 ]];then
-						print_screen_output "Man file download URL verified: $MAN_FILE_DOWNLOAD"
+					if [[ $DOWNLOADER != 'curl' ]];then
+						wget -q --spider $MAN_FILE_DOWNLOAD || downloader_man_error=$?
+					fi
+					if [[ $downloader_man_error -eq 0 ]];then
+						if [[ $DOWNLOADER != 'curl' ]];then
+							print_screen_output "Man file download URL verified: $MAN_FILE_DOWNLOAD"
+						fi
 						print_screen_output "Downloading Man page file now."
-						wget -q -O $man_file_path $MAN_FILE_DOWNLOAD || wget_man_error=$?
-						if [[ $wget_man_error -gt 0 ]];then
+						if [[ $DOWNLOADER != 'curl' ]];then
+							wget -q -O $man_file_path $MAN_FILE_DOWNLOAD || downloader_man_error=$?
+						else
+							curl -s -o $man_file_path $MAN_FILE_DOWNLOAD || downloader_man_error=$?
+						fi
+						if [[ $downloader_man_error -gt 0 ]];then
 							print_screen_output "Oh no! Something went wrong downloading the Man gz file at: $MAN_FILE_DOWNLOAD"
-							print_screen_output "Check the error messages for what happened. Error: $wget_man_error"
+							print_screen_output "Check the error messages for what happened. Error: $downloader_man_error"
 						else
 							print_screen_output "Download/install of man page successful. Check to make sure it works: man inxi"
 						fi
@@ -1559,7 +1575,7 @@ script_self_updater()
 	# now run the error handlers on any wget failure
 	else
 		if [[ $2 == 'svn server' ]];then
-			error_handler 8 "$wget_error"
+			error_handler 8 "$downloader_error"
 		elif [[ $2 == 'alt server' ]];then
 			error_handler 10 "$1"
 		else
@@ -1703,7 +1719,11 @@ debug_data_collector()
 				mv -f xiin $xiin_file
 			fi
 			# -Nc is creating really weird download anomolies, so using -O instead
-			xiin_download="$( wget -q -O - http://inxi.googlecode.com/svn/branches/xiin/$xiin_file )"
+			if [[ $DOWNLOADER != 'curl' ]];then
+				xiin_download="$( wget -q -O - http://inxi.googlecode.com/svn/branches/xiin/$xiin_file )"
+			else
+				xiin_download="$( curl -s http://inxi.googlecode.com/svn/branches/xiin/$xiin_file )"
+			fi
 			# if nothing got downloaded kick out error, otherwise we'll use an older version
 			if [[ $? -gt 0 && ! -f $xiin_file ]];then
 				echo -e "ERROR: Failed to download required file: $xiin_file\nMaybe the remote site is down or your networking is broken?"
@@ -2211,13 +2231,12 @@ remove_erroneous_chars()
 get_parameters()
 {
 	eval $LOGFS
-	local opt='' wget_test='' debug_data_type='' weather_flag='wW:' 
+	local opt='' downloader_test='' debug_data_type='' weather_flag='wW:' 
 	local use_short='true' # this is needed to trigger short output, every v/d/F/line trigger sets this false
 
 	# if distro maintainers don't want the weather feature disable it
 	if [[ $B_ALLOW_WEATHER == 'false' ]];then
 		weather_flag=''
-		
 	fi
 	if [[ $1 == '--version' ]];then
 		print_version_info
@@ -3032,6 +3051,8 @@ get_start_client()
 			
 			if [[ -n $App_Working_Name ]];then
 				Irc_Client_Path=$App_Working_Name
+				irc_client_path_lower=$( tr '[A-Z]' '[a-z]' <<< $Irc_Client_Path )
+				App_Working_Name=${irc_client_path_lower##*/}
 				B_Non_Native_App='false'
 				get_irc_client_version
 				if [[ -z $IRC_CLIENT ]];then
@@ -3207,6 +3228,7 @@ get_irc_client_version()
 			}' )"
 			IRC_CLIENT="Pidgin"
 			;;
+		# possible failure of wildcard so make it explicit
 		quassel*)
 			# sample: quassel -v
 			# Qt: 4.5.0
@@ -3780,7 +3802,6 @@ get_cpu_data()
 				cpu[nr, "model"] = $NF
 			}
 		}
-
 		/^model name|^cpu\t+:/ {
 			gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF )
 			gsub(/'"$BAN_LIST_CPU"'/, "", $NF )
@@ -3792,7 +3813,6 @@ get_cpu_data()
 				bArm = "true"
 			}
 		}
-
 		/^cpu MHz|^clock\t+:/ {
 			if (!min) {
 				min = $NF
@@ -3802,7 +3822,6 @@ get_cpu_data()
 					min = $NF
 				}
 			}
-
 			if ($NF > max) {
 				max = $NF
 			}
@@ -3810,11 +3829,9 @@ get_cpu_data()
 			gsub(/.00[0]+$/,".00",$NF) ## clears out excessive zeros
 			cpu[nr, "speed"] = $NF
 		}
-
 		/^cache size/ {
 			cpu[nr, "cache"] = $NF
 		}
-
 		/^flags|^features/ {
 			cpu[nr, "flags"] = $NF
 			# not all ARM cpus show ARM in model name
@@ -3822,16 +3839,13 @@ get_cpu_data()
 				bArm = "true"
 			}
 		}
-
 		/^bogomips/ {
 			cpu[nr, "bogomips"] = $NF
 		}
-
 		/vendor_id/ {
 			gsub(/genuine|authentic/,"",$NF)
 			cpu[nr, "vendor"] = tolower( $NF )
 		}
-
 		END {
 			#if (!nr) { print ",,,"; exit } # <- should this be necessary or should bash handle that
 			for ( i = 0; i <= nr; i++ ) {
@@ -3914,13 +3928,19 @@ get_cpu_data_bsd()
 			cpuVendor=""
 			bSwitchFs="false"
 		}
-		 /^hw.model/ && ( bsdVersion != "darwin" ) {
+		/^hw.model/ && ( bsdVersion != "darwin" ) {
 			gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF )
 			gsub(/'"$BAN_LIST_CPU"'/, "", $NF )
-			sub(//,"",$NF)
+			gsub(/,/," ",$NF)
 			sub(/[a-z]+-core/, "", $NF )
 			gsub(/^ +| +$|\"/, "", $NF)
 			gsub(/ [ \t]+/, " ", $NF)
+			if ( $NF ~ /[0-9]+[[:space:]]*[KM]B[[:space:]]+L2 cache/) {
+				cpuCache=gensub(/.*[^0-9]([0-9]+[[:space:]]*[KM]B)[[:space:]]+L2 cach.*/,"\\1",1,$NV)
+			}
+			if ( $NF ~ /\)$/ ){
+				sub(/[[:space:]]*\(.*\)$/,"",$NF)
+			}
 			cpuModel=$NF
 			if ( cpuClock != "" ) {
 				exit
@@ -3935,6 +3955,9 @@ get_cpu_data_bsd()
 		/^hw.cpufrequency/ {
 			cpuClock = $NF / 1000000
 		}
+		/^hw.cpuspeed/ {
+			cpuClock=$NF
+		}
 		/^hw.l2cachesize/ {
 			cpuCache=$NF/1024
 			cpuCache=cpuCache " kB"
@@ -3945,7 +3968,7 @@ get_cpu_data_bsd()
 		/^machdep.cpu.brand_string/ {
 			gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF )
 			gsub(/'"$BAN_LIST_CPU"'/, "", $NF )
-			sub(//,"",$NF)
+			gsub(/,/," ",$NF)
 			sub(/[a-z]+-core/, "", $NF )
 			gsub(/^ +| +$|\"/, "", $NF)
 			gsub(/ [ \t]+/, " ", $NF)
@@ -3968,18 +3991,16 @@ get_cpu_flags_bsd()
 	
 	local cpu_flags=''
 	local gawk_fs=':'
-	if [[ $BSD_VERSION == 'openbsd' ]];then
-		gawk_fs='='
-	fi
+	
 	if [[ -n $Dmesg_Boot_Data ]];then
-		cpu_flags=$( gawk -F "=" '
+		cpu_flags=$( gawk -v bsdVersion=$BSD_VERSION -F ":" '
 		BEGIN {
 			IGNORECASE=1
 			cpuFlags=""
 		}
-		/^CPU:/ {
-			while ( getline && !/memory/  ) {
-				if ( $1 ~ /Features/ ) {
+		/^(CPU:|cpu0:)/ {
+			while ( getline && !/memory|real mem/  ) {
+				if ( $1 ~ /Features/ || ( bsdVersion == "openbsd" && $0 ~ /^cpu0.*,[a-z][a-z][a-z],[a-z][a-z][a-z],/ ) ) {
 					# clean up odd stuff like <b23>
 					gsub(/<[a-z0-9]+>/,"", $2)
 					# all the flags are contained within < ... > on freebsd at least
@@ -3993,6 +4014,9 @@ get_cpu_flags_bsd()
 			exit
 		}' <<< "$Dmesg_Boot_Data" )
 	elif [[ -n $Sysctl_a_Data ]];then
+		if [[ $BSD_VERSION == 'openbsd' ]];then
+			gawk_fs='='
+		fi
 		cpu_flags=$( gawk -F "$gawk_fs" '
 		BEGIN {
 			cpuFlags=""
@@ -4936,12 +4960,12 @@ get_dmidecode_data()
 			fi
 			# these tests first, because bsd error messages like this (note how many : are in the string)
 			# inxi: line 4928: /usr/local/sbin/dmidecode: Permission denied
-			if [[ ${#DMIDECODE_DATA} -lt 100  ]];then
-				if [[ -z ${DMIDECODE_DATA/*Permission denied*/} ]];then
-				# if [[ -n $( grep -i 'Permission denied' <<< "$DMIDECODE_DATA" ) ]];then
+			if [[ ${#dmiData} -lt 100  ]];then
+				if [[ -z ${dmiData/*Permission denied*/} ]];then
+				# if [[ -n $( grep -i 'Permission denied' <<< "$dmiData" ) ]];then
 					DMIDECODE_DATA='dmidecode-error-requires-root'
 				# this handles very old systems, like Lenny 2.6.26, with dmidecode, but no data
-				elif [[ -n $( grep -i 'no smbios ' <<< "$DMIDECODE_DATA" ) ]];then
+				elif [[ -n $( grep -i 'no smbios ' <<< "$dmiData" ) ]];then
 					DMIDECODE_DATA='dmidecode-error-no-smbios-dmi-data'
 				else
 					DMIDECODE_DATA='dmidecode-error-unknown-error'
@@ -5036,7 +5060,8 @@ get_dmesg_boot_data()
 	if [[ $B_DMESG_BOOT_FILE == 'true' ]];then
 		# replace all indented items with ~ so we can id them easily while processing
 		# note that if user, may get error of read permissions
-		dmsg_boot_data="$( cat $FILE_DMESG_BOOT 2>/dev/null | sed $SED_RX 's/"//g' )"
+		# for some weird reason, real mem and avail mem are use a '=' separator, who knows why, the others are ':'
+		dmsg_boot_data="$( cat $FILE_DMESG_BOOT 2>/dev/null | sed -e 's/"//g' -e 's/[[:space:]]*=[[:space:]]*/:/g' -e 's/:[[:space:]]*/:/g' )"
 	fi
 	echo "$dmsg_boot_data"
 	# log_function_data "$dmsg_boot_data"
@@ -5254,8 +5279,10 @@ get_graphics_driver()
 			# failed/unloaded, which have not always actually been truly loaded
  			aDrivers[driver]="loaded" 
 		}
-		/Unloading[[:space:]].*('"$driver_list"')(|_drv.so)$/ {
-			driver=gensub(/(.*)Unloading[[:space:]].*('"$driver_list"')(|_drv.so)$/, "\\2", 1, $0 )
+		# openbsd uses UnloadModule: 
+		/(Unloading[[:space:]]|UnloadModule).*('"$driver_list"')(\"||_drv.so)$/ {
+			gsub(/\"/,"",$0)
+			driver=gensub(/(.*)(Unloading[[:space:]]|UnloadModule).*('"$driver_list"')(\"||_drv.so)$/, "\\3", 1, $0 )
 			# we need to make sure that the driver has already been truly loaded, not just discussed
 			if ( driver in aDrivers ) {
 				aDrivers[driver]="unloaded"
@@ -6290,7 +6317,7 @@ get_machine_data()
 get_memory_data()
 {
 	eval $LOGFS
-	local memory='' memory_full='' 
+	local memory='' memory_full='' used_memory=''
 	if [[ $B_MEMINFO_FILE == 'true' ]];then
 		memory=$( gawk '
 		/^MemTotal:/ {
@@ -6310,7 +6337,24 @@ get_memory_data()
 		if [[ $BSD_VERSION == 'openbsd' ]];then
 			gawk_fs='='
 		fi
-		memory=$( grep -i 'mem' <<< "$Sysctl_a_Data" | gawk -F "$gawk_fs"  '
+		# use this for all bsds, maybe we can get some useful data on other ones
+		if [[ -n $( type -p vmstat) ]];then
+			# avail mem:2037186560 (1942MB)
+			used_memory=$( vmstat 2>/dev/null | tail -n 1 | gawk '
+			# procs    memory       page                    disks    traps          cpu
+			# r b w    avm     fre  flt  re  pi  po  fr  sr wd0 wd1  int   sys   cs us sy id
+			# 0 0 0  55256 1484092  171   0   0   0   0   0   2   0   12   460   39  3  1 96
+			BEGIN {
+				IGNORECASE=1
+			}
+			{
+				sub(/K,/,"",$4)
+				
+				print $4 " " 
+				exit
+			}' )
+		fi
+		memory=$( grep -i 'mem' <<< "$Sysctl_a_Data" | gawk -v usedMemory="$used_memory" -F "$gawk_fs"  '
 		BEGIN {
 			realMemory=""
 			freeMemory=""
@@ -6335,7 +6379,13 @@ get_memory_data()
 		END {
 			# hack: temp fix for openbsd/darwin: in case no free mem was detected but we have physmem
 			if ( freeMemory == "" && realMemory != "" ) {
-				printf("NA/%.1fMB\n", realMemory/1024)
+				# use openbsd avail mem data if available
+				if (usedMemory != "" ) {
+					printf("%.1f/%.1fMB\n", usedMemory/1024, realMemory/1024)
+				}
+				else {
+					printf("NA/%.1fMB\n", realMemory/1024)
+				}
 			}
 			else if ( freeMemory != "" && realMemory != "" ) {
 				used = realMemory - freeMemory
@@ -6707,7 +6757,7 @@ get_networking_usb_data()
 get_networking_wan_ip_data()
 {
 	eval $LOGFS
-	local ip=''
+	local ip='' ip_data=''
 
 	# get ip using wget redirect to stdout. This is a clean, text only IP output url,
 	# single line only, ending in the ip address. May have to modify this in the future
@@ -6715,11 +6765,16 @@ get_networking_wan_ip_data()
 	# awk has bad regex handling so checking it with grep -E instead
 	# ip=$( echo  2001:0db8:85a3:0000:0000:8a2e:0370:7334 | gawk  --re-interval '
 	# ip=$( wget -q -O - $WAN_IP_URL | gawk  --re-interval '
-	ip=$( wget -t 4 -T $WGET_TIMEOUT -q -O - $WAN_IP_URL | gawk  --re-interval '
+	if [[ $DOWNLOADER != 'curl' ]];then
+		ip_data="$(wget -t 4 -T $WGET_TIMEOUT -q -O - $WAN_IP_URL )"
+	else
+		ip_data="$( curl -y $WGET_TIMEOUT -s $WAN_IP_URL )"
+	fi
+	ip=$( gawk  --re-interval '
 	{
 		#gsub("\n","",$2")
 		print $NF
-	}' )
+	}' <<< "$ip_data" )
 	# validate the data
 	if [[ -z $ip ]];then
 		ip='None Detected!'
@@ -7233,11 +7288,23 @@ get_partition_data()
 		# older bsds have df minus -T so can't get fs type easily, try using mount instead
 		if [[ $BSD_TYPE == 'bsd' ]] && [[ -z $fs_type && -n $dev_item ]];then
 			dev_bsd_item=$( sed -e 's/non-dev-//' -e 's|/|\\/|g' <<< "$dev_item" )
-			fs_type=$( gawk -F '(' '
+			fs_type=$( gawk -v bsdVersion=$BSD_VERSION -F '(' '
+			BEGIN {
+				IGNORECASE=1
+				fileSystem=""
+			}
 			/'$dev_bsd_item'/ {
-				# slice out everything after / plus the first comma
-				sub( /,.*/, "", $2 )
-				print $2
+				if ( bsdVersion != "openbsd" ) {
+					# slice out everything after / plus the first comma
+					sub( /,.*/, "", $2 )
+					fileSystem=$2
+				}
+				else {
+					# for openbsd: /dev/wd0f on /usr type ffs (local, nodev)
+					gsub( /^.*type[[:space:]]+|[[:space:]]*$/, "", $1 )
+					fileSystem=$1
+				}
+				print fileSystem
 				exit
 			}' <<< "$mount_data" )
 		fi
@@ -7628,7 +7695,7 @@ EOF"
 				sub(/:$/, "", pciId)
 				itemData=$4
 				chipId=gensub(/.*chip=([0-9a-f][0-9a-f][0-9a-f][0-9a-f])([0-9a-f][0-9a-f][0-9a-f][0-9a-f]).*/, "\\2:\\1", itemData )
-				if ( $2 == "class=020000" ) {
+				if ( $2 ~ /class=020000|class=0x068000/ ) {
 					class="network"
 				}
 				else if ( $2 == "class=030000" ) {
@@ -8681,7 +8748,7 @@ get_repo_data()
 	local repo_name=''
 	local apt_file='/etc/apt/sources.list' yum_repo_dir='/etc/yum.repos.d/' yum_conf='/etc/yum.conf'
 	local pacman_conf='/etc/pacman.conf' pacman_repo_dir='/etc/pacman.d/' pisi_dir='/etc/pisi/'
-	local zypp_repo_dir='/etc/zypp/repos.d/' freebsd_conf='/etc/portsnap.conf'
+	local zypp_repo_dir='/etc/zypp/repos.d/' freebsd_conf='/etc/portsnap.conf' openbsd_conf='/etc/pkg.conf'
 	
 	# apt - debian, buntus, also sometimes some yum/rpm repos may create apt repos here as well
 	if [[ -f $apt_file || -d $apt_file.d ]];then
@@ -8881,6 +8948,15 @@ $repo_data_working"
 			print "BSD ports servers:" repoFile ":" $2
 		}
 		' $freebsd_conf )"
+	elif [[ -f $openbsd_conf ]];then
+		REPO_DATA="$( gawk -F '=' -v repoFile=$openbsd_conf '
+		BEGIN {
+			IGNORECASE=1
+		}
+		/^installpath/ {
+			print "BSD ports servers:" repoFile ":" $2
+		}
+		' $openbsd_conf )"
 	fi
 	eval $LOGFE
 }
@@ -9394,8 +9470,8 @@ get_shell_data()
 		shell_type="$shell_type $shell_version"
 	fi
 	echo $shell_type
-	
-	eval $LOGFS
+	log_function_data "shell type: $shell_type"
+	eval $LOGFE
 }
 
 get_shell_parent()
@@ -9436,6 +9512,7 @@ get_sysctl_data()
 	fi
 	# log_function_data "sysctl_data: $sysctl_data"
 	echo "$sysctl_data"
+	
 	eval $LOGFE
 }
 
@@ -9605,7 +9682,7 @@ get_weather_data()
 	local location_site='http://geoip.ubuntu.com/lookup'
 	local weather_feed='http://api.wunderground.com/auto/wui/geo/WXCurrentObXML/index.xml?query='
 	local weather_spider='http://wunderground.com/'
-	local data_grab_error='' wget_error=0 
+	local data_grab_error='' downloader_error=0 
 	local b_test_loc=false b_test_weather=false b_debug=false
 	local test_dir="$HOME/bin/scripts/inxi/data/weather/"
 	local test_location='location2.xml' test_weather='weather-feed.xml'
@@ -9620,12 +9697,16 @@ get_weather_data()
 		# echo $ALTERNATE_WEATHER_LOCATION;exit
 	else
 		if [[ $b_test_loc != 'true' ]];then
-			location_data=$( wget -q -t 1 -T $WGET_TIMEOUT -O- $location_site || wget_error=$? )
-			log_function_data "$location_data"
-			if [[ $wget_error -ne 0 ]];then
-				data_grab_error="Error: location server up but download error - wget: $wget_error"
+			if [[ $DOWNLOADER != 'curl' ]];then
+				location_data=$( wget -q -t 1 -T $WGET_TIMEOUT -O- $location_site || downloader_error=$? )
+			else
+				location_data=$( curl -s -y $WGET_TIMEOUT $location_site || downloader_error=$? )
 			fi
-			wget_error=0
+			log_function_data "$location_data"
+			if [[ $downloader_error -ne 0 ]];then
+				data_grab_error="Error: location server up but download error - $DOWNLOADER: $downloader_error"
+			fi
+			downloader_error=0
 		else
 			if [[ -f $test_dir$test_location ]];then
 				location_data="$( cat $test_dir$test_location )"
@@ -9736,9 +9817,13 @@ get_weather_data()
 	# now either dump process or go on to get weather data
 	if [[ -z $data_grab_error ]];then
 		if [[ $b_test_weather != 'true' ]];then
-			weather_data="$( wget -q -t 1 -T $WGET_TIMEOUT -O- $weather_feed"$location" || wget_error=$? )"
-			if [[ $wget_error -ne 0 ]];then
-				data_grab_error="Error: weather server up but download error - wget: $wget_error"
+			if [[ $DOWNLOADER != 'curl' ]];then
+				weather_data="$( wget -q -t 1 -T $WGET_TIMEOUT -O- $weather_feed"$location" || downloader_error=$? )"
+			else
+				weather_data="$( curl -s -y $WGET_TIMEOUT $weather_feed"$location" || downloader_error=$? )"
+			fi
+			if [[ $downloader_error -ne 0 ]];then
+				data_grab_error="Error: weather server up but download error - $DOWNLOADER: $downloader_error"
 			fi
 			log_function_data "$weather_data"
 		else
@@ -10087,6 +10172,13 @@ print_short_data()
 	local cpu_core_count=${A_CPU_CORE_DATA[3]}
 	local cpu_core_alpha=${A_CPU_CORE_DATA[1]}
 	local cpu_type=${A_CPU_CORE_DATA[2]}
+	local kernel_os=''
+	
+	if [[ $BSD_TYPE == 'bsd' ]];then
+		kernel_os="${C1}OS${C2}$SEP1$( uname -rsp )" 
+	else
+		kernel_os="${C1}Kernel${C2}$SEP1$current_kernel"
+	fi
 
 	if [[ $cpu_physical_count -gt 1 ]];then
 		cpc_plural='(s)'
@@ -10156,7 +10248,7 @@ print_short_data()
 			#C1="${C1},1"; C2="${C2},1"; CN="${CN},1"
 		fi
 	fi
-	short_data="${C1}CPU$cpc_plural${C2}$SEP1$cpu_data_string $cpu_model$model_plural ($cpu_type) clocked at $min_max_clock$SEP2${C1}Kernel${C2}$SEP1$current_kernel$SEP2${C1}Up${C2}$SEP1$up_time$SEP2${C1}Mem${C2}$SEP1$memory$SEP2${C1}HDD${C2}$SEP1$hdd_capacity($hdd_used)$SEP2${C1}Procs${C2}$SEP1$processes$SEP2"
+	short_data="${C1}CPU$cpc_plural${C2}$SEP1$cpu_data_string $cpu_model$model_plural ($cpu_type) clocked at $min_max_clock$SEP2$kernel_os$SEP2${C1}Up${C2}$SEP1$up_time$SEP2${C1}Mem${C2}$SEP1$memory$SEP2${C1}HDD${C2}$SEP1$hdd_capacity($hdd_used)$SEP2${C1}Procs${C2}$SEP1$processes$SEP2"
 
 	if [[ $SHOW_IRC -gt 0 ]];then
 		short_data="$short_data${C1}Client${C2}$SEP1$IRC_CLIENT$IRC_CLIENT_VERSION$SEP2"
@@ -10533,11 +10625,13 @@ print_cpu_flags_full()
 			a_cpu_flags[$counter]=$flag_string
 			flag_string=$flag
 			(( counter++ ))
-		fi
+		fi	
 		temp_string=''
 	done
 	if [[ -n $flag_string ]];then
 		a_cpu_flags[$counter]=$flag_string
+	else
+		a_cpu_flags[$counter]='No CPU flag data found.'
 	fi
 	# then print it out
 	for (( i=0; i < ${#a_cpu_flags[@]};i++ ))
@@ -10683,8 +10777,8 @@ print_graphics_data()
 	if [[ -n $root_x_string ]];then
 		root_x_string="${C1}Advanced Data$SEP3${C2} N/A $root_x_string"
 	fi
-	
-	if [[ ${#A_GRAPHICS_CARD_DATA[@]} -gt 0 ]];then
+	# note, this comes out with a count of 1 sometimes for null data
+	if [[ ${A_GRAPHICS_CARD_DATA[0]} != '' ]];then
 		for (( i=0; i < ${#A_GRAPHICS_CARD_DATA[@]}; i++ ))
 		do
 			IFS=","
