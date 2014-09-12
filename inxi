@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
+# fetch has -q for quiet you can use -o - for stdout and -T for timeout
+# openbsd ftp does http
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.2.3
-####  Date: 2014-09-03
+####  Version: 2.2.4
+####  Date: 2014-09-10
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -222,7 +224,7 @@ COLS_MAX_IRC='105'
 COLS_MAX_NO_DISPLAY='140'
 PS_COUNT=5
 # change to less, or more if you have very slow connection
-WGET_TIMEOUT=8
+DL_TIMEOUT=8
 ### END USER CONFIGS ###
 
 ### LOCALIZATION - DO NOT CHANGE! ###
@@ -824,8 +826,18 @@ initialize_data()
 	
 	initialize_paths
 	
-	if [[ -z $( type -p wget ) && -n $( type -p curl ) ]];then
-		DOWNLOADER='curl'
+	# set downloaders. 
+	if [[ -z $( type -p wget ) ]];then
+		# first check for bsd stuff
+		if [[ -n $( type -p fetch ) ]];then
+			DOWNLOADER='fetch'
+		elif -n $( type -p curl ) ]];then
+			DOWNLOADER='curl'
+		elif [[ $BSD_VERSION == 'openbsd' && -n $( type -p ftp ) ]];then
+			DOWNLOADER='ftp'
+		else
+			DOWNLOADER='no-downloader'
+		fi
 	fi
 	
 	if [[ -n $BSD_TYPE ]];then
@@ -1511,11 +1523,24 @@ script_self_updater()
 	print_screen_output "Currently running $SCRIPT_NAME version number: $SCRIPT_VERSION_NUMBER"
 	print_screen_output "Current version patch number: $SCRIPT_PATCH_NUMBER"
 	print_screen_output "Updating $SCRIPT_NAME in $SCRIPT_PATH using $2 as download source..."
-	if [[ $DOWNLOADER != 'curl' ]];then
-		file_contents="$( wget -q -O - $1$SCRIPT_NAME )" || downloader_error=$?
-	else
-		file_contents="$( curl -s $1$SCRIPT_NAME )" || downloader_error=$?
-	fi
+	case $DOWNLOADER in
+		curl)
+			file_contents="$( curl -s $1$SCRIPT_NAME )" || downloader_error=$?
+			;;
+		fetch)
+			file_contents="$( fetch -q -o - $1$SCRIPT_NAME )" || downloader_error=$?
+			;;
+		ftp)
+			file_contents="$( ftp -o - $1$SCRIPT_NAME 2>/dev/null )" || downloader_error=$?
+			;;
+		wget)
+			file_contents="$( wget -q -O - $1$SCRIPT_NAME )" || downloader_error=$?
+			;;
+		no-downloader)
+			downloader_error=1
+			;;
+	esac
+
 	# then do the actual download
 	if [[  $downloader_error -eq 0 ]];then
 		# make sure the whole file got downloaded and is in the variable
@@ -1541,19 +1566,31 @@ script_self_updater()
 							exec $( type -p mandb ) -q 
 						fi
 					fi
-					if [[ $DOWNLOADER != 'curl' ]];then
+					if [[ $DOWNLOADER == 'wget' ]];then
 						wget -q --spider $MAN_FILE_DOWNLOAD || downloader_man_error=$?
 					fi
 					if [[ $downloader_man_error -eq 0 ]];then
-						if [[ $DOWNLOADER != 'curl' ]];then
+						if [[ $DOWNLOADER == 'wget' ]];then
 							print_screen_output "Man file download URL verified: $MAN_FILE_DOWNLOAD"
 						fi
 						print_screen_output "Downloading Man page file now."
-						if [[ $DOWNLOADER != 'curl' ]];then
-							wget -q -O $man_file_path $MAN_FILE_DOWNLOAD || downloader_man_error=$?
-						else
-							curl -s -o $man_file_path $MAN_FILE_DOWNLOAD || downloader_man_error=$?
-						fi
+						case $DOWNLOADER in
+							curl)
+								curl -s -o $man_file_path $MAN_FILE_DOWNLOAD || downloader_man_error=$?
+								;;
+							fetch)
+								fetch -q -o $man_file_path $MAN_FILE_DOWNLOAD || downloader_man_error=$?
+								;;
+							ftp)
+								ftp -o $man_file_path $MAN_FILE_DOWNLOAD 2>/dev/null || downloader_man_error=$?
+								;;
+							wget)
+								wget -q -O $man_file_path $MAN_FILE_DOWNLOAD || downloader_man_error=$?
+								;;
+							no-downloader)
+								downloader_man_error=1
+								;;
+						esac
 						if [[ $downloader_man_error -gt 0 ]];then
 							print_screen_output "Oh no! Something went wrong downloading the Man gz file at: $MAN_FILE_DOWNLOAD"
 							print_screen_output "Check the error messages for what happened. Error: $downloader_man_error"
@@ -1591,9 +1628,12 @@ debug_data_collector()
 	local xiin_app='' xiin_data_file='' xiin_download='' error='' b_run_xiin='false'
 	local debug_data_dir='' bsd_string='' xorg_d_files='' xorg_file='' a_distro_ids=''
 	local completed_gz_file='' xiin_file='xiin.py' ftp_upload='ftp.techpatterns.com/incoming'
+	local xiin_url="http://inxi.googlecode.com/svn/branches/xiin/$xiin_file"
 	local Line='-------------------------' root_string=''
 	local start_directory=$( pwd )
 	local host=$( tr '[A-Z]' '[a-z]' <<< "$HOSTNAME" )
+	local downloader_error=0
+	
 	if [[ -n $host ]];then
 		host=${host// /-}
 	else
@@ -1659,6 +1699,7 @@ debug_data_collector()
 				fi
 			done
 		fi
+		dmesg &> $debug_data_dir/dmesg.txt
 		lscpu &> $debug_data_dir/lscpu.txt
 		lspci &> $debug_data_dir/lspci.txt
 		lspci -k &> $debug_data_dir/lspci-k.txt
@@ -1719,13 +1760,25 @@ debug_data_collector()
 				mv -f xiin $xiin_file
 			fi
 			# -Nc is creating really weird download anomolies, so using -O instead
-			if [[ $DOWNLOADER != 'curl' ]];then
-				xiin_download="$( wget -q -O - http://inxi.googlecode.com/svn/branches/xiin/$xiin_file )"
-			else
-				xiin_download="$( curl -s http://inxi.googlecode.com/svn/branches/xiin/$xiin_file )"
-			fi
+			case $DOWNLOADER in
+				curl)
+					xiin_download="$( curl -s $xiin_url )" || downloader_error=$?
+					;;
+				fetch)
+					xiin_download="$( fetch -q -o - $xiin_url )" || downloader_error=$?
+					;;
+				ftp)
+					xiin_download="$( ftp -o - $xiin_url 2>/dev/null )" || downloader_error=$?
+					;;
+				wget)
+					xiin_download="$( wget -q -O - $xiin_url )" || downloader_error=$?
+					;;
+				no-downloader)
+					downloader_error=1
+					;;
+			esac
 			# if nothing got downloaded kick out error, otherwise we'll use an older version
-			if [[ $? -gt 0 && ! -f $xiin_file ]];then
+			if [[ $downloader_error -gt 0 && ! -f $xiin_file ]];then
 				echo -e "ERROR: Failed to download required file: $xiin_file\nMaybe the remote site is down or your networking is broken?"
 				echo "Continuing with incomplete data collection."
 				echo "$xiin_file download failed and no existing $xiin_file" >> $debug_data_dir/xiin-error.txt
@@ -1912,12 +1965,17 @@ check_recommends_user_output()
 {
 	local Line=$LINE1
 	local gawk_version='N/A' sed_version='N/A' sudo_version='N/A' python_version='N/A'
+	local downloaders_bsd=''
 	
 	if [[ $B_IRC == 'true' ]];then
 		print_screen_output "Sorry, you can't run this option in an IRC client."
 		exit 1
 	fi
-	
+	if [[ -n $BSD_TYPE ]];then
+		downloaders_bsd='
+		fetch:BSD-only~BSD-only~BSD-only~:-i_wan_ip;-w/-W;-U/-!_[11-15]_(BSDs)
+		ftp:ftp-OpenBSD-only~ftp-OpenBSD-only~ftp-OpenBSD-only~:-i_wan_ip;-w/-W;-U/-!_[11-15]_(OpenBSD_only)'
+	fi
 	initialize_paths
 	print_lines_basic "0" "" "$SCRIPT_NAME will now begin checking for the programs it needs to operate. First a check of the main languages and tools $SCRIPT_NAME uses. Python is only for debugging data collection."
 	echo $Line
@@ -1964,7 +2022,12 @@ check_recommends_user_output()
 	echo 
 	check_recommends_items 'recommended-apps'
 	
-	echo 'Test Five: System Directories for Various Information.' 
+	echo 'Test Five: Script Recommends for Remaining Features.' 
+	print_lines_basic "0" "" "One of these downloaders needed for options -i/-w/-W (-U/-! [11-15], if supported):"
+	echo 
+	check_recommends_items 'downloaders'
+	
+	echo 'Test Six: System Directories for Various Information.' 
 	print_lines_basic "0" "" "If one of these directories is missing, $SCRIPT_NAME will have incomplete output:"
 	echo 
 	check_recommends_items 'system-dirs'
@@ -2013,6 +2076,12 @@ check_recommends_items()
 	runlevel:sysvinit~sysvinit~systemd~:-I_runlevel
 	sudo:sudo~sudo~sudo~:-Dx_hddtemp-user;-o_file-user
 	'
+	
+	local downloaders="
+	wget:wget~wget~wget~:-i_wan_ip;-w/-W;-U/-!_[11-15]_(if_supported)
+	curl:curl~curl~curl~:-i_wan_ip;-w/-W;-U/-!_[11-15]_(if_supported)
+	$downloaders_bsd
+	"
 	local recommended_dirs='
 	/sys/class/dmi/id:-M_system,_motherboard,_bios
 	/dev:-l,-u,-o,-p,-P,-D_disk_partition_data
@@ -2030,6 +2099,13 @@ check_recommends_items()
 	fi
 	
 	case $1 in
+		downloaders)
+			item_list=$downloaders
+			item_string='Downloaders'
+			item_string=''
+			missing_string='downloaders, and their corresponding packages,'
+			type='applications'
+			;;
 		required-dirs)
 			item_list=$required_dirs
 			item_string='Required file system'
@@ -3041,12 +3117,12 @@ get_start_client()
 				}' )"
 		else
 			# this should handle certain cases where it's ssh or some other startup tool
-			# that falls through all the other tests
+			# that falls through all the other tests. Also bsd irc clients will land here
 			if [[ $BSD_TYPE != 'bsd' ]];then
 				App_Working_Name=$(ps -p $PPID --no-headers 2>/dev/null | gawk '{print $NF}' )
 			else
 				# without --no-headers we need the second line
-				App_Working_Name=$(ps -p $PPID 2>/dev/null | gawk '/^[0-9]+/ {print $5}' )
+				App_Working_Name=$(ps -p $PPID 2>/dev/null | gawk '$1 ~ /^[0-9]+/ {print $5}' )
 			fi
 			
 			if [[ -n $App_Working_Name ]];then
@@ -3173,7 +3249,6 @@ get_irc_client_version()
 				}
 				exit
 			}' )"
-
 			T=($IRC_CLIENT_VERSION)
 			if [[ ${T[0]} == *+* ]];then
 				# < Sho_> locsmif: The version numbers of SVN versions look like this:
@@ -3679,6 +3754,8 @@ get_cpu_core_count()
 {
 	eval $LOGFS
 	local cpu_physical_count='' cpu_core_count='' cpu_type='' cpu_alpha_count='' cores_per_cpu=''
+	local array_data=''
+	
 	if [[ $B_CPUINFO_FILE == 'true' ]]; then
 		# load the A_CPU_TYPE_PCNT_CCNT core data array
 		get_cpu_ht_multicore_smp_data
@@ -3693,19 +3770,22 @@ get_cpu_core_count()
 		
 		# create array, core count integer; core count string
 		# A_CPU_CORE_DATA=( "$cpu_core_count" "$cpu_alpha_count Core$cpu_type" )
-		A_CPU_CORE_DATA=( "$cpu_physical_count" "$cpu_alpha_count" "$cpu_type" "$cpu_core_count" )
+		array_data="$cpu_physical_count,$cpu_alpha_count,$cpu_type,$cpu_core_count"
+		IFS=','
+		A_CPU_CORE_DATA=( $array_data )
+		IFS="$ORIGINAL_IFS"
 	elif [[ -n $BSD_TYPE ]];then
 		local gawk_fs=': '
 	
 		if [[ $BSD_VERSION == 'openbsd' ]];then
 			gawk_fs='='
 		fi
-		cpu_core_count=$( gawk -F "$gawk_fs" -v bsdType=$BSD_VERSION '
+		cpu_core_count=$( gawk -F "$gawk_fs" -v bsdVersion="$BSD_VERSION" '
 		# note: on openbsd can also be hw.ncpufound so exit after first
 		BEGIN {
 			coreCount=""
 		}
-		/^hw.ncpu$/ {
+		$1 ~ /^hw.ncpu$/ {
 			coreCount=$NF
 		}
 		/^machdep.cpu.core_count/ {
@@ -3727,12 +3807,19 @@ get_cpu_core_count()
 		fi
 		if [[ -n $cores_per_cpu ]];then
 			cpu_physical_count=$(( $cpu_core_count / $cores_per_cpu ))
+			cpu_core_count=$cores_per_cpu
+		# do not guess here, only use phys count if it actually exists, otherwise handle in print_cpu..
+		# this 1 value should not be used for output, and is just to avoid math errors
 		else
 			cpu_physical_count=1
 		fi
-		A_CPU_CORE_DATA=( "$cpu_physical_count" "$cpu_alpha_count" "$cpu_type" "$cpu_core_count" )
+		array_data="$cpu_physical_count,$cpu_alpha_count,$cpu_type,$cpu_core_count"
+		IFS=','
+		A_CPU_CORE_DATA=( $array_data )
+		IFS="$ORIGINAL_IFS"
 	fi
 	a_temp=${A_CPU_CORE_DATA[@]}
+	# echo $a_temp :: ${#A_CPU_CORE_DATA[@]}
 	log_function_data "A_CPU_CORE_DATA: $a_temp"
 	eval $LOGFE
 }
@@ -5758,7 +5845,7 @@ get_hard_drive_data_advanced()
 	eval $LOGFS
 	local a_temp_working='' a_temp_scsi='' temp_holder='' temp_name='' i='' j=''
 	local sd_ls_by_id='' ls_disk_by_id='' ls_disk_by_path='' usb_exists='' a_temp=''
-	local firewire_exists='' thunderbolt_exists=''
+	local firewire_exists='' thunderbolt_exists='' thunderbolt_exists=''
 
 	## check for all ide type drives, non libata, only do it if hdx is in array
 	## this is now being updated for new /sys type paths, this may handle that ok too
@@ -5866,6 +5953,7 @@ get_hard_drive_data_advanced()
 				else # 
 					usb_exists=$( grep -Em1 "usb-.*$temp_name.*${a_temp_working[0]}$" <<< "$ls_disk_by_id" )
 					firewire_exists=$( grep -Em1 "ieee1394-.*$temp_name.*${a_temp_working[0]}$" <<< "$ls_disk_by_id" )
+					# thunderbolt_exists=$( grep -Em1 "ieee1394-.*$temp_name.*${a_temp_working[0]}$" <<< "$ls_disk_by_id" )
 					# note: sometimes with wwn- numbering usb does not appear in by-id but it does in by-path
 					if [[ -z $usb_exists ]];then
 						usb_exists=$( grep -Em1 "usb-.*${a_temp_working[0]}$" <<< "$ls_disk_by_path" )
@@ -6341,16 +6429,33 @@ get_memory_data()
 		if [[ -n $( type -p vmstat) ]];then
 			# avail mem:2037186560 (1942MB)
 			used_memory=$( vmstat 2>/dev/null | tail -n 1 | gawk '
+			# openbsd/linux
 			# procs    memory       page                    disks    traps          cpu
 			# r b w    avm     fre  flt  re  pi  po  fr  sr wd0 wd1  int   sys   cs us sy id
 			# 0 0 0  55256 1484092  171   0   0   0   0   0   2   0   12   460   39  3  1 96
+			# freebsd:
+			# procs      memory      page                    disks     faults         cpu
+			# r b w     avm    fre   flt  re  pi  po    fr  sr ad0 ad1   in   sy   cs us sy id
+			# 0 0 0  21880M  6444M   924  32  11   0   822 827   0   0  853  832  463  8  3 88
+
 			BEGIN {
 				IGNORECASE=1
+				memory=""
 			}
 			{
-				sub(/K,/,"",$4)
-				
-				print $4 " " 
+				if ($4 ~ /M/ ){
+					sub(/M/,"",$4)
+					memory=$4*1024
+				}
+				else if ($4 ~ /G/ ){
+					sub(/G/,"",$4)
+					memory=$4*1024*1000
+				}
+				else {
+					sub(/K/,"",$4)
+					memory=$4
+				}
+				print memory " " 
 				exit
 			}' )
 		fi
@@ -6757,7 +6862,7 @@ get_networking_usb_data()
 get_networking_wan_ip_data()
 {
 	eval $LOGFS
-	local ip='' ip_data=''
+	local ip='' ip_data='' downloader_error=0
 
 	# get ip using wget redirect to stdout. This is a clean, text only IP output url,
 	# single line only, ending in the ip address. May have to modify this in the future
@@ -6765,11 +6870,23 @@ get_networking_wan_ip_data()
 	# awk has bad regex handling so checking it with grep -E instead
 	# ip=$( echo  2001:0db8:85a3:0000:0000:8a2e:0370:7334 | gawk  --re-interval '
 	# ip=$( wget -q -O - $WAN_IP_URL | gawk  --re-interval '
-	if [[ $DOWNLOADER != 'curl' ]];then
-		ip_data="$(wget -t 4 -T $WGET_TIMEOUT -q -O - $WAN_IP_URL )"
-	else
-		ip_data="$( curl -y $WGET_TIMEOUT -s $WAN_IP_URL )"
-	fi
+	case $DOWNLOADER in
+		curl)
+			ip_data="$( curl -y $DL_TIMEOUT -s $WAN_IP_URL )" || downloader_error=$?
+			;;
+		fetch)
+			ip_data="$( fetch -T $DL_TIMEOUT -q -o - $WAN_IP_URL )" || downloader_error=$?
+			;;
+		ftp)
+			ip_data="$( ftp -o - $WAN_IP_URL 2>/dev/null )" || downloader_error=$?
+			;;
+		wget)
+			ip_data="$( wget -T $DL_TIMEOUT -q -O - $WAN_IP_URL )" || downloader_error=$?
+			;;
+		no-downloader)
+			downloader_error=1
+			;;
+	esac
 	ip=$( gawk  --re-interval '
 	{
 		#gsub("\n","",$2")
@@ -6921,7 +7038,12 @@ get_optical_drive_data()
 	
 	local a_temp='' sys_uevent_path='' proc_cdrom='' link_list=''
 	local separator='' linked='' working_disk='' disk='' item_string='' proc_info_string='' 
-	local dev_disks_full="$( ls /dev/dvd* /dev/cd* /dev/scd* /dev/sr* 2>/dev/null  )"
+	local dev_disks_full=''
+	if [[ $BSD_TYPE != 'bsd' ]];then
+		dev_disks_full="$( ls /dev/dvd* /dev/cd* /dev/scd* /dev/sr* 2>/dev/null | grep -vE 'random' )"
+	else
+		dev_disks_full="$( ls /dev/dvd* /dev/cd* /dev/scd* 2>/dev/null )"
+	fi
 	## Not using this now because newer kernel is NOT linking all optical drives. Some, but not all
 	# Some systems don't support xargs -L plus the unlinked optical drive unit make this not a good option
 	# get the actual disk dev location, first try default which is easier to run, need to preserve line breaks
@@ -9697,14 +9819,31 @@ get_weather_data()
 		# echo $ALTERNATE_WEATHER_LOCATION;exit
 	else
 		if [[ $b_test_loc != 'true' ]];then
-			if [[ $DOWNLOADER != 'curl' ]];then
-				location_data=$( wget -q -t 1 -T $WGET_TIMEOUT -O- $location_site || downloader_error=$? )
-			else
-				location_data=$( curl -s -y $WGET_TIMEOUT $location_site || downloader_error=$? )
-			fi
+			case $DOWNLOADER in
+				curl)
+					location_data="$( curl -y $DL_TIMEOUT -s $location_site )" || downloader_error=$?
+					;;
+				fetch)
+					location_data="$( fetch -T $DL_TIMEOUT -q -o - $location_site )" || downloader_error=$?
+					;;
+				ftp)
+					location_data="$( ftp -o - $location_site 2>/dev/null )" || downloader_error=$?
+					;;
+				wget)
+					location_data="$( wget -t 1 -T $DL_TIMEOUT -q -O - $location_site )" || downloader_error=$?
+					;;
+				no-downloader)
+					downloader_error=100
+					;;
+			esac
 			log_function_data "$location_data"
+			
 			if [[ $downloader_error -ne 0 ]];then
-				data_grab_error="Error: location server up but download error - $DOWNLOADER: $downloader_error"
+				if [[ $downloader_error -eq 100 ]];then
+					data_grab_error="Error: No downloader tool available. Install wget, curl, or fetch."
+				else
+					data_grab_error="Error: location server up but download error - $DOWNLOADER: $downloader_error"
+				fi
 			fi
 			downloader_error=0
 		else
@@ -9817,13 +9956,29 @@ get_weather_data()
 	# now either dump process or go on to get weather data
 	if [[ -z $data_grab_error ]];then
 		if [[ $b_test_weather != 'true' ]];then
-			if [[ $DOWNLOADER != 'curl' ]];then
-				weather_data="$( wget -q -t 1 -T $WGET_TIMEOUT -O- $weather_feed"$location" || downloader_error=$? )"
-			else
-				weather_data="$( curl -s -y $WGET_TIMEOUT $weather_feed"$location" || downloader_error=$? )"
-			fi
+			case $DOWNLOADER in
+				curl)
+					weather_data="$( curl -y $DL_TIMEOUT -s $weather_feed"$location" )" || downloader_error=$?
+					;;
+				fetch)
+					weather_data="$( fetch -T $DL_TIMEOUT -q -o - $weather_feed"$location" )" || downloader_error=$?
+					;;
+				ftp)
+					weather_data="$( ftp -o - $weather_feed"$location" 2>/dev/null )" || downloader_error=$?
+					;;
+				wget)
+					weather_data="$( wget -t 1 -T $DL_TIMEOUT -q -O - $weather_feed"$location" )" || downloader_error=$?
+					;;
+				no-downloader)
+					downloader_error=100
+					;;
+			esac
 			if [[ $downloader_error -ne 0 ]];then
-				data_grab_error="Error: weather server up but download error - $DOWNLOADER: $downloader_error"
+				if [[ $downloader_error -eq 100 ]];then
+					data_grab_error="Error: No downloader tool available. Install wget, curl, or fetch."
+				else
+					data_grab_error="Error: weather server up but download error - $DOWNLOADER: $downloader_error"
+				fi
 			fi
 			log_function_data "$weather_data"
 		else
@@ -10172,7 +10327,11 @@ print_short_data()
 	local cpu_core_count=${A_CPU_CORE_DATA[3]}
 	local cpu_core_alpha=${A_CPU_CORE_DATA[1]}
 	local cpu_type=${A_CPU_CORE_DATA[2]}
-	local kernel_os=''
+	local kernel_os='' local cpu_data_string=''
+	
+	if [[ -z $BSD_TYPE || -n $cpu_type ]];then
+		cpu_type=" ($cpu_type)"
+	fi
 	
 	if [[ $BSD_TYPE == 'bsd' ]];then
 		kernel_os="${C1}OS${C2}$SEP1$( uname -rsp )" 
@@ -10185,8 +10344,11 @@ print_short_data()
 		model_plural='s'
 		cpu_count_print="$cpu_physical_count "
 	fi
-	
-	local cpu_data_string="$cpu_count_print$cpu_core_alpha core"
+	if [[ -z $BSD_TYPE ]];then
+		cpu_data_string="$cpu_count_print$cpu_core_alpha core"
+	else
+		cpu_data_string="$cpu_count_print$cpu_core_count core"
+	fi
 # 	local cpu_core_count=${A_CPU_CORE_DATA[0]}
 
 	# load A_HDD_DATA
@@ -10248,7 +10410,7 @@ print_short_data()
 			#C1="${C1},1"; C2="${C2},1"; CN="${CN},1"
 		fi
 	fi
-	short_data="${C1}CPU$cpc_plural${C2}$SEP1$cpu_data_string $cpu_model$model_plural ($cpu_type) clocked at $min_max_clock$SEP2$kernel_os$SEP2${C1}Up${C2}$SEP1$up_time$SEP2${C1}Mem${C2}$SEP1$memory$SEP2${C1}HDD${C2}$SEP1$hdd_capacity($hdd_used)$SEP2${C1}Procs${C2}$SEP1$processes$SEP2"
+	short_data="${C1}CPU$cpc_plural${C2}$SEP1$cpu_data_string $cpu_model$model_plural$cpu_type clocked at $min_max_clock$SEP2$kernel_os$SEP2${C1}Up${C2}$SEP1$up_time$SEP2${C1}Mem${C2}$SEP1$memory$SEP2${C1}HDD${C2}$SEP1$hdd_capacity($hdd_used)$SEP2${C1}Procs${C2}$SEP1$processes$SEP2"
 
 	if [[ $SHOW_IRC -gt 0 ]];then
 		short_data="$short_data${C1}Client${C2}$SEP1$IRC_CLIENT$IRC_CLIENT_VERSION$SEP2"
@@ -10457,8 +10619,20 @@ print_cpu_data()
 			model_plural='s'
 		fi
 		line_starter="CPU$cpc_plural:"
-		cpu_data_string="$cpu_count_print$cpu_core_alpha core"
-		cpu_data="${C1}$cpu_data_string${C2} ${a_cpu_working[0]}$model_plural ($cpu_type)"
+		if [[ -z $BSD_TYPE ]];then
+			cpu_data_string="$cpu_count_print$cpu_core_alpha core"
+			cpu_data="${C1}$cpu_data_string${C2} ${a_cpu_working[0]}$model_plural ($cpu_type)"
+		else
+			if [[ $cpu_physical_count -gt 1 ]];then
+				cpu_data_string="${C1}Cores$SEP3${C2} $cpu_core_count ${C1}CPUs$SEP3${C2} $cpu_physical_count "
+			else
+				cpu_data_string="${C1}Cores$SEP3${C2} $cpu_core_count "
+			fi
+			if [[ -n $cpu_type ]];then
+				cpu_type=" ($cpu_type)"
+			fi
+			cpu_data="$cpu_data_string${C1}model$SEP3${C2} ${a_cpu_working[0]}$cpu_type"
+		fi
 		if [[ $B_SHOW_CPU == 'true' ]];then
 			# update for multicore, bogomips x core count.
 			if [[ $B_EXTRA_DATA == 'true' ]];then
@@ -12808,7 +12982,11 @@ print_system_data()
 	local host_name=$HOSTNAME
 	local current_kernel=$( get_kernel_version ) 
 	local distro="$( get_distro_data )"
-	local tty_session='' compiler_string=''
+	local tty_session='' compiler_string='' distro_os='Distro'
+	
+	if [[ -n $BSD_TYPE ]];then
+		distro_os='OS'
+	fi
 	
 	# I think these will work, maybe, if logged in as root and in X
 	if [[ $B_RUNNING_IN_DISPLAY == 'true' ]];then
@@ -12874,7 +13052,7 @@ print_system_data()
 	fi
 	host_kernel_string="$host_string${C1}Kernel$SEP3${C2} $current_kernel$bits "
 	de_string="${C1}$desktop_type$SEP3${C2} $desktop_environment$de_extra_data$dm_data "
-	distro_string="${C1}Distro$SEP3${C2} $distro "
+	distro_string="${C1}$distro_os$SEP3${C2} $distro "
 	
 	if [[ $( calculate_line_length "$host_kernel_string$de_string" ) -gt $COLS_INNER ]];then
 		system_data=$( create_print_line "$line_starter" "$host_kernel_string" )
