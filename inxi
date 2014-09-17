@@ -3,8 +3,8 @@
 # openbsd ftp does http
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.2.4
-####  Date: 2014-09-10
+####  Version: 2.2.5
+####  Date: 2014-09-16
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -2754,7 +2754,7 @@ show_options()
 	print_lines_basic "2" "97" "Console IRC running in X - like irssi in xTerm"
 	print_lines_basic "2" "98" "Console IRC not in  X"
 	print_lines_basic "2" "99" "Global - Overrides/removes all settings. Setting specific removes global."
-	print_lines_basic "1" "-C" "CPU output, including per CPU clockspeed (if available)."
+	print_lines_basic "1" "-C" "CPU output, including per CPU clockspeed and max CPU speed (if available)."
 	print_lines_basic "1" "-d" "Optical drive data. Same as -Dd. See also -x and -xx."
 	print_lines_basic "1" "-D" "Full hard Disk info, not only model, ie: /dev/sda ST380817AS 80.0GB. See also -x and -xx. Disk total used percentage includes swap partition size(s)."
 	print_lines_basic "1" "-f" "All cpu flags, triggers -C. Not shown with -F to avoid spamming. ARM cpus show 'features'."
@@ -2813,6 +2813,7 @@ show_options()
 	fi
 	print_lines_basic "1" "-xx" "Show extra, extra data (only works with verbose or line output, not short form):"
 	print_lines_basic "2" "-A" "Chip vendor:product ID for each audio device."
+	print_lines_basic "2" "-C" "Minimum CPU speed, if available (on > 1 core systems only)."
 	print_lines_basic "2" "-D" "Disk serial number."
 	print_lines_basic "2" "-G" "Chip vendor:product ID for each video card."
 	print_lines_basic "2" "-I" "Other detected installed gcc versions (if present). System default runlevel. Adds parent program (or tty) for shell info if not in IRC (like Konsole or Gterm). Adds Init/RC (if found) version number."
@@ -3858,14 +3859,21 @@ get_cpu_data()
 {
 	eval $LOGFS
 	local i='' j='' cpu_array_nu='' a_cpu_working='' multi_cpu='' bits='' a_temp=''
-	local bsd_cpu_flags=''
+	local bsd_cpu_flags='' min_speed='' max_speed=''
+	
+	if [[ -f  /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq ]];then
+		max_speed=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq)
+		if [[ -f  /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq ]];then
+			min_speed=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq)
+		fi
+	fi
 
 	if [[ $B_CPUINFO_FILE == 'true' ]];then
 		# stop script for a bit to let cpu slow down before parsing cpu /proc file
 		sleep $CPU_SLEEP
 		IFS=$'\n'
 		A_CPU_DATA=( $( 
-		gawk -F': ' '
+		gawk -v cpuMin="$min_speed" -v cpuMax="$max_speed" -F': ' '
 		BEGIN {
 			IGNORECASE=1
 			# need to prime nr for arm cpus, which do not have processor number output in some cases
@@ -3874,6 +3882,9 @@ get_cpu_data()
 			bArm = "false"
 			# ARM cpus are erratic in /proc/cpuinfo this hack can sometimes resolve it. Linux only.
 			sysSpeed="'$(get_cpu_speed_hack)'"
+			speed = 0
+			max = 0
+			min = 0
 		}
 		# TAKE STRONGER NOTE: \t+ does NOT always work, MUST be [ \t]+
 		# TAKE NOTE: \t+ will work for $FILE_CPUINFO, but SOME ARBITRARY FILE used for TESTING might contain SPACES!
@@ -3905,12 +3916,12 @@ get_cpu_data()
 			}
 		}
 		/^cpu MHz|^clock\t+:/ {
-			if (!min) {
-				min = $NF
+			if (speed == 0) {
+				speed = $NF
 			}
 			else {
-				if ($NF < min) {
-					min = $NF
+				if ($NF < speed) {
+					speed = $NF
 				}
 			}
 			if ($NF > max) {
@@ -3953,20 +3964,24 @@ get_cpu_data()
 				}
 				print cpu[i, "model"] "," cpu[i, "speed"] "," cpu[i, "cache"] "," cpu[i, "flags"] "," cpu[i, "bogomips"] ","  cpu[nr, "vendor"] "," bArm
 			}
+			if (cpuMin != "") {
+				min=cpuMin/1000
+			}
+			if (cpuMax != "") {
+				max=cpuMax/1000
+			}
 			
 			# this is / was used in inxi short output only, but when it is N/A, need to use the previous array
 			# value, from above, the actual speed that is, for short output, key 0.
-			if (!min) {
+			if (speed == 0) {
 				print "N/A"
 				exit
 			}
 			else {
-				if (min != max) {
-					printf("Min:%s%s Max:%s%s\n", min, "Mhz", max, "Mhz")
-				}
-				else {
-					printf("%s %s\n", max, "Mhz")
-				}
+				sub(/\.0[0]+$/,"",max)
+				sub(/\.0[0]+$/,"",speed)
+				sub(/\.0[0]+$/,"",min)
+				print speed "," min "," max 
 			}
 		} 
 		' $FILE_CPUINFO ) )
@@ -4068,7 +4083,8 @@ get_cpu_data_bsd()
 		}
 		END {
 			print cpuModel "," cpuClock "," cpuCache "," cpuFlags "," cpuBogomips ","  cpuVendor
-			print "N/A"
+			# triggers print case
+			print "N/A,0,0"
 		}' <<< "$Sysctl_a_Data" ) )
 		IFS="$ORIGINAL_IFS"
 	fi
@@ -10326,12 +10342,13 @@ print_short_data()
 
 	# set A_CPU_CORE_DATA
 	get_cpu_core_count
-	local cpc_plural='' cpu_count_print='' model_plural=''
+	local cpc_plural='' cpu_count_print='' model_plural='' current_max_clock=''
 	local cpu_physical_count=${A_CPU_CORE_DATA[0]}
 	local cpu_core_count=${A_CPU_CORE_DATA[3]}
 	local cpu_core_alpha=${A_CPU_CORE_DATA[1]}
 	local cpu_type=${A_CPU_CORE_DATA[2]}
-	local kernel_os='' local cpu_data_string=''
+	local kernel_os='' 
+	local cpu_data_string=''
 	
 	if [[ -z $BSD_TYPE || -n $cpu_type ]];then
 		cpu_type=" ($cpu_type)"
@@ -10373,6 +10390,9 @@ print_short_data()
 
 	IFS=","
 	local a_cpu_working=(${A_CPU_DATA[0]})
+	# this gets that weird min/max final array item, which almost never contains any data of use
+	local current_max_clock_nu=$(( ${#A_CPU_DATA[@]} - 1 ))
+	local a_cpu_speeds=(${A_CPU_DATA[$current_max_clock_nu]})
 	IFS="$ORIGINAL_IFS"
 	local cpu_model="${a_cpu_working[0]}"
 	## assemble data for output
@@ -10381,15 +10401,23 @@ print_short_data()
 	# if [[ -z ${a_cpu_working[1]} || ${a_cpu_working[1]} < 50 ]];then
 	#	a_cpu_working[1]=$(get_cpu_speed_hack)
 	# fi
-	# this gets that weird min/max final array item, which almost never contains any data of use
-	local min_max_clock_nu=$(( ${#A_CPU_DATA[@]} - 1 ))
-	local min_max_clock=${A_CPU_DATA[$min_max_clock_nu]/.* Mhz/ Mhz}
+	
 	# this handles the case of for example ARM cpus, which will not have data for
 	# min/max, since they don't have speed. Since that sets a flag, not found, just
 	# look for that and use the speed from the first array array, same where we got 
 	# model from
-	if [[ "$min_max_clock" == 'N/A' && ${a_cpu_working[1]} != '' ]];then
-		min_max_clock="${a_cpu_working[1]} MHz"
+	# index: 0 speed ; 1 min ; 2 max
+	# this handles bsd types which always should show N/A unless we get a way to get min / max data
+	if [[ "${a_cpu_speeds[0]}" == 'N/A' && ${a_cpu_working[1]} != '' ]];then
+		current_max_clock="${a_cpu_working[1]} MHz"
+	else
+		if [[ ${a_cpu_speeds[2]} != 0 ]];then
+			if [[ ${a_cpu_speeds[0]} == ${a_cpu_speeds[2]} ]];then
+				current_max_clock="${a_cpu_speeds[0]} MHz (max)"
+			else
+				current_max_clock="${a_cpu_speeds[0]} MHz (max ${a_cpu_speeds[2]} MHz)"
+			fi
+		fi
 	fi
 	local patch_version_number=$( get_patch_version_string )
 
@@ -10416,7 +10444,7 @@ print_short_data()
 			#C1="${C1},1"; C2="${C2},1"; CN="${CN},1"
 		fi
 	fi
-	short_data="${C1}CPU$cpc_plural${C2}$SEP1$cpu_data_string $cpu_model$model_plural$cpu_type clocked at $min_max_clock$SEP2$kernel_os$SEP2${C1}Up${C2}$SEP1$up_time$SEP2${C1}Mem${C2}$SEP1$memory$SEP2${C1}HDD${C2}$SEP1$hdd_capacity($hdd_used)$SEP2${C1}Procs${C2}$SEP1$processes$SEP2"
+	short_data="${C1}CPU$cpc_plural${C2}$SEP1$cpu_data_string $cpu_model$model_plural$cpu_type clocked at $current_max_clock$SEP2$kernel_os$SEP2${C1}Up${C2}$SEP1$up_time$SEP2${C1}Mem${C2}$SEP1$memory$SEP2${C1}HDD${C2}$SEP1$hdd_capacity($hdd_used)$SEP2${C1}Procs${C2}$SEP1$processes$SEP2"
 
 	if [[ $SHOW_IRC -gt 0 ]];then
 		short_data="$short_data${C1}Client${C2}$SEP1$IRC_CLIENT$IRC_CLIENT_VERSION$SEP2"
@@ -10581,13 +10609,13 @@ print_audio_data()
 print_cpu_data()
 {
 	eval $LOGFS
-	local cpu_data='' i='' cpu_clock_speed='' cpu_multi_clock_data=''
+	local cpu_data='' i='' cpu_clock_speed='' cpu_multi_clock_data='' a_cpu_speeds=''
 	local bmip_data='' cpu_cache='' cpu_vendor='' cpu_flags='' flag_feature='flags'
-	local a_cpu_working='' cpu_model='' cpu_clock='' cpu_null_error=''
+	local a_cpu_working='' cpu_model='' cpu_clock='' cpu_null_error='' max_speed=''
 	local cpc_plural='' cpu_count_print='' model_plural='' cpu_data_string=''
 	local cpu_physical_count='' cpu_core_count='' cpu_core_alpha='' cpu_type=''
-	local cpu_2_data='' working_cpu='' temp1='' per_cpu_cores=''
-	local line_starter="CPU:" multi_cpu_starter="${C1}Clock Speeds$SEP3${C2} "
+	local cpu_2_data='' working_cpu='' temp1='' per_cpu_cores='' current_max_clock_nu=''
+	local line_starter="CPU:" multi_cpu_starter="${C1}Clock speeds$SEP3${C2} "
 
 	##print_screen_output "A_CPU_DATA[0]=\"${A_CPU_DATA[0]}\""
 	# Array A_CPU_DATA always has one extra element: max clockfreq found.
@@ -10597,6 +10625,8 @@ print_cpu_data()
 
 	IFS=","
 	a_cpu_working=(${A_CPU_DATA[0]})
+	current_max_clock_nu=$(( ${#A_CPU_DATA[@]} - 1 ))
+	a_cpu_speeds=(${A_CPU_DATA[$current_max_clock_nu]})
 	IFS="$ORIGINAL_IFS"
 
 	# Strange (and also some expected) behavior encountered. If print_screen_output() uses $1
@@ -10710,6 +10740,14 @@ print_cpu_data()
 			else
 				a_cpu_working[1]="${a_cpu_working[1]%.*} MHz"
 			fi
+			# this handles bsd case unless we get a way to get max/min cpu speeds
+			if [[ ${a_cpu_speeds[2]} != 0 ]];then
+				if [[ ${a_cpu_speeds[0]} == ${a_cpu_speeds[2]} ]];then
+					a_cpu_working[1]="${a_cpu_speeds[0]} MHz (max)"
+				else
+					a_cpu_working[1]="${a_cpu_speeds[0]} MHz (max ${a_cpu_speeds[2]} MHz)"
+				fi
+			fi
 			cpu_clock_speed="${C1}clocked at${C2} ${a_cpu_working[1]}"
 		fi
 		cpu_2_data="$cpu_2_data$cpu_clock_speed"
@@ -10738,6 +10776,12 @@ print_cpu_data()
 	# we don't do this printing out extra line unless > 1 cpu core
 	# note the numbering, the last array item is the min/max/not found for cpu speeds
 	if [[ ${#A_CPU_DATA[@]} -gt 2 && $B_SHOW_CPU == 'true' ]];then
+		if [[ ${a_cpu_speeds[2]} != 0 ]];then
+			max_speed="${C1}max$SEP3${C2} ${a_cpu_speeds[2]} MHz "
+			if [[ $B_EXTRA_EXTRA_DATA == 'true' && ${a_cpu_speeds[1]} != 0 ]];then
+				max_speed="${C1}min/max$SEP3${C2}${a_cpu_speeds[1]}/${a_cpu_speeds[2]} MHz "
+			fi
+		fi
 		for (( i=0; i < ${#A_CPU_DATA[@]}-1; i++ ))
 		do
 			IFS=","
@@ -10750,7 +10794,8 @@ print_cpu_data()
 			#	break
 			#fi
 			# echo $(calculate_line_length "$multi_cpu_starter$SEP3 $cpu_multi_clock_data" )
-			working_cpu="${C1}$(( i + 1 ))$SEP3${C2} ${a_cpu_working[1]%.*} MHz "
+			working_cpu="$max_speed${C1}$(( i + 1 ))$SEP3${C2} ${a_cpu_working[1]%.*} MHz "
+			max_speed=''
 			if [[ -n $cpu_multi_clock_data && \
 			$( calculate_line_length "$multi_cpu_starter$cpu_multi_clock_data$working_cpu" ) -gt $COLS_INNER ]];then
 				cpu_multi_clock_data=$( create_print_line " " "$multi_cpu_starter$cpu_multi_clock_data" )
