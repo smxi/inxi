@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
+# fetch has -q for quiet you can use -o - for stdout and -T for timeout
+# openbsd ftp does http
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.2.0
-####  Date: 2014-08-20
-####  Patch Number: 02-b1
+####  Version: 2.2.4
+####  Date: 2014-09-16
+####  Patch Number: 01-b1
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -222,7 +224,7 @@ COLS_MAX_IRC='105'
 COLS_MAX_NO_DISPLAY='140'
 PS_COUNT=5
 # change to less, or more if you have very slow connection
-WGET_TIMEOUT=8
+DL_TIMEOUT=8
 ### END USER CONFIGS ###
 
 ### LOCALIZATION - DO NOT CHANGE! ###
@@ -481,6 +483,7 @@ DEV_DISK_LABEL=''
 DEV_DISK_MAPPER=''
 DEV_DISK_UUID=''
 DMIDECODE_DATA=''
+DOWNLOADER='wget'
 IRC_CLIENT=''
 IRC_CLIENT_VERSION=''
 PS_THROTTLED=''
@@ -822,6 +825,20 @@ initialize_data()
 	fi
 	
 	initialize_paths
+	
+	# set downloaders. 
+	if [[ -z $( type -p wget ) ]];then
+		# first check for bsd stuff
+		if [[ -n $( type -p fetch ) ]];then
+			DOWNLOADER='fetch'
+		elif -n $( type -p curl ) ]];then
+			DOWNLOADER='curl'
+		elif [[ $BSD_VERSION == 'openbsd' && -n $( type -p ftp ) ]];then
+			DOWNLOADER='ftp'
+		else
+			DOWNLOADER='no-downloader'
+		fi
+	fi
 	
 	if [[ -n $BSD_TYPE ]];then
 		if [[ -e $FILE_DMESG_BOOT ]];then
@@ -1329,7 +1346,7 @@ error_handler()
 			;;
 		7)	error_message="One of the options you entered in your script parameters: $2\nis not supported.The option may require extra arguments to work.\nFor supported options (and their arguments), check the help menu: $SCRIPT_NAME -h"
 			;;
-		8)	error_message="the self-updater failed, wget exited with error: $2.\nYou probably need to be root.\nHint, to make for easy updates without being root, do: chown <user name> $SCRIPT_PATH/$SCRIPT_NAME"
+		8)	error_message="the self-updater failed, $DOWNLOADER exited with error: $2.\nYou probably need to be root.\nHint, to make for easy updates without being root, do: chown <user name> $SCRIPT_PATH/$SCRIPT_NAME"
 			;;
 		9)	error_message="unsupported debugging level: $2"
 			;;
@@ -1494,7 +1511,7 @@ create_rotate_logfiles()
 script_self_updater()
 {
 	eval $LOGFS
-	local wget_error=0 file_contents='' wget_man_error=0 
+	local downloader_error=0 file_contents='' downloader_man_error=0 
 	local man_file_path="$MAN_FILE_LOCATION/inxi.1.gz"
 	
 	if [[ $B_IRC == 'true' ]];then
@@ -1506,10 +1523,26 @@ script_self_updater()
 	print_screen_output "Currently running $SCRIPT_NAME version number: $SCRIPT_VERSION_NUMBER"
 	print_screen_output "Current version patch number: $SCRIPT_PATCH_NUMBER"
 	print_screen_output "Updating $SCRIPT_NAME in $SCRIPT_PATH using $2 as download source..."
+	case $DOWNLOADER in
+		curl)
+			file_contents="$( curl -s $1$SCRIPT_NAME )" || downloader_error=$?
+			;;
+		fetch)
+			file_contents="$( fetch -q -o - $1$SCRIPT_NAME )" || downloader_error=$?
+			;;
+		ftp)
+			file_contents="$( ftp -o - $1$SCRIPT_NAME 2>/dev/null )" || downloader_error=$?
+			;;
+		wget)
+			file_contents="$( wget -q -O - $1$SCRIPT_NAME )" || downloader_error=$?
+			;;
+		no-downloader)
+			downloader_error=1
+			;;
+	esac
 
-	file_contents="$( wget -q -O - $1$SCRIPT_NAME )" || wget_error=$?
 	# then do the actual download
-	if [[  $wget_error -eq 0 ]];then
+	if [[  $downloader_error -eq 0 ]];then
 		# make sure the whole file got downloaded and is in the variable
 		if [[ -n $( grep '###\*\*EOF\*\*###' <<< "$file_contents" ) ]];then
 			echo "$file_contents" > $SCRIPT_PATH/$SCRIPT_NAME || error_handler 14 "$?"
@@ -1533,14 +1566,34 @@ script_self_updater()
 							exec $( type -p mandb ) -q 
 						fi
 					fi
-					wget -q --spider $MAN_FILE_DOWNLOAD || wget_man_error=$?
-					if [[ $wget_man_error -eq 0 ]];then
-						print_screen_output "Man file download URL verified: $MAN_FILE_DOWNLOAD"
+					if [[ $DOWNLOADER == 'wget' ]];then
+						wget -q --spider $MAN_FILE_DOWNLOAD || downloader_man_error=$?
+					fi
+					if [[ $downloader_man_error -eq 0 ]];then
+						if [[ $DOWNLOADER == 'wget' ]];then
+							print_screen_output "Man file download URL verified: $MAN_FILE_DOWNLOAD"
+						fi
 						print_screen_output "Downloading Man page file now."
-						wget -q -O $man_file_path $MAN_FILE_DOWNLOAD || wget_man_error=$?
-						if [[ $wget_man_error -gt 0 ]];then
+						case $DOWNLOADER in
+							curl)
+								curl -s -o $man_file_path $MAN_FILE_DOWNLOAD || downloader_man_error=$?
+								;;
+							fetch)
+								fetch -q -o $man_file_path $MAN_FILE_DOWNLOAD || downloader_man_error=$?
+								;;
+							ftp)
+								ftp -o $man_file_path $MAN_FILE_DOWNLOAD 2>/dev/null || downloader_man_error=$?
+								;;
+							wget)
+								wget -q -O $man_file_path $MAN_FILE_DOWNLOAD || downloader_man_error=$?
+								;;
+							no-downloader)
+								downloader_man_error=1
+								;;
+						esac
+						if [[ $downloader_man_error -gt 0 ]];then
 							print_screen_output "Oh no! Something went wrong downloading the Man gz file at: $MAN_FILE_DOWNLOAD"
-							print_screen_output "Check the error messages for what happened. Error: $wget_man_error"
+							print_screen_output "Check the error messages for what happened. Error: $downloader_man_error"
 						else
 							print_screen_output "Download/install of man page successful. Check to make sure it works: man inxi"
 						fi
@@ -1559,7 +1612,7 @@ script_self_updater()
 	# now run the error handlers on any wget failure
 	else
 		if [[ $2 == 'svn server' ]];then
-			error_handler 8 "$wget_error"
+			error_handler 8 "$downloader_error"
 		elif [[ $2 == 'alt server' ]];then
 			error_handler 10 "$1"
 		else
@@ -1575,9 +1628,12 @@ debug_data_collector()
 	local xiin_app='' xiin_data_file='' xiin_download='' error='' b_run_xiin='false'
 	local debug_data_dir='' bsd_string='' xorg_d_files='' xorg_file='' a_distro_ids=''
 	local completed_gz_file='' xiin_file='xiin.py' ftp_upload='ftp.techpatterns.com/incoming'
+	local xiin_url="http://inxi.googlecode.com/svn/branches/xiin/$xiin_file"
 	local Line='-------------------------' root_string=''
 	local start_directory=$( pwd )
 	local host=$( tr '[A-Z]' '[a-z]' <<< "$HOSTNAME" )
+	local downloader_error=0
+	
 	if [[ -n $host ]];then
 		host=${host// /-}
 	else
@@ -1617,9 +1673,16 @@ debug_data_collector()
 		echo 'also checking for dmidecode data: note, you must be root to have dmidecode work.'
 		echo "Data going into: $SCRIPT_DATA_DIR/$debug_data_dir"
 		# bsd tools http://cb.vu/unixtoolbox.xhtml
+		# freebsd
 		pciconf -l -cv &> $debug_data_dir/bsd-pciconf-cvl.txt
 		pciconf -vl &> $debug_data_dir/bsd-pciconf-vl.txt
 		pciconf -l &> $debug_data_dir/bsd-pciconf-l.txt
+		# openbsd
+		pcidump &> $debug_data_dir/bsd-pcidump.txt
+		pcidump -v &> $debug_data_dir/bsd-pcidump-v.txt
+		# netbsd
+		pcictl list &> $debug_data_dir/bsd-pcictl-list.txt
+		pcictl list -n &> $debug_data_dir/bsd-pcictl-list-n.txt
 		sysctl -a &> $debug_data_dir/bsd-sysctl-a.txt
 		usbdevs -v  &> $debug_data_dir/bsd-usbdevs-v.txt
 		kldstat  &> $debug_data_dir/bsd-kldstat.txt
@@ -1636,6 +1699,7 @@ debug_data_collector()
 				fi
 			done
 		fi
+		dmesg &> $debug_data_dir/dmesg.txt
 		lscpu &> $debug_data_dir/lscpu.txt
 		lspci &> $debug_data_dir/lspci.txt
 		lspci -k &> $debug_data_dir/lspci-k.txt
@@ -1696,9 +1760,25 @@ debug_data_collector()
 				mv -f xiin $xiin_file
 			fi
 			# -Nc is creating really weird download anomolies, so using -O instead
-			xiin_download="$( wget -q -O - http://inxi.googlecode.com/svn/branches/xiin/$xiin_file )"
+			case $DOWNLOADER in
+				curl)
+					xiin_download="$( curl -s $xiin_url )" || downloader_error=$?
+					;;
+				fetch)
+					xiin_download="$( fetch -q -o - $xiin_url )" || downloader_error=$?
+					;;
+				ftp)
+					xiin_download="$( ftp -o - $xiin_url 2>/dev/null )" || downloader_error=$?
+					;;
+				wget)
+					xiin_download="$( wget -q -O - $xiin_url )" || downloader_error=$?
+					;;
+				no-downloader)
+					downloader_error=1
+					;;
+			esac
 			# if nothing got downloaded kick out error, otherwise we'll use an older version
-			if [[ $? -gt 0 && ! -f $xiin_file ]];then
+			if [[ $downloader_error -gt 0 && ! -f $xiin_file ]];then
 				echo -e "ERROR: Failed to download required file: $xiin_file\nMaybe the remote site is down or your networking is broken?"
 				echo "Continuing with incomplete data collection."
 				echo "$xiin_file download failed and no existing $xiin_file" >> $debug_data_dir/xiin-error.txt
@@ -1796,8 +1876,8 @@ debug_data_collector()
 			df -h -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs &> $debug_data_dir/df-h-T-P-excludes.txt
 			df -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs &> $debug_data_dir/df-T-P-excludes.txt
 			df -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs --total &> $debug_data_dir/df-T-P-excludes-total.txt
-			df -H -T &> $debug_data_dir/bsd-df-H-T-no-excludes.txt
-			df -H &> $debug_data_dir/bsd-df-H-no-excludes.txt
+			df -h -T &> $debug_data_dir/bsd-df-h-T-no-excludes.txt
+			df -h &> $debug_data_dir/bsd-df-h-no-excludes.txt
 			df -k -T &> $debug_data_dir/bsd-df-k-T-no-excludes.txt
 			df -k &> $debug_data_dir/bsd-df-k-no-excludes.txt
 			atacontrol list &> $debug_data_dir/bsd-atacontrol-list.txt
@@ -1885,12 +1965,17 @@ check_recommends_user_output()
 {
 	local Line=$LINE1
 	local gawk_version='N/A' sed_version='N/A' sudo_version='N/A' python_version='N/A'
+	local downloaders_bsd=''
 	
 	if [[ $B_IRC == 'true' ]];then
 		print_screen_output "Sorry, you can't run this option in an IRC client."
 		exit 1
 	fi
-	
+	if [[ -n $BSD_TYPE ]];then
+		downloaders_bsd='
+		fetch:BSD-only~BSD-only~BSD-only~:-i_wan_ip;-w/-W;-U/-!_[11-15]_(BSDs)
+		ftp:ftp-OpenBSD-only~ftp-OpenBSD-only~ftp-OpenBSD-only~:-i_wan_ip;-w/-W;-U/-!_[11-15]_(OpenBSD_only)'
+	fi
 	initialize_paths
 	print_lines_basic "0" "" "$SCRIPT_NAME will now begin checking for the programs it needs to operate. First a check of the main languages and tools $SCRIPT_NAME uses. Python is only for debugging data collection."
 	echo $Line
@@ -1937,7 +2022,12 @@ check_recommends_user_output()
 	echo 
 	check_recommends_items 'recommended-apps'
 	
-	echo 'Test Five: System Directories for Various Information.' 
+	echo 'Test Five: Script Recommends for Remaining Features.' 
+	print_lines_basic "0" "" "One of these downloaders needed for options -i/-w/-W (-U/-! [11-15], if supported):"
+	echo 
+	check_recommends_items 'downloaders'
+	
+	echo 'Test Six: System Directories for Various Information.' 
 	print_lines_basic "0" "" "If one of these directories is missing, $SCRIPT_NAME will have incomplete output:"
 	echo 
 	check_recommends_items 'system-dirs'
@@ -1986,6 +2076,12 @@ check_recommends_items()
 	runlevel:sysvinit~sysvinit~systemd~:-I_runlevel
 	sudo:sudo~sudo~sudo~:-Dx_hddtemp-user;-o_file-user
 	'
+	
+	local downloaders="
+	wget:wget~wget~wget~:-i_wan_ip;-w/-W;-U/-!_[11-15]_(if_supported)
+	curl:curl~curl~curl~:-i_wan_ip;-w/-W;-U/-!_[11-15]_(if_supported)
+	$downloaders_bsd
+	"
 	local recommended_dirs='
 	/sys/class/dmi/id:-M_system,_motherboard,_bios
 	/dev:-l,-u,-o,-p,-P,-D_disk_partition_data
@@ -2003,6 +2099,13 @@ check_recommends_items()
 	fi
 	
 	case $1 in
+		downloaders)
+			item_list=$downloaders
+			item_string='Downloaders'
+			item_string=''
+			missing_string='downloaders, and their corresponding packages,'
+			type='applications'
+			;;
 		required-dirs)
 			item_list=$required_dirs
 			item_string='Required file system'
@@ -2166,8 +2269,9 @@ print_screen_output()
 create_print_line()
 {
 	eval $LOGFS
-	local line=${2% } #trim off trailing space if present, note: ${CN} may hide the actual trailing end space
-	printf "${C1}%-${INDENT}s${C2} %s" "$1" "$line"
+	# convoluted, yes, but it works to trim spaces off end
+	local line=${2%${2##*[![:space:]]}}
+	printf "${C1}%-${INDENT}s${C2} %s" "$1" "$line${CN}"
 	eval $LOGFE
 }
 
@@ -2203,13 +2307,12 @@ remove_erroneous_chars()
 get_parameters()
 {
 	eval $LOGFS
-	local opt='' wget_test='' debug_data_type='' weather_flag='wW:' 
+	local opt='' downloader_test='' debug_data_type='' weather_flag='wW:' 
 	local use_short='true' # this is needed to trigger short output, every v/d/F/line trigger sets this false
 
 	# if distro maintainers don't want the weather feature disable it
 	if [[ $B_ALLOW_WEATHER == 'false' ]];then
 		weather_flag=''
-		
 	fi
 	if [[ $1 == '--version' ]];then
 		print_version_info
@@ -3014,16 +3117,18 @@ get_start_client()
 				}' )"
 		else
 			# this should handle certain cases where it's ssh or some other startup tool
-			# that falls through all the other tests
+			# that falls through all the other tests. Also bsd irc clients will land here
 			if [[ $BSD_TYPE != 'bsd' ]];then
 				App_Working_Name=$(ps -p $PPID --no-headers 2>/dev/null | gawk '{print $NF}' )
 			else
 				# without --no-headers we need the second line
-				App_Working_Name=$(ps -p $PPID 2>/dev/null | gawk '/^[0-9]+/ {print $5}' )
+				App_Working_Name=$(ps -p $PPID 2>/dev/null | gawk '$1 ~ /^[0-9]+/ {print $5}' )
 			fi
 			
 			if [[ -n $App_Working_Name ]];then
 				Irc_Client_Path=$App_Working_Name
+				irc_client_path_lower=$( tr '[A-Z]' '[a-z]' <<< $Irc_Client_Path )
+				App_Working_Name=${irc_client_path_lower##*/}
 				B_Non_Native_App='false'
 				get_irc_client_version
 				if [[ -z $IRC_CLIENT ]];then
@@ -3144,7 +3249,6 @@ get_irc_client_version()
 				}
 				exit
 			}' )"
-
 			T=($IRC_CLIENT_VERSION)
 			if [[ ${T[0]} == *+* ]];then
 				# < Sho_> locsmif: The version numbers of SVN versions look like this:
@@ -3199,6 +3303,7 @@ get_irc_client_version()
 			}' )"
 			IRC_CLIENT="Pidgin"
 			;;
+		# possible failure of wildcard so make it explicit
 		quassel*)
 			# sample: quassel -v
 			# Qt: 4.5.0
@@ -3649,6 +3754,8 @@ get_cpu_core_count()
 {
 	eval $LOGFS
 	local cpu_physical_count='' cpu_core_count='' cpu_type='' cpu_alpha_count='' cores_per_cpu=''
+	local array_data=''
+	
 	if [[ $B_CPUINFO_FILE == 'true' ]]; then
 		# load the A_CPU_TYPE_PCNT_CCNT core data array
 		get_cpu_ht_multicore_smp_data
@@ -3663,19 +3770,22 @@ get_cpu_core_count()
 		
 		# create array, core count integer; core count string
 		# A_CPU_CORE_DATA=( "$cpu_core_count" "$cpu_alpha_count Core$cpu_type" )
-		A_CPU_CORE_DATA=( "$cpu_physical_count" "$cpu_alpha_count" "$cpu_type" "$cpu_core_count" )
+		array_data="$cpu_physical_count,$cpu_alpha_count,$cpu_type,$cpu_core_count"
+		IFS=','
+		A_CPU_CORE_DATA=( $array_data )
+		IFS="$ORIGINAL_IFS"
 	elif [[ -n $BSD_TYPE ]];then
 		local gawk_fs=': '
 	
 		if [[ $BSD_VERSION == 'openbsd' ]];then
 			gawk_fs='='
 		fi
-		cpu_core_count=$( gawk -F "$gawk_fs" -v bsdType=$BSD_VERSION '
+		cpu_core_count=$( gawk -F "$gawk_fs" -v bsdVersion="$BSD_VERSION" '
 		# note: on openbsd can also be hw.ncpufound so exit after first
 		BEGIN {
 			coreCount=""
 		}
-		/^hw.ncpu$/ {
+		$1 ~ /^hw.ncpu$/ {
 			coreCount=$NF
 		}
 		/^machdep.cpu.core_count/ {
@@ -3692,17 +3802,28 @@ get_cpu_core_count()
 		if [[ -n $( grep -E '^[0-9]+$' <<< "$cpu_core_count" ) ]];then
 			cpu_alpha_count=$( get_cpu_core_count_alpha "$cpu_core_count" )
 			if [[ $cpu_core_count -gt 1 ]];then
-				cpu_type='SMP'
+				cpu_type='-SMP-'
+			else
+				cpu_type='-UP-'
 			fi
 		fi
 		if [[ -n $cores_per_cpu ]];then
 			cpu_physical_count=$(( $cpu_core_count / $cores_per_cpu ))
+			if [[ $cores_per_cpu -gt 1 ]];then
+				cpu_type='-MCP-'
+			fi
+		# do not guess here, only use phys count if it actually exists, otherwise handle in print_cpu..
+		# this 1 value should not be used for output, and is just to avoid math errors
 		else
 			cpu_physical_count=1
 		fi
-		A_CPU_CORE_DATA=( "$cpu_physical_count" "$cpu_alpha_count" "$cpu_type" "$cpu_core_count" )
+		array_data="$cpu_physical_count,$cpu_alpha_count,$cpu_type,$cpu_core_count"
+		IFS=','
+		A_CPU_CORE_DATA=( $array_data )
+		IFS="$ORIGINAL_IFS"
 	fi
 	a_temp=${A_CPU_CORE_DATA[@]}
+	# echo $a_temp :: ${#A_CPU_CORE_DATA[@]}
 	log_function_data "A_CPU_CORE_DATA: $a_temp"
 	eval $LOGFE
 }
@@ -3737,14 +3858,21 @@ get_cpu_data()
 {
 	eval $LOGFS
 	local i='' j='' cpu_array_nu='' a_cpu_working='' multi_cpu='' bits='' a_temp=''
-	local bsd_cpu_flags=''
+	local bsd_cpu_flags='' min_speed='' max_speed=''
+	
+	if [[ -f  /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq ]];then
+		max_speed=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq)
+		if [[ -f  /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq ]];then
+			min_speed=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq)
+		fi
+	fi
 
 	if [[ $B_CPUINFO_FILE == 'true' ]];then
 		# stop script for a bit to let cpu slow down before parsing cpu /proc file
 		sleep $CPU_SLEEP
 		IFS=$'\n'
 		A_CPU_DATA=( $( 
-		gawk -F': ' '
+		gawk -v cpuMin="$min_speed" -v cpuMax="$max_speed" -F': ' '
 		BEGIN {
 			IGNORECASE=1
 			# need to prime nr for arm cpus, which do not have processor number output in some cases
@@ -3753,6 +3881,9 @@ get_cpu_data()
 			bArm = "false"
 			# ARM cpus are erratic in /proc/cpuinfo this hack can sometimes resolve it. Linux only.
 			sysSpeed="'$(get_cpu_speed_hack)'"
+			speed = 0
+			max = 0
+			min = 0
 		}
 		# TAKE STRONGER NOTE: \t+ does NOT always work, MUST be [ \t]+
 		# TAKE NOTE: \t+ will work for $FILE_CPUINFO, but SOME ARBITRARY FILE used for TESTING might contain SPACES!
@@ -3772,7 +3903,6 @@ get_cpu_data()
 				cpu[nr, "model"] = $NF
 			}
 		}
-
 		/^model name|^cpu\t+:/ {
 			gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF )
 			gsub(/'"$BAN_LIST_CPU"'/, "", $NF )
@@ -3784,17 +3914,15 @@ get_cpu_data()
 				bArm = "true"
 			}
 		}
-
 		/^cpu MHz|^clock\t+:/ {
-			if (!min) {
-				min = $NF
+			if (speed == 0) {
+				speed = $NF
 			}
 			else {
-				if ($NF < min) {
-					min = $NF
+				if ($NF < speed) {
+					speed = $NF
 				}
 			}
-
 			if ($NF > max) {
 				max = $NF
 			}
@@ -3802,11 +3930,9 @@ get_cpu_data()
 			gsub(/.00[0]+$/,".00",$NF) ## clears out excessive zeros
 			cpu[nr, "speed"] = $NF
 		}
-
 		/^cache size/ {
 			cpu[nr, "cache"] = $NF
 		}
-
 		/^flags|^features/ {
 			cpu[nr, "flags"] = $NF
 			# not all ARM cpus show ARM in model name
@@ -3814,16 +3940,13 @@ get_cpu_data()
 				bArm = "true"
 			}
 		}
-
 		/^bogomips/ {
 			cpu[nr, "bogomips"] = $NF
 		}
-
 		/vendor_id/ {
 			gsub(/genuine|authentic/,"",$NF)
 			cpu[nr, "vendor"] = tolower( $NF )
 		}
-
 		END {
 			#if (!nr) { print ",,,"; exit } # <- should this be necessary or should bash handle that
 			for ( i = 0; i <= nr; i++ ) {
@@ -3840,20 +3963,24 @@ get_cpu_data()
 				}
 				print cpu[i, "model"] "," cpu[i, "speed"] "," cpu[i, "cache"] "," cpu[i, "flags"] "," cpu[i, "bogomips"] ","  cpu[nr, "vendor"] "," bArm
 			}
+			if (cpuMin != "") {
+				min=cpuMin/1000
+			}
+			if (cpuMax != "") {
+				max=cpuMax/1000
+			}
 			
 			# this is / was used in inxi short output only, but when it is N/A, need to use the previous array
 			# value, from above, the actual speed that is, for short output, key 0.
-			if (!min) {
+			if (speed == 0) {
 				print "N/A"
 				exit
 			}
 			else {
-				if (min != max) {
-					printf("Min:%s%s Max:%s%s\n", min, "Mhz", max, "Mhz")
-				}
-				else {
-					printf("%s %s\n", max, "Mhz")
-				}
+				sub(/\.0[0]+$/,"",max)
+				sub(/\.0[0]+$/,"",speed)
+				sub(/\.0[0]+$/,"",min)
+				print speed "," min "," max 
 			}
 		} 
 		' $FILE_CPUINFO ) )
@@ -3906,13 +4033,19 @@ get_cpu_data_bsd()
 			cpuVendor=""
 			bSwitchFs="false"
 		}
-		 /^hw.model/ && ( bsdVersion != "darwin" ) {
+		/^hw.model/ && ( bsdVersion != "darwin" ) {
 			gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF )
 			gsub(/'"$BAN_LIST_CPU"'/, "", $NF )
-			sub(//,"",$NF)
+			gsub(/,/," ",$NF)
 			sub(/[a-z]+-core/, "", $NF )
 			gsub(/^ +| +$|\"/, "", $NF)
 			gsub(/ [ \t]+/, " ", $NF)
+			if ( $NF ~ /[0-9]+[[:space:]]*[KM]B[[:space:]]+L2 cache/) {
+				cpuCache=gensub(/.*[^0-9]([0-9]+[[:space:]]*[KM]B)[[:space:]]+L2 cach.*/,"\\1",1,$NV)
+			}
+			if ( $NF ~ /\)$/ ){
+				sub(/[[:space:]]*\(.*\)$/,"",$NF)
+			}
 			cpuModel=$NF
 			if ( cpuClock != "" ) {
 				exit
@@ -3927,6 +4060,9 @@ get_cpu_data_bsd()
 		/^hw.cpufrequency/ {
 			cpuClock = $NF / 1000000
 		}
+		/^hw.cpuspeed/ {
+			cpuClock=$NF
+		}
 		/^hw.l2cachesize/ {
 			cpuCache=$NF/1024
 			cpuCache=cpuCache " kB"
@@ -3937,7 +4073,7 @@ get_cpu_data_bsd()
 		/^machdep.cpu.brand_string/ {
 			gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF )
 			gsub(/'"$BAN_LIST_CPU"'/, "", $NF )
-			sub(//,"",$NF)
+			gsub(/,/," ",$NF)
 			sub(/[a-z]+-core/, "", $NF )
 			gsub(/^ +| +$|\"/, "", $NF)
 			gsub(/ [ \t]+/, " ", $NF)
@@ -3946,7 +4082,8 @@ get_cpu_data_bsd()
 		}
 		END {
 			print cpuModel "," cpuClock "," cpuCache "," cpuFlags "," cpuBogomips ","  cpuVendor
-			print "N/A"
+			# triggers print case
+			print "N/A,0,0"
 		}' <<< "$Sysctl_a_Data" ) )
 		IFS="$ORIGINAL_IFS"
 	fi
@@ -3960,18 +4097,16 @@ get_cpu_flags_bsd()
 	
 	local cpu_flags=''
 	local gawk_fs=':'
-	if [[ $BSD_VERSION == 'openbsd' ]];then
-		gawk_fs='='
-	fi
+	
 	if [[ -n $Dmesg_Boot_Data ]];then
-		cpu_flags=$( gawk -F "=" '
+		cpu_flags=$( gawk -v bsdVersion=$BSD_VERSION -F ":" '
 		BEGIN {
 			IGNORECASE=1
 			cpuFlags=""
 		}
-		/^CPU:/ {
-			while ( getline && !/memory/  ) {
-				if ( $1 ~ /Features/ ) {
+		/^(CPU:|cpu0:)/ {
+			while ( getline && !/memory|real mem/  ) {
+				if ( $1 ~ /Features/ || ( bsdVersion == "openbsd" && $0 ~ /^cpu0.*,[a-z][a-z][a-z],[a-z][a-z][a-z],/ ) ) {
 					# clean up odd stuff like <b23>
 					gsub(/<[a-z0-9]+>/,"", $2)
 					# all the flags are contained within < ... > on freebsd at least
@@ -3985,6 +4120,9 @@ get_cpu_flags_bsd()
 			exit
 		}' <<< "$Dmesg_Boot_Data" )
 	elif [[ -n $Sysctl_a_Data ]];then
+		if [[ $BSD_VERSION == 'openbsd' ]];then
+			gawk_fs='='
+		fi
 		cpu_flags=$( gawk -F "$gawk_fs" '
 		BEGIN {
 			cpuFlags=""
@@ -4926,87 +5064,89 @@ get_dmidecode_data()
 			else 
 				dmiData="$( $dmidecodePath 2>&1 )"
 			fi
-			DMIDECODE_DATA="$( echo "$dmiData" | gawk -F ':' '
-			BEGIN {
-				IGNORECASE=1
-				cutExtraTab="false"
-				twoData=""
-				oneData=""
-			}
-			{
-				# no idea why, but freebsd gawk does not do this right
-				oneData=$1
-				twoData=$2
-				if ( twoData != "" ) {
-					twoHolder="true"
+			# these tests first, because bsd error messages like this (note how many : are in the string)
+			# inxi: line 4928: /usr/local/sbin/dmidecode: Permission denied
+			if [[ ${#dmiData} -lt 100  ]];then
+				if [[ -z ${dmiData/*Permission denied*/} ]];then
+				# if [[ -n $( grep -i 'Permission denied' <<< "$dmiData" ) ]];then
+					DMIDECODE_DATA='dmidecode-error-requires-root'
+				# this handles very old systems, like Lenny 2.6.26, with dmidecode, but no data
+				elif [[ -n $( grep -i 'no smbios ' <<< "$dmiData" ) ]];then
+					DMIDECODE_DATA='dmidecode-error-no-smbios-dmi-data'
+				else
+					DMIDECODE_DATA='dmidecode-error-unknown-error'
+				fi
+			else
+				DMIDECODE_DATA="$( echo "$dmiData" | gawk -F ':' '
+				BEGIN {
+					IGNORECASE=1
+					cutExtraTab="false"
+					twoData=""
+					oneData=""
 				}
-				else {
-					twoHolder="false"
-				}
-				if ( $0 ~ /^\tDMI type/ ) {
-					sub(/^\tDMI type.*/, "", $0)
-					cutExtraTab="true"
-				}
-				
-				gsub(/'"$BAN_LIST_NORMAL"'/, "", twoData)
-				gsub(/,/, " ", twoData)
-				# clean out Handle line
-				# sub(/^Handle.*/,"", $0)
-				sub(/^[[:space:]]*Inactive.*/,"",twoData)
-				# yes, there is a typo in a user data set, unknow
-				# Base Board Version|Base Board Serial Number
-				# Chassis Manufacturer|Chassis Version|Chassis Serial Number
-				# System manufacturer|System Product Name|System Version
-				# To Be Filled By O.E.M.
-				# strip out starting white space so that the following stuff will clear properly
-				sub(/^[[:space:]]+/, "", twoData)
-				sub(/^Base Board .*|^Chassis .*|.*O\.E\.M\..*|.*OEM.*|^Not .*|^System .*|.*unknow.*|.*N\/A.*|none|^To be filled.*|^0x[0]+$|\[Empty\]|<Bad Index>|^\.\.$/, "", twoData) 
-				sub(/.*(AssetTagNum|Manufacturer| Or Motherboard|PartNum.*|SerNum).*/, "", twoData)
-				gsub(/bios|acpi/, "", twoData)
-				sub(/http:\/\/www.abit.com.tw\//, "Abit", twoData)
-				
-				# for double indented values replace with ~ so later can test for it, we are trusting that
-				# indentation will be tabbed in this case
-				# special case, dmidecode 2.2 has an extra tab and a DMI type line
-				if ( cutExtraTab == "true" ) {
-					sub(/^\t\t\t+/, "~", oneData)
-				}
-				else {
-					sub(/^\t\t+/, "~", oneData)
-				}
-				gsub(/ [ \t]+/, " ", twoData)
-				gsub(/^[[:space:]]+|[[:space:]]+$/, "", twoData)
-				gsub(/^[[:space:]]+|[[:space:]]+$/, "", oneData)
-				
-				# reconstructing the line for processing so gawk can use -F : again
-				if ( oneData != "" && twoHolder == "true" ) {
-					print oneData ":" twoData
-				}
-				else {
-					# make sure all null lines have no spaces in them!
-					gsub(/^[[:space:]]+|[[:space:]]+$/,"",$0)
-					print $0
-				}
-			}' \
-			| sed '/^$/{
+				{
+					# no idea why, but freebsd gawk does not do this right
+					oneData=$1
+					twoData=$2
+					if ( twoData != "" ) {
+						twoHolder="true"
+					}
+					else {
+						twoHolder="false"
+					}
+					if ( $0 ~ /^\tDMI type/ ) {
+						sub(/^\tDMI type.*/, "", $0)
+						cutExtraTab="true"
+					}
+					gsub(/'"$BAN_LIST_NORMAL"'/, "", twoData)
+					gsub(/,/, " ", twoData)
+					# clean out Handle line
+					# sub(/^Handle.*/,"", $0)
+					sub(/^[[:space:]]*Inactive.*/,"",twoData)
+					# yes, there is a typo in a user data set, unknow
+					# Base Board Version|Base Board Serial Number
+					# Chassis Manufacturer|Chassis Version|Chassis Serial Number
+					# System manufacturer|System Product Name|System Version
+					# To Be Filled By O.E.M.
+					# strip out starting white space so that the following stuff will clear properly
+					sub(/^[[:space:]]+/, "", twoData)
+					sub(/^Base Board .*|^Chassis .*|.*O\.E\.M\..*|.*OEM.*|^Not .*|^System .*|.*unknow.*|.*N\/A.*|none|^To be filled.*|^0x[0]+$|\[Empty\]|<Bad Index>|^\.\.$/, "", twoData) 
+					sub(/.*(AssetTagNum|Manufacturer| Or Motherboard|PartNum.*|SerNum).*/, "", twoData)
+					gsub(/bios|acpi/, "", twoData)
+					sub(/http:\/\/www.abit.com.tw\//, "Abit", twoData)
+					
+					# for double indented values replace with ~ so later can test for it, we are trusting that
+					# indentation will be tabbed in this case
+					# special case, dmidecode 2.2 has an extra tab and a DMI type line
+					if ( cutExtraTab == "true" ) {
+						sub(/^\t\t\t+/, "~", oneData)
+					}
+					else {
+						sub(/^\t\t+/, "~", oneData)
+					}
+					gsub(/ [ \t]+/, " ", twoData)
+					gsub(/^[[:space:]]+|[[:space:]]+$/, "", twoData)
+					gsub(/^[[:space:]]+|[[:space:]]+$/, "", oneData)
+					
+					# reconstructing the line for processing so gawk can use -F : again
+					if ( oneData != "" && twoHolder == "true" ) {
+						print oneData ":" twoData
+					}
+					else {
+						# make sure all null lines have no spaces in them!
+						gsub(/^[[:space:]]+|[[:space:]]+$/,"",$0)
+						print $0
+					}
+				}' \
+				| sed '/^$/{
 N
 /^\n$/D
 }' \
-			)"
+				)"
+			fi
 			# echo ":${DMIDECODE_DATA}:"
 			log_function_data "DMIDECODE_DATA (PRE): $DMIDECODE_DATA"
-			if [[ ${#DMIDECODE_DATA} -lt 100  ]];then
-				if [[ -z ${DMIDECODE_DATA/*Permission denied*/} ]];then
-				# if [[ -n $( grep -i 'Permission denied' <<< "$DMIDECODE_DATA" ) ]];then
-					DMIDECODE_DATA='dmidecode-error-requires-root'
-				# this handles very old systems, like Lenny 2.6.26, with dmidecode, but no data
-				elif [[ -n $( grep -i 'no smbios ' <<< "$DMIDECODE_DATA" ) ]];then
-					DMIDECODE_DATA='dmidecode-error-no-smbios-dmi-data'
-				else
-					echo $DMIDECODE_DATA
-					DMIDECODE_DATA='dmidecode-error-unknown-error'
-				fi
-			fi
+			
 		fi
 		B_DMIDECODE_SET='true'
 		log_function_data "DMIDECODE_DATA (POST): $DMIDECODE_DATA"
@@ -5026,7 +5166,8 @@ get_dmesg_boot_data()
 	if [[ $B_DMESG_BOOT_FILE == 'true' ]];then
 		# replace all indented items with ~ so we can id them easily while processing
 		# note that if user, may get error of read permissions
-		dmsg_boot_data="$( cat $FILE_DMESG_BOOT 2>/dev/null | sed $SED_RX 's/"//g' )"
+		# for some weird reason, real mem and avail mem are use a '=' separator, who knows why, the others are ':'
+		dmsg_boot_data="$( cat $FILE_DMESG_BOOT 2>/dev/null | sed -e 's/"//g' -e 's/[[:space:]]*=[[:space:]]*/:/g' -e 's/:[[:space:]]*/:/g' )"
 	fi
 	echo "$dmsg_boot_data"
 	# log_function_data "$dmsg_boot_data"
@@ -5244,8 +5385,10 @@ get_graphics_driver()
 			# failed/unloaded, which have not always actually been truly loaded
  			aDrivers[driver]="loaded" 
 		}
-		/Unloading[[:space:]].*('"$driver_list"')(|_drv.so)$/ {
-			driver=gensub(/(.*)Unloading[[:space:]].*('"$driver_list"')(|_drv.so)$/, "\\2", 1, $0 )
+		# openbsd uses UnloadModule: 
+		/(Unloading[[:space:]]|UnloadModule).*('"$driver_list"')(\"||_drv.so)$/ {
+			gsub(/\"/,"",$0)
+			driver=gensub(/(.*)(Unloading[[:space:]]|UnloadModule).*('"$driver_list"')(\"||_drv.so)$/, "\\3", 1, $0 )
 			# we need to make sure that the driver has already been truly loaded, not just discussed
 			if ( driver in aDrivers ) {
 				aDrivers[driver]="unloaded"
@@ -5721,7 +5864,7 @@ get_hard_drive_data_advanced()
 	eval $LOGFS
 	local a_temp_working='' a_temp_scsi='' temp_holder='' temp_name='' i='' j=''
 	local sd_ls_by_id='' ls_disk_by_id='' ls_disk_by_path='' usb_exists='' a_temp=''
-	local firewire_exists='' thunderbolt_exists=''
+	local firewire_exists='' thunderbolt_exists='' thunderbolt_exists=''
 
 	## check for all ide type drives, non libata, only do it if hdx is in array
 	## this is now being updated for new /sys type paths, this may handle that ok too
@@ -5829,6 +5972,7 @@ get_hard_drive_data_advanced()
 				else # 
 					usb_exists=$( grep -Em1 "usb-.*$temp_name.*${a_temp_working[0]}$" <<< "$ls_disk_by_id" )
 					firewire_exists=$( grep -Em1 "ieee1394-.*$temp_name.*${a_temp_working[0]}$" <<< "$ls_disk_by_id" )
+					# thunderbolt_exists=$( grep -Em1 "ieee1394-.*$temp_name.*${a_temp_working[0]}$" <<< "$ls_disk_by_id" )
 					# note: sometimes with wwn- numbering usb does not appear in by-id but it does in by-path
 					if [[ -z $usb_exists ]];then
 						usb_exists=$( grep -Em1 "usb-.*${a_temp_working[0]}$" <<< "$ls_disk_by_path" )
@@ -6280,7 +6424,7 @@ get_machine_data()
 get_memory_data()
 {
 	eval $LOGFS
-	local memory='' memory_full='' 
+	local memory='' memory_full='' used_memory=''
 	if [[ $B_MEMINFO_FILE == 'true' ]];then
 		memory=$( gawk '
 		/^MemTotal:/ {
@@ -6300,7 +6444,41 @@ get_memory_data()
 		if [[ $BSD_VERSION == 'openbsd' ]];then
 			gawk_fs='='
 		fi
-		memory=$( grep -i 'mem' <<< "$Sysctl_a_Data" | gawk -F "$gawk_fs"  '
+		# use this for all bsds, maybe we can get some useful data on other ones
+		if [[ -n $( type -p vmstat) ]];then
+			# avail mem:2037186560 (1942MB)
+			used_memory=$( vmstat 2>/dev/null | tail -n 1 | gawk '
+			# openbsd/linux
+			# procs    memory       page                    disks    traps          cpu
+			# r b w    avm     fre  flt  re  pi  po  fr  sr wd0 wd1  int   sys   cs us sy id
+			# 0 0 0  55256 1484092  171   0   0   0   0   0   2   0   12   460   39  3  1 96
+			# freebsd:
+			# procs      memory      page                    disks     faults         cpu
+			# r b w     avm    fre   flt  re  pi  po    fr  sr ad0 ad1   in   sy   cs us sy id
+			# 0 0 0  21880M  6444M   924  32  11   0   822 827   0   0  853  832  463  8  3 88
+
+			BEGIN {
+				IGNORECASE=1
+				memory=""
+			}
+			{
+				if ($4 ~ /M/ ){
+					sub(/M/,"",$4)
+					memory=$4*1024
+				}
+				else if ($4 ~ /G/ ){
+					sub(/G/,"",$4)
+					memory=$4*1024*1000
+				}
+				else {
+					sub(/K/,"",$4)
+					memory=$4
+				}
+				print memory " " 
+				exit
+			}' )
+		fi
+		memory=$( grep -i 'mem' <<< "$Sysctl_a_Data" | gawk -v usedMemory="$used_memory" -F "$gawk_fs"  '
 		BEGIN {
 			realMemory=""
 			freeMemory=""
@@ -6325,7 +6503,13 @@ get_memory_data()
 		END {
 			# hack: temp fix for openbsd/darwin: in case no free mem was detected but we have physmem
 			if ( freeMemory == "" && realMemory != "" ) {
-				printf("NA/%.1fMB\n", realMemory/1024)
+				# use openbsd avail mem data if available
+				if (usedMemory != "" ) {
+					printf("%.1f/%.1fMB\n", usedMemory/1024, realMemory/1024)
+				}
+				else {
+					printf("NA/%.1fMB\n", realMemory/1024)
+				}
 			}
 			else if ( freeMemory != "" && realMemory != "" ) {
 				used = realMemory - freeMemory
@@ -6697,7 +6881,7 @@ get_networking_usb_data()
 get_networking_wan_ip_data()
 {
 	eval $LOGFS
-	local ip=''
+	local ip='' ip_data='' downloader_error=0
 
 	# get ip using wget redirect to stdout. This is a clean, text only IP output url,
 	# single line only, ending in the ip address. May have to modify this in the future
@@ -6705,11 +6889,28 @@ get_networking_wan_ip_data()
 	# awk has bad regex handling so checking it with grep -E instead
 	# ip=$( echo  2001:0db8:85a3:0000:0000:8a2e:0370:7334 | gawk  --re-interval '
 	# ip=$( wget -q -O - $WAN_IP_URL | gawk  --re-interval '
-	ip=$( wget -t 4 -T $WGET_TIMEOUT -q -O - $WAN_IP_URL | gawk  --re-interval '
+	case $DOWNLOADER in
+		curl)
+			ip_data="$( curl -y $DL_TIMEOUT -s $WAN_IP_URL )" || downloader_error=$?
+			;;
+		fetch)
+			ip_data="$( fetch -T $DL_TIMEOUT -q -o - $WAN_IP_URL )" || downloader_error=$?
+			;;
+		ftp)
+			ip_data="$( ftp -o - $WAN_IP_URL 2>/dev/null )" || downloader_error=$?
+			;;
+		wget)
+			ip_data="$( wget -T $DL_TIMEOUT -q -O - $WAN_IP_URL )" || downloader_error=$?
+			;;
+		no-downloader)
+			downloader_error=1
+			;;
+	esac
+	ip=$( gawk  --re-interval '
 	{
 		#gsub("\n","",$2")
 		print $NF
-	}' )
+	}' <<< "$ip_data" )
 	# validate the data
 	if [[ -z $ip ]];then
 		ip='None Detected!'
@@ -6856,7 +7057,12 @@ get_optical_drive_data()
 	
 	local a_temp='' sys_uevent_path='' proc_cdrom='' link_list=''
 	local separator='' linked='' working_disk='' disk='' item_string='' proc_info_string='' 
-	local dev_disks_full="$( ls /dev/dvd* /dev/cd* /dev/scd* /dev/sr* 2>/dev/null  )"
+	local dev_disks_full=''
+	if [[ $BSD_TYPE != 'bsd' ]];then
+		dev_disks_full="$( ls /dev/dvd* /dev/cd* /dev/scd* /dev/sr* 2>/dev/null | grep -vE 'random' )"
+	else
+		dev_disks_full="$( ls /dev/dvd* /dev/cd* /dev/scd* 2>/dev/null )"
+	fi
 	## Not using this now because newer kernel is NOT linking all optical drives. Some, but not all
 	# Some systems don't support xargs -L plus the unlinked optical drive unit make this not a good option
 	# get the actual disk dev location, first try default which is easier to run, need to preserve line breaks
@@ -7050,10 +7256,10 @@ get_partition_data()
 		swap_data="$( swapctl -l 2>/dev/null )"
 		# default size is 512, -H only for size in human readable format
 		# older bsds don't support -T, pain, so we'll use partial output there
-		if df -H -T &>/dev/null;then
-			df_string='df -H -T'
+		if df -h -T &>/dev/null;then
+			df_string='df -h -T'
 		else
-			df_string='df -H'
+			df_string='df -h'
 		fi
 	fi
 	main_partition_data="$( eval $df_string )"
@@ -7223,11 +7429,23 @@ get_partition_data()
 		# older bsds have df minus -T so can't get fs type easily, try using mount instead
 		if [[ $BSD_TYPE == 'bsd' ]] && [[ -z $fs_type && -n $dev_item ]];then
 			dev_bsd_item=$( sed -e 's/non-dev-//' -e 's|/|\\/|g' <<< "$dev_item" )
-			fs_type=$( gawk -F '(' '
+			fs_type=$( gawk -v bsdVersion=$BSD_VERSION -F '(' '
+			BEGIN {
+				IGNORECASE=1
+				fileSystem=""
+			}
 			/'$dev_bsd_item'/ {
-				# slice out everything after / plus the first comma
-				sub( /,.*/, "", $2 )
-				print $2
+				if ( bsdVersion != "openbsd" ) {
+					# slice out everything after / plus the first comma
+					sub( /,.*/, "", $2 )
+					fileSystem=$2
+				}
+				else {
+					# for openbsd: /dev/wd0f on /usr type ffs (local, nodev)
+					gsub( /^.*type[[:space:]]+|[[:space:]]*$/, "", $1 )
+					fileSystem=$1
+				}
+				print fileSystem
 				exit
 			}' <<< "$mount_data" )
 		fi
@@ -7618,7 +7836,7 @@ EOF"
 				sub(/:$/, "", pciId)
 				itemData=$4
 				chipId=gensub(/.*chip=([0-9a-f][0-9a-f][0-9a-f][0-9a-f])([0-9a-f][0-9a-f][0-9a-f][0-9a-f]).*/, "\\2:\\1", itemData )
-				if ( $2 == "class=020000" ) {
+				if ( $2 ~ /class=020000|class=0x068000/ ) {
 					class="network"
 				}
 				else if ( $2 == "class=030000" ) {
@@ -8671,7 +8889,7 @@ get_repo_data()
 	local repo_name=''
 	local apt_file='/etc/apt/sources.list' yum_repo_dir='/etc/yum.repos.d/' yum_conf='/etc/yum.conf'
 	local pacman_conf='/etc/pacman.conf' pacman_repo_dir='/etc/pacman.d/' pisi_dir='/etc/pisi/'
-	local zypp_repo_dir='/etc/zypp/repos.d/' freebsd_conf='/etc/portsnap.conf'
+	local zypp_repo_dir='/etc/zypp/repos.d/' freebsd_conf='/etc/portsnap.conf' openbsd_conf='/etc/pkg.conf'
 	
 	# apt - debian, buntus, also sometimes some yum/rpm repos may create apt repos here as well
 	if [[ -f $apt_file || -d $apt_file.d ]];then
@@ -8871,6 +9089,15 @@ $repo_data_working"
 			print "BSD ports servers:" repoFile ":" $2
 		}
 		' $freebsd_conf )"
+	elif [[ -f $openbsd_conf ]];then
+		REPO_DATA="$( gawk -F '=' -v repoFile=$openbsd_conf '
+		BEGIN {
+			IGNORECASE=1
+		}
+		/^installpath/ {
+			print "BSD ports servers:" repoFile ":" $2
+		}
+		' $openbsd_conf )"
 	fi
 	eval $LOGFE
 }
@@ -9384,8 +9611,8 @@ get_shell_data()
 		shell_type="$shell_type $shell_version"
 	fi
 	echo $shell_type
-	
-	eval $LOGFS
+	log_function_data "shell type: $shell_type"
+	eval $LOGFE
 }
 
 get_shell_parent()
@@ -9426,6 +9653,7 @@ get_sysctl_data()
 	fi
 	# log_function_data "sysctl_data: $sysctl_data"
 	echo "$sysctl_data"
+	
 	eval $LOGFE
 }
 
@@ -9595,7 +9823,7 @@ get_weather_data()
 	local location_site='http://geoip.ubuntu.com/lookup'
 	local weather_feed='http://api.wunderground.com/auto/wui/geo/WXCurrentObXML/index.xml?query='
 	local weather_spider='http://wunderground.com/'
-	local data_grab_error='' wget_error=0 
+	local data_grab_error='' downloader_error=0 
 	local b_test_loc=false b_test_weather=false b_debug=false
 	local test_dir="$HOME/bin/scripts/inxi/data/weather/"
 	local test_location='location2.xml' test_weather='weather-feed.xml'
@@ -9610,12 +9838,33 @@ get_weather_data()
 		# echo $ALTERNATE_WEATHER_LOCATION;exit
 	else
 		if [[ $b_test_loc != 'true' ]];then
-			location_data=$( wget -q -t 1 -T $WGET_TIMEOUT -O- $location_site || wget_error=$? )
+			case $DOWNLOADER in
+				curl)
+					location_data="$( curl -y $DL_TIMEOUT -s $location_site )" || downloader_error=$?
+					;;
+				fetch)
+					location_data="$( fetch -T $DL_TIMEOUT -q -o - $location_site )" || downloader_error=$?
+					;;
+				ftp)
+					location_data="$( ftp -o - $location_site 2>/dev/null )" || downloader_error=$?
+					;;
+				wget)
+					location_data="$( wget -t 1 -T $DL_TIMEOUT -q -O - $location_site )" || downloader_error=$?
+					;;
+				no-downloader)
+					downloader_error=100
+					;;
+			esac
 			log_function_data "$location_data"
-			if [[ $wget_error -ne 0 ]];then
-				data_grab_error="Error: location server up but download error - wget: $wget_error"
+			
+			if [[ $downloader_error -ne 0 ]];then
+				if [[ $downloader_error -eq 100 ]];then
+					data_grab_error="Error: No downloader tool available. Install wget, curl, or fetch."
+				else
+					data_grab_error="Error: location server up but download error - $DOWNLOADER: $downloader_error"
+				fi
 			fi
-			wget_error=0
+			downloader_error=0
 		else
 			if [[ -f $test_dir$test_location ]];then
 				location_data="$( cat $test_dir$test_location )"
@@ -9726,9 +9975,29 @@ get_weather_data()
 	# now either dump process or go on to get weather data
 	if [[ -z $data_grab_error ]];then
 		if [[ $b_test_weather != 'true' ]];then
-			weather_data="$( wget -q -t 1 -T $WGET_TIMEOUT -O- $weather_feed"$location" || wget_error=$? )"
-			if [[ $wget_error -ne 0 ]];then
-				data_grab_error="Error: weather server up but download error - wget: $wget_error"
+			case $DOWNLOADER in
+				curl)
+					weather_data="$( curl -y $DL_TIMEOUT -s $weather_feed"$location" )" || downloader_error=$?
+					;;
+				fetch)
+					weather_data="$( fetch -T $DL_TIMEOUT -q -o - $weather_feed"$location" )" || downloader_error=$?
+					;;
+				ftp)
+					weather_data="$( ftp -o - $weather_feed"$location" 2>/dev/null )" || downloader_error=$?
+					;;
+				wget)
+					weather_data="$( wget -t 1 -T $DL_TIMEOUT -q -O - $weather_feed"$location" )" || downloader_error=$?
+					;;
+				no-downloader)
+					downloader_error=100
+					;;
+			esac
+			if [[ $downloader_error -ne 0 ]];then
+				if [[ $downloader_error -eq 100 ]];then
+					data_grab_error="Error: No downloader tool available. Install wget, curl, or fetch."
+				else
+					data_grab_error="Error: weather server up but download error - $DOWNLOADER: $downloader_error"
+				fi
 			fi
 			log_function_data "$weather_data"
 		else
@@ -10072,19 +10341,36 @@ print_short_data()
 
 	# set A_CPU_CORE_DATA
 	get_cpu_core_count
-	local cpc_plural='' cpu_count_print='' model_plural=''
+	local cpc_plural='' cpu_count_print='' model_plural='' current_max_clock=''
 	local cpu_physical_count=${A_CPU_CORE_DATA[0]}
 	local cpu_core_count=${A_CPU_CORE_DATA[3]}
 	local cpu_core_alpha=${A_CPU_CORE_DATA[1]}
 	local cpu_type=${A_CPU_CORE_DATA[2]}
+	local kernel_os='' 
+	local cpu_data_string=''
+	
+	if [[ -z $BSD_TYPE || -n $cpu_type ]];then
+		cpu_type=" ($cpu_type)"
+	fi
+	
+	if [[ $BSD_TYPE == 'bsd' ]];then
+		kernel_os="${C1}OS${C2}$SEP1$( uname -rsp )" 
+	else
+		kernel_os="${C1}Kernel${C2}$SEP1$current_kernel"
+	fi
 
 	if [[ $cpu_physical_count -gt 1 ]];then
 		cpc_plural='(s)'
 		model_plural='s'
 		cpu_count_print="$cpu_physical_count "
+		# for multicpu systems, divide total cores by cpu count to get per cpu cores
+		$cpu_core_count=$(($cpu_core_count/$cpu_physical_count))
 	fi
-	
-	local cpu_data_string="$cpu_count_print$cpu_core_alpha core"
+	if [[ -z $BSD_TYPE ]];then
+		cpu_data_string="$cpu_count_print$cpu_core_alpha core"
+	else
+		cpu_data_string="$cpu_count_print$cpu_core_count core"
+	fi
 # 	local cpu_core_count=${A_CPU_CORE_DATA[0]}
 
 	# load A_HDD_DATA
@@ -10103,6 +10389,9 @@ print_short_data()
 
 	IFS=","
 	local a_cpu_working=(${A_CPU_DATA[0]})
+	# this gets that weird min/max final array item, which almost never contains any data of use
+	local current_max_clock_nu=$(( ${#A_CPU_DATA[@]} - 1 ))
+	local a_cpu_speeds=(${A_CPU_DATA[$current_max_clock_nu]})
 	IFS="$ORIGINAL_IFS"
 	local cpu_model="${a_cpu_working[0]}"
 	## assemble data for output
@@ -10111,15 +10400,23 @@ print_short_data()
 	# if [[ -z ${a_cpu_working[1]} || ${a_cpu_working[1]} < 50 ]];then
 	#	a_cpu_working[1]=$(get_cpu_speed_hack)
 	# fi
-	# this gets that weird min/max final array item, which almost never contains any data of use
-	local min_max_clock_nu=$(( ${#A_CPU_DATA[@]} - 1 ))
-	local min_max_clock=${A_CPU_DATA[$min_max_clock_nu]/.* Mhz/ Mhz}
+	
 	# this handles the case of for example ARM cpus, which will not have data for
 	# min/max, since they don't have speed. Since that sets a flag, not found, just
 	# look for that and use the speed from the first array array, same where we got 
 	# model from
-	if [[ "$min_max_clock" == 'N/A' && ${a_cpu_working[1]} != '' ]];then
-		min_max_clock="${a_cpu_working[1]} MHz"
+	# index: 0 speed ; 1 min ; 2 max
+	# this handles bsd types which always should show N/A unless we get a way to get min / max data
+	if [[ "${a_cpu_speeds[0]}" == 'N/A' && ${a_cpu_working[1]} != '' ]];then
+		current_max_clock="${a_cpu_working[1]} MHz"
+	else
+		if [[ ${a_cpu_speeds[2]} != 0 ]];then
+			if [[ ${a_cpu_speeds[0]} == ${a_cpu_speeds[2]} ]];then
+				current_max_clock="${a_cpu_speeds[0]} MHz"
+			else
+				current_max_clock="${a_cpu_speeds[0]} MHz (max ${a_cpu_speeds[2]} MHz)"
+			fi
+		fi
 	fi
 	local patch_version_number=$( get_patch_version_string )
 
@@ -10146,7 +10443,7 @@ print_short_data()
 			#C1="${C1},1"; C2="${C2},1"; CN="${CN},1"
 		fi
 	fi
-	short_data="${C1}CPU$cpc_plural${C2}$SEP1$cpu_data_string $cpu_model$model_plural ($cpu_type) clocked at $min_max_clock$SEP2${C1}Kernel${C2}$SEP1$current_kernel$SEP2${C1}Up${C2}$SEP1$up_time$SEP2${C1}Mem${C2}$SEP1$memory$SEP2${C1}HDD${C2}$SEP1$hdd_capacity($hdd_used)$SEP2${C1}Procs${C2}$SEP1$processes$SEP2"
+	short_data="${C1}CPU$cpc_plural${C2}$SEP1$cpu_data_string $cpu_model$model_plural$cpu_type clocked at $current_max_clock$SEP2$kernel_os$SEP2${C1}Up${C2}$SEP1$up_time$SEP2${C1}Mem${C2}$SEP1$memory$SEP2${C1}HDD${C2}$SEP1$hdd_capacity($hdd_used)$SEP2${C1}Procs${C2}$SEP1$processes$SEP2"
 
 	if [[ $SHOW_IRC -gt 0 ]];then
 		short_data="$short_data${C1}Client${C2}$SEP1$IRC_CLIENT$IRC_CLIENT_VERSION$SEP2"
@@ -10277,19 +10574,19 @@ print_audio_data()
 			fi
 			if [[ -n $audio_data ]];then
 				if [[ $( calculate_line_length "$card_string$audio_data" ) -lt $COLS_INNER ]];then
-					print_data=$( create_print_line "$line_starter" "$card_string$audio_data${CN}" )
+					print_data=$( create_print_line "$line_starter" "$card_string$audio_data" )
 					print_screen_output "$print_data"
 				# print the line
 				else
 					# keep the driver on the same line no matter what, looks weird alone on its own line
 					if [[ $( calculate_line_length "$card_string$audio_data" ) -gt $COLS_INNER ]];then
-						print_data=$( create_print_line "$line_starter" "$card_string${CN}" )
+						print_data=$( create_print_line "$line_starter" "$card_string" )
 						print_screen_output "$print_data"
 						line_starter=' '
-						print_data=$( create_print_line "$line_starter" "$audio_data${CN}" )
+						print_data=$( create_print_line "$line_starter" "$audio_data" )
 						print_screen_output "$print_data"
 					else
-						print_data=$( create_print_line "$line_starter" "$card_string$audio_data${CN}" )
+						print_data=$( create_print_line "$line_starter" "$card_string$audio_data" )
 						print_screen_output "$print_data"
 					fi
 				fi
@@ -10302,7 +10599,7 @@ print_audio_data()
 			# alsa_data=$( sed 's/ALSA/Advanced Linux Sound Architecture/' <<< $alsa_data )
 			alsa_data=${alsa_data/ALSA/Advanced Linux Sound Architecture}
 		fi
-		alsa_data=$( create_print_line "$line_starter" "$alsa_data${CN}" )
+		alsa_data=$( create_print_line "$line_starter" "$alsa_data" )
 		print_screen_output "$alsa_data"
 	fi
 	eval $LOGFE
@@ -10311,13 +10608,13 @@ print_audio_data()
 print_cpu_data()
 {
 	eval $LOGFS
-	local cpu_data='' i='' cpu_clock_speed='' cpu_multi_clock_data=''
+	local cpu_data='' i='' cpu_clock_speed='' cpu_multi_clock_data='' a_cpu_speeds=''
 	local bmip_data='' cpu_cache='' cpu_vendor='' cpu_flags='' flag_feature='flags'
-	local a_cpu_working='' cpu_model='' cpu_clock='' cpu_null_error=''
+	local a_cpu_working='' cpu_model='' cpu_clock='' cpu_null_error='' max_speed=''
 	local cpc_plural='' cpu_count_print='' model_plural='' cpu_data_string=''
 	local cpu_physical_count='' cpu_core_count='' cpu_core_alpha='' cpu_type=''
-	local cpu_2_data='' working_cpu='' temp1=''
-	local line_starter="CPU:" multi_cpu_starter="${C1}Clock Speeds$SEP3${C2} "
+	local cpu_2_data='' working_cpu='' temp1='' per_cpu_cores='' current_max_clock_nu=''
+	local line_starter="CPU:" multi_cpu_starter="${C1}Clock speeds$SEP3${C2} "
 
 	##print_screen_output "A_CPU_DATA[0]=\"${A_CPU_DATA[0]}\""
 	# Array A_CPU_DATA always has one extra element: max clockfreq found.
@@ -10327,6 +10624,8 @@ print_cpu_data()
 
 	IFS=","
 	a_cpu_working=(${A_CPU_DATA[0]})
+	current_max_clock_nu=$(( ${#A_CPU_DATA[@]} - 1 ))
+	a_cpu_speeds=(${A_CPU_DATA[$current_max_clock_nu]})
 	IFS="$ORIGINAL_IFS"
 
 	# Strange (and also some expected) behavior encountered. If print_screen_output() uses $1
@@ -10355,8 +10654,21 @@ print_cpu_data()
 			model_plural='s'
 		fi
 		line_starter="CPU$cpc_plural:"
-		cpu_data_string="$cpu_count_print$cpu_core_alpha core"
-		cpu_data="${C1}$cpu_data_string${C2} ${a_cpu_working[0]}$model_plural ($cpu_type)"
+		if [[ -z $BSD_TYPE ]];then
+			cpu_data_string="$cpu_count_print$cpu_core_alpha core"
+			cpu_data="${C1}$cpu_data_string${C2} ${a_cpu_working[0]}$model_plural ($cpu_type)"
+		else
+			if [[ $cpu_physical_count -gt 1 ]];then
+				per_cpu_cores=$(($cpu_core_count/$cpu_physical_count))
+				cpu_data_string="${C1}Cores$SEP3${C2} $cpu_core_count ($cpu_physical_count $per_cpu_cores core cpus) "
+			else
+				cpu_data_string="${C1}Cores$SEP3${C2} $cpu_core_count "
+			fi
+			if [[ -n $cpu_type ]];then
+				cpu_type=" ($cpu_type)"
+			fi
+			cpu_data="$cpu_data_string${C1}model$SEP3${C2} ${a_cpu_working[0]}$cpu_type"
+		fi
 		if [[ $B_SHOW_CPU == 'true' ]];then
 			# update for multicore, bogomips x core count.
 			if [[ $B_EXTRA_DATA == 'true' ]];then
@@ -10427,6 +10739,14 @@ print_cpu_data()
 			else
 				a_cpu_working[1]="${a_cpu_working[1]%.*} MHz"
 			fi
+			# this handles bsd case unless we get a way to get max/min cpu speeds
+			if [[ ${a_cpu_speeds[2]} != 0 ]];then
+				if [[ ${a_cpu_speeds[0]} == ${a_cpu_speeds[2]} ]];then
+					a_cpu_working[1]="${a_cpu_speeds[0]} MHz (max)"
+				else
+					a_cpu_working[1]="${a_cpu_speeds[0]} MHz (max ${a_cpu_speeds[2]} MHz)"
+				fi
+			fi
 			cpu_clock_speed="${C1}clocked at${C2} ${a_cpu_working[1]}"
 		fi
 		cpu_2_data="$cpu_2_data$cpu_clock_speed"
@@ -10438,23 +10758,26 @@ print_cpu_data()
 	fi
 # 	echo $cpu_data $cpu_2_data
 # 	echo ln: $( calculate_line_length "$cpu_data $cpu_2_data" )
-# 	echo cpl: $( create_print_line "$line_starter" "$cpu_2_data${CN}" ):
+# 	echo cpl: $( create_print_line "$line_starter" "$cpu_2_data" ):
 # 	echo icols: $COLS_INNER
 # 	echo tc: $TERM_COLUMNS
 	# echo :${cpu_2_data}:
 	if [[ -n $cpu_2_data && $( calculate_line_length "$cpu_data $cpu_2_data" ) -gt $COLS_INNER ]];then
-		cpu_data=$( create_print_line "$line_starter" "$cpu_data${CN}" )
+		cpu_data=$( create_print_line "$line_starter" "$cpu_data" )
 		line_starter=' '
 		print_screen_output "$cpu_data"
-		cpu_data=$( create_print_line " " "$cpu_2_data${CN}" )
+		cpu_data=$( create_print_line " " "$cpu_2_data" )
 		print_screen_output "$cpu_data"
 	else
-		cpu_data=$( create_print_line "$line_starter" "$cpu_data${CN}" )
+		cpu_data=$( create_print_line "$line_starter" "$cpu_data" )
 		print_screen_output "$cpu_data $cpu_2_data"
 	fi
-	# we don't this printing out extra line unless > 1 cpu core
+	# we don't do this printing out extra line unless > 1 cpu core
 	# note the numbering, the last array item is the min/max/not found for cpu speeds
 	if [[ ${#A_CPU_DATA[@]} -gt 2 && $B_SHOW_CPU == 'true' ]];then
+		if [[ ${a_cpu_speeds[2]} != 0 ]];then
+			max_speed="${C1}max$SEP3${C2} ${a_cpu_speeds[2]} MHz "
+		fi
 		for (( i=0; i < ${#A_CPU_DATA[@]}-1; i++ ))
 		do
 			IFS=","
@@ -10467,7 +10790,8 @@ print_cpu_data()
 			#	break
 			#fi
 			# echo $(calculate_line_length "$multi_cpu_starter$SEP3 $cpu_multi_clock_data" )
-			working_cpu="${C1}$(( i + 1 ))$SEP3${C2} ${a_cpu_working[1]%.*} MHz "
+			working_cpu="$max_speed${C1}$(( i + 1 ))$SEP3${C2} ${a_cpu_working[1]%.*} MHz "
+			max_speed=''
 			if [[ -n $cpu_multi_clock_data && \
 			$( calculate_line_length "$multi_cpu_starter$cpu_multi_clock_data$working_cpu" ) -gt $COLS_INNER ]];then
 				cpu_multi_clock_data=$( create_print_line " " "$multi_cpu_starter$cpu_multi_clock_data" )
@@ -10523,11 +10847,13 @@ print_cpu_flags_full()
 			a_cpu_flags[$counter]=$flag_string
 			flag_string=$flag
 			(( counter++ ))
-		fi
+		fi	
 		temp_string=''
 	done
 	if [[ -n $flag_string ]];then
 		a_cpu_flags[$counter]=$flag_string
+	else
+		a_cpu_flags[$counter]='No CPU flag data found.'
 	fi
 	# then print it out
 	for (( i=0; i < ${#a_cpu_flags[@]};i++ ))
@@ -10549,10 +10875,13 @@ print_dmidecode_error()
 	local sysDmiError='Using '
 	
 	if [[ $1 == 'sys' ]];then
-		sysDmiError='No /sys/class/dmi; using '
-	fi
-	if [[ $B_FORCE_DMIDECODE == 'true' && $1 == 'sys' ]];then
-		sysDmiError='Forcing '
+		if [[ $B_FORCE_DMIDECODE == 'true' ]];then
+			sysDmiError='Forcing '
+		elif [[ $BSD_TYPE == '' || -d /sys ]];then
+			sysDmiError='No /sys/class/dmi; using '
+		else
+			sysDmiError='Using '
+		fi
 	fi
 	if [[ $2 == 'dmidecode-error-requires-root' ]];then
 		error_message="${sysDmiError}dmidecode: you must be root to run dmidecode"
@@ -10670,8 +10999,8 @@ print_graphics_data()
 	if [[ -n $root_x_string ]];then
 		root_x_string="${C1}Advanced Data$SEP3${C2} N/A $root_x_string"
 	fi
-	
-	if [[ ${#A_GRAPHICS_CARD_DATA[@]} -gt 0 ]];then
+	# note, this comes out with a count of 1 sometimes for null data
+	if [[ ${A_GRAPHICS_CARD_DATA[0]} != '' ]];then
 		for (( i=0; i < ${#A_GRAPHICS_CARD_DATA[@]}; i++ ))
 		do
 			IFS=","
@@ -10915,7 +11244,7 @@ print_hard_disk_data()
 		# temporary message to indicate not yet supported
 		if [[ $BSD_TYPE == 'bsd' ]];then
 			hdd_data=$bsd_unsupported
-			hdd_data=$( create_print_line "$Line_Starter" "$hdd_data${CN}" )
+			hdd_data=$( create_print_line "$Line_Starter" "$hdd_data" )
 			print_screen_output "$hdd_data"
 			Line_Starter=' '
 		fi
@@ -10925,7 +11254,7 @@ print_hard_disk_data()
 		if [[ $BSD_TYPE == 'bsd' ]];then
 			hdd_data=$bsd_unsupported
 		fi
-		hdd_data=$( create_print_line "$Line_Starter" "$hdd_data${CN}" )
+		hdd_data=$( create_print_line "$Line_Starter" "$hdd_data" )
 		print_screen_output "$hdd_data"
 		Line_Starter=' '
 	fi
@@ -11041,7 +11370,7 @@ print_info_data()
 	# sometimes gcc is very long, and default runlevel can be long with systemd, so create a gcc-less line first
 	if [[ $( calculate_line_length "$info_data$init_data$gcc_installed" ) -gt $COLS_INNER ]];then
 		# info_data=$info_data
-		info_data=$( create_print_line "$line_starter" "$info_data${CN}" )
+		info_data=$( create_print_line "$line_starter" "$info_data" )
 		print_screen_output "$info_data"
 		info_data=''
 		# closing_data=''
@@ -11050,7 +11379,7 @@ print_info_data()
 	fi
 	if [[ $( calculate_line_length "$init_data$gcc_installed" ) -gt $COLS_INNER ]];then
 		info_data=$init_data
-		info_data=$( create_print_line "$line_starter" "$info_data${CN}" )
+		info_data=$( create_print_line "$line_starter" "$info_data" )
 		print_screen_output "$info_data"
 		info_data=''
 		init_data=''
@@ -11059,7 +11388,7 @@ print_info_data()
 	fi
 	if [[ $( calculate_line_length "$info_data$init_data$gcc_installed$closing_data" ) -gt $COLS_INNER ]];then
 		info_data=$info_data$init_data$gcc_installed
-		info_data=$( create_print_line "$line_starter" "$info_data${CN}" )
+		info_data=$( create_print_line "$line_starter" "$info_data" )
 		print_screen_output "$info_data"
 		info_data=''
 		gcc_installed=''
@@ -11069,7 +11398,7 @@ print_info_data()
 	fi
 	info_data="$info_data$init_data$gcc_installed$closing_data"
 	
-	info_data=$( create_print_line "$line_starter" "$info_data${CN}" )
+	info_data=$( create_print_line "$line_starter" "$info_data" )
 	if [[ $SCHEME -gt 0 ]];then
 		info_data="$info_data ${NORMAL}"
 	fi
@@ -11224,18 +11553,18 @@ print_machine_data()
 		bios_line=''
 		chassis_line=''
 	fi
-	system_line=$( create_print_line "Machine:" "$system_line${CN}" )
+	system_line=$( create_print_line "Machine:" "$system_line" )
 	print_screen_output "$system_line"
 	if [[ -n $mobo_line ]];then
-		mobo_line=$( create_print_line " " "$mobo_line${CN}" )
+		mobo_line=$( create_print_line " " "$mobo_line" )
 		print_screen_output "$mobo_line"
 	fi
 	if [[ -n $bios_line ]];then
-		bios_line=$( create_print_line " " "$bios_line${CN}" )
+		bios_line=$( create_print_line " " "$bios_line" )
 		print_screen_output "$bios_line"
 	fi
 	if [[ -n $chassis_line ]];then
-		chassis_line=$( create_print_line " " "$chassis_line${CN}" )
+		chassis_line=$( create_print_line " " "$chassis_line" )
 		print_screen_output "$chassis_line"
 	fi
 	
@@ -11390,7 +11719,7 @@ print_networking_data()
 		done
 	else
 		network_data="${C1}Card$SEP3${C2} Failed to Detect Network Card! "
-		network_data=$( create_print_line "$line_starter" "$network_data${CN}" )
+		network_data=$( create_print_line "$line_starter" "$network_data" )
 		print_screen_output "$network_data"
 	fi
 	if [[ $B_SHOW_IP == 'true' ]];then
@@ -11443,12 +11772,12 @@ print_network_advanced_data()
 	network_data="${C1}IF$SEP3${C2} $if_id ${C1}state$SEP3${C2} $oper_state $speed_string$duplex_string"
 	part_2_data="${C1}mac$SEP3${C2} $mac_id"
 	if [[ $( calculate_line_length "$network_data$part_2_data" ) -gt $COLS_INNER ]];then
-		network_data=$( create_print_line " " "$network_data${CN}" )
+		network_data=$( create_print_line " " "$network_data" )
 		print_screen_output "$network_data"
 		network_data=''
 	fi
 	if [[ -n $network_data$part_2_data ]];then
-		network_data=$( create_print_line " " "$network_data$part_2_data${CN}" )
+		network_data=$( create_print_line " " "$network_data$part_2_data" )
 		print_screen_output "$network_data"
 		network_data=''
 	fi
@@ -11513,14 +11842,14 @@ print_networking_ip_data()
 		# first line, print wan on its own line if too long
 		if [[ $i -eq 0 ]];then
 			if [[ $( calculate_line_length "$wan_ip_data$if_string" ) -gt $COLS_INNER ]];then
-				full_string=$( create_print_line " " "$wan_ip_data${CN}" )
+				full_string=$( create_print_line " " "$wan_ip_data" )
 				print_screen_output "$full_string"
 				wan_ip_data=''
-				full_string=$( create_print_line " " "$if_string${CN}" )
+				full_string=$( create_print_line " " "$if_string" )
 				print_screen_output "$full_string"
 				if_string=''
 			else
-				full_string=$( create_print_line " " "$wan_ip_data$if_string${CN}" )
+				full_string=$( create_print_line " " "$wan_ip_data$if_string" )
 				print_screen_output "$full_string"
 				wan_ip_data=''
 				if_string=''
@@ -11528,7 +11857,7 @@ print_networking_ip_data()
 		else 
 			if [[ $( calculate_line_length "$if_string_holding$if_string" ) -gt $COLS_INNER ]];then
 				if [[ -n $if_string_holding ]];then
-					full_string=$( create_print_line " " "$if_string_holding${CN}" )
+					full_string=$( create_print_line " " "$if_string_holding" )
 					print_screen_output "$full_string"
 				fi
 				if_string_holding="$if_string"
@@ -11541,7 +11870,7 @@ print_networking_ip_data()
 	
 	# then print out anything not printed already
 	if [[ -n $if_string_holding ]];then
-		full_string=$( create_print_line " " "$if_string_holding${CN}" )
+		full_string=$( create_print_line " " "$if_string_holding" )
 		print_screen_output "$full_string"
 	fi
 	eval $LOGFE
@@ -11620,30 +11949,30 @@ print_optical_drive_data()
 			fi
 			drive_data="${C1}Optical${counter}$SEP3${C2} $drive_string"
 			if [[ $( calculate_line_length "$drive_data$part_2_data" ) -lt $COLS_INNER ]];then
-				drive_data=$( create_print_line "$Line_Starter" "$drive_data$part_2_data${CN}" )
+				drive_data=$( create_print_line "$Line_Starter" "$drive_data$part_2_data" )
 				print_screen_output "$drive_data"
 				Line_Starter=' '
 				drive_data=''
 				part_2_data=''
 			else
 				if [[ $( calculate_line_length "$drive_data" ) -gt $COLS_INNER ]];then
-					drive_data=$( create_print_line "$Line_Starter" "$drive_data${CN}" )
+					drive_data=$( create_print_line "$Line_Starter" "$drive_data" )
 					print_screen_output "$drive_data"
 					Line_Starter=' '
 					drive_data=''
 				fi
 				if [[ $( calculate_line_length "$drive_data$part_2_data" ) -lt $COLS_INNER ]];then
-					drive_data=$( create_print_line "$Line_Starter" "$drive_data$part_2_data${CN}" )
+					drive_data=$( create_print_line "$Line_Starter" "$drive_data$part_2_data" )
 					print_screen_output "$drive_data"
 					Line_Starter=' '
 					part_2_data=''
 					drive_data=''
 				else
-					drive_data=$( create_print_line "$Line_Starter" "$drive_data${CN}" )
+					drive_data=$( create_print_line "$Line_Starter" "$drive_data" )
 					print_screen_output "$drive_data"
 					drive_data=''
 					Line_Starter=' '
-					drive_data=$( create_print_line "$Line_Starter" "$part_2_data${CN}" )
+					drive_data=$( create_print_line "$Line_Starter" "$part_2_data" )
 					print_screen_output "$drive_data"
 					Line_Starter=' '
 					part_2_data=''
@@ -11719,13 +12048,13 @@ print_optical_drive_data()
 				drive_data="${C1}Features: speed$SEP3${C2} $speed $multisession"
 				part_2_data="$audio${C1}dvd$SEP3${C2} $dvd ${C1}rw$SEP3${C2} $rw_support $state"
 				if [[ $( calculate_line_length "$drive_data$part_2_data" ) -lt $COLS_INNER ]];then
-					drive_data=$( create_print_line "$Line_Starter" "$drive_data$part_2_data${CN}" )
+					drive_data=$( create_print_line "$Line_Starter" "$drive_data$part_2_data" )
 					print_screen_output "$drive_data"
 					Line_Starter=' '
 				else
 					drive_data=$( create_print_line "$Line_Starter" "$drive_data" )
 					print_screen_output "$drive_data"
-					drive_data=$( create_print_line "$Line_Starter" "$part_2_data${CN}" )
+					drive_data=$( create_print_line "$Line_Starter" "$part_2_data" )
 					print_screen_output "$drive_data"
 					Line_Starter=' '
 				fi
@@ -11840,7 +12169,7 @@ print_partition_data()
 			line_starter=' '
 		fi
 		if [[ -n ${a_partition_data[$i]} ]];then
-			partition_data=$( create_print_line "$line_starter" "${a_partition_data[$i]}${CN}" )
+			partition_data=$( create_print_line "$line_starter" "${a_partition_data[$i]}" )
 			print_screen_output "$partition_data"
 		fi
 	done
@@ -11908,7 +12237,7 @@ print_ps_item()
 	fi
 	
 	# appName, appPath, appStarterName, appStarterPath, cpu, mem, pid, vsz, user
-	ps_data=$( create_print_line "$line_starter" "$line_start_data${CN}" )
+	ps_data=$( create_print_line "$line_starter" "$line_start_data" )
 	print_screen_output "$ps_data"
 
 	for (( i=0; i < ${#A_PS_DATA[@]}; i++ ))
@@ -11947,7 +12276,7 @@ print_ps_item()
 		(( line_counter++ ))
 		count_nu="${C1}$line_counter$SEP3${C2}"
 		full_line="$count_nu$app_cpu$app_mem$app_name$app_pid$extra_data"
-		ps_data=$( create_print_line " " "$full_line${CN}" )
+		ps_data=$( create_print_line " " "$full_line" )
 		print_screen_output "$ps_data"
 	done
 	
@@ -12235,7 +12564,7 @@ print_raid_data()
 			fi
 			if [[ $B_EXTRA_EXTRA_DATA == 'true' && $array_count != '' ]];then
 				if [[ $i == 0 ]];then
-					raid_data=$( create_print_line "$line_starter" "${a_raid_data[array_count]}${CN}" )
+					raid_data=$( create_print_line "$line_starter" "${a_raid_data[array_count]}" )
 					print_screen_output "$raid_data"
 					line_starter=' '
 				fi
@@ -12244,7 +12573,7 @@ print_raid_data()
 			print_screen_output "$raid_data"
 			if [[ $B_EXTRA_EXTRA_DATA == 'true' && $array_count_unused != '' ]];then
 				if [[ $i == $(( array_count_unused - 2 )) ]];then
-					raid_data=$( create_print_line "$line_starter" "${a_raid_data[array_count_unused]}${CN}" )
+					raid_data=$( create_print_line "$line_starter" "${a_raid_data[array_count_unused]}" )
 					print_screen_output "$raid_data"
 				fi
 			fi
@@ -12321,7 +12650,7 @@ print_ram_data()
 					memory_line="${C1}Array-$array_counter capacity$SEP3${C2} $max_capacity ${C1}devices$SEP3${C2} $nu_of_devices ${C1}EC$SEP3${C2} $error_correction "
 					line_2="$max_module_size$module_voltage"
 					if [[ -n $line_2 && $( calculate_line_length "$memory_line$line_2" ) -gt $COLS_INNER ]];then
-						memory_line=$( create_print_line "$line_starter" "$memory_line${CN}" )
+						memory_line=$( create_print_line "$line_starter" "$memory_line" )
 						print_screen_output "$memory_line"
 						memory_line="$line_2"
 						line_starter=' '
@@ -12452,12 +12781,12 @@ print_ram_data()
 					# echo $( calculate_line_length "$memory_line" )
 					# echo $( calculate_line_length "$memory_line$line_2" )
 					if [[ $( calculate_line_length "$memory_line$line_2$line_3" ) -gt $COLS_INNER ]];then
-						memory_line=$( create_print_line "$line_starter" "$memory_line${CN}" )
+						memory_line=$( create_print_line "$line_starter" "$memory_line" )
 						print_screen_output "$memory_line"
 						memory_line="$line_2"
 						line_starter=' '
 						if [[ -n $memory_line && -n $line_3 && $( calculate_line_length "$memory_line$line_3" ) -gt $COLS_INNER ]];then
-							memory_line=$( create_print_line "$line_starter" "$memory_line${CN}" )
+							memory_line=$( create_print_line "$line_starter" "$memory_line" )
 							print_screen_output "$memory_line"
 							memory_line="$line_3"
 						else
@@ -12468,7 +12797,7 @@ print_ram_data()
 					fi
 					(( device_counter++ ))
 				fi
-				memory_line=$( create_print_line "$line_starter" "$memory_line${CN}" )
+				memory_line=$( create_print_line "$line_starter" "$memory_line" )
 				print_screen_output "$memory_line"
 				line_starter=' '
 			done
@@ -12480,7 +12809,7 @@ print_ram_data()
 	IFS="$ORIGINAL_IFS"
 	memory_line=${memory_line## }
 	if [[ -n $memory_line ]];then
-		memory_line=$( create_print_line "$line_starter" "$memory_line${CN}" )
+		memory_line=$( create_print_line "$line_starter" "$memory_line" )
 		print_screen_output "$memory_line"
 	fi
 
@@ -12524,13 +12853,13 @@ print_repo_data()
 				file_name_holder=$file_name
 				b_print_next_line='true'
 			else
-				repo_full=$file_content
+				repo_full="${C2}$file_content"
 			fi
 			# first line print Repos: 
 			if [[ $repo_count -eq 1 ]];then
-				repo_full=$( create_print_line "Repos:" "$repo_full${CN}" )
+				repo_full=$( create_print_line "Repos:" "$repo_full" )
 			else
-				repo_full=$( create_print_line " " "$repo_full${CN}" )
+				repo_full=$( create_print_line " " "$repo_full" )
 			fi
 			print_screen_output "$repo_full"
 			# this prints the content of the file as well as the file name
@@ -12675,16 +13004,16 @@ print_sensors_data()
 	# unless -s used explicitly. So for -F type output won't show unless valid or -! 1 used
 	if [[ $b_is_error != 'true' || $B_SHOW_SENSORS == 'true' || $B_TESTING_1 == 'true' ]];then
 		temp_data="$cpu_temp$mobo_temp$psu_temp$gpu_temp"
-		temp_data=$( create_print_line "Sensors:" "$temp_data${CN}" )
+		temp_data=$( create_print_line "Sensors:" "$temp_data" )
 		print_screen_output "$temp_data"
 		# don't print second or subsequent lines if error data
 		fan_data="$cpu_fan$mobo_fan$ps_fan$sys_fans"
 		if [[ $b_is_error != 'true' && -n $fan_data ]];then
-			fan_data=$( create_print_line " " "$fan_data${CN}" )
+			fan_data=$( create_print_line " " "$fan_data" )
 			print_screen_output "$fan_data"
 			# and then second wrapped fan line if needed
 			if [[ -n $sys_fans2 ]];then
-				fan_data2=$( create_print_line " " "$sys_fans2${CN}" )
+				fan_data2=$( create_print_line " " "$sys_fans2" )
 				print_screen_output "$fan_data2"
 			fi
 		fi
@@ -12701,7 +13030,11 @@ print_system_data()
 	local host_name=$HOSTNAME
 	local current_kernel=$( get_kernel_version ) 
 	local distro="$( get_distro_data )"
-	local tty_session='' compiler_string=''
+	local tty_session='' compiler_string='' distro_os='Distro'
+	
+	if [[ -n $BSD_TYPE ]];then
+		distro_os='OS'
+	fi
 	
 	# I think these will work, maybe, if logged in as root and in X
 	if [[ $B_RUNNING_IN_DISPLAY == 'true' ]];then
@@ -12767,16 +13100,16 @@ print_system_data()
 	fi
 	host_kernel_string="$host_string${C1}Kernel$SEP3${C2} $current_kernel$bits "
 	de_string="${C1}$desktop_type$SEP3${C2} $desktop_environment$de_extra_data$dm_data "
-	distro_string="${C1}Distro$SEP3${C2} $distro "
+	distro_string="${C1}$distro_os$SEP3${C2} $distro "
 	
 	if [[ $( calculate_line_length "$host_kernel_string$de_string" ) -gt $COLS_INNER ]];then
-		system_data=$( create_print_line "$line_starter" "$host_kernel_string${CN}" )
+		system_data=$( create_print_line "$line_starter" "$host_kernel_string" )
 		print_screen_output "$system_data"
 		host_kernel_string=''
 		line_starter=' '
 	fi
 	if [[ $( calculate_line_length "$host_kernel_string$de_string$distro_string" ) -gt $COLS_INNER ]];then
-		system_data=$( create_print_line "$line_starter" "$host_kernel_string$de_string${CN}" )
+		system_data=$( create_print_line "$line_starter" "$host_kernel_string$de_string" )
 		print_screen_output "$system_data"
 		host_kernel_string=''
 		de_string=''
@@ -12785,7 +13118,7 @@ print_system_data()
 	system_data="$host_kernel_string$de_string$distro_string"
 	if [[ -n $system_data ]];then
 		system_data="$host_kernel_string$de_string$distro_string"
-		system_data=$( create_print_line "$line_starter" "$system_data${CN}" )
+		system_data=$( create_print_line "$line_starter" "$system_data" )
 		print_screen_output "$system_data"
 	fi
 	
@@ -12849,19 +13182,19 @@ print_unmounted_partition_data()
 				part_2_data="$full_fs$full_label$full_uuid"
 			fi
 			if [[ $( calculate_line_length "$full_string$part_2_data" ) -gt $COLS_INNER ]];then
-				unmounted_data=$( create_print_line "$line_starter" "$full_string${CN}" )
+				unmounted_data=$( create_print_line "$line_starter" "$full_string" )
 				print_screen_output "$unmounted_data"
 				line_starter=' '
-				unmounted_data=$( create_print_line "$line_starter" "$part_2_data${CN}" )
+				unmounted_data=$( create_print_line "$line_starter" "$part_2_data" )
 				print_screen_output "$unmounted_data"
 			else
-				unmounted_data=$( create_print_line "$line_starter" "$full_string$part_2_data${CN}" )
+				unmounted_data=$( create_print_line "$line_starter" "$full_string$part_2_data" )
 				print_screen_output "$unmounted_data"
 				line_starter=' '
 			fi
 		done
 	else
-		unmounted_data=$( create_print_line "$line_starter" "No unmounted partitions detected${CN}" )
+		unmounted_data=$( create_print_line "$line_starter" "No unmounted partitions detected" )
 		print_screen_output "$unmounted_data"
 	fi
 	
@@ -12935,11 +13268,11 @@ print_weather_data()
 
 		if [[ $B_EXTRA_DATA != 'true' ]];then
 			weather_data="$weather_string $time_string"
-			weather_data=$( create_print_line "Weather:" "$weather_data${CN}" )
+			weather_data=$( create_print_line "Weather:" "$weather_data" )
 			print_screen_output "$weather_data"
 		else
 			weather_data="$weather_string"
-			weather_data=$( create_print_line "Weather:" "$weather_data${CN}" )
+			weather_data=$( create_print_line "Weather:" "$weather_data" )
 			print_screen_output "$weather_data"
 			if [[ $B_EXTRA_EXTRA_EXTRA_DATA == 'true' ]];then
 				if [[ -n ${a_weather[8]} ]];then
@@ -12975,10 +13308,10 @@ print_weather_data()
 				fi
 				# the last three are oftenblank
 				if [[ -z "$heat_index$wind_chill$dew_point" ]];then
-					weather_data=$( create_print_line " " "$pressure$location_string${CN}" )
+					weather_data=$( create_print_line " " "$pressure$location_string" )
 					print_screen_output "$weather_data"
 				else
-					weather_data=$( create_print_line " " "$pressure$heat_index$wind_chill$dew_point${CN}" )
+					weather_data=$( create_print_line " " "$pressure$heat_index$wind_chill$dew_point" )
 					print_screen_output "$weather_data"
 					if [[ $B_OUTPUT_FILTER != 'true' ]];then
 						weather_data=$( create_print_line " " "$location_string" )
@@ -12986,21 +13319,21 @@ print_weather_data()
 					fi
 				fi
 				if [[ -n $time_string$observation_time ]];then
-					weather_data=$( create_print_line " " "$time_string$observation_time${CN}" )
+					weather_data=$( create_print_line " " "$time_string$observation_time" )
 					print_screen_output "$weather_data"
 				fi
 			else
 				if [[ -n $pressure$time_string ]];then
 					weather_data="$pressure$time_string"
-					weather_data=$( create_print_line " " "$weather_data${CN}" )
+					weather_data=$( create_print_line " " "$weather_data" )
 					print_screen_output "$weather_data"
 				fi
 			fi
 		fi
 	else
-		weather_data=$( create_print_line "Weather:" "Weather data failure: $(date)" )
+		weather_data=$( create_print_line "Weather:" "${C2}Weather data failure: $(date)" )
 		print_screen_output "$weather_data"
-		weather_data=$( create_print_line " " "${A_WEATHER_DATA}${CN}" )
+		weather_data=$( create_print_line " " "${C2}${A_WEATHER_DATA}" )
 		print_screen_output "$weather_data"
 	fi
 	eval $LOGFE
