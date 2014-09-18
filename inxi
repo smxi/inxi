@@ -5,7 +5,7 @@
 ####  Script Name: inxi
 ####  Version: 2.2.5
 ####  Date: 2014-09-17
-####  Patch Number: 01-b1
+####  Patch Number: 02-b1
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -4011,7 +4011,7 @@ get_cpu_data_bsd()
 	eval $LOGFS
 
 	local bsd_cpu_flags=$( get_cpu_flags_bsd )
-	local gawk_fs=': '
+	local gawk_fs=': ' cpu_max=''
 	
 	if [[ $BSD_VERSION == 'openbsd' ]];then
 		gawk_fs='='
@@ -4019,9 +4019,29 @@ get_cpu_data_bsd()
 	# avoid setting this for systems where you have no read/execute permissions
 	# might be cases where the dmesg boot file was readable but sysctl perms failed
 	if [[ -n $Sysctl_a_Data || -n $bsd_cpu_flags ]];then
+		if [[ -n $Dmesg_Boot_Data ]];then
+			cpu_max=$( gawk -F ':' '
+			BEGIN {
+			IGNORECASE=1
+			}
+			$1 ~ /^(CPU|cpu0)$/ {
+				if ( $NF ~ /[^0-9][0-9]+[-[:space:]]*[MG]Hz/) {
+					max=gensub(/.*[^0-9]([0-9]+[-[:space:]]*[MG]Hz).*/,"\\1",1,$NF)
+					if (max ~ /MHz/) {
+						sub(/[[:space:]]*MHz/,"",max)
+					}
+					if (max ~ /GHz/) {
+						sub(/[[:space:]]*GHz/,"",max)
+						max=max*1000
+					}
+					print max
+					exit
+				}
+			}' <<< "$Dmesg_Boot_Data" )
+		fi
 		IFS=$'\n'
 		A_CPU_DATA=( $( 
-		gawk -F "$gawk_fs" -v bsdVersion=$BSD_VERSION -v cpuFlags="$bsd_cpu_flags" '
+		gawk -F "$gawk_fs" -v bsdVersion=$BSD_VERSION -v cpuFlags="$bsd_cpu_flags" -v cpuMax="$cpu_max" '
 		BEGIN {
 			IGNORECASE=1
 			cpuModel=""
@@ -4044,8 +4064,8 @@ get_cpu_data_bsd()
 			if ( $NF ~ /[0-9]+[[:space:]]*[KM]B[[:space:]]+L2 cache/) {
 				cpuCache=gensub(/.*[^0-9]([0-9]+[[:space:]]*[KM]B)[[:space:]]+L2 cach.*/,"\\1",1,$NF)
 			}
-			if ( $NF ~ /[^0-9][0-9]+[[:space:]]*[MG]Hz/) {
-				max=gensub(/.*[^0-9]([0-9]+[[:space:]]*[MG]Hz).*/,"\\1",1,$NF)
+			if ( $NF ~ /[^0-9][0-9]+[-[:space:]]*[MG]Hz/) {
+				max=gensub(/.*[^0-9]([0-9]+[-[:space:]]*[MG]Hz).*/,"\\1",1,$NF)
 				if (max ~ /MHz/) {
 					sub(/[[:space:]]*MHz/,"",max)
 				}
@@ -4092,6 +4112,9 @@ get_cpu_data_bsd()
 			cpuModel=$NF
 		}
 		END {
+			if ( cpuMax != "" ) {
+				max=cpuMax
+			}
 			print cpuModel "," cpuClock "," cpuCache "," cpuFlags "," cpuBogomips ","  cpuVendor
 			# triggers print case
 			print "N/A," min "," max
