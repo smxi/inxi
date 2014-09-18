@@ -3,8 +3,8 @@
 # openbsd ftp does http
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.2.5
-####  Date: 2014-09-16
+####  Version: 2.2.6
+####  Date: 2014-09-17
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -4011,7 +4011,7 @@ get_cpu_data_bsd()
 	eval $LOGFS
 
 	local bsd_cpu_flags=$( get_cpu_flags_bsd )
-	local gawk_fs=': '
+	local gawk_fs=': ' cpu_max=''
 	
 	if [[ $BSD_VERSION == 'openbsd' ]];then
 		gawk_fs='='
@@ -4019,9 +4019,30 @@ get_cpu_data_bsd()
 	# avoid setting this for systems where you have no read/execute permissions
 	# might be cases where the dmesg boot file was readable but sysctl perms failed
 	if [[ -n $Sysctl_a_Data || -n $bsd_cpu_flags ]];then
+		if [[ -n $Dmesg_Boot_Data ]];then
+			cpu_max=$( gawk -F ':' '
+			BEGIN {
+			IGNORECASE=1
+			}
+			# NOTE: freebsd may say: 2300-MHz, so check for dash as well
+			$1 ~ /^(CPU|cpu0)$/ {
+				if ( $NF ~ /[^0-9\.][0-9\.]+[\-[:space:]]*[MG]Hz/) {
+					max=gensub(/.*[^0-9\.]([0-9\.]+[\-[:space:]]*[MG]Hz).*/,"\\1",1,$NF)
+					if (max ~ /MHz/) {
+						sub(/[-[:space:]]*MHz/,"",max)
+					}
+					if (max ~ /GHz/) {
+						sub(/[-[:space:]]*GHz/,"",max)
+						max=max*1000
+					}
+					print max
+					exit
+				}
+			}' <<< "$Dmesg_Boot_Data" )
+		fi
 		IFS=$'\n'
 		A_CPU_DATA=( $( 
-		gawk -F "$gawk_fs" -v bsdVersion=$BSD_VERSION -v cpuFlags="$bsd_cpu_flags" '
+		gawk -F "$gawk_fs" -v bsdVersion=$BSD_VERSION -v cpuFlags="$bsd_cpu_flags" -v cpuMax="$cpu_max" '
 		BEGIN {
 			IGNORECASE=1
 			cpuModel=""
@@ -4030,6 +4051,8 @@ get_cpu_data_bsd()
 			cpuBogomips=""
 			cpuVendor=""
 			bSwitchFs="false"
+			min=0
+			max=0
 		}
 		/^hw.model/ && ( bsdVersion != "darwin" ) {
 			gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF )
@@ -4038,8 +4061,19 @@ get_cpu_data_bsd()
 			sub(/[a-z]+-core/, "", $NF )
 			gsub(/^ +| +$|\"/, "", $NF)
 			gsub(/ [ \t]+/, " ", $NF)
+			# cut L2 cache/cpu max speed out of model string, if available
 			if ( $NF ~ /[0-9]+[[:space:]]*[KM]B[[:space:]]+L2 cache/) {
-				cpuCache=gensub(/.*[^0-9]([0-9]+[[:space:]]*[KM]B)[[:space:]]+L2 cach.*/,"\\1",1,$NV)
+				cpuCache=gensub(/.*[^0-9]([0-9]+[[:space:]]*[KM]B)[[:space:]]+L2 cach.*/,"\\1",1,$NF)
+			}
+			if ( $NF ~ /[^0-9\.][0-9\.]+[\-[:space:]]*[MG]Hz/) {
+				max=gensub(/.*[^0-9\.]([0-9\.]+[\-[:space:]]*[MG]Hz).*/,"\\1",1,$NF)
+				if (max ~ /MHz/) {
+					sub(/[\-[:space:]]*MHz/,"",max)
+				}
+				if (max ~ /GHz/) {
+					sub(/[\-[:space:]]*GHz/,"",max)
+					max=max*1000
+				}
 			}
 			if ( $NF ~ /\)$/ ){
 				sub(/[[:space:]]*\(.*\)$/,"",$NF)
@@ -4079,9 +4113,15 @@ get_cpu_data_bsd()
 			cpuModel=$NF
 		}
 		END {
+			if ( cpuMax != "" ) {
+				max=cpuMax
+			}
+			if ( cpuClock == "" ) {
+				cpuClock="N/A"
+			}
 			print cpuModel "," cpuClock "," cpuCache "," cpuFlags "," cpuBogomips ","  cpuVendor
 			# triggers print case
-			print "N/A,0,0"
+			print cpuClock "," min "," max
 		}' <<< "$Sysctl_a_Data" ) )
 		IFS="$ORIGINAL_IFS"
 	fi
@@ -10344,7 +10384,7 @@ print_short_data()
 	local cpu_core_count=${A_CPU_CORE_DATA[3]}
 	local cpu_core_alpha=${A_CPU_CORE_DATA[1]}
 	local cpu_type=${A_CPU_CORE_DATA[2]}
-	local kernel_os='' 
+	local kernel_os='' speed_starter='speed'
 	local cpu_data_string=''
 	
 	if [[ -z $BSD_TYPE || -n $cpu_type ]];then
@@ -10412,7 +10452,8 @@ print_short_data()
 			if [[ ${a_cpu_speeds[0]} == ${a_cpu_speeds[2]} ]];then
 				current_max_clock="${a_cpu_speeds[0]} MHz (max)"
 			else
-				current_max_clock="${a_cpu_speeds[0]} MHz (max ${a_cpu_speeds[2]} MHz)"
+				current_max_clock="${a_cpu_speeds[0]}/${a_cpu_speeds[2]} MHz"
+				speed_starter='speed/max'
 			fi
 		fi
 	fi
@@ -10441,7 +10482,7 @@ print_short_data()
 			#C1="${C1},1"; C2="${C2},1"; CN="${CN},1"
 		fi
 	fi
-	short_data="${C1}CPU$cpc_plural${C2}$SEP1$cpu_data_string $cpu_model$model_plural$cpu_type clocked at $current_max_clock$SEP2$kernel_os$SEP2${C1}Up${C2}$SEP1$up_time$SEP2${C1}Mem${C2}$SEP1$memory$SEP2${C1}HDD${C2}$SEP1$hdd_capacity($hdd_used)$SEP2${C1}Procs${C2}$SEP1$processes$SEP2"
+	short_data="${C1}CPU$cpc_plural${C2}$SEP1$cpu_data_string $cpu_model$model_plural$cpu_type ${C1}$speed_starter${C2}$SEP1$current_max_clock$SEP2$kernel_os$SEP2${C1}Up${C2}$SEP1$up_time$SEP2${C1}Mem${C2}$SEP1$memory$SEP2${C1}HDD${C2}$SEP1$hdd_capacity($hdd_used)$SEP2${C1}Procs${C2}$SEP1$processes$SEP2"
 
 	if [[ $SHOW_IRC -gt 0 ]];then
 		short_data="$short_data${C1}Client${C2}$SEP1$IRC_CLIENT$IRC_CLIENT_VERSION$SEP2"
@@ -10612,7 +10653,8 @@ print_cpu_data()
 	local cpc_plural='' cpu_count_print='' model_plural='' cpu_data_string=''
 	local cpu_physical_count='' cpu_core_count='' cpu_core_alpha='' cpu_type=''
 	local cpu_2_data='' working_cpu='' temp1='' per_cpu_cores='' current_max_clock_nu=''
-	local line_starter="CPU:" multi_cpu_starter="${C1}Clock speeds$SEP3${C2} "
+	local line_starter="CPU:" multi_cpu_starter="${C1}clock speeds$SEP3${C2} "
+	local speed_starter='speed'
 
 	##print_screen_output "A_CPU_DATA[0]=\"${A_CPU_DATA[0]}\""
 	# Array A_CPU_DATA always has one extra element: max clockfreq found.
@@ -10741,16 +10783,18 @@ print_cpu_data()
 			if [[ ${a_cpu_speeds[0]} != 'N/A' && ${a_cpu_speeds[2]} != 0 ]];then
 				if [[ $B_EXTRA_EXTRA_DATA == 'true' && ${#A_CPU_DATA[@]} -eq 2 && 
 				      $B_SHOW_CPU == 'true' && ${a_cpu_speeds[1]} != 0 ]];then
-					a_cpu_working[1]="${a_cpu_speeds[0]} MHz (min/max ${a_cpu_speeds[1]}/${a_cpu_speeds[2]})"
+					a_cpu_working[1]="${a_cpu_speeds[0]}/${a_cpu_speeds[1]}/${a_cpu_speeds[2]} MHz"
+					speed_starter='speed/min/max'
 				else
 					if [[ ${a_cpu_speeds[0]} == ${a_cpu_speeds[2]} ]];then
 						a_cpu_working[1]="${a_cpu_speeds[0]} MHz (max)"
 					else
-						a_cpu_working[1]="${a_cpu_speeds[0]} MHz (max ${a_cpu_speeds[2]})"
+						a_cpu_working[1]="${a_cpu_speeds[0]}/${a_cpu_speeds[2]} MHz"
+						speed_starter='speed/max'
 					fi
 				fi
 			fi
-			cpu_clock_speed="${C1}speed$SEP3${C2} ${a_cpu_working[1]}"
+			cpu_clock_speed="${C1}$speed_starter$SEP3${C2} ${a_cpu_working[1]}"
 		fi
 		cpu_2_data="$cpu_2_data$cpu_clock_speed"
 	else
