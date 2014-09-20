@@ -3,8 +3,8 @@
 # openbsd ftp does http
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.2.6
-####  Date: 2014-09-17
+####  Version: 2.2.7
+####  Date: 2014-09-19
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -274,6 +274,7 @@ A_DISPLAY_SERVER_DATA=''
 
 ### BOOLEANS ###
 ## standard boolean flags ##
+B_BSD_DISK_SET='false'
 B_BSD_RAID='false'
 B_COLOR_SCHEME_SET='false'
 B_CONSOLE_IRC='false'
@@ -798,7 +799,7 @@ initialize_data()
 	eval $LOGFS
 	BSD_VERSION=$( uname -s 2>/dev/null | tr '[A-Z]' '[a-z]' )
 	# note: archbsd says they are a freebsd distro, so assuming it's the same as freebsd
-	if [[ -z ${BSD_VERSION/*bsd*/} || -z ${BSD_VERSION/*darwin*/} ]];then
+	if [[ -z ${BSD_VERSION/*bsd*/} || -z ${BSD_VERSION/*dragonfly*/} || -z ${BSD_VERSION/*darwin*/} ]];then
 		if [[ -z ${BSD_VERSION/*openbsd*/} ]];then
 			BSD_VERSION='openbsd'
 		elif [[ -z ${BSD_VERSION/*darwin*/} ]];then
@@ -1640,7 +1641,7 @@ debug_data_collector()
 		host="-no-host"
 	fi
 	if [[ -n $BSD_TYPE ]];then
-		bsd_string="-$BSD_TYPE"
+		bsd_string="-$BSD_TYPE-$BSD_VERSION"
 	fi
 	if [[ $( whoami ) == 'root' ]];then
 		root_string='-root'
@@ -4079,15 +4080,15 @@ get_cpu_data_bsd()
 				sub(/[[:space:]]*\(.*\)$/,"",$NF)
 			}
 			cpuModel=$NF
-			if ( cpuClock != "" ) {
-				exit
-			}
+# 			if ( cpuClock != "" ) {
+# 				exit
+# 			}
 		}
 		/^hw.clock/ {
 			cpuClock=$NF
-			if ( cpuModel != "" ) {
-				exit
-			}
+# 			if ( cpuModel != "" ) {
+# 				exit
+# 			}
 		}
 		/^hw.cpufrequency/ {
 			cpuClock = $NF / 1000000
@@ -4102,6 +4103,15 @@ get_cpu_data_bsd()
 		/^machdep.cpu.vendor/ {
 			cpuVendor=$NF
 		}
+		# Freebsd does some voltage hacking to actually run at lowest listed frequencies.
+		# The cpu does not actually support all the speeds output here but works in freebsd. 
+		/^dev.cpu.0.freq_levels/ {
+			gsub(/^[[:space:]]+|\/[0-9]+|[[:space:]]+$/,"",$NF)
+			if ( $NF ~ /[0-9]+[[:space:]]+[0-9]+/ ) {
+				min=gensub(/.*[[:space:]]([0-9]+)$/,"\\1",1,$NF)
+				max=gensub(/^([0-9]+)[[:space:]].*/,"\\1",1,$NF)
+			}
+		}
 		/^machdep.cpu.brand_string/ {
 			gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF )
 			gsub(/'"$BAN_LIST_CPU"'/, "", $NF )
@@ -4113,12 +4123,15 @@ get_cpu_data_bsd()
 			cpuModel=$NF
 		}
 		END {
-			if ( cpuMax != "" ) {
+			if ( max == 0 && cpuMax != "" ) {
 				max=cpuMax
 			}
 			if ( cpuClock == "" ) {
 				cpuClock="N/A"
 			}
+			sub(/\.[0-9]+/,"",cpuClock)
+			sub(/\.[0-9]+/,"",min)
+			sub(/\.[0-9]+/,"",max)
 			print cpuModel "," cpuClock "," cpuCache "," cpuFlags "," cpuBogomips ","  cpuVendor
 			# triggers print case
 			print cpuClock "," min "," max
@@ -4137,7 +4150,7 @@ get_cpu_flags_bsd()
 	local gawk_fs=':'
 	
 	if [[ -n $Dmesg_Boot_Data ]];then
-		cpu_flags=$( gawk -v bsdVersion=$BSD_VERSION -F ":" '
+		cpu_flags=$( gawk -v bsdVersion="$BSD_VERSION" -F ":" '
 		BEGIN {
 			IGNORECASE=1
 			cpuFlags=""
@@ -4742,6 +4755,7 @@ get_de_gtk_data()
 	eval $LOGFE
 }
 
+
 # see which dm has started if any
 get_display_manager()
 {
@@ -5205,7 +5219,14 @@ get_dmesg_boot_data()
 		# replace all indented items with ~ so we can id them easily while processing
 		# note that if user, may get error of read permissions
 		# for some weird reason, real mem and avail mem are use a '=' separator, who knows why, the others are ':'
-		dmsg_boot_data="$( cat $FILE_DMESG_BOOT 2>/dev/null | sed -e 's/"//g' -e 's/[[:space:]]*=[[:space:]]*/:/g' -e 's/:[[:space:]]*/:/g' )"
+		dmsg_boot_data="$( cat $FILE_DMESG_BOOT 2>/dev/null | gawk '
+		{
+			sub(/[[:space:]]*=[[:space:]]*|:[[:space:]]*/,":", $0)
+			gsub(/,/," ", $0)
+			gsub(/\"/, "", $0)
+			gsub(/[[:space:]][[:space:]]/, " ", $0)
+			print $0
+		}' )"
 	fi
 	echo "$dmsg_boot_data"
 	# log_function_data "$dmsg_boot_data"
@@ -5774,7 +5795,7 @@ get_hdd_data_basic()
 	hdd_data="$( eval $df_string )"
 	# eval $df_string | awk 'BEGIN{tot=0} !/total/ {tot+=$4} END{print tot}'
 	log_function_data 'raw' "hdd_data:\n$hdd_data"
-	hdd_used=$( echo "$hdd_data" | gawk -v bsdType=$BSD_TYPE -v swapSize=$swap_size '
+	hdd_used=$( echo "$hdd_data" | gawk -v bsdType="$BSD_TYPE" -v swapSize="$swap_size" '
 	BEGIN {
 		# this is used for specific cases where bind, or incorrect multiple mounts to same partitions,
 		# is present. The value is searched for an earlier appearance of that partition and if it is 
@@ -5795,7 +5816,7 @@ get_hdd_data_basic()
 	# note that linux 3.2.45-grsec-9th types kernels have this type of partition name: /dev/xvdc (no number, letter)
 	# note: btrfs does not seem to use partition integers, just the primary /dev/sdx identifier
 	# df can also show /dev/disk/(by-label|by-uuid etc)
-	/^\/dev\/(disk\/|mapper\/|[hsv]d[a-z][0-9]*|dm[-]?[0-9]+|ada[0-9]+p[0-9]+.*|md[0-9]+|[aw]d[0-9]+s.*|xvd[a-z])/ {
+	/^\/dev\/(disk\/|mapper\/|[hsv]d[a-z][0-9]*|dm[-]?[0-9]+|ada[0-9]+p[0-9]+.*|(ad|sd|wd)[0-9]+[a-z]|md[0-9]+|[aw]d[0-9]+s.*|xvd[a-z])/ {
 		# this handles the case where the first item is too long
 		# and makes df wrap output to next line, so here we advance
 		# it to the next line for that single case. Using df -P should
@@ -5875,19 +5896,29 @@ get_hdd_data_basic()
 			# this handles a special case with livecds where no hdd_used is detected
 			if ( size > 0 && hddUsed == "na" ) {
 				size = sprintf( "%.1f", size )
-				print size "GB,-"
+				print size "GB,-,,.."
 			}
 			else if ( size > 0 && workingUsed > 0 ) {
 				diskUsed = workingUsed*100/size  # calculate used percentage
 				diskUsed = sprintf( "%.1f", diskUsed )
+				if ( int(diskUsed) > 100 ) {
+					diskUsed = "Used Error!"
+				}
+				else {
+					diskUsed = diskUsed "% used"
+				}
 				size = sprintf( "%.1f", size )
-				print size "GB," diskUsed "% used"
+				print size "GB," diskUsed ",,.." 
 			}
 			else {
-				print "NA,-" # print an empty array, this will be further handled in the print out function
+				print "NA,-,,.." # print an empty array, this will be further handled in the print out function
 			}
 		}' $FILE_PARTITIONS ) )
 		log_function_data 'cat' "$FILE_PARTITIONS"
+	else
+		if [[ -n $BSD_TYPE ]];then
+			get_hard_drive_data_bsd "$hdd_used"
+		fi
 	fi
 	IFS="$ORIGINAL_IFS"
 	a_temp=${A_HDD_DATA[@]}
@@ -5902,7 +5933,7 @@ get_hard_drive_data_advanced()
 	eval $LOGFS
 	local a_temp_working='' a_temp_scsi='' temp_holder='' temp_name='' i='' j=''
 	local sd_ls_by_id='' ls_disk_by_id='' ls_disk_by_path='' usb_exists='' a_temp=''
-	local firewire_exists='' thunderbolt_exists='' thunderbolt_exists=''
+	local firewire_exists='' thunderbolt_exists='' thunderbolt_exists='' hdd_temp hdd_serial=''
 
 	## check for all ide type drives, non libata, only do it if hdx is in array
 	## this is now being updated for new /sys type paths, this may handle that ok too
@@ -6036,11 +6067,125 @@ get_hard_drive_data_advanced()
 					fi
 				done
 			fi
+			if [[ $B_EXTRA_DATA == 'true' ]];then
+				IFS=","
+				a_temp_working=( ${A_HDD_DATA[i]} )
+				# echo "a:" ${a_temp_working[@]}
+				IFS="$ORIGINAL_IFS"
+				hdd_temp=''
+				hdd_serial=''
+				if [[ -n ${a_temp_working[1]} ]];then
+					hdd_temp=$( get_hdd_temp_data "/dev/${a_temp_working[0]}" )
+				fi
+				if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+					hdd_serial=$( get_hdd_serial_number "${a_temp_working[0]}" )
+				fi
+				A_HDD_DATA[i]="${a_temp_working[0]},${a_temp_working[1]},${a_temp_working[2]},${a_temp_working[3]},$hdd_serial,$hdd_temp"
+				# echo b: ${A_HDD_DATA[i]}
+			fi
 		done
-		unset ls_disk_by_id # and then let's dump the data we don't need
 	fi
 	a_temp=${A_HDD_DATA[@]}
 	log_function_data "A_HDD_DATA: $a_temp"
+	eval $LOGFE
+}
+
+# args: $1 ~ hdd_used
+get_hard_drive_data_bsd()
+{
+	eval $LOGFS
+	
+	local a_temp=''
+	
+	if [[ -n $Dmesg_Boot_Data ]];then
+		IFS=$'\n'
+		A_HDD_DATA=( $( gawk -v hddUsed="$1" -F ':' '
+		BEGIN {
+			IGNORECASE=1
+			nr=0
+			size=0
+			bSetSize="false"
+		}
+		# sde,3.9GB,STORE_N_GO,USB,C200431546D3CF49-0:0,0
+		# sdd,250.1GB,ST3250824AS,,9ND08GKX,45
+		$1 ~ /^(ad|ada|sd|wd)[0-9]+(|[[:space:]]at.*)$/ {
+			diskId=gensub(/^((ad|ada|sd|wd)[0-9]+)[^0-9].*/,"\\1",1,$1)
+			if (aIds[diskId] == "" ) {
+				nr++
+				aIds[diskId]=diskId
+				if ( $0 !~ /raid/) { 
+					bSetSize="true"
+				}
+			}
+			aDisks[nr, "id"] = diskId
+			if ($0 ~ /[^0-9][0-9\.]+[[:space:]]*[MG]B/ && $0 !~ /MB\/s/) {
+				workingSize=gensub(/.*[^0-9]([0-9\.]+[[:space:]]*[MG]B).*/,"\\1",1,$0)
+				if (workingSize ~ /GB/ ) {
+					sub(/[[:space:]]*GB/,"",workingSize)
+					workingSize=workingSize*1000
+				}
+				else if (workingSize ~ /MB/ ) {
+					sub(/[[:space:]]*MB/,"",workingSize)
+					workingSize=workingSize
+				}
+				aDisks[nr, "size"] = workingSize
+				if ( bSetSize == "true" ) {
+					if ( workingSize != "" ){
+						size=size+workingSize
+						bSetSize="false"
+					}
+				}
+			}
+			if ( $NF ~ /<.*>/ ){
+				gsub(/.*<|>.*/,"",$NF)
+				aDisks[nr, "model"] = $NF
+			}
+			if ( $NF ~ /serial number/ ){
+				sub(/serial[[:space:]]+number[[:space:]]*/,"",$NF)
+				aDisks[nr, "serial"] = $NF
+			}
+		}
+		END {
+			for (i=1;i<=nr;i++) {
+				# we are not adding to size above for raid, and we do not print it for raid
+				# this is re openbsd raid, which uses sd0 for raid array, even though sd is for scsi
+				if ( aDisks[i, "model"] !~ /raid/ ) {
+					workingSize = aDisks[i, "size"]/1000
+					workingSize = sprintf( "%.1fGB", workingSize )
+					print aDisks[i, "id"] "," workingSize "," aDisks[i, "model"] "," "," aDisks[i, "serial"] "," 
+				}
+			}
+			size = size/1000                # calculate size in GB size
+			# in kb
+			workingUsed = hddUsed*1024/1000**3         # calculate workingUsed in GB used
+			# this handles a special case with livecds where no hdd_used is detected
+			if ( size > 0 && hddUsed == "na" ) {
+				size = sprintf( "%.1f", size )
+				print size "GB,-,,.."
+			}
+			else if ( size > 0 && workingUsed > 0 ) {
+				diskUsed = workingUsed*100/size  # calculate used percentage
+				diskUsed = sprintf( "%.1f", diskUsed )
+				if ( int(diskUsed) > 100 ) {
+					diskUsed = "Used Error!"
+				}
+				else {
+					diskUsed = diskUsed "% used"
+				}
+				size = sprintf( "%.1f", size )
+				print size "GB," diskUsed ",,.." 
+			}
+			else {
+				print "NA,-,,.." # print an empty array, this will be further handled in the print out function
+			}
+		}' <<< "$Dmesg_Boot_Data" ) )
+		IFS="$ORIGINAL_IFS"
+	fi
+	
+	a_temp=${A_HDD_DATA[@]}
+	# echo ${a_temp[@]}
+	log_function_data "A_HDD_DATA: $a_temp"
+	
 	eval $LOGFE
 }
 
@@ -7096,11 +7241,7 @@ get_optical_drive_data()
 	local a_temp='' sys_uevent_path='' proc_cdrom='' link_list=''
 	local separator='' linked='' working_disk='' disk='' item_string='' proc_info_string='' 
 	local dev_disks_full=''
-	if [[ $BSD_TYPE != 'bsd' ]];then
-		dev_disks_full="$( ls /dev/dvd* /dev/cd* /dev/scd* /dev/sr* 2>/dev/null | grep -vE 'random' )"
-	else
-		dev_disks_full="$( ls /dev/dvd* /dev/cd* /dev/scd* 2>/dev/null )"
-	fi
+	dev_disks_full="$( ls /dev/dvd* /dev/cd* /dev/scd* /dev/sr* 2>/dev/null | grep -vE 'random' )"
 	## Not using this now because newer kernel is NOT linking all optical drives. Some, but not all
 	# Some systems don't support xargs -L plus the unlinked optical drive unit make this not a good option
 	# get the actual disk dev location, first try default which is easier to run, need to preserve line breaks
@@ -7275,6 +7416,60 @@ get_optical_drive_data()
 }
 # get_optical_drive_data;exit
 
+get_optical_drive_data_bsd()
+{
+	eval $LOGFS
+	
+	local a_temp=''
+	
+	if [[ -n $Dmesg_Boot_Data ]];then
+		IFS=$'\n'
+		A_OPTICAL_DRIVE_DATA=( $( gawk -F ':' '
+		BEGIN {
+			IGNORECASE=1
+			nr=0
+		}
+		# sde,3.9GB,STORE_N_GO,USB,C200431546D3CF49-0:0,0
+		# sdd,250.1GB,ST3250824AS,,9ND08GKX,45
+		$1 ~ /^(cd|dvd)[0-9]+/ {
+			diskId=gensub(/^((cd|dvd)[0-9]+)[^0-9].*/,"\\1",1,$1)
+			if (aIds[diskId] == "" ) {
+				nr++
+				aIds[diskId]=diskId
+			}
+			aDisks[nr, "id"] = diskId
+			if ( $NF ~ /<.*>/ ){
+				gsub(/.*<|>.*/,"",$NF)
+				rev_number=gensub(/.*[^0-9\.]([0-9\.]+)$/,"\\1",1,$NF)
+				if (rev_number ~ /^[0-9\.]+$/) {
+					aDisks[nr, "rev"] = rev_number
+				}
+				model=gensub(/(.*[^0-9\.])[0-9\.]+$/,"\\1",1,$NF)
+				sub(/[[:space:]]+$/,"",model)
+				aDisks[nr, "model"] = model
+			}
+			if ( $NF ~ /serial number/ ){
+				sub(/serial[[:space:]]+number[[:space:]]*/,"",$NF)
+				aDisks[nr, "serial"] = $NF
+			}
+		}
+		# "$link,dev-readlinks,$vendor,$model,$rev_number,$proc_info_string,$state"
+		# $proc_info_string: print speed "," multisession "," mcn "," audio "," cdr "," cdrw "," dvd "," dvdr "," dvdram
+		END {
+			for (i=1;i<=nr;i++) {
+				print aDisks[i, "id"] ",,," aDisks[i, "model"] "," aDisks[i, "rev"] ",,,,,,,,," 
+			}
+		}' <<< "$Dmesg_Boot_Data" ) )
+		IFS="$ORIGINAL_IFS"
+	fi
+	
+	a_temp=${A_OPTICAL_DRIVE_DATA[@]}
+	# echo ${a_temp[@]}
+	log_function_data "A_OPTICAL_DRIVE_DATA: $a_temp"
+	
+	eval $LOGFE
+}
+
 get_partition_data()
 {
 	eval $LOGFS
@@ -7320,7 +7515,7 @@ get_partition_data()
 	# $NF = partition name; $(NF - 4) = partition size; $(NF - 3) = used, in gB; $(NF - 1) = percent used
 	## note: by subtracting from the last field number NF, we avoid a subtle issue with LVM df output, where if
 	## the first field is too long, it will occupy its own line, this way we are getting only the needed data
-	A_PARTITION_DATA=( $( echo "$main_partition_data" | gawk -v bsdType=$BSD_TYPE -v bsdVersion=$BSD_VERSION '
+	A_PARTITION_DATA=( $( echo "$main_partition_data" | gawk -v bsdType="$BSD_TYPE" -v bsdVersion="$BSD_VERSION" '
 	BEGIN {
 		IGNORECASE=1
 		fileSystem=""
@@ -7332,7 +7527,7 @@ get_partition_data()
 	( bsdType != "" ) {
 		# skip if non disk/partition, or if raid primary id, which will not have a / in it
 		if ( $1 ~ /^(aufs|devfs|devtmpfs|fdescfs|iso9660|linprocfs|procfs|squashfs|sysfs|tmpfs|type|unionfs)$/ || 
-		$1 ~ /^([^\/]+)$/ ) {
+		( $1 ~ /^([^\/]+)$/ && $1 !~ /^ROOT/ ) ) {
 			# note use next, not getline or it does not work right
 			next 
 		}
@@ -7467,7 +7662,7 @@ get_partition_data()
 		# older bsds have df minus -T so can't get fs type easily, try using mount instead
 		if [[ $BSD_TYPE == 'bsd' ]] && [[ -z $fs_type && -n $dev_item ]];then
 			dev_bsd_item=$( sed -e 's/non-dev-//' -e 's|/|\\/|g' <<< "$dev_item" )
-			fs_type=$( gawk -v bsdVersion=$BSD_VERSION -F '(' '
+			fs_type=$( gawk -v bsdVersion="$BSD_VERSION" -F '(' '
 			BEGIN {
 				IGNORECASE=1
 				fileSystem=""
@@ -11177,11 +11372,12 @@ print_graphics_data()
 print_hard_disk_data()
 {
 	eval $LOGFS
+	local b_bsd_debugger='true'
 	local hdd_data='' hdd_data_2='' a_hdd_working='' hdd_temp_data='' hdd_string=''
-	local hdd_serial=''
+	local hdd_serial='' dev_string='/dev/'
 	local dev_data='' size_data='' hdd_model='' usb_data='' hdd_name=''
 	local Line_Starter='Drives:' # inherited by print_optical_drives
-	# load A_HDD_DATA
+	# load A_HDD_DATA - this will also populate the full bsd disk data array values
 	get_hdd_data_basic
 	## note: if hdd_model is declared prior to use, whatever string you want inserted will
 	## be inserted first. In this case, it's desirable to print out (x) before each disk found.
@@ -11194,6 +11390,10 @@ print_hard_disk_data()
 	local bsd_unsupported='Hard drive data not yet supported for BSD systems.'
 	local hdd_name_temp='' part_1_data='' part_2_data=''
 	local row_starter="${C1}HDD Total Size$SEP3${C2} $hdd_capacity ($hdd_used) "
+	# in bsd, /dev/wd0c is disk id
+	if [[ -n $BSD_TYPE ]];then
+		dev_string=''
+	fi
 
 	if [[ $B_SHOW_BASIC_DISK == 'true' || $B_SHOW_DISK == 'true' ]];then
 		## note: the output part of this should be in the print hdd data function, not here
@@ -11210,10 +11410,9 @@ print_hard_disk_data()
 				else
 					usb_data=''
 				fi
-				dev_data="/dev/${a_hdd_working[0]} "
 				size_data=" ${C1}size$SEP3${C2} ${a_hdd_working[1]}"
-				if [[ $B_EXTRA_DATA == 'true' && -n $dev_data ]];then
-					hdd_temp_data=$( get_hdd_temp_data "$dev_data" )
+				if [[ $B_EXTRA_DATA == 'true' ]];then
+					hdd_temp_data=${a_hdd_working[5]}
 					# error handling is done in get data function
 					if [[ -n $hdd_temp_data ]];then
 						hdd_temp_data=" ${C1}temp$SEP3${C2} ${hdd_temp_data}C"
@@ -11222,13 +11421,13 @@ print_hard_disk_data()
 					fi
 				fi
 				if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
-					hdd_serial=$( get_hdd_serial_number "${a_hdd_working[0]}" )
+					hdd_serial=${a_hdd_working[4]}
 					if [[ -z $hdd_serial ]];then
 						hdd_serial='N/A'
 					fi
 					hdd_serial=" ${C1}serial$SEP3${C2} $hdd_serial"
 				fi
-				dev_data="/dev/${a_hdd_working[0]} "
+				dev_data="$dev_string${a_hdd_working[0]} "
 			fi
 			if [[ -n ${a_hdd_working[2]} ]];then
 				hdd_name_temp=${a_hdd_working[2]}
@@ -11293,7 +11492,7 @@ print_hard_disk_data()
 			#echo 5
 		fi
 		# temporary message to indicate not yet supported
-		if [[ $BSD_TYPE == 'bsd' ]];then
+		if [[ $b_bsd_debugger == 'false' && $BSD_TYPE == 'bsd' ]];then
 			hdd_data=$bsd_unsupported
 			hdd_data=$( create_print_line "$Line_Starter" "$hdd_data" )
 			print_screen_output "$hdd_data"
@@ -11302,7 +11501,7 @@ print_hard_disk_data()
 	else
 		# temporary message to indicate not yet supported
 		hdd_data="$row_starter"
-		if [[ $BSD_TYPE == 'bsd' ]];then
+		if [[ $b_bsd_debugger == 'false' && $BSD_TYPE == 'bsd' ]];then
 			hdd_data=$bsd_unsupported
 		fi
 		hdd_data=$( create_print_line "$Line_Starter" "$hdd_data" )
@@ -11930,10 +12129,15 @@ print_networking_ip_data()
 print_optical_drive_data()
 {
 	eval $LOGFS
-	local a_drives='' drive_data='' counter='' 
+	local a_drives='' drive_data='' counter='' dev_string='/dev/'
 	local drive_id='' drive_links='' vendor='' speed='' multisession='' mcn='' audio=''
 	local dvd='' state='' rw_support='' rev='' separator='' drive_string='' part_2_data=''
-	get_optical_drive_data
+	if [[ -z $BSD_TYPE ]];then
+		get_optical_drive_data
+	else
+		get_optical_drive_data_bsd
+		dev_string=''
+	fi
 	# 0 - true dev path, ie, sr0, hdc
 	# 1 - dev links to true path
 	# 2 - device vendor - for hdx drives, vendor model are one string from proc
@@ -11968,7 +12172,7 @@ print_optical_drive_data()
 				if [[ -z ${a_drives[0]} ]];then
 					drive_id='N/A'
 				else
-					drive_id="/dev/${a_drives[0]}"
+					drive_id="$dev_string${a_drives[0]}"
 				fi
 				drive_links=$( sed 's/~/,/g' <<< ${a_drives[1]} )
 				if [[ -z $drive_links ]];then
