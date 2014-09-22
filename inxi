@@ -8482,6 +8482,7 @@ get_raid_data_bsd()
 		A_RAID_DATA=( $(
 		gawk '
 		BEGIN {
+			IGNORECASE=1
 			raidString=""
 			separator=""
 			components=""
@@ -8503,10 +8504,17 @@ get_raid_data_bsd()
 			blocksAvailable=$4
 			chunkRaidAllocated=$3
 			
-			# go to the next line now, this will probably need fixing later with weird data sets
 			getline
+			# raid level is the second item in the output, unless it is not, sometimes it is absent
 			if ( $1 != "" ) {
-				raidLevel="zfs " $1
+				if ( $1 ~ /raid|mirror/ ) {
+					raidLevel="zfs " $1
+				}
+				else {
+					raidLevel="zfs-no-raid"
+					components = $1
+					separator=" "
+				}
 			}
 			
 			while ( getline && $1 !~ /^$/ ) {
@@ -8514,7 +8522,8 @@ get_raid_data_bsd()
 				components = components separator $1
 				separator=" "
 			}
-
+			# some issues if we use ~ here
+			gsub(/\//,"%",components)
 			# print $1
 			raidString = device "," deviceState "," raidLevel "," components "," reportSize "," uData 
 			raidString = raidString "," blocksAvailable "," superBlock "," algorithm "," chunkRaidAllocated 
@@ -8561,6 +8570,9 @@ get_raid_component_data_bsd()
 					IGNORECASE=1
 					separator=""
 				}
+				{
+					gsub(/\//,"%",$1)
+				}
 				$1 ~ /^'$component'$/ {
 					sub( /ONLINE/, "", $2 )
 					print "'$component'" $2
@@ -8569,7 +8581,7 @@ get_raid_component_data_bsd()
 				component_string="$component_string$separator$component_status"
 				separator=' '
 			done
-			array_string="$device,${a_raid_data[1]},${a_raid_data[2]},$component_string,${a_raid_data[4]}"
+			array_string="$device,${a_raid_data[1]},${a_raid_data[2]},${component_string//%/\/},${a_raid_data[4]}"
 			array_string="$array_string,${a_raid_data[5]},${a_raid_data[6]},${a_raid_data[7]},${a_raid_data[8]}"
 			array_string="$array_string,${a_raid_data[9]},${a_raid_data[10]},${a_raid_data[11]},${a_raid_data[12]},"
 			array_string="$array_string${a_raid_data[13]},${a_raid_data[14]},${a_raid_data[15]}"
@@ -8583,10 +8595,17 @@ get_raid_component_data_bsd()
 			}
 			$1 ~ /^'$device'$/ {
 				while ( getline && !/^$/ ) {
-					# raid level is the second item in the output
-					if ( $1 != "" && raidLevel == "" ) {
-						raidLevel="zfs " $1
-						getline
+					# raid level is the second item in the output, unless it is not, sometimes it is absent
+					if ( $1 != "" ) {
+						if ( raidLevel == "" ) {
+							if (  $1 ~ /raid|mirror/ ) {
+								raidLevel="zfs " $1
+								getline
+							}
+							else {
+								raidLevel="zfs-no-raid"
+							}
+						}
 					}
 					sub( /ONLINE/, "", $2 )
 					components=components separator $1 separator $2
