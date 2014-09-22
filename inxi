@@ -3,8 +3,8 @@
 # openbsd ftp does http
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.2.7
-####  Date: 2014-09-20
+####  Version: 2.2.8
+####  Date: 2014-09-21
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -828,11 +828,11 @@ initialize_data()
 	initialize_paths
 	
 	# set downloaders. 
-	if [[ -z $( type -p wget ) ]];then
+	if ! type -p wget &>/dev/null;then
 		# first check for bsd stuff
-		if [[ -n $( type -p fetch ) ]];then
+		if type -p fetch &>/dev/null;then
 			DOWNLOADER='fetch'
-		elif -n $( type -p curl ) ]];then
+		elif type -p curl &>/dev/null;then
 			DOWNLOADER='curl'
 		elif [[ $BSD_VERSION == 'openbsd' && -n $( type -p ftp ) ]];then
 			DOWNLOADER='ftp'
@@ -3665,7 +3665,7 @@ get_audio_usb_data()
 		lsusb_data=$( lsusb 2>/dev/null )
 	fi
 	log_function_data 'raw' "usb_data:\n$lsusb_data"
-	if [[ -n $lsusb_data ]];then
+	if [[ -n $lsusb_data && -d /proc/asound/ ]];then
 		# for every sound card symlink in /proc/asound - display information about it
 		for usb_proc_file in /proc/asound/*
 		do
@@ -4411,6 +4411,22 @@ get_desktop_environment()
 			fi
 		fi
 		desktop_environment="Unity"
+	elif [[ $XDG_CURRENT_DESKTOP == 'LXQt' ]];then
+# 		if type -p lxqt-about &>/dev/null;then
+# 			version=$( get_program_version 'lxqt-about' '^lxqt-about' '2' )
+# 		fi
+		if [[ $B_EXTRA_DATA == 'true' ]];then
+			if kded$KDE_SESSION_VERSION &>/dev/null;then
+				version_data=$( kded$KDE_SESSION_VERSION --version 2>/dev/null )
+				toolkit=$( grep -si '^Qt:' <<< "$version_data" | gawk '{print $2}' )
+			elif type -p qtdiag &>/dev/null;then
+				toolkit=$( get_program_version 'qtdiag' '^qt' '2' )
+			fi
+			if [[ -n $toolkit ]];then
+				version="$version (Qt $toolkit)"
+			fi
+		fi
+		desktop_environment='LXQt'
 	fi
 	# did we find it? If not, start the xprop tests
 	if [[ -z $desktop_environment ]];then
@@ -6810,7 +6826,9 @@ get_networking_data()
 	IFS="$ORIGINAL_IFS"
 	get_networking_usb_data
 	if [[ $B_SHOW_ADVANCED_NETWORK == 'true' || $B_USB_NETWORKING == 'true' ]];then
-		get_network_advanced_data
+		if [[ -z $BSD_TYPE ]];then
+			get_network_advanced_data
+		fi
 	fi
 	a_temp=${A_NETWORK_DATA[@]}
 	log_function_data "A_NETWORK_DATA: $a_temp"
@@ -8077,13 +8095,13 @@ EOF"
 				sub(/:$/, "", pciId)
 				itemData=$4
 				chipId=gensub(/.*chip=([0-9a-f][0-9a-f][0-9a-f][0-9a-f])([0-9a-f][0-9a-f][0-9a-f][0-9a-f]).*/, "\\2:\\1", itemData )
-				if ( $2 ~ /class=020000|class=0x068000/ ) {
+				if ( $2 ~ /class=020000|class=068000/ ) {
 					class="network"
 				}
 				else if ( $2 == "class=030000" ) {
 					class="display"
 				}
-				else if ( $2 == "class=040300" ) {
+				else if ( $2 ~ /class=040300|class=040100/ ) {
 					class="audio"
 				}
 				
@@ -10711,10 +10729,14 @@ print_audio_data()
 	local driver=''
 	# set A_AUDIO_DATA and get alsa data
 	if [[ $BSD_TYPE == 'bsd' ]];then
-		if [[ $B_PCICONF_SET == 'false' ]];then
-			get_pciconf_data
+		if [[ $B_PCICONF == 'true' ]];then
+			if [[ $B_PCICONF_SET == 'false' ]];then
+				get_pciconf_data
+			fi
+			get_pciconf_card_data 'audio'
+		elif [[ $B_LSPCI == 'true' ]];then
+			get_audio_data
 		fi
-		get_pciconf_card_data 'audio'
 	else
 		get_audio_data
 	fi
@@ -11174,13 +11196,17 @@ print_graphics_data()
 	# this can contain a long No case debugging message, so it's being sliced off
 	# note: using grep -ioE '(No|Yes)' <<< ${A_GLX_DATA[2]} did not work in Arch, no idea why
 	local glx_direct_render=$( gawk '{print $1}' <<< "${A_GLX_DATA[2]}" )
-
+	
 	# set A_GRAPHICS_CARD_DATA
 	if [[ $BSD_TYPE == 'bsd' ]];then
-		if [[ $B_PCICONF_SET == 'false' ]];then
-			get_pciconf_data
+		if [[ $B_PCICONF == 'true' ]];then
+			if [[ $B_PCICONF_SET == 'false' ]];then
+				get_pciconf_data
+			fi
+			get_pciconf_card_data 'display'
+		elif [[ $B_LSPCI == 'true' ]];then
+			get_graphics_card_data
 		fi
-		get_pciconf_card_data 'display'
 	else
 		get_graphics_card_data
 	fi
@@ -11872,12 +11898,17 @@ print_networking_data()
 	local card_string='' port_plural='' module_version='' pci_bus_id='' bus_usb_text=''
 	local bus_usb_id='' line_starter='Network:' card_string='' card_data='' chip_id=''
 	local driver='' part_2_data=''
+	
 	# set A_NETWORK_DATA
 	if [[ $BSD_TYPE == 'bsd' ]];then
-		if [[ $B_PCICONF_SET == 'false' ]];then
-			get_pciconf_data
+		if [[ $B_PCICONF == 'true' ]];then
+			if [[ $B_PCICONF_SET == 'false' ]];then
+				get_pciconf_data
+			fi
+			get_pciconf_card_data 'network'
+		elif [[ $B_LSPCI == 'true' ]];then
+			get_networking_data
 		fi
-		get_pciconf_card_data 'network'
 	else
 		get_networking_data
 	fi
