@@ -3,8 +3,8 @@
 # openbsd ftp does http
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.2.8
-####  Date: 2014-09-21
+####  Version: 2.2.9
+####  Date: 2014-09-22
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -5832,7 +5832,7 @@ get_hdd_data_basic()
 	# note that linux 3.2.45-grsec-9th types kernels have this type of partition name: /dev/xvdc (no number, letter)
 	# note: btrfs does not seem to use partition integers, just the primary /dev/sdx identifier
 	# df can also show /dev/disk/(by-label|by-uuid etc)
-	/^\/dev\/(disk\/|mapper\/|[hsv]d[a-z][0-9]*|dm[-]?[0-9]+|ada[0-9]+p[0-9]+.*|(ad|sd|wd)[0-9]+[a-z]|md[0-9]+|[aw]d[0-9]+s.*|xvd[a-z])/ {
+	/^\/dev\/(disk\/|mapper\/|[hsv]d[a-z][0-9]*|dm[-]?[0-9]+|ada[0-9]+p[0-9]+.*|(ad|sd|wd)[0-9]+[a-z]|md[0-9]+|[aw]d[0-9]+s.*|xvd[a-z])|^ROOT/ {
 		# this handles the case where the first item is too long
 		# and makes df wrap output to next line, so here we advance
 		# it to the next line for that single case. Using df -P should
@@ -6163,6 +6163,11 @@ get_hard_drive_data_bsd()
 		END {
 			# sde,3.9GB,STORE_N_GO,USB,C200431546D3CF49-0:0,0
 			# sdd,250.1GB,ST3250824AS,,9ND08GKX,45
+			# multi dimensional pseudo arrays are sorted at total random, not in order of
+			# creation, so force a sort of the aIds, which deletes the array index but preserves
+			# the sorted keys.
+			asort(aIds) 
+			
 			for ( key in aIds ) {
 				# we are not adding to size above for raid, and we do not print it for raid
 				# this is re openbsd raid, which uses sd0 for raid array, even though sd is for scsi
@@ -6647,7 +6652,7 @@ get_memory_data()
 		# use this for all bsds, maybe we can get some useful data on other ones
 		if [[ -n $( type -p vmstat) ]];then
 			# avail mem:2037186560 (1942MB)
-			used_memory=$( vmstat 2>/dev/null | tail -n 1 | gawk '
+			used_memory=$( vmstat 2>/dev/null | tail -n 1 | gawk -v bsdVersion="$BSD_VERSION" '
 			# openbsd/linux
 			# procs    memory       page                    disks    traps          cpu
 			# r b w    avm     fre  flt  re  pi  po  fr  sr wd0 wd1  int   sys   cs us sy id
@@ -6672,13 +6677,19 @@ get_memory_data()
 				}
 				else {
 					sub(/K/,"",$4)
-					memory=$4
+					if ( bsdVersion !~ /dragonfly/ ) {
+						memory=$4
+					}
+					else {
+						memory=$5
+					}
 				}
 				print memory " " 
 				exit
 			}' )
 		fi
-		memory=$( grep -i 'mem' <<< "$Sysctl_a_Data" | gawk -v usedMemory="$used_memory" -F "$gawk_fs"  '
+		# for dragonfly, we will use free mem, not used because free is 0
+		memory=$( grep -i 'mem' <<< "$Sysctl_a_Data" | gawk -v bsdVersion="$BSD_VERSION" -v usedMemory="$used_memory" -F "$gawk_fs"  '
 		BEGIN {
 			realMemory=""
 			freeMemory=""
@@ -6703,9 +6714,16 @@ get_memory_data()
 		END {
 			# hack: temp fix for openbsd/darwin: in case no free mem was detected but we have physmem
 			if ( freeMemory == "" && realMemory != "" ) {
-				# use openbsd avail mem data if available
+				# use openbsd/dragonfly avail mem data if available
 				if (usedMemory != "" ) {
-					printf("%.1f/%.1fMB\n", usedMemory/1024, realMemory/1024)
+					if (bsdVersion !~ /dragonfly/) {
+						printf("%.1f/%.1fMB\n", usedMemory/1024, realMemory/1024)
+					}
+					else {
+						# using free mem, not used for dragonfly
+						usedMemory = realMemory - usedMemory
+						printf("%.1f/%.1fMB\n", usedMemory/1024, realMemory/1024)
+					}
 				}
 				else {
 					printf("NA/%.1fMB\n", realMemory/1024)
@@ -7482,6 +7500,10 @@ get_optical_drive_data_bsd()
 		# "$link,dev-readlinks,$vendor,$model,$rev_number,$proc_info_string,$state"
 		# $proc_info_string: print speed "," multisession "," mcn "," audio "," cdr "," cdrw "," dvd "," dvdr "," dvdram
 		END {
+			# multi dimensional pseudo arrays are sorted at total random, not in order of
+			# creation, so force a sort of the aIds, which deletes the array index but preserves
+			# the sorted keys.
+			asort(aIds) 
 			for ( key in aIds ) {
 				print aDisks[aIds[key], "id"] ",,," aDisks[aIds[key], "model"] "," aDisks[aIds[key], "rev"] "," aDisks[aIds[key], "speed"] ",,,,,,,," 
 			}
@@ -9177,6 +9199,7 @@ get_repo_data()
 	local apt_file='/etc/apt/sources.list' yum_repo_dir='/etc/yum.repos.d/' yum_conf='/etc/yum.conf'
 	local pacman_conf='/etc/pacman.conf' pacman_repo_dir='/etc/pacman.d/' pisi_dir='/etc/pisi/'
 	local zypp_repo_dir='/etc/zypp/repos.d/' freebsd_conf='/etc/portsnap.conf' openbsd_conf='/etc/pkg.conf'
+	local ports_dir='/usr/local/etc/pkg/repos/'
 	
 	# apt - debian, buntus, also sometimes some yum/rpm repos may create apt repos here as well
 	if [[ -f $apt_file || -d $apt_file.d ]];then
@@ -9367,15 +9390,60 @@ $repo_data_working"
 		done <<< "$REPO_DATA"
 		# echo and execute the line breaks inserted
 		REPO_DATA="$( echo -e $repo_data_working )"
-	elif [[ -f $freebsd_conf ]];then
-		REPO_DATA="$( gawk -F '=' -v repoFile=$freebsd_conf '
-		BEGIN {
-			IGNORECASE=1
-		}
-		/^SERVERNAME/ {
-			print "BSD ports servers:" repoFile ":" $2
-		}
-		' $freebsd_conf )"
+	elif [[ -f $freebsd_conf || -d $ports_dir ]];then
+		if [[ -f $freebsd_conf ]];then
+			REPO_DATA="$( gawk -F '=' -v repoFile=$freebsd_conf '
+			BEGIN {
+				IGNORECASE=1
+			}
+			/^SERVERNAME/ {
+				print "BSD ports servers:" repoFile ":" $2
+			}
+			' $freebsd_conf )"
+		fi
+		if [[ -d $ports_dir ]];then
+			repo_files=$(ls ${ports_dir}*.conf 2>/dev/null )
+			for repo_file in $repo_files
+			do
+				repo_data_working="$repo_data_working$( gawk -v repoFile=$repo_file '
+				BEGIN {
+					FS=":"
+					IGNORECASE=1
+					repoName=""
+					repoUrl=""
+					enabled=""
+				}
+				{
+					gsub(/{|}|^#.*/,"",$0)
+				}
+				/^[^[:space:]]/ {
+					repoName=$1
+					repoUrl=""
+					enabled=""
+					while ( getline && $0 !~ /^[[:space:]]*$/ ) {
+						gsub(/,|}/,"",$0)
+						gsub(/({|}|^[[:space:]]+|[[:space:]]+$)/,"",$1)
+						gsub(/({|}|^[[:space:]]+|[[:space:]]+$)/,"",$2)
+						if ( $1 == "url" ) {
+							repoUrl=$2$3
+						}
+						if ( $1 == "enabled" ) {
+							if ( $2 == "yes" ) {
+								print "BSD ports server:" repoFile ":" repoName " " repoUrl 
+							}
+						}
+					}
+				}
+				' $repo_file )"
+			done
+		fi
+		if [[ -z $REPO_DATA ]];then
+			REPO_DATA="$repo_data_working"
+		elif [[ -n $repo_data_working ]];then
+			REPO_DATA="$REPO_DATA
+$repo_data_working"
+		fi
+		repo_data_working=''
 	elif [[ -f $openbsd_conf ]];then
 		REPO_DATA="$( gawk -F '=' -v repoFile=$openbsd_conf '
 		BEGIN {
