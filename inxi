@@ -3,9 +3,9 @@
 # openbsd ftp does http
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.2.8
-####  Date: 2014-09-21
-####  Patch Number: 00
+####  Version: 2.2.9
+####  Date: 2014-09-24
+####  Patch Number: 01-b1
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -1712,6 +1712,7 @@ debug_data_collector()
 		lspci -mmnnv &> $debug_data_dir/lspci-mmnnv.txt
 		lspci -v &> $debug_data_dir/lspci-v.txt
 		lsusb &> $debug_data_dir/lsusb.txt
+		ls /sys &> $debug_data_dir/ls-sys.txt
 		ps aux &> $debug_data_dir/ps-aux.txt
 		runlevel &> $debug_data_dir/runlevel.txt
 		systemctl list-units &> $debug_data_dir/systemctl-list-units.txt
@@ -2028,10 +2029,17 @@ check_recommends_user_output()
 	echo 
 	check_recommends_items 'downloaders'
 	
-	echo 'Test Six: System Directories for Various Information.' 
-	print_lines_basic "0" "" "If one of these directories is missing, $SCRIPT_NAME will have incomplete output:"
+	echo 'Test Six: System Directories for Various Information.'
+	echo '(Unless otherwise noted, these are for GNU/Linux systems)' 
+	print_lines_basic "0" "" "If one of these directories is missing, $SCRIPT_NAME may have incomplete output:"
 	echo 
 	check_recommends_items 'system-dirs'
+	
+	echo 'Test Seven: System Files for Various Information.'
+	echo '(Unless otherwise noted, these are for GNU/Linux systems)' 
+	print_lines_basic "0" "" "If one of these files is missing, $SCRIPT_NAME may have incomplete output:"
+	echo 
+	check_recommends_items 'system-files'
 	
 	echo 'All tests completed.' 
 }
@@ -2088,8 +2096,22 @@ check_recommends_items()
 	/dev:-l,-u,-o,-p,-P,-D_disk_partition_data
 	/dev/disk/by-label:-l,-o,-p,-P_partition_labels
 	/dev/disk/by-uuid:-u,-o,-p,-P_partition_uuid
-	/var/run/dmesg.boot:-C,-f_(BSD_only)
 	'
+	local recommended_files="
+	$FILE_ASOUND_DEVICE:-A_sound_card_data
+	$FILE_ASOUND_VERSION:-A_ALSA_data
+	$FILE_CPUINFO:-C_cpu_data
+	$FILE_LSB_RELEASE:-S_distro_version_data_[deprecated]
+	$FILE_MDSTAT:-R_mdraid_data
+	$FILE_MEMINFO:-I_memory_data
+	$FILE_OS_RELEASE:-S_distro_version_data
+	$FILE_PARTITIONS:-p,-P_partitions_data
+	$FILE_MODULES:-G_module_data
+	$FILE_MOUNTS:-P,-p_partition_advanced_data
+	$FILE_DMESG_BOOT:-D,-d_disk_data_[BSD_only]
+	$FILE_SCSI:-D_Advanced_hard_disk_data_[used_rarely]
+	$FILE_XORG_LOG:-G_graphics_driver_load_status
+	"
 	
 	if [[ -n $COLS_INNER ]];then
 		if [[ $COLS_INNER -ge 90 ]];then
@@ -2142,6 +2164,13 @@ check_recommends_items()
 			missing_string='system directories'
 			type='directories'
 			;;
+		system-files)
+			item_list=$recommended_files
+			item_string='System file'
+			item_string=''
+			missing_string='system files'
+			type='files'
+			;;
 	esac
 	# great trick from: http://ideatrash.net/2011/01/bash-string-padding-with-sed.html
 	# left pad: sed -e :a -e 's/^.\{1,80\}$/& /;ta'
@@ -2177,7 +2206,7 @@ check_recommends_items()
 		fi
 		
 		starter="$( sed -e :a -e 's/^.\{1,'$width'\}$/&./;ta' <<< $print_string )"
-		if [[ -z $( grep '^/' <<< $application ) && -n $location ]] || [[ -d $application ]];then
+		if [[ -z $( grep '^/' <<< $application ) && -n $location ]] || [[ -d $application || -f $application ]];then
 			if [[ -n $location ]];then
 				finisher=" $location"
 			else
@@ -2206,8 +2235,10 @@ check_recommends_items()
 				echo "Application: $application"
 				print_lines_basic "0" "" "To add to your system, install the proper distribution package for your system:"
 				print_lines_basic "0" "" "Debian/Ubuntu:^$package_deb^:: Arch Linux:^$package_pacman^:: Redhat/Fedora/Suse:^$package_rpm"
-			else
+			elif [[ $type == 'directories' ]];then
 				echo "Directory: $application"
+			elif [[ $type == 'files' ]];then
+				echo "File: $application"
 			fi
 		done
 		if [[ $item_string == 'System directory' ]];then
@@ -3580,7 +3611,7 @@ get_audio_data()
 				modules[audioCard] = modules[audioCard] gensub( /(.*): (.*)/ ,"\\2" ,"g" ,$0 ) ""
 			}
 			else if (/^[[:space:]]*I\/O/) {
-				portsTemp = gensub(/\t*I\/O ports at (.*) \[.*\]/,"\\1","g",$0)
+				portsTemp = gensub(/\t*I\/O ports at ([a-z0-9]+)(| \[.*\])/,"\\1","g",$0)
 				ports[audioCard] = ports[audioCard] portsTemp " "
 			}
 		}
@@ -4400,7 +4431,7 @@ get_desktop_environment()
 		desktop_environment="KDE"
 	elif [[ $XDG_CURRENT_DESKTOP == 'Unity' ]];then
 		version=$( get_program_version 'unity' '^unity' '2' )
-		# not certain cinn will always have version, so keep output right if not
+		# not certain will always have version, so keep output right if not
 		if [[ -n $version ]];then
 			version="$version "
 		fi
@@ -4427,6 +4458,20 @@ get_desktop_environment()
 			fi
 		fi
 		desktop_environment='LXQt'
+	# note, X-Cinnamon value strikes me as highly likely to change, so just search for the last part
+	elif [[ -n $XDG_CURRENT_DESKTOP && -z ${XDG_CURRENT_DESKTOP/*innamon*/} ]];then
+		version=$( get_program_version 'cinnamon' '^cinnamon' '2' )
+		# not certain cinn will always have version, so keep output right if not
+		if [[ -n $version ]];then
+			version="$version "
+		fi
+		if [[ $B_EXTRA_DATA == 'true' ]];then
+			toolkit=$( get_de_gtk_data )
+			if [[ -n $toolkit ]];then
+				version="$version(Gtk $toolkit)"
+			fi
+		fi
+		desktop_environment="Cinnamon"
 	fi
 	# did we find it? If not, start the xprop tests
 	if [[ -z $desktop_environment ]];then
@@ -4761,6 +4806,10 @@ get_de_gtk_data()
 			fi
 		elif type -p pacman &>/dev/null;then
 			toolkit=$(  pacman -Qi gtk3 2>/dev/null | gawk -F ':' '/^Version/ {print $2}' )
+			# just guessing on gkt 4 package name
+			if [[ -z $toolkit ]];then
+				toolkit=$( pacman -Qi gtk4 2>/dev/null | gawk -F ':' '/^Version/ {print $2}' )
+			fi
 			if [[ -z $toolkit ]];then
 				toolkit=$( pacman -Qi gtk2 2>/dev/null | gawk -F ':' '/^Version/ {print $2}' )
 			fi
@@ -5832,7 +5881,7 @@ get_hdd_data_basic()
 	# note that linux 3.2.45-grsec-9th types kernels have this type of partition name: /dev/xvdc (no number, letter)
 	# note: btrfs does not seem to use partition integers, just the primary /dev/sdx identifier
 	# df can also show /dev/disk/(by-label|by-uuid etc)
-	/^\/dev\/(disk\/|mapper\/|[hsv]d[a-z][0-9]*|dm[-]?[0-9]+|ada[0-9]+p[0-9]+.*|(ad|sd|wd)[0-9]+[a-z]|md[0-9]+|[aw]d[0-9]+s.*|xvd[a-z])/ {
+	/^\/dev\/(disk\/|mapper\/|[hsv]d[a-z][0-9]*|dm[-]?[0-9]+|ada[0-9]+p[0-9]+.*|(ad|sd|wd)[0-9]+[a-z]|md[0-9]+|[aw]d[0-9]+s.*|xvd[a-z])|^ROOT/ {
 		# this handles the case where the first item is too long
 		# and makes df wrap output to next line, so here we advance
 		# it to the next line for that single case. Using df -P should
@@ -6163,6 +6212,11 @@ get_hard_drive_data_bsd()
 		END {
 			# sde,3.9GB,STORE_N_GO,USB,C200431546D3CF49-0:0,0
 			# sdd,250.1GB,ST3250824AS,,9ND08GKX,45
+			# multi dimensional pseudo arrays are sorted at total random, not in order of
+			# creation, so force a sort of the aIds, which deletes the array index but preserves
+			# the sorted keys.
+			asort(aIds) 
+			
 			for ( key in aIds ) {
 				# we are not adding to size above for raid, and we do not print it for raid
 				# this is re openbsd raid, which uses sd0 for raid array, even though sd is for scsi
@@ -6647,7 +6701,7 @@ get_memory_data()
 		# use this for all bsds, maybe we can get some useful data on other ones
 		if [[ -n $( type -p vmstat) ]];then
 			# avail mem:2037186560 (1942MB)
-			used_memory=$( vmstat 2>/dev/null | tail -n 1 | gawk '
+			used_memory=$( vmstat 2>/dev/null | tail -n 1 | gawk -v bsdVersion="$BSD_VERSION" '
 			# openbsd/linux
 			# procs    memory       page                    disks    traps          cpu
 			# r b w    avm     fre  flt  re  pi  po  fr  sr wd0 wd1  int   sys   cs us sy id
@@ -6656,7 +6710,11 @@ get_memory_data()
 			# procs      memory      page                    disks     faults         cpu
 			# r b w     avm    fre   flt  re  pi  po    fr  sr ad0 ad1   in   sy   cs us sy id
 			# 0 0 0  21880M  6444M   924  32  11   0   822 827   0   0  853  832  463  8  3 88
-
+			# dragonfly
+			#  procs      memory      page                    disks     faults      cpu
+			#  r b w     avm    fre  flt  re  pi  po  fr  sr ad0 ad1   in   sy  cs us sy id
+			#  0 0 0       0  84060 30273993 2845 12742 1164 407498171 320960902   0   0 424453025 1645645889 1254348072 35 38 26
+			
 			BEGIN {
 				IGNORECASE=1
 				memory=""
@@ -6672,13 +6730,19 @@ get_memory_data()
 				}
 				else {
 					sub(/K/,"",$4)
-					memory=$4
+					if ( bsdVersion !~ /dragonfly/ ) {
+						memory=$4
+					}
+					else {
+						memory=$5
+					}
 				}
 				print memory " " 
 				exit
 			}' )
 		fi
-		memory=$( grep -i 'mem' <<< "$Sysctl_a_Data" | gawk -v usedMemory="$used_memory" -F "$gawk_fs"  '
+		# for dragonfly, we will use free mem, not used because free is 0
+		memory=$( grep -i 'mem' <<< "$Sysctl_a_Data" | gawk -v bsdVersion="$BSD_VERSION" -v usedMemory="$used_memory" -F "$gawk_fs"  '
 		BEGIN {
 			realMemory=""
 			freeMemory=""
@@ -6703,9 +6767,16 @@ get_memory_data()
 		END {
 			# hack: temp fix for openbsd/darwin: in case no free mem was detected but we have physmem
 			if ( freeMemory == "" && realMemory != "" ) {
-				# use openbsd avail mem data if available
+				# use openbsd/dragonfly avail mem data if available
 				if (usedMemory != "" ) {
-					printf("%.1f/%.1fMB\n", usedMemory/1024, realMemory/1024)
+					if (bsdVersion !~ /dragonfly/) {
+						printf("%.1f/%.1fMB\n", usedMemory/1024, realMemory/1024)
+					}
+					else {
+						# using free mem, not used for dragonfly
+						usedMemory = realMemory - usedMemory
+						printf("%.1f/%.1fMB\n", usedMemory/1024, realMemory/1024)
+					}
 				}
 				else {
 					printf("NA/%.1fMB\n", realMemory/1024)
@@ -7482,6 +7553,10 @@ get_optical_drive_data_bsd()
 		# "$link,dev-readlinks,$vendor,$model,$rev_number,$proc_info_string,$state"
 		# $proc_info_string: print speed "," multisession "," mcn "," audio "," cdr "," cdrw "," dvd "," dvdr "," dvdram
 		END {
+			# multi dimensional pseudo arrays are sorted at total random, not in order of
+			# creation, so force a sort of the aIds, which deletes the array index but preserves
+			# the sorted keys.
+			asort(aIds) 
 			for ( key in aIds ) {
 				print aDisks[aIds[key], "id"] ",,," aDisks[aIds[key], "model"] "," aDisks[aIds[key], "rev"] "," aDisks[aIds[key], "speed"] ",,,,,,,," 
 			}
@@ -8095,7 +8170,7 @@ EOF"
 				sub(/:$/, "", pciId)
 				itemData=$4
 				chipId=gensub(/.*chip=([0-9a-f][0-9a-f][0-9a-f][0-9a-f])([0-9a-f][0-9a-f][0-9a-f][0-9a-f]).*/, "\\2:\\1", itemData )
-				if ( $2 ~ /class=020000|class=068000/ ) {
+				if ( $2 ~ /class=020000/ ) {
 					class="network"
 				}
 				else if ( $2 == "class=030000" ) {
@@ -8518,6 +8593,10 @@ get_raid_data_bsd()
 			}
 			
 			while ( getline && $1 !~ /^$/ ) {
+				# https://blogs.oracle.com/eschrock/entry/zfs_hot_spares
+				if ($1 ~ /spares/) {
+					getline
+				}
 				# print $1
 				components = components separator $1
 				separator=" "
@@ -8606,6 +8685,10 @@ get_raid_component_data_bsd()
 								raidLevel="zfs-no-raid"
 							}
 						}
+					}
+					# https://blogs.oracle.com/eschrock/entry/zfs_hot_spares
+					if ($1 ~ /spares/) {
+						getline
 					}
 					sub( /ONLINE/, "", $2 )
 					components=components separator $1 separator $2
@@ -9169,6 +9252,7 @@ get_repo_data()
 	local apt_file='/etc/apt/sources.list' yum_repo_dir='/etc/yum.repos.d/' yum_conf='/etc/yum.conf'
 	local pacman_conf='/etc/pacman.conf' pacman_repo_dir='/etc/pacman.d/' pisi_dir='/etc/pisi/'
 	local zypp_repo_dir='/etc/zypp/repos.d/' freebsd_conf='/etc/portsnap.conf' openbsd_conf='/etc/pkg.conf'
+	local ports_dir='/usr/local/etc/pkg/repos/' slackpkg_file='/etc/slackpkg/mirrors'
 	
 	# apt - debian, buntus, also sometimes some yum/rpm repos may create apt repos here as well
 	if [[ -f $apt_file || -d $apt_file.d ]];then
@@ -9184,10 +9268,13 @@ get_repo_data()
 			# older redhats put their yum data in /etc/yum.conf
 			repo_files=$( ls $yum_repo_dir*.repo $yum_conf 2>/dev/null )
 			repo_name='yum'
+			log_function_data "yum repo filess: $repo_files"
 		elif [[ -d $zypp_repo_dir ]];then
 			repo_files=$( ls $zypp_repo_dir*.repo 2>/dev/null )
 			repo_name='zypp'
+			log_function_data "zypp repo filess: $repo_files"
 		fi
+		log_function_data 'cat' "$repo_files"
 		if [[ -n $repo_files ]];then
 			for repo_file in $repo_files
 			do
@@ -9295,6 +9382,8 @@ $repo_data_working"
 		# execute line breaks
 		REPO_DATA="$( echo -e $repo_data_working2 )"
 	# pisi - pardus
+	elif [[ -f $slackpkg_file ]];then
+		REPO_DATA="$( grep -Esv '(^[[:space:]]*$|^[[:space:]]*#)' $slackpkg_file | sed $SED_RX 's/^(.*)/slackpkg sources:\1/' )"
 	elif [[ -d $pisi_dir && -n $( type -p pisi ) ]];then
 		REPO_DATA="$( pisi list-repo )"
 		# now we need to create the structure: repo info: repo path
@@ -9359,15 +9448,60 @@ $repo_data_working"
 		done <<< "$REPO_DATA"
 		# echo and execute the line breaks inserted
 		REPO_DATA="$( echo -e $repo_data_working )"
-	elif [[ -f $freebsd_conf ]];then
-		REPO_DATA="$( gawk -F '=' -v repoFile=$freebsd_conf '
-		BEGIN {
-			IGNORECASE=1
-		}
-		/^SERVERNAME/ {
-			print "BSD ports servers:" repoFile ":" $2
-		}
-		' $freebsd_conf )"
+	elif [[ -f $freebsd_conf || -d $ports_dir ]];then
+		if [[ -f $freebsd_conf ]];then
+			REPO_DATA="$( gawk -F '=' -v repoFile=$freebsd_conf '
+			BEGIN {
+				IGNORECASE=1
+			}
+			/^SERVERNAME/ {
+				print "BSD ports servers:" repoFile ":" $2
+			}
+			' $freebsd_conf )"
+		fi
+		if [[ -d $ports_dir ]];then
+			repo_files=$(ls ${ports_dir}*.conf 2>/dev/null )
+			for repo_file in $repo_files
+			do
+				repo_data_working="$repo_data_working$( gawk -v repoFile=$repo_file '
+				BEGIN {
+					FS=":"
+					IGNORECASE=1
+					repoName=""
+					repoUrl=""
+					enabled=""
+				}
+				{
+					gsub(/{|}|^#.*/,"",$0)
+				}
+				/^[^[:space:]]/ {
+					repoName=$1
+					repoUrl=""
+					enabled=""
+					while ( getline && $0 !~ /^[[:space:]]*$/ ) {
+						gsub(/,/,"",$0)
+						gsub(/({|}|^[[:space:]]+|[[:space:]]+$)/,"",$1)
+						gsub(/({|}|^[[:space:]]+|[[:space:]]+$)/,"",$2)
+						if ( $1 == "url" ) {
+							repoUrl=$2$3
+						}
+						if ( $1 == "enabled" ) {
+							if ( $2 == "yes" ) {
+								print "BSD ports server:" repoFile ":" repoName ":" repoUrl 
+							}
+						}
+					}
+				}
+				' $repo_file )"
+			done
+		fi
+		if [[ -z $REPO_DATA ]];then
+			REPO_DATA="$repo_data_working"
+		elif [[ -n $repo_data_working ]];then
+			REPO_DATA="$REPO_DATA
+$repo_data_working"
+		fi
+		repo_data_working=''
 	elif [[ -f $openbsd_conf ]];then
 		REPO_DATA="$( gawk -F '=' -v repoFile=$openbsd_conf '
 		BEGIN {
@@ -11173,7 +11307,8 @@ print_dmidecode_error()
 	if [[ $1 == 'sys' ]];then
 		if [[ $B_FORCE_DMIDECODE == 'true' ]];then
 			sysDmiError='Forcing '
-		elif [[ $BSD_TYPE == '' || -d /sys ]];then
+		# dragonfly has /sys, but it's empty
+		elif [[ $BSD_TYPE == '' || -d /sys/devices ]];then
 			sysDmiError='No /sys/class/dmi; using '
 		else
 			sysDmiError='Using '
@@ -11426,7 +11561,6 @@ print_graphics_data()
 print_hard_disk_data()
 {
 	eval $LOGFS
-	local b_bsd_debugger='true'
 	local hdd_data='' hdd_data_2='' a_hdd_working='' hdd_temp_data='' hdd_string=''
 	local hdd_serial='' dev_string='/dev/'
 	local dev_data='' size_data='' hdd_model='' usb_data='' hdd_name=''
@@ -11441,7 +11575,7 @@ print_hard_disk_data()
 	IFS="$ORIGINAL_IFS"
 	local hdd_capacity="${a_hdd_basic_working[0]}"
 	local hdd_used=${a_hdd_basic_working[1]}
-	local bsd_unsupported='Hard drive data not yet supported for BSD systems.'
+	local bsd_error="No HDD Info. $FILE_DMESG_BOOT not readable?"
 	local hdd_name_temp='' part_1_data='' part_2_data=''
 	local row_starter="${C1}HDD Total Size$SEP3${C2} $hdd_capacity ($hdd_used) "
 	# in bsd, /dev/wd0c is disk id
@@ -11452,112 +11586,110 @@ print_hard_disk_data()
 	if [[ $B_SHOW_BASIC_DISK == 'true' || $B_SHOW_DISK == 'true' ]];then
 		## note: the output part of this should be in the print hdd data function, not here
 		get_hard_drive_data_advanced
-		for (( i=0; i < ${#A_HDD_DATA[@]} - 1; i++ ))
-		do
-			# this adds the (x) numbering in front of each disk found, and creates the full disk string
-			IFS=","
-			a_hdd_working=( ${A_HDD_DATA[i]} )
-			IFS="$ORIGINAL_IFS"
-			if [[ $B_SHOW_DISK == 'true' ]];then
-				if [[ -n ${a_hdd_working[3]} ]];then
-					usb_data="${a_hdd_working[3]} "
-				else
-					usb_data=''
-				fi
-				size_data=" ${C1}size$SEP3${C2} ${a_hdd_working[1]}"
-				if [[ $B_EXTRA_DATA == 'true' ]];then
-					hdd_temp_data=${a_hdd_working[5]}
-					# error handling is done in get data function
-					if [[ -n $hdd_temp_data ]];then
-						hdd_temp_data=" ${C1}temp$SEP3${C2} ${hdd_temp_data}C"
+		
+		# temporary message to indicate not yet supported
+		if [[ $BSD_TYPE == 'bsd' && -z $Dmesg_Boot_Data ]];then
+			hdd_data=$bsd_error
+			hdd_data=$( create_print_line "$Line_Starter" "$hdd_data" )
+			print_screen_output "$hdd_data"
+			Line_Starter=' '
+		else
+			for (( i=0; i < ${#A_HDD_DATA[@]} - 1; i++ ))
+			do
+				# this adds the (x) numbering in front of each disk found, and creates the full disk string
+				IFS=","
+				a_hdd_working=( ${A_HDD_DATA[i]} )
+				IFS="$ORIGINAL_IFS"
+				if [[ $B_SHOW_DISK == 'true' ]];then
+					if [[ -n ${a_hdd_working[3]} ]];then
+						usb_data="${a_hdd_working[3]} "
 					else
-						hdd_temp_data=''
+						usb_data=''
 					fi
-				fi
-				if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
-					hdd_serial=${a_hdd_working[4]}
-					if [[ -z $hdd_serial ]];then
-						hdd_serial='N/A'
+					size_data=" ${C1}size$SEP3${C2} ${a_hdd_working[1]}"
+					if [[ $B_EXTRA_DATA == 'true' ]];then
+						hdd_temp_data=${a_hdd_working[5]}
+						# error handling is done in get data function
+						if [[ -n $hdd_temp_data ]];then
+							hdd_temp_data=" ${C1}temp$SEP3${C2} ${hdd_temp_data}C"
+						else
+							hdd_temp_data=''
+						fi
 					fi
-					hdd_serial=" ${C1}serial$SEP3${C2} $hdd_serial"
+					if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+						hdd_serial=${a_hdd_working[4]}
+						if [[ -z $hdd_serial ]];then
+							hdd_serial='N/A'
+						fi
+						hdd_serial=" ${C1}serial$SEP3${C2} $hdd_serial"
+					fi
+					dev_data="$dev_string${a_hdd_working[0]} "
 				fi
-				dev_data="$dev_string${a_hdd_working[0]} "
-			fi
-			if [[ -n ${a_hdd_working[2]} ]];then
-				hdd_name_temp=${a_hdd_working[2]}
-			else
-				hdd_name_temp='N/A'
-			fi
-			# echo "loop: $i"
-			hdd_name="${C1}model$SEP3${C2} $hdd_name_temp"
-			hdd_string="${C1}ID-$((i+1))$SEP3${C2} $usb_data$dev_data$hdd_name$size_data$hdd_serial$hdd_temp_data"
-			part_1_data="$hdd_model$hdd_string "
-			
-			if [[ $i -eq 0 ]];then
-				if [[ $( calculate_line_length "$row_starter$part_1_data" ) -gt $COLS_INNER ]];then
-					hdd_data=$( create_print_line "$Line_Starter" "$row_starter" )
-					print_screen_output "$hdd_data"
-					#echo 0
-					Line_Starter=' '
-					row_starter=''
-					hdd_data=$( create_print_line "$Line_Starter" "$part_1_data" )
-					print_screen_output "$hdd_data"
-					part_1_data=''
-					#echo 1
+				if [[ -n ${a_hdd_working[2]} ]];then
+					hdd_name_temp=${a_hdd_working[2]}
 				else
+					hdd_name_temp='N/A'
+				fi
+				# echo "loop: $i"
+				hdd_name="${C1}model$SEP3${C2} $hdd_name_temp"
+				hdd_string="${C1}ID-$((i+1))$SEP3${C2} $usb_data$dev_data$hdd_name$size_data$hdd_serial$hdd_temp_data"
+				part_1_data="$hdd_model$hdd_string "
+				
+				if [[ $i -eq 0 ]];then
+					if [[ $( calculate_line_length "$row_starter$part_1_data" ) -gt $COLS_INNER ]];then
+						hdd_data=$( create_print_line "$Line_Starter" "$row_starter" )
+						print_screen_output "$hdd_data"
+						#echo 0
+						Line_Starter=' '
+						row_starter=''
+						hdd_data=$( create_print_line "$Line_Starter" "$part_1_data" )
+						print_screen_output "$hdd_data"
+						part_1_data=''
+						#echo 1
+					else
+						hdd_data=$( create_print_line "$Line_Starter" "$row_starter$part_1_data" )
+						print_screen_output "$hdd_data"
+						Line_Starter=' '
+						row_starter=''
+						part_1_data=''
+						#echo 2
+					fi
+				fi
+				if [[ $( calculate_line_length "$row_starter$part_2_data$part_1_data" ) -gt $COLS_INNER ]];then
+					if [[ -n $( grep -vE '^[[:space:]]*$' <<< $part_2_data ) ]];then
+						hdd_data=$( create_print_line "$Line_Starter" "$row_starter$part_2_data" )
+						print_screen_output "$hdd_data"
+						#echo 3
+						Line_Starter=' '
+						row_starter=''
+						part_2_data=''
+					fi
 					hdd_data=$( create_print_line "$Line_Starter" "$row_starter$part_1_data" )
 					print_screen_output "$hdd_data"
-					Line_Starter=' '
-					row_starter=''
 					part_1_data=''
-					#echo 2
-				fi
-			fi
-			if [[ $( calculate_line_length "$row_starter$part_2_data$part_1_data" ) -gt $COLS_INNER ]];then
-				if [[ -n $( grep -vE '^[[:space:]]*$' <<< $part_2_data ) ]];then
-					hdd_data=$( create_print_line "$Line_Starter" "$row_starter$part_2_data" )
+					#echo 4
+				elif [[ -n $part_2_data && \
+						$( calculate_line_length "$row_starter$part_2_data$part_1_data" ) -le $COLS_INNER ]];then
+					hdd_data=$( create_print_line "$Line_Starter" "$row_starter$part_2_data$part_1_data" )
 					print_screen_output "$hdd_data"
 					#echo 3
 					Line_Starter=' '
 					row_starter=''
+					part_1_data=''
 					part_2_data=''
+				else
+					part_2_data=$part_1_data
 				fi
-				hdd_data=$( create_print_line "$Line_Starter" "$row_starter$part_1_data" )
+			done
+			# then print any leftover items
+			if [[ -n $part_2_data ]];then
+				hdd_data=$( create_print_line "$Line_Starter" "$part_2_data" )
 				print_screen_output "$hdd_data"
-				part_1_data=''
-				#echo 4
-			elif [[ -n $part_2_data && \
-			        $( calculate_line_length "$row_starter$part_2_data$part_1_data" ) -le $COLS_INNER ]];then
-				hdd_data=$( create_print_line "$Line_Starter" "$row_starter$part_2_data$part_1_data" )
-				print_screen_output "$hdd_data"
-				#echo 3
-				Line_Starter=' '
-				row_starter=''
-				part_1_data=''
-				part_2_data=''
-			else
-				part_2_data=$part_1_data
+				#echo 5
 			fi
-		done
-		# then print any leftover items
-		if [[ -n $part_2_data ]];then
-			hdd_data=$( create_print_line "$Line_Starter" "$part_2_data" )
-			print_screen_output "$hdd_data"
-			#echo 5
-		fi
-		# temporary message to indicate not yet supported
-		if [[ $b_bsd_debugger == 'false' && $BSD_TYPE == 'bsd' ]];then
-			hdd_data=$bsd_unsupported
-			hdd_data=$( create_print_line "$Line_Starter" "$hdd_data" )
-			print_screen_output "$hdd_data"
-			Line_Starter=' '
 		fi
 	else
-		# temporary message to indicate not yet supported
 		hdd_data="$row_starter"
-		if [[ $b_bsd_debugger == 'false' && $BSD_TYPE == 'bsd' ]];then
-			hdd_data=$bsd_unsupported
-		fi
 		hdd_data=$( create_print_line "$Line_Starter" "$hdd_data" )
 		print_screen_output "$hdd_data"
 		Line_Starter=' '
