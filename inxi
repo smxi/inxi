@@ -3,8 +3,8 @@
 # openbsd ftp does http
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.2.9
-####  Date: 2014-09-22
+####  Version: 2.2.10
+####  Date: 2014-09-24
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -4796,22 +4796,32 @@ get_de_gtk_data()
 		# this is the most likely order as of: 2014-01-13. Not going to try to support all package managers
 		# too much work, just the very biggest ones.
 		if type -p dpkg &>/dev/null;then
-			toolkit=$( dpkg -s libgtk-3-0 2>/dev/null | gawk -F ':' '/^Version/ {print $2}' )
-			if [[ -z $toolkit ]];then
-				toolkit=$( dpkg -s libgtk2.0-0 2>/dev/null | gawk -F ':' '/^Version/ {print $2}' )
-			fi
+			toolkit=$( dpkg -s libgtk-3-0 2>/dev/null | gawk -F ':' '/^[[:space:]]*Version/ {print $2}' )
 			# just guessing on gkt 4 package name
 			if [[ -z $toolkit ]];then
-				toolkit=$( dpkg -s libgtk-4-0 2>/dev/null | gawk -F ':' '/^Version/ {print $2}' )
+				toolkit=$( dpkg -s libgtk-4-0 2>/dev/null | gawk -F ':' '/^[[:space:]]*Version/ {print $2}' )
+			fi
+			if [[ -z $toolkit ]];then
+				toolkit=$( dpkg -s libgtk2.0-0 2>/dev/null | gawk -F ':' '/^[[:space:]]*Version/ {print $2}' )
 			fi
 		elif type -p pacman &>/dev/null;then
-			toolkit=$(  pacman -Qi gtk3 2>/dev/null | gawk -F ':' '/^Version/ {print $2}' )
+			toolkit=$(  pacman -Qi gtk3 2>/dev/null | gawk -F ':' '/^[[:space:]]*Version/ {print $2}' )
 			# just guessing on gkt 4 package name
 			if [[ -z $toolkit ]];then
-				toolkit=$( pacman -Qi gtk4 2>/dev/null | gawk -F ':' '/^Version/ {print $2}' )
+				toolkit=$( pacman -Qi gtk4 2>/dev/null | gawk -F ':' '/^[[:space:]]*Version/ {print $2}' )
 			fi
 			if [[ -z $toolkit ]];then
-				toolkit=$( pacman -Qi gtk2 2>/dev/null | gawk -F ':' '/^Version/ {print $2}' )
+				toolkit=$( pacman -Qi gtk2 2>/dev/null | gawk -F ':' '/^[[:space:]]*Version/ {print $2}' )
+			fi
+		# Name        : libgtk-3-0
+		# Version     : 3.12.2
+		elif type -p rpm &>/dev/null;then
+			toolkit=$( rpm -qi libgtk-3-0 2>/dev/null | gawk -F ':' '/^[[:space:]]*Version/ {print $3}' )
+			if [[ -z $toolkit ]];then
+				toolkit=$( rpm -qi libgtk-4-0 2>/dev/null | gawk -F ':' '/^[[:space:]]*Version/ {print $3}' )
+			fi
+			if [[ -z $toolkit ]];then
+				toolkit=$( rpm -qi libgtk-2-0 2>/dev/null | gawk -F ':' '/^[[:space:]]*Version/ {print $3}' )
 			fi
 		fi
 	fi
@@ -6701,7 +6711,7 @@ get_memory_data()
 		# use this for all bsds, maybe we can get some useful data on other ones
 		if [[ -n $( type -p vmstat) ]];then
 			# avail mem:2037186560 (1942MB)
-			used_memory=$( vmstat 2>/dev/null | tail -n 1 | gawk -v bsdVersion="$BSD_VERSION" '
+			used_memory=$( vmstat 2>/dev/null | tail -n 1 | gawk '
 			# openbsd/linux
 			# procs    memory       page                    disks    traps          cpu
 			# r b w    avm     fre  flt  re  pi  po  fr  sr wd0 wd1  int   sys   cs us sy id
@@ -6730,11 +6740,12 @@ get_memory_data()
 				}
 				else {
 					sub(/K/,"",$4)
-					if ( bsdVersion !~ /dragonfly/ ) {
+					# dragonfly can have 0 avm, but they may fix that so make test dynamic
+					if ( $4 != 0 ) {
 						memory=$4
 					}
 					else {
-						memory=$5
+						memory="avm-0-" $5
 					}
 				}
 				print memory " " 
@@ -6742,7 +6753,7 @@ get_memory_data()
 			}' )
 		fi
 		# for dragonfly, we will use free mem, not used because free is 0
-		memory=$( grep -i 'mem' <<< "$Sysctl_a_Data" | gawk -v bsdVersion="$BSD_VERSION" -v usedMemory="$used_memory" -F "$gawk_fs"  '
+		memory=$( grep -i 'mem' <<< "$Sysctl_a_Data" | gawk -v usedMemory="$used_memory" -F "$gawk_fs"  '
 		BEGIN {
 			realMemory=""
 			freeMemory=""
@@ -6769,10 +6780,12 @@ get_memory_data()
 			if ( freeMemory == "" && realMemory != "" ) {
 				# use openbsd/dragonfly avail mem data if available
 				if (usedMemory != "" ) {
-					if (bsdVersion !~ /dragonfly/) {
+					if (usedMemory !~ /^avm-0-/ ) {
 						printf("%.1f/%.1fMB\n", usedMemory/1024, realMemory/1024)
 					}
 					else {
+						sub(/avm-0-/,"",usedMemory)
+						int(usedMemory)
 						# using free mem, not used for dragonfly
 						usedMemory = realMemory - usedMemory
 						printf("%.1f/%.1fMB\n", usedMemory/1024, realMemory/1024)
@@ -9252,7 +9265,7 @@ get_repo_data()
 	local apt_file='/etc/apt/sources.list' yum_repo_dir='/etc/yum.repos.d/' yum_conf='/etc/yum.conf'
 	local pacman_conf='/etc/pacman.conf' pacman_repo_dir='/etc/pacman.d/' pisi_dir='/etc/pisi/'
 	local zypp_repo_dir='/etc/zypp/repos.d/' freebsd_conf='/etc/portsnap.conf' openbsd_conf='/etc/pkg.conf'
-	local ports_dir='/usr/local/etc/pkg/repos/'
+	local ports_dir='/usr/local/etc/pkg/repos/' slackpkg_file='/etc/slackpkg/mirrors'
 	
 	# apt - debian, buntus, also sometimes some yum/rpm repos may create apt repos here as well
 	if [[ -f $apt_file || -d $apt_file.d ]];then
@@ -9268,10 +9281,13 @@ get_repo_data()
 			# older redhats put their yum data in /etc/yum.conf
 			repo_files=$( ls $yum_repo_dir*.repo $yum_conf 2>/dev/null )
 			repo_name='yum'
+			log_function_data "yum repo filess: $repo_files"
 		elif [[ -d $zypp_repo_dir ]];then
 			repo_files=$( ls $zypp_repo_dir*.repo 2>/dev/null )
 			repo_name='zypp'
+			log_function_data "zypp repo filess: $repo_files"
 		fi
+		log_function_data 'cat' "$repo_files"
 		if [[ -n $repo_files ]];then
 			for repo_file in $repo_files
 			do
@@ -9379,6 +9395,8 @@ $repo_data_working"
 		# execute line breaks
 		REPO_DATA="$( echo -e $repo_data_working2 )"
 	# pisi - pardus
+	elif [[ -f $slackpkg_file ]];then
+		REPO_DATA="$( grep -Esv '(^[[:space:]]*$|^[[:space:]]*#)' $slackpkg_file | sed $SED_RX 's/^(.*)/slackpkg sources:\1/' )"
 	elif [[ -d $pisi_dir && -n $( type -p pisi ) ]];then
 		REPO_DATA="$( pisi list-repo )"
 		# now we need to create the structure: repo info: repo path
@@ -9482,7 +9500,7 @@ $repo_data_working"
 						}
 						if ( $1 == "enabled" ) {
 							if ( $2 == "yes" ) {
-								print "BSD ports server:" repoFile ":" repoName " " repoUrl 
+								print "BSD ports server:" repoFile ":" repoName ":" repoUrl 
 							}
 						}
 					}
