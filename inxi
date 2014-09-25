@@ -3,9 +3,9 @@
 # openbsd ftp does http
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.2.9
+####  Version: 2.2.11
 ####  Date: 2014-09-24
-####  Patch Number: 01-b1
+####  Patch Number: 01
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -1455,7 +1455,10 @@ log_function_data()
 				;;
 			cat)
 				if [[ $B_LOG_FULL_DATA == 'true' ]];then
-					logged_data="\n$line\nFull file data: cat $2\n\n$( cat $2 )\n$line\n"
+					for cat_file in $2
+					do
+						logged_data="$logged_data\n$line\nFull file data: cat $cat_file\n\n$( cat $cat_file )\n$line\n"
+					done
 					spacer=''
 				fi
 				;;
@@ -4796,22 +4799,44 @@ get_de_gtk_data()
 		# this is the most likely order as of: 2014-01-13. Not going to try to support all package managers
 		# too much work, just the very biggest ones.
 		if type -p dpkg &>/dev/null;then
-			toolkit=$( dpkg -s libgtk-3-0 2>/dev/null | gawk -F ':' '/^Version/ {print $2}' )
-			if [[ -z $toolkit ]];then
-				toolkit=$( dpkg -s libgtk2.0-0 2>/dev/null | gawk -F ':' '/^Version/ {print $2}' )
-			fi
+			toolkit=$( dpkg -s libgtk-3-0 2>/dev/null | gawk -F ':' '/^[[:space:]]*Version/ {print $2}' )
 			# just guessing on gkt 4 package name
 			if [[ -z $toolkit ]];then
-				toolkit=$( dpkg -s libgtk-4-0 2>/dev/null | gawk -F ':' '/^Version/ {print $2}' )
+				toolkit=$( dpkg -s libgtk-4-0 2>/dev/null | gawk -F ':' '/^[[:space:]]*Version/ {print $2}' )
+			fi
+			if [[ -z $toolkit ]];then
+				toolkit=$( dpkg -s libgtk2.0-0 2>/dev/null | gawk -F ':' '/^[[:space:]]*Version/ {print $2}' )
 			fi
 		elif type -p pacman &>/dev/null;then
-			toolkit=$(  pacman -Qi gtk3 2>/dev/null | gawk -F ':' '/^Version/ {print $2}' )
+			toolkit=$(  pacman -Qi gtk3 2>/dev/null | gawk -F ':' '/^[[:space:]]*Version/ {print $2}' )
 			# just guessing on gkt 4 package name
 			if [[ -z $toolkit ]];then
-				toolkit=$( pacman -Qi gtk4 2>/dev/null | gawk -F ':' '/^Version/ {print $2}' )
+				toolkit=$( pacman -Qi gtk4 2>/dev/null | gawk -F ':' '/^[[:space:]]*Version/ {print $2}' )
 			fi
 			if [[ -z $toolkit ]];then
-				toolkit=$( pacman -Qi gtk2 2>/dev/null | gawk -F ':' '/^Version/ {print $2}' )
+				toolkit=$( pacman -Qi gtk2 2>/dev/null | gawk -F ':' '/^[[:space:]]*Version/ {print $2}' )
+			fi
+		# Name        : libgtk-3-0
+		# Version     : 3.12.2
+		elif type -p rpm &>/dev/null;then
+			toolkit=$( rpm -qi libgtk-3-0 2>/dev/null | gawk -F ':' '
+			/^[[:space:]]*Version/ { 
+				gsub(/^[[:space:]]+|[[:space:]]+$/,"",$2)
+				print $2 
+			}' )
+			if [[ -z $toolkit ]];then
+				toolkit=$( rpm -qi libgtk-4-0 2>/dev/null | gawk -F ':' '
+				/^[[:space:]]*Version/ {
+					gsub(/^[[:space:]]+|[[:space:]]+$/,"",$2)
+					print $2
+				}' )
+			fi
+			if [[ -z $toolkit ]];then
+				toolkit=$( rpm -qi libgtk-2-0 2>/dev/null | gawk -F ':' '
+				/^[[:space:]]*Version/ {
+					gsub(/^[[:space:]]+|[[:space:]]+$/,"",$2)
+					print $2
+				}' )
 			fi
 		fi
 	fi
@@ -6701,7 +6726,7 @@ get_memory_data()
 		# use this for all bsds, maybe we can get some useful data on other ones
 		if [[ -n $( type -p vmstat) ]];then
 			# avail mem:2037186560 (1942MB)
-			used_memory=$( vmstat 2>/dev/null | tail -n 1 | gawk -v bsdVersion="$BSD_VERSION" '
+			used_memory=$( vmstat 2>/dev/null | tail -n 1 | gawk '
 			# openbsd/linux
 			# procs    memory       page                    disks    traps          cpu
 			# r b w    avm     fre  flt  re  pi  po  fr  sr wd0 wd1  int   sys   cs us sy id
@@ -6730,11 +6755,12 @@ get_memory_data()
 				}
 				else {
 					sub(/K/,"",$4)
-					if ( bsdVersion !~ /dragonfly/ ) {
+					# dragonfly can have 0 avm, but they may fix that so make test dynamic
+					if ( $4 != 0 ) {
 						memory=$4
 					}
 					else {
-						memory=$5
+						memory="avm-0-" $5
 					}
 				}
 				print memory " " 
@@ -6742,7 +6768,7 @@ get_memory_data()
 			}' )
 		fi
 		# for dragonfly, we will use free mem, not used because free is 0
-		memory=$( grep -i 'mem' <<< "$Sysctl_a_Data" | gawk -v bsdVersion="$BSD_VERSION" -v usedMemory="$used_memory" -F "$gawk_fs"  '
+		memory=$( grep -i 'mem' <<< "$Sysctl_a_Data" | gawk -v usedMemory="$used_memory" -F "$gawk_fs"  '
 		BEGIN {
 			realMemory=""
 			freeMemory=""
@@ -6769,10 +6795,12 @@ get_memory_data()
 			if ( freeMemory == "" && realMemory != "" ) {
 				# use openbsd/dragonfly avail mem data if available
 				if (usedMemory != "" ) {
-					if (bsdVersion !~ /dragonfly/) {
+					if (usedMemory !~ /^avm-0-/ ) {
 						printf("%.1f/%.1fMB\n", usedMemory/1024, realMemory/1024)
 					}
 					else {
+						sub(/avm-0-/,"",usedMemory)
+						int(usedMemory)
 						# using free mem, not used for dragonfly
 						usedMemory = realMemory - usedMemory
 						printf("%.1f/%.1fMB\n", usedMemory/1024, realMemory/1024)
@@ -9256,7 +9284,22 @@ get_repo_data()
 	
 	# apt - debian, buntus, also sometimes some yum/rpm repos may create apt repos here as well
 	if [[ -f $apt_file || -d $apt_file.d ]];then
-		REPO_DATA="$( grep -Esv '(^[[:space:]]*$|^[[:space:]]*#)' $apt_file $apt_file.d/*.list | sed $SED_RX 's/^(.*)/apt sources:\1/' )"
+		for repo_file in $apt_file $( ls $apt_file.d/*.list 2>/dev/null)
+		do
+			repo_data_working="$( gawk -v repoFile="$repo_file" '
+			!/^[[:space:]]*$|^[[:space:]]*#/ {
+				print "apt sources:" repoFile ":" $0
+			}' $repo_file )"
+			if [[ -n $repo_data_working ]];then
+				if [[ -z $REPO_DATA ]];then
+					REPO_DATA="$repo_data_working"
+				else
+					REPO_DATA="$REPO_DATA
+					$repo_data_working"
+				fi
+			fi
+		done
+		repo_data_working=''
 	fi
 	# yum - fedora, redhat, centos, etc. Note that rpmforge also may create apt sources
 	# in /etc/apt/sources.list.d/. Therefore rather than trying to assume what package manager is
@@ -9341,10 +9384,10 @@ get_repo_data()
 						REPO_DATA="$REPO_DATA
 $repo_data_working"
 					fi
-					repo_data_working=''
 				fi
 			done
 		fi
+		repo_data_working=''
 	# pacman - archlinux, going to assume that pisi and arch/pacman, etc don't have the above issue with apt/yum
 	elif [[ -f $pacman_conf ]];then
 		# get list of mirror include files, trim white space off ends
@@ -9381,11 +9424,29 @@ $repo_data_working"
 		done
 		# execute line breaks
 		REPO_DATA="$( echo -e $repo_data_working2 )"
+		repo_data_working=''
 	# pisi - pardus
 	elif [[ -f $slackpkg_file ]];then
-		REPO_DATA="$( grep -Esv '(^[[:space:]]*$|^[[:space:]]*#)' $slackpkg_file | sed $SED_RX 's/^(.*)/slackpkg sources:\1/' )"
+		# note, only one file, but loop it in case more are added in future
+		for repo_file in $slackpkg_file
+		do
+			repo_data_working="$( gawk -v repoFile="$repo_file" '
+			!/^[[:space:]]*$|^[[:space:]]*#/ {
+				print "slackpkg sources:" repoFile ":" $0
+			}' $repo_file )"
+			if [[ -n $repo_data_working ]];then
+				if [[ -z $REPO_DATA ]];then
+					REPO_DATA="$repo_data_working"
+				else
+					REPO_DATA="$REPO_DATA
+					$repo_data_working"
+				fi
+			fi
+		done
+		repo_data_working=''
 	elif [[ -d $pisi_dir && -n $( type -p pisi ) ]];then
 		REPO_DATA="$( pisi list-repo )"
+		log_function_data "pisi-list-repo: $REPO_DATA"
 		# now we need to create the structure: repo info: repo path
 		# we do that by looping through the lines of the output and then
 		# putting it back into the <data>:<url> format print repos expects to see
@@ -9413,9 +9474,11 @@ $repo_data_working"
 		done <<< "$REPO_DATA"
 		# echo and execute the line breaks inserted
 		REPO_DATA="$( echo -e $repo_data_working )"
+		repo_data_working=''
 	# Mandriva/Mageia using: urpmq
 	elif type -p urpmq &>/dev/null;then
 		REPO_DATA="$( urpmq --list-media active --list-url )"
+		log_function_data "urpmq: $REPO_DATA"
 		# now we need to create the structure: repo info: repo path
 		# we do that by looping through the lines of the output and then
 		# putting it back into the <data>:<url> format print repos expects to see
@@ -9461,9 +9524,10 @@ $repo_data_working"
 		fi
 		if [[ -d $ports_dir ]];then
 			repo_files=$(ls ${ports_dir}*.conf 2>/dev/null )
+			log_function_data 'cat' "$repo_files"
 			for repo_file in $repo_files
 			do
-				repo_data_working="$repo_data_working$( gawk -v repoFile=$repo_file '
+				repo_data_working="$( gawk -v repoFile=$repo_file '
 				BEGIN {
 					FS=":"
 					IGNORECASE=1
@@ -9487,19 +9551,19 @@ $repo_data_working"
 						}
 						if ( $1 == "enabled" ) {
 							if ( $2 == "yes" ) {
-								print "BSD ports server:" repoFile ":" repoName ":" repoUrl 
+								print "BSD ports server:" repoFile ":" repoName " " repoUrl 
 							}
 						}
 					}
 				}
 				' $repo_file )"
-			done
-		fi
-		if [[ -z $REPO_DATA ]];then
-			REPO_DATA="$repo_data_working"
-		elif [[ -n $repo_data_working ]];then
-			REPO_DATA="$REPO_DATA
+				if [[ -z $REPO_DATA ]];then
+					REPO_DATA="$repo_data_working"
+				elif [[ -n $repo_data_working ]];then
+					REPO_DATA="$REPO_DATA
 $repo_data_working"
+				fi
+			done
 		fi
 		repo_data_working=''
 	elif [[ -f $openbsd_conf ]];then
