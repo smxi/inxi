@@ -3,8 +3,8 @@
 # openbsd ftp does http
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.2.12
-####  Date: 2014-09-24
+####  Version: 2.2.13
+####  Date: 2014-09-25
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -1694,6 +1694,8 @@ debug_data_collector()
 		# fdisk <disk>
 		dmidecode &> $debug_data_dir/dmidecode.txt
 		
+		get_repo_data "$SCRIPT_DATA_DIR/$debug_data_dir"
+		
 		if type -p shopt &>/dev/null;then
 			shopt -s nullglob;a_distro_ids=(/etc/*[-_]{release,version});shopt -u nullglob;echo ${a_distro_ids[@]} &> $debug_data_dir/etc-distro-files.txt
 			for distro_file in ${a_distro_ids[@]} /etc/issue
@@ -3118,7 +3120,12 @@ get_start_client()
 		case $App_Working_Name in
 			# bsd will never use this section
 			bash|dash|sh|python*|perl*)	# We want to know who wrapped it into the shell or perl.
-				pppid="$( ps -p $PPID -o ppid --no-headers | sed 's/[[:space:]]//g' )"
+				if [[ $BSD_TYPE != 'bsd' ]];then
+					pppid=$( ps -p $PPID -o ppid --no-headers 2>/dev/null | gawk '{print $NF}' )
+				else
+					# without --no-headers we need the second line
+					pppid=$( ps -p $PPID -o ppid 2>/dev/null | gawk '$1 ~ /^[0-9]+/ {print $5}' )
+				fi
 				if [[ -n $pppid && -f /proc/$pppid/exe ]];then
 					Irc_Client_Path="$( readlink /proc/$pppid/exe )"
 					irc_client_path_lower=$( tr '[A-Z]' '[a-z]' <<< $Irc_Client_Path )
@@ -9272,6 +9279,7 @@ get_ram_data()
 # neat and readable. Each line of the total number contains the following sections,
 # separated by a : for splitting in the print function
 # part one, repo type/string : part two, file name, if present, of info : part 3, repo data
+# args: $1 - [file location of debug data file - optional, only for debugging data collection] 
 get_repo_data()
 {
 	eval $LOGFS
@@ -9279,13 +9287,20 @@ get_repo_data()
 	local repo_name=''
 	local apt_file='/etc/apt/sources.list' yum_repo_dir='/etc/yum.repos.d/' yum_conf='/etc/yum.conf'
 	local pacman_conf='/etc/pacman.conf' pacman_repo_dir='/etc/pacman.d/' pisi_dir='/etc/pisi/'
-	local zypp_repo_dir='/etc/zypp/repos.d/' freebsd_conf='/etc/portsnap.conf' openbsd_conf='/etc/pkg.conf'
-	local ports_dir='/usr/local/etc/pkg/repos/' slackpkg_file='/etc/slackpkg/mirrors'
+	local zypp_repo_dir='/etc/zypp/repos.d/' ports_conf='/etc/portsnap.conf' openbsd_conf='/etc/pkg.conf'
+	local bsd_pkg_dir='/usr/local/etc/pkg/repos/' slackpkg_file='/etc/slackpkg/mirrors'
+	local netbsd_file='/usr/pkg/etc/pkgin/repositories.conf' freebsd_file='/etc/freebsd-update.conf'
+	local freebsd_pkg_file='/etc/pkg/FreeBSD.conf' slackpkg_plus_file='/etc/slackpkg/slackpkgplus.conf'
 	
 	# apt - debian, buntus, also sometimes some yum/rpm repos may create apt repos here as well
 	if [[ -f $apt_file || -d $apt_file.d ]];then
-		for repo_file in $apt_file $( ls $apt_file.d/*.list 2>/dev/null)
+		repo_files=$(ls /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null)
+		log_function_data "apt repo files: $repo_files"
+		for repo_file in $apt_file $repo_files
 		do
+			if [[ -n $1 ]];then
+				cat $repo_file &> $1/repo-data_${repo_file//\//-}.txt
+			fi
 			repo_data_working="$( gawk -v repoFile="$repo_file" '
 			!/^[[:space:]]*$|^[[:space:]]*#/ {
 				print "apt sources^" repoFile "^" $0
@@ -9317,10 +9332,12 @@ get_repo_data()
 			repo_name='zypp'
 			log_function_data "zypp repo files: $repo_files"
 		fi
-		log_function_data 'cat' "$repo_files"
 		if [[ -n $repo_files ]];then
 			for repo_file in $repo_files
 			do
+				if [[ -n $1 ]];then
+					cat $repo_file &> $1/repo-data_${repo_file//\//-}.txt
+				fi
 				repo_data_working="$( gawk -v repoFile=$repo_file '
 				# construct the string for the print function to work with, file name: data
 				function print_line( fileName, repoId, repoUrl ){
@@ -9406,6 +9423,9 @@ $repo_data_working"
 		repo_data_working="$repo_data_working $pacman_conf"
 		for repo_file in $repo_data_working 
 		do
+			if [[ -n $1 ]];then
+				cat $repo_file &> $1/repo-data_${repo_file//\//-}.txt
+			fi
 			if [[ -f $repo_file ]];then
 				# inserting a new line after each found / processed match
 				repo_data_working2="$repo_data_working2$( gawk -v repoFile=$repo_file '
@@ -9426,14 +9446,16 @@ $repo_data_working"
 		REPO_DATA="$( echo -e $repo_data_working2 )"
 		repo_data_working=''
 	# pisi - pardus
-	elif [[ -f $slackpkg_file ]];then
+	elif [[ -f $slackpkg_file || -f $slackpkg_plus_file ]];then
 		# note, only one file, but loop it in case more are added in future
-		for repo_file in $slackpkg_file
-		do
-			repo_data_working="$( gawk -v repoFile="$repo_file" '
+		if [[ -f $slackpkg_file ]];then
+			if [[ -n $1 ]];then
+				cat $slackpkg_file &> $1/repo-data_${slackpkg_file//\//-}.txt
+			fi
+			repo_data_working="$( gawk -v repoFile="$slackpkg_file" '
 			!/^[[:space:]]*$|^[[:space:]]*#/ {
 				print "slackpkg sources^" repoFile "^" $0
-			}' $repo_file )"
+			}' $slackpkg_file )"
 			if [[ -n $repo_data_working ]];then
 				if [[ -z $REPO_DATA ]];then
 					REPO_DATA="$repo_data_working"
@@ -9442,10 +9464,50 @@ $repo_data_working"
 					$repo_data_working"
 				fi
 			fi
-		done
+		fi
+		if [[ -f $slackpkg_plus_file ]];then
+			if [[ -n $1 ]];then
+				cat $slackpkg_plus_file &> $1/repo-data_${slackpkg_plus_file//\//-}.txt
+			fi
+			# see sample for syntax
+			repo_data_working="$( gawk -F '=' -v repoFile="$slackpkg_plus_file" '
+			BEGIN {
+				activeRepos=""
+			}
+			# stop if set to off
+			/^SLACKPKGPLUS/ {
+				if ( $2 == "off" ){
+					exit
+				}
+			}
+			# get list of current active repos
+			/^REPOPLUS/ {
+				activeRepos=$2
+			}
+			# print out repo line if found
+			/^MIRRORPLUS/ {
+				if ( activeRepos != "" ) {
+					gsub(/MIRRORPLUS\['\''|'\''\]/,"",$1)
+					if ( match( activeRepos, $1 ) ){
+						print "slackpkg+ sources^" repoFile "^" $1 " " $2
+					}
+				}
+			}' $slackpkg_plus_file )"
+			if [[ -n $repo_data_working ]];then
+				if [[ -z $REPO_DATA ]];then
+					REPO_DATA="$repo_data_working"
+				else
+					REPO_DATA="$REPO_DATA
+					$repo_data_working"
+				fi
+			fi
+		fi
 		repo_data_working=''
 	elif [[ -d $pisi_dir && -n $( type -p pisi ) ]];then
 		REPO_DATA="$( pisi list-repo )"
+		if [[ -n $1 ]];then
+			echo "$REPO_DATA" &> $1/repo-data_pisi-list-repo.txt
+		fi
 		log_function_data "pisi-list-repo: $REPO_DATA"
 		# now we need to create the structure: repo info: repo path
 		# we do that by looping through the lines of the output and then
@@ -9478,7 +9540,9 @@ $repo_data_working"
 	# Mandriva/Mageia using: urpmq
 	elif type -p urpmq &>/dev/null;then
 		REPO_DATA="$( urpmq --list-media active --list-url )"
-		log_function_data "urpmq: $REPO_DATA"
+		if [[ -n $1 ]];then
+			echo "$REPO_DATA" &> $1/repo-data_urpmq-list-media-active.txt
+		fi
 		# now we need to create the structure: repo info: repo path
 		# we do that by looping through the lines of the output and then
 		# putting it back into the <data>:<url> format print repos expects to see
@@ -9511,22 +9575,76 @@ $repo_data_working"
 		done <<< "$REPO_DATA"
 		# echo and execute the line breaks inserted
 		REPO_DATA="$( echo -e $repo_data_working )"
-	elif [[ -f $freebsd_conf || -d $ports_dir ]];then
-		if [[ -f $freebsd_conf ]];then
-			REPO_DATA="$( gawk -F '=' -v repoFile=$freebsd_conf '
+	elif [[ -f $ports_conf || -f $freebsd_file || -d $bsd_pkg_dir ]];then
+		if [[ -f $ports_conf ]];then
+			if [[ -n $1 ]];then
+				cat $ports_conf &> $1/repo-data_${ports_conf//\//-}.txt
+			fi
+			repo_data_working="$( gawk -F '=' -v repoFile=$ports_conf '
 			BEGIN {
 				IGNORECASE=1
 			}
 			/^SERVERNAME/ {
-				print "BSD ports servers^" repoFile "^" $2
+				print "BSD ports server^" repoFile "^" $2
+				exit
 			}
-			' $freebsd_conf )"
+			' $ports_conf )"
+			if [[ -z $REPO_DATA ]];then
+				REPO_DATA="$repo_data_working"
+			elif [[ -n $repo_data_working ]];then
+				REPO_DATA="$REPO_DATA
+$repo_data_working"
+			fi
 		fi
-		if [[ -d $ports_dir ]];then
-			repo_files=$(ls ${ports_dir}*.conf 2>/dev/null )
-			log_function_data 'cat' "$repo_files"
+		if [[ -f $freebsd_file ]];then
+			if [[ -n $1 ]];then
+				cat $freebsd_file &> $1/repo-data_${freebsd_file//\//-}.txt
+			fi
+			repo_data_working="$( gawk -v repoFile=$freebsd_file '
+			BEGIN {
+				IGNORECASE=1
+			}
+			/^ServerName/ {
+				print "FreeBSD update server^" repoFile "^" $2
+				exit
+			}
+			' $freebsd_file )"
+			if [[ -z $REPO_DATA ]];then
+				REPO_DATA="$repo_data_working"
+			elif [[ -n $repo_data_working ]];then
+				REPO_DATA="$REPO_DATA
+$repo_data_working"
+			fi
+		fi
+		if [[ -f $freebsd_pkg_file ]];then
+			if [[ -n $1 ]];then
+				cat $freebsd_pkg_file &> $1/repo-data_${freebsd_pkg_file//\//-}.txt
+			fi
+			repo_data_working="$( gawk -F ': ' -v repoFile=$freebsd_pkg_file '
+			BEGIN {
+				IGNORECASE=1
+			}
+			$1 ~ /^[[:space:]]*url/ {
+				gsub(/\"|pkg\+|,/,"",$2)
+				print "FreeBSD default pkg server^" repoFile "^" $2
+				exit
+			}
+			' $freebsd_pkg_file )"
+			if [[ -z $REPO_DATA ]];then
+				REPO_DATA="$repo_data_working"
+			elif [[ -n $repo_data_working ]];then
+				REPO_DATA="$REPO_DATA
+$repo_data_working"
+			fi
+		fi
+		
+		if [[ -d $bsd_pkg_dir ]];then
+			repo_files=$(ls ${bsd_pkg_dir}*.conf 2>/dev/null )
 			for repo_file in $repo_files
 			do
+				if [[ -n $1 ]];then
+					cat $repo_file &> $1/repo-data_${repo_file//\//-}.txt
+				fi
 				repo_data_working="$( gawk -v repoFile=$repo_file '
 				BEGIN {
 					FS=":"
@@ -9551,7 +9669,7 @@ $repo_data_working"
 						}
 						if ( $1 == "enabled" ) {
 							if ( $2 == "yes" ) {
-								print "BSD ports server^" repoFile "^" repoName " " repoUrl 
+								print "BSD pkg server^" repoFile "^" repoName " " repoUrl 
 							}
 						}
 					}
@@ -9567,14 +9685,38 @@ $repo_data_working"
 		fi
 		repo_data_working=''
 	elif [[ -f $openbsd_conf ]];then
+		if [[ -n $1 ]];then
+			cat $openbsd_conf &> $1/repo-data_${openbsd_conf//\//-}.txt
+		fi
 		REPO_DATA="$( gawk -F '=' -v repoFile=$openbsd_conf '
 		BEGIN {
 			IGNORECASE=1
 		}
 		/^installpath/ {
-			print "BSD ports servers^" repoFile "^" $2
+			print "OpenBSD pkg mirror^" repoFile "^" $2
 		}
 		' $openbsd_conf )"
+	elif [[ -f $netbsd_file ]];then
+		# note, only one file, but loop it in case more are added in future
+		for repo_file in $netbsd_file
+		do
+			if [[ -n $1 ]];then
+				cat $repo_file &> $1/repo-data_${repo_file//\//-}.txt
+			fi
+			repo_data_working="$( gawk -v repoFile="$repo_file" '
+			!/^[[:space:]]*$|^[[:space:]]*#/ {
+				print "NetBSD pkg servers^" repoFile "^" $0
+			}' $repo_file )"
+			if [[ -n $repo_data_working ]];then
+				if [[ -z $REPO_DATA ]];then
+					REPO_DATA="$repo_data_working"
+				else
+					REPO_DATA="$REPO_DATA
+					$repo_data_working"
+				fi
+			fi
+		done
+		repo_data_working=''
 	fi
 	eval $LOGFE
 }
