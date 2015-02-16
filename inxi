@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# fetch has -q for quiet you can use -o - for stdout and -T for timeout
-# openbsd ftp does http
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.2.12
-####  Date: 2014-09-24
-####  Patch Number: 02-b1
+####  Version: 2.2.18
+####  Date: 2015-02-14
+####  Patch Number: 01-b1
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -22,7 +20,7 @@
 ####  Gaim/Pidgin, Weechat, KVIrc and Kopete.
 ####  Original infobash author and copyright holder:
 ####  Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif
-####  inxi version: Copyright (C) 2008-2014 Scott Rogers & Harald Hope
+####  inxi version: Copyright (C) 2008-2015 Scott Rogers & Harald Hope
 ####  Further fixes (listed as known): Horst Tritremmel <hjt at sidux.com>
 ####  Steven Barrett (aka: damentz) - usb audio patch; swap percent used patch
 ####  Jarett.Stevens - dmidecde -M patch for older systems with the /sys 
@@ -55,7 +53,7 @@
 ####  DEPENDENCIES
 ####  * bash >=3.0 (bash); df, readlink, stty, tr, uname, wc (coreutils);
 ####    gawk (gawk); grep (grep); lspci (pciutils);
-####    ps, uptime (procps); find (findutils)
+####    ps, find (findutils)
 ####  * Also the proc filesystem should be present and mounted for Linux
 ####  * Some features, like -M and -d will not work, or will work incompletely,
 ####    if /sys is missing
@@ -76,6 +74,7 @@
 ####  -G - full graphics output requires:  glxinfo (mesa-utils); xdpyinfo (X11-utils);
 ####       xrandr (x11-xserver-utils)
 ####  -i - IP information, local/wan - ip (iproute) legacy, not used if ip present: ifconfig (net-tools)
+####  -I - uptime (procps, check Debian if changed)
 ####  -Ix - view current runlevel while not in X window system (or with -x): runlevel (sysvinit)
 ####  -m - all systems, dmidecode, unless someone can find a better way.
 ####  -M - for older systems whose kernel does not have /sys data for machine, dmidecode (dmidecode)
@@ -966,22 +965,22 @@ parse_version_data()
 	# note, using ####[[:space:]]+ to avoid having this function also trip the version datas
 	case $1 in
 		date)
-			version_data="$( gawk -F ': ' '
+			version_data=$( gawk -F ': ' '
 			/####[[:space:]]+Date:/ {
 				print $NF
-			}' $SCRIPT_PATH/$SCRIPT_NAME )"
+			}' "$SCRIPT_PATH/$SCRIPT_NAME" )
 			;;
 		main)
-			version_data="$( gawk '
+			version_data=$( gawk '
 			/####[[:space:]]+Version:/ {
 				print $3
-			}' $SCRIPT_PATH/$SCRIPT_NAME )"
+			}' "$SCRIPT_PATH/$SCRIPT_NAME" )
 			;;
 		patch)
-			version_data="$( gawk '
+			version_data=$( gawk '
 			/####[[:space:]]+Patch Number:/ {
 				print $4
-			}' $SCRIPT_PATH/$SCRIPT_NAME )"
+			}' "$SCRIPT_PATH/$SCRIPT_NAME" )
 			;;
 	esac
 	echo $version_data
@@ -994,7 +993,7 @@ initialize_paths()
 	local extra_paths="/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:/opt/local/bin"
 	
 	# this needs to be set here because various options call the parent initialize function directly.
-	SCRIPT_PATH=$( dirname $0 )
+	SCRIPT_PATH=$( dirname "$0" )
 
 	# Fallback paths put into $extra_paths; This might, among others, help on gentoo.
 	# Now, create a difference of $PATH and $extra_paths and add that to $PATH:
@@ -1064,7 +1063,7 @@ check_required_apps()
 	eval $LOGFS
 	local app_name=''
 	# bc removed from deps for now
-	local depends="df gawk grep ps readlink tr uname uptime wc"
+	local depends="df gawk grep ps readlink tr uname wc"
 	
 	if [[ -z $BSD_TYPE  ]];then
 		depends="$depends lspci"
@@ -1678,21 +1677,47 @@ debug_data_collector()
 		echo "Data going into: $SCRIPT_DATA_DIR/$debug_data_dir"
 		# bsd tools http://cb.vu/unixtoolbox.xhtml
 		# freebsd
-		pciconf -l -cv &> $debug_data_dir/bsd-pciconf-cvl.txt
-		pciconf -vl &> $debug_data_dir/bsd-pciconf-vl.txt
-		pciconf -l &> $debug_data_dir/bsd-pciconf-l.txt
+		if type -p pciconf &>/dev/null;then
+			pciconf -l -cv &> $debug_data_dir/bsd-pciconf-cvl.txt
+			pciconf -vl &> $debug_data_dir/bsd-pciconf-vl.txt
+			pciconf -l &> $debug_data_dir/bsd-pciconf-l.txt
+		else
+			touch $debug_data_dir/bsd-pciconf-absent
+		fi
 		# openbsd
-		pcidump &> $debug_data_dir/bsd-pcidump.txt
-		pcidump -v &> $debug_data_dir/bsd-pcidump-v.txt
+		if type -p pcidump &>/dev/null;then
+			pcidump &> $debug_data_dir/bsd-pcidump-openbsd.txt
+			pcidump -v &> $debug_data_dir/bsd-pcidump-v-openbsd.txt
+		else
+			touch $debug_data_dir/bsd-pcidump-openbsd-absent
+		fi
 		# netbsd
-		pcictl list &> $debug_data_dir/bsd-pcictl-list.txt
-		pcictl list -n &> $debug_data_dir/bsd-pcictl-list-n.txt
-		sysctl -a &> $debug_data_dir/bsd-sysctl-a.txt
-		usbdevs -v  &> $debug_data_dir/bsd-usbdevs-v.txt
-		kldstat  &> $debug_data_dir/bsd-kldstat.txt
+		if type -p pcictl &>/dev/null;then
+			pcictl list &> $debug_data_dir/bsd-pcictl-list-netbsd.txt
+			pcictl list -n &> $debug_data_dir/bsd-pcictl-list-n-netbsd.txt
+		else
+			touch $debug_data_dir/bsd-pcictl-netbsd-absent
+		fi
+		if type -p sysctl &>/dev/null;then
+			sysctl -a &> $debug_data_dir/bsd-sysctl-a.txt
+		else
+			touch $debug_data_dir/bsd-sysctl-absent
+		fi
+		if type -p usbdevs &>/dev/null;then
+			usbdevs -v  &> $debug_data_dir/bsd-usbdevs-v.txt
+		else
+			touch $debug_data_dir/bsd-usbdevs-absent
+		fi
+		if type -p kldstat &>/dev/null;then
+			kldstat  &> $debug_data_dir/bsd-kldstat.txt
+		else
+			touch $debug_data_dir/bsd-kldstat-absent
+		fi
 		# diskinfo -v <disk>
 		# fdisk <disk>
 		dmidecode &> $debug_data_dir/dmidecode.txt
+		
+		get_repo_data "$SCRIPT_DATA_DIR/$debug_data_dir"
 		
 		if type -p shopt &>/dev/null;then
 			shopt -s nullglob;a_distro_ids=(/etc/*[-_]{release,version});shopt -u nullglob;echo ${a_distro_ids[@]} &> $debug_data_dir/etc-distro-files.txt
@@ -1717,10 +1742,28 @@ debug_data_collector()
 		lsusb &> $debug_data_dir/lsusb.txt
 		ls /sys &> $debug_data_dir/ls-sys.txt
 		ps aux &> $debug_data_dir/ps-aux.txt
+		ps -e &> $debug_data_dir/ps-e.txt
+		ps -p 1 &> $debug_data_dir/ps-p-1.txt
+		cat /proc/1/comm &> $debug_data_dir/proc-1-comm.txt
 		runlevel &> $debug_data_dir/runlevel.txt
-		systemctl list-units &> $debug_data_dir/systemctl-list-units.txt
-		systemctl list-units --type=target &> $debug_data_dir/systemctl-list-units-target.txt
-		initctl list &> $debug_data_dir/initctl-list.txt
+		if type -p rc-status &>/dev/null;then
+			rc-status -a &> $debug_data_dir/rc-status-a.txt
+			rc-status -l &> $debug_data_dir/rc-status-l.txt
+			rc-status -r &> $debug_data_dir/rc-status-r.txt
+		else
+			touch $debug_data_dir/rc-status-absent
+		fi
+		if type -p systemctl &>/dev/null;then
+			systemctl list-units &> $debug_data_dir/systemctl-list-units.txt
+			systemctl list-units --type=target &> $debug_data_dir/systemctl-list-units-target.txt
+		else
+			touch $debug_data_dir/systemctl-absent
+		fi
+		if type -p initctl &>/dev/null;then
+			initctl list &> $debug_data_dir/initctl-list.txt
+		else
+			touch $debug_data_dir/initctl-absent
+		fi
 		sensors &> $debug_data_dir/sensors.txt
 		if type -p strings &>/dev/null;then
 			touch $debug_data_dir/strings-present
@@ -1739,8 +1782,16 @@ debug_data_collector()
 		fi
 		head -n 1 /proc/asound/card*/codec* &> $debug_data_dir/proc-asound-card-codec.txt
 		ls /usr/bin/gcc* &> $debug_data_dir/gcc-sys-versions.txt
-		gcc --version &> $debug_data_dir/gcc-version.txt
-		clang --version &> $debug_data_dir/clang-version.txt
+		if type -p gcc &>/dev/null;then
+			gcc --version &> $debug_data_dir/gcc-version.txt
+		else
+			touch $debug_data_dir/gcc-absent
+		fi
+		if type -p clang &>/dev/null;then
+			clang --version &> $debug_data_dir/clang-version.txt
+		else
+			touch $debug_data_dir/clang-absent
+		fi
 		cat /etc/src.conf &> $debug_data_dir/bsd-etc-src-conf.txt
 		cat /etc/make.conf &> $debug_data_dir/bsd-etc-make-conf.txt
 		cat /etc/issue &> $debug_data_dir/etc-issue.txt
@@ -2066,7 +2117,6 @@ check_recommends_items()
 	sed:sed~sed~sed~:string_replace 
 	tr:coreutils~coreutils~coreutils~:character_replace 
 	uname:uname~coreutils~coreutils~:kernel_data 
-	uptime:procps~procps~procps~: 
 	wc:coreutils~coreutils~coreutils~:word_character_count
 	'
 	local x_recommends='
@@ -2087,6 +2137,7 @@ check_recommends_items()
 	modinfo:module-init-tools~module-init-tools~module-init-tools~:-Ax,-Nx_module_version 
 	runlevel:sysvinit~sysvinit~systemd~:-I_runlevel
 	sudo:sudo~sudo~sudo~:-Dx_hddtemp-user;-o_file-user
+	uptime:procps~procps~procps~:-I_uptime_(check_which_package_owns_Debian)
 	'
 	
 	local downloaders="
@@ -3118,7 +3169,12 @@ get_start_client()
 		case $App_Working_Name in
 			# bsd will never use this section
 			bash|dash|sh|python*|perl*)	# We want to know who wrapped it into the shell or perl.
-				pppid="$( ps -p $PPID -o ppid --no-headers | sed 's/[[:space:]]//g' )"
+				if [[ $BSD_TYPE != 'bsd' ]];then
+					pppid=$( ps -p $PPID -o ppid --no-headers 2>/dev/null | gawk '{print $NF}' )
+				else
+					# without --no-headers we need the second line
+					pppid=$( ps -p $PPID -o ppid 2>/dev/null | gawk '$1 ~ /^[0-9]+/ {print $5}' )
+				fi
 				if [[ -n $pppid && -f /proc/$pppid/exe ]];then
 					Irc_Client_Path="$( readlink /proc/$pppid/exe )"
 					irc_client_path_lower=$( tr '[A-Z]' '[a-z]' <<< $Irc_Client_Path )
@@ -4850,8 +4906,9 @@ get_de_gtk_data()
 get_display_manager()
 {
 	eval $LOGFS
-	# ldm - LTSP display manager
-	local dm_id_list='entranced.pid gdm.pid gdm3.pid kdm.pid ldm.pid lightdm.pid lxdm.pid mdm.pid nodm.pid slim.lock tint2.pid wdm.pid xdm.pid' 
+	# ldm - LTSP display manager. Note that sddm does not appear to have a .pid extension in Arch
+	# note: to avoid positives with directories, test for -f explicitly, not -e
+	local dm_id_list='entranced.pid gdm.pid gdm3.pid kdm.pid ldm.pid lightdm.pid lxdm.pid mdm.pid nodm.pid sddm.pid sddm slim.lock tint2.pid wdm.pid xdm.pid' 
 	local dm_id='' dm='' separator=''
 	# note we don't need to filter grep if we do it this way
 	local x_is_running=$( grep '/usr.*/X' <<< "$Ps_aux_Data" | grep -iv '/Xprt' )
@@ -4859,7 +4916,8 @@ get_display_manager()
 	for dm_id in $dm_id_list
 	do
 		# note: ${dm_id%.*}/$dm_id will create a dir name out of the dm id, then test if pid is in that
-		if [[ -e /run/$dm_id || -e /run/${dm_id%.*}/$dm_id || -e /var/run/$dm_id ]];then
+		if [[ -f /run/$dm_id || -f /run/${dm_id%.*}/$dm_id || -f /var/run/$dm_id || \
+		      -f /var/run/${dm_id%.*}/$dm_id ]];then
 			# just on the off chance that two dms are running, good info to have in that case, if possible
 			dm=$dm$separator${dm_id%.*}
 			separator=','
@@ -6369,10 +6427,18 @@ get_init_data()
 			init_type='Upstart'
 			# /sbin/init --version == init (upstart 1.12.1)
 			init_version=$( get_program_version 'init' 'upstart' '3' )
-		elif type -p epoch &>/dev/null;then
+		elif [[ -e /proc/1/comm && -n $( grep -s 'epoch' /proc/1/comm ) ]];then
 			init_type='Epoch'
 			# epoch version == Epoch Init System 1.0.1 "Sage"
 			init_version=$( get_program_version 'epoch' '^Epoch' '4' )
+		# missing data: note, runit can install as a dependency without being the init system
+		# http://smarden.org/runit/sv.8.html
+		# NOTE: the proc test won't work on bsds, so if runit is used on bsds we will need more data
+		elif [[ -e /proc/1/comm && -n $( grep -s 'runit' /proc/1/comm ) ]];then
+		# elif [[ -e /sbin/runit-init || -e /etc/runit || -n $( type -p sv ) ]];then
+			init_type='runit' # lower case
+			# no data on version yet
+		# freebsd at least
 		elif type -p launchctl &>/dev/null;then
 			init_type='launchd'
 			#  / launchd/ version.plist /etc/launchd.conf
@@ -6385,16 +6451,9 @@ get_init_data()
 			if [[ -n $strings_init_version ]];then
 				init_version=$( gawk '{print $2}' <<< "$strings_init_version" )
 			fi
-		# missing data: note, runit can install as a dependency without being the init system
-		# http://smarden.org/runit/sv.8.html
-		elif [[ -e /sbin/runit-init || -e /etc/runit || -n $( type -p sv ) ]];then
-			init_type='runit' # lower case
-			# no data on version yet
-		# freebsd at least
 		elif [[ -f /etc/ttys ]];then
 			init_type='init (bsd)'
 		fi
-		
 		if [[ -n $( grep 'openrc' <<< "$ls_run" ) ]];then
 			rc_type='OpenRC'
 			# /sbin/openrc --version == openrc (OpenRC) 0.13
@@ -6404,6 +6463,13 @@ get_init_data()
 			elif type -p rc &>/dev/null;then
 				rc_version=$( get_program_version 'rc' '^rc' '3' )
 			fi
+			if [[ -e /run/openrc/softlevel ]];then
+				runlevel=$( cat /run/openrc/softlevel 2>/dev/null )
+			elif [[ -e /var/run/openrc/softlevel ]];then
+				runlevel=$( cat /var/run/openrc/softlevel 2>/dev/null )
+			elif type -p rc-status &>/dev/null;then
+				runlevel=$( rc-status -r 2>/dev/null )
+			fi
 		## assume sysvrc, but this data is too buggy and weird and inconsistent to have meaning
 		# leaving this off for now
 # 		elif [[ -f /etc/inittab ]];then
@@ -6412,7 +6478,6 @@ get_init_data()
 # 			rc_version=$init_version
 		fi
 	fi
-	
 	IFS=$'\n'
 	
 	A_INIT_DATA=( 
@@ -9272,6 +9337,7 @@ get_ram_data()
 # neat and readable. Each line of the total number contains the following sections,
 # separated by a : for splitting in the print function
 # part one, repo type/string : part two, file name, if present, of info : part 3, repo data
+# args: $1 - [file location of debug data file - optional, only for debugging data collection] 
 get_repo_data()
 {
 	eval $LOGFS
@@ -9279,25 +9345,26 @@ get_repo_data()
 	local repo_name=''
 	local apt_file='/etc/apt/sources.list' yum_repo_dir='/etc/yum.repos.d/' yum_conf='/etc/yum.conf'
 	local pacman_conf='/etc/pacman.conf' pacman_repo_dir='/etc/pacman.d/' pisi_dir='/etc/pisi/'
-	local zypp_repo_dir='/etc/zypp/repos.d/' freebsd_conf='/etc/portsnap.conf' openbsd_conf='/etc/pkg.conf'
-	local ports_dir='/usr/local/etc/pkg/repos/' slackpkg_file='/etc/slackpkg/mirrors'
+	local zypp_repo_dir='/etc/zypp/repos.d/' ports_conf='/etc/portsnap.conf' openbsd_conf='/etc/pkg.conf'
+	local bsd_pkg_dir='/usr/local/etc/pkg/repos/' slackpkg_file='/etc/slackpkg/mirrors'
+	local netbsd_file='/usr/pkg/etc/pkgin/repositories.conf' freebsd_file='/etc/freebsd-update.conf'
+	local freebsd_pkg_file='/etc/pkg/FreeBSD.conf' slackpkg_plus_file='/etc/slackpkg/slackpkgplus.conf'
+	local portage_repo_dir='/etc/portage/repos.conf/'
 	
 	# apt - debian, buntus, also sometimes some yum/rpm repos may create apt repos here as well
 	if [[ -f $apt_file || -d $apt_file.d ]];then
-		for repo_file in $apt_file $( ls $apt_file.d/*.list 2>/dev/null)
+		repo_files=$(ls /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null)
+		log_function_data "apt repo files: $repo_files"
+		for repo_file in $repo_files
 		do
+			if [[ -n $1 ]];then
+				cat $repo_file &> $1/repo-data_${repo_file//\//-}.txt
+			fi
 			repo_data_working="$( gawk -v repoFile="$repo_file" '
 			!/^[[:space:]]*$|^[[:space:]]*#/ {
 				print "apt sources^" repoFile "^" $0
 			}' $repo_file )"
-			if [[ -n $repo_data_working ]];then
-				if [[ -z $REPO_DATA ]];then
-					REPO_DATA="$repo_data_working"
-				else
-					REPO_DATA="$REPO_DATA
-					$repo_data_working"
-				fi
-			fi
+			get_repo_builder "$repo_data_working"
 		done
 		repo_data_working=''
 	fi
@@ -9317,14 +9384,16 @@ get_repo_data()
 			repo_name='zypp'
 			log_function_data "zypp repo files: $repo_files"
 		fi
-		log_function_data 'cat' "$repo_files"
 		if [[ -n $repo_files ]];then
 			for repo_file in $repo_files
 			do
-				repo_data_working="$( gawk -v repoFile=$repo_file '
+				if [[ -n $1 ]];then
+					cat $repo_file &> $1/repo-data_${repo_file//\//-}.txt
+				fi
+				repo_data_working="$( gawk -v repoFile="$repo_file" '
 				# construct the string for the print function to work with, file name: data
 				function print_line( fileName, repoId, repoUrl ){
-					print "'$repo_name' sources^" fileName "^" repoId repoUrl
+					print "'$repo_name' sources^" fileName "^" repoId  repoUrl
 				}
 				BEGIN {
 					FS="\n"
@@ -9375,16 +9444,8 @@ get_repo_data()
 					}
 				}
 				' $repo_file )"
-				
 				# then load the global for each file as it gets filled
-				if [[ -n $repo_data_working ]];then
-					if [[ -z $REPO_DATA ]];then
-						REPO_DATA="$repo_data_working"
-					else
-						REPO_DATA="$REPO_DATA
-$repo_data_working"
-					fi
-				fi
+				get_repo_builder "$repo_data_working"
 			done
 		fi
 		repo_data_working=''
@@ -9406,6 +9467,9 @@ $repo_data_working"
 		repo_data_working="$repo_data_working $pacman_conf"
 		for repo_file in $repo_data_working 
 		do
+			if [[ -n $1 ]];then
+				cat $repo_file &> $1/repo-data_${repo_file//\//-}.txt
+			fi
 			if [[ -f $repo_file ]];then
 				# inserting a new line after each found / processed match
 				repo_data_working2="$repo_data_working2$( gawk -v repoFile=$repo_file '
@@ -9426,26 +9490,123 @@ $repo_data_working"
 		REPO_DATA="$( echo -e $repo_data_working2 )"
 		repo_data_working=''
 	# pisi - pardus
-	elif [[ -f $slackpkg_file ]];then
+	elif [[ -f $slackpkg_file || -f $slackpkg_plus_file ]];then
 		# note, only one file, but loop it in case more are added in future
-		for repo_file in $slackpkg_file
-		do
-			repo_data_working="$( gawk -v repoFile="$repo_file" '
+		if [[ -f $slackpkg_file ]];then
+			if [[ -n $1 ]];then
+				cat $slackpkg_file &> $1/repo-data_${slackpkg_file//\//-}.txt
+			fi
+			repo_data_working="$( gawk -v repoFile="$slackpkg_file" '
 			!/^[[:space:]]*$|^[[:space:]]*#/ {
 				print "slackpkg sources^" repoFile "^" $0
-			}' $repo_file )"
-			if [[ -n $repo_data_working ]];then
-				if [[ -z $REPO_DATA ]];then
-					REPO_DATA="$repo_data_working"
-				else
-					REPO_DATA="$REPO_DATA
-					$repo_data_working"
-				fi
+			}' $slackpkg_file )"
+			get_repo_builder "$repo_data_working"
+		fi
+		if [[ -f $slackpkg_plus_file ]];then
+			if [[ -n $1 ]];then
+				cat $slackpkg_plus_file &> $1/repo-data_${slackpkg_plus_file//\//-}.txt
 			fi
-		done
+			# see sample for syntax
+			repo_data_working="$( gawk -F '=' -v repoFile="$slackpkg_plus_file" '
+			BEGIN {
+				activeRepos=""
+			}
+			# stop if set to off
+			/^SLACKPKGPLUS/ {
+				if ( $2 == "off" ){
+					exit
+				}
+			}
+			# get list of current active repos
+			/^REPOPLUS/ {
+				activeRepos=$2
+			}
+			# print out repo line if found
+			/^MIRRORPLUS/ {
+				if ( activeRepos != "" ) {
+					gsub(/MIRRORPLUS\['\''|'\''\]/,"",$1)
+					if ( match( activeRepos, $1 ) ){
+						print "slackpkg+ sources^" repoFile "^" $1 " ~ " $2
+					}
+				}
+			}' $slackpkg_plus_file )"
+			get_repo_builder "$repo_data_working"
+		fi
 		repo_data_working=''
+	elif [[ -d $portage_repo_dir && -n $( type -p emerge ) ]];then
+		repo_files=$( ls $portage_repo_dir*.repo 2>/dev/null )
+		repo_name='portage'
+		log_function_data "portage repo files: $repo_files"
+		if [[ -n $repo_files ]];then
+			for repo_file in $repo_files
+			do
+				if [[ -n $1 ]];then
+					cat $repo_file &> $1/repo-data_${repo_file//\//-}.txt
+				fi
+				repo_data_working="$( gawk -v repoFile="$repo_file" '
+				# construct the string for the print function to work with, file name: data
+				function print_line( fileName, repoId, repoUrl ){
+					print "'$repo_name' sources^" fileName "^" repoId  repoUrl
+				}
+				BEGIN {
+					FS="\n"
+					IGNORECASE=1
+					enabledStatus=""
+					repoTitle=""
+					urlData=""
+				}
+				# this is a hack, assuming that each item has these fields listed, we collect the 3
+				# items one by one, then when the url/enabled fields are set, we print it out and
+				# reset the data. Not elegant but it works. Note that if enabled was not present
+				# we assume it is enabled then, and print the line, reset the variables. This will
+				# miss the last item, so it is printed if found in END
+				/^\[.+\]/ {
+					if ( urlData != "" && repoTitle != "" ){
+						print_line( repoFile, repoTitle, urlData )
+						enabledStatus=""
+						urlData=""
+						repoTitle=""
+					}
+					gsub( /\[|\]/, "", $1 ) # strip out the brackets
+					repoTitle = $1 " ~ "
+				}
+				/^(sync-uri)/ {
+					sub( /sync-uri[[:space:]]*=[[:space:]]*/, "", $1 ) # strip out the field starter
+					urlData = $1
+				}
+				# note: enabled = 1. enabled = 0 means disabled
+				/^auto-sync[[:space:]]*=/ {
+					sub( /auto-sync[[:space:]]*=[[:space:]]*/, "", $1 ) # strip out the field starter
+					enabledStatus = $1
+				}
+				# print out the line if all 3 values are found, otherwise if a new
+				# repoTitle is hit above, it will print out the line there instead
+				{ 
+					if ( urlData != "" && enabledStatus != "" && repoTitle != "" ){
+						if ( enabledStatus !~ /enabled[[:space:]]*=[[:space:]]*0/ ){
+							print_line( repoFile, repoTitle, urlData )
+						}
+						enabledStatus=""
+						urlData=""
+						repoTitle=""
+					}
+				}
+				END {
+					# print the last one if there is data for it
+					if ( urlData != ""  && repoTitle != "" ){
+						print_line( repoFile, repoTitle, urlData )
+					}
+				}
+				' $repo_file )"
+				# then load the global for each file as it gets filled
+				get_repo_builder "$repo_data_working"
+			done
+		fi
 	elif [[ -d $pisi_dir && -n $( type -p pisi ) ]];then
 		REPO_DATA="$( pisi list-repo )"
+		if [[ -n $1 ]];then
+			echo "$REPO_DATA" &> $1/repo-data_pisi-list-repo.txt
+		fi
 		log_function_data "pisi-list-repo: $REPO_DATA"
 		# now we need to create the structure: repo info: repo path
 		# we do that by looping through the lines of the output and then
@@ -9478,7 +9639,9 @@ $repo_data_working"
 	# Mandriva/Mageia using: urpmq
 	elif type -p urpmq &>/dev/null;then
 		REPO_DATA="$( urpmq --list-media active --list-url )"
-		log_function_data "urpmq: $REPO_DATA"
+		if [[ -n $1 ]];then
+			echo "$REPO_DATA" &> $1/repo-data_urpmq-list-media-active.txt
+		fi
 		# now we need to create the structure: repo info: repo path
 		# we do that by looping through the lines of the output and then
 		# putting it back into the <data>:<url> format print repos expects to see
@@ -9511,22 +9674,61 @@ $repo_data_working"
 		done <<< "$REPO_DATA"
 		# echo and execute the line breaks inserted
 		REPO_DATA="$( echo -e $repo_data_working )"
-	elif [[ -f $freebsd_conf || -d $ports_dir ]];then
-		if [[ -f $freebsd_conf ]];then
-			REPO_DATA="$( gawk -F '=' -v repoFile=$freebsd_conf '
+	elif [[ -f $ports_conf || -f $freebsd_file || -d $bsd_pkg_dir ]];then
+		if [[ -f $ports_conf ]];then
+			if [[ -n $1 ]];then
+				cat $ports_conf &> $1/repo-data_${ports_conf//\//-}.txt
+			fi
+			repo_data_working="$( gawk -F '=' -v repoFile=$ports_conf '
 			BEGIN {
 				IGNORECASE=1
 			}
 			/^SERVERNAME/ {
-				print "BSD ports servers^" repoFile "^" $2
+				print "BSD ports server^" repoFile "^" $2
+				exit
 			}
-			' $freebsd_conf )"
+			' $ports_conf )"
+			get_repo_builder "$repo_data_working"
 		fi
-		if [[ -d $ports_dir ]];then
-			repo_files=$(ls ${ports_dir}*.conf 2>/dev/null )
-			log_function_data 'cat' "$repo_files"
+		if [[ -f $freebsd_file ]];then
+			if [[ -n $1 ]];then
+				cat $freebsd_file &> $1/repo-data_${freebsd_file//\//-}.txt
+			fi
+			repo_data_working="$( gawk -v repoFile=$freebsd_file '
+			BEGIN {
+				IGNORECASE=1
+			}
+			/^ServerName/ {
+				print "FreeBSD update server^" repoFile "^" $2
+				exit
+			}
+			' $freebsd_file )"
+			get_repo_builder "$repo_data_working"
+		fi
+		if [[ -f $freebsd_pkg_file ]];then
+			if [[ -n $1 ]];then
+				cat $freebsd_pkg_file &> $1/repo-data_${freebsd_pkg_file//\//-}.txt
+			fi
+			repo_data_working="$( gawk -F ': ' -v repoFile=$freebsd_pkg_file '
+			BEGIN {
+				IGNORECASE=1
+			}
+			$1 ~ /^[[:space:]]*url/ {
+				gsub(/\"|pkg\+|,/,"",$2)
+				print "FreeBSD default pkg server^" repoFile "^" $2
+				exit
+			}
+			' $freebsd_pkg_file )"
+			get_repo_builder "$repo_data_working"
+		fi
+		
+		if [[ -d $bsd_pkg_dir ]];then
+			repo_files=$(ls ${bsd_pkg_dir}*.conf 2>/dev/null )
 			for repo_file in $repo_files
 			do
+				if [[ -n $1 ]];then
+					cat $repo_file &> $1/repo-data_${repo_file//\//-}.txt
+				fi
 				repo_data_working="$( gawk -v repoFile=$repo_file '
 				BEGIN {
 					FS=":"
@@ -9551,32 +9753,57 @@ $repo_data_working"
 						}
 						if ( $1 == "enabled" ) {
 							if ( $2 == "yes" ) {
-								print "BSD ports server^" repoFile "^" repoName " " repoUrl 
+								print "BSD pkg server^" repoFile "^" repoName " ~ " repoUrl 
 							}
 						}
 					}
 				}
 				' $repo_file )"
-				if [[ -z $REPO_DATA ]];then
-					REPO_DATA="$repo_data_working"
-				elif [[ -n $repo_data_working ]];then
-					REPO_DATA="$REPO_DATA
-$repo_data_working"
-				fi
+				get_repo_builder "$repo_data_working"
 			done
 		fi
 		repo_data_working=''
 	elif [[ -f $openbsd_conf ]];then
+		if [[ -n $1 ]];then
+			cat $openbsd_conf &> $1/repo-data_${openbsd_conf//\//-}.txt
+		fi
 		REPO_DATA="$( gawk -F '=' -v repoFile=$openbsd_conf '
 		BEGIN {
 			IGNORECASE=1
 		}
 		/^installpath/ {
-			print "BSD ports servers^" repoFile "^" $2
+			print "OpenBSD pkg mirror^" repoFile "^" $2
 		}
 		' $openbsd_conf )"
+	elif [[ -f $netbsd_file ]];then
+		# note, only one file, but loop it in case more are added in future
+		for repo_file in $netbsd_file
+		do
+			if [[ -n $1 ]];then
+				cat $repo_file &> $1/repo-data_${repo_file//\//-}.txt
+			fi
+			repo_data_working="$( gawk -v repoFile="$repo_file" '
+			!/^[[:space:]]*$|^[[:space:]]*#/ {
+				print "NetBSD pkg servers^" repoFile "^" $0
+			}' $repo_file )"
+			get_repo_builder "$repo_data_working"
+		done
+		repo_data_working=''
 	fi
 	eval $LOGFE
+}
+# build the total REPO_DATA global here
+# args: $1 - the repo line/s
+get_repo_builder()
+{
+	if [[ -n $1 ]];then
+		if [[ -z $REPO_DATA ]];then
+			REPO_DATA="$1"
+		else
+			REPO_DATA="$REPO_DATA
+$1"
+		fi
+	fi
 }
 
 get_runlevel_data()
@@ -10283,11 +10510,14 @@ get_unmounted_partition_filesystem()
 get_uptime()
 {
 	eval $LOGFS
+	local uptime_value=''
 	## note: removing gsub(/ /,"",a); to get get space back in there, goes right before print a
-	local uptime_value="$( uptime | gawk '{
-		a = gensub(/^.*up *([^,]*).*$/,"\\1","g",$0)
-		print a
-	}' )"
+	if type -p uptime &>/dev/null;then
+		uptime_value="$( uptime | gawk '{
+			a = gensub(/^.*up *([^,]*).*$/,"\\1","g",$0)
+			print a
+		}' )"
+	fi
 	echo "$uptime_value"
 	log_function_data "uptime_value: $uptime_value"
 	eval $LOGFE
@@ -10815,6 +11045,9 @@ print_short_data()
 	local short_data='' i='' b_background_black='false'
 	local memory=$( get_memory_data )
 	local up_time="$( get_uptime )"
+	if [[ -z $up_time ]];then
+		up_time='N/A - missing uptime?'
+	fi
 
 	# set A_CPU_CORE_DATA
 	get_cpu_core_count
@@ -11775,6 +12008,9 @@ print_info_data()
 	local memory="$( get_memory_data )"
 	local processes=$(( $( wc -l <<< "$Ps_aux_Data" ) - 1 ))
 	local up_time="$( get_uptime )"
+	if [[ -z $up_time ]];then
+		up_time='N/A - missing uptime?'
+	fi
 	local patch_version_number=$( get_patch_version_string )
 	local gcc_installed='' gcc_others='' closing_data='' 
 	
@@ -11832,7 +12068,6 @@ print_info_data()
 		if [[ -z $init_type ]];then
 			init_type='N/A'
 		fi
-		
 		if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
 			init_version=${A_INIT_DATA[1]}
 			if [[ -z $init_version ]];then
@@ -11841,18 +12076,16 @@ print_info_data()
 			init_version=" ${C1}v$SEP3${C2} $init_version"
 			rc_version=${A_INIT_DATA[3]}
 			if [[ -n $rc_version ]];then
-				rc_version=" ${C1}v$SEP3${C2} $rc_version"
+				rc_version="${C1}v$SEP3${C2} $rc_version "
 			fi
-			
 			runlvl_default=${A_INIT_DATA[5]}
 		fi
 		# currently only using openrc here, otherwise show nothing
 		rc_type=${A_INIT_DATA[2]}
 		if [[ -n $rc_type ]];then
-			rc_type=" ${C1}rc$SEP3${C2} $rc_type$rc_version"
+			rc_type="${C1}rc$SEP3${C2} $rc_type $rc_version"
 		fi
 		init_type="${C1}Init$SEP3${C2} $init_type$init_version "
-		
 		runlvl=${A_INIT_DATA[4]}
 		if [[ -n $runlvl ]];then
 			runlvl="${C1}$runlvl_title$SEP3${C2} $runlvl "
