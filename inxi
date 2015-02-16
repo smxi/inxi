@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.2.18
-####  Date: 2015-01-24
+####  Version: 2.2.19
+####  Date: 2015-02-15
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -2857,7 +2857,7 @@ show_options()
 	print_lines_basic "1" "-o" "Unmounted $partition_string information (includes UUID and LABEL if available). Shows file system type if you have file installed, if you are root OR if you have added to /etc/sudoers (sudo v. 1.7 or newer) Example:^<username>^ALL^=^NOPASSWD:^/usr/bin/file^"
 	print_lines_basic "1" "-p" "Full $partition_string information (-P plus all other detected ${partition_string}s)."
 	print_lines_basic "1" "-P" "Basic $partition_string information (shows what -v^4 would show, but without extra data). Shows, if detected: / /boot /home /tmp /usr /var. Use -p to see all mounted ${partition_string}s."
-	print_lines_basic "1" "-r" "Distro repository data. Supported repo types: APT; PACMAN; PISI; YUM; URPMQ; Ports."
+	print_lines_basic "1" "-r" "Distro repository data. Supported repo types: APT; PACMAN; PISI; PORTAGE; PORTS (BSDs); SLACKPKG; URPMQ; YUM; ZYPP."
 	print_lines_basic "1" "-R" "RAID data. Shows RAID devices, states, levels, and components, and extra data with -x/-xx. md-raid: If device is resyncing, shows resync progress line as well."
 	print_lines_basic "1" "-s" "Sensors output (if sensors installed/configured): mobo/cpu/gpu temp; detected fan speeds. Gpu temp only for Fglrx/Nvidia drivers. Nvidia shows screen number for > 1 screens."
 	print_lines_basic "1" "-S" "System information: host name, kernel, desktop environment (if in X), distro"
@@ -9349,6 +9349,7 @@ get_repo_data()
 	local bsd_pkg_dir='/usr/local/etc/pkg/repos/' slackpkg_file='/etc/slackpkg/mirrors'
 	local netbsd_file='/usr/pkg/etc/pkgin/repositories.conf' freebsd_file='/etc/freebsd-update.conf'
 	local freebsd_pkg_file='/etc/pkg/FreeBSD.conf' slackpkg_plus_file='/etc/slackpkg/slackpkgplus.conf'
+	local portage_repo_dir='/etc/portage/repos.conf/'
 	
 	# apt - debian, buntus, also sometimes some yum/rpm repos may create apt repos here as well
 	if [[ -f $apt_file || -d $apt_file.d ]];then
@@ -9532,6 +9533,75 @@ get_repo_data()
 			get_repo_builder "$repo_data_working"
 		fi
 		repo_data_working=''
+	elif [[ -d $portage_repo_dir && -n $( type -p emerge ) ]];then
+		repo_files=$( ls $portage_repo_dir*.conf 2>/dev/null )
+		repo_name='portage'
+		log_function_data "portage repo files: $repo_files"
+		if [[ -n $repo_files ]];then
+			for repo_file in $repo_files
+			do
+				if [[ -n $1 ]];then
+					cat $repo_file &> $1/repo-data_${repo_file//\//-}.txt
+				fi
+				repo_data_working="$( gawk -v repoFile="$repo_file" '
+				# construct the string for the print function to work with, file name: data
+				function print_line( fileName, repoId, repoUrl ){
+					print "'$repo_name' sources^" fileName "^" repoId  repoUrl
+				}
+				BEGIN {
+					FS="\n"
+					IGNORECASE=1
+					enabledStatus=""
+					repoTitle=""
+					urlData=""
+				}
+				# this is a hack, assuming that each item has these fields listed, we collect the 3
+				# items one by one, then when the url/enabled fields are set, we print it out and
+				# reset the data. Not elegant but it works. Note that if enabled was not present
+				# we assume it is enabled then, and print the line, reset the variables. This will
+				# miss the last item, so it is printed if found in END
+				/^\[.+\]/ {
+					if ( urlData != "" && repoTitle != "" ){
+						print_line( repoFile, repoTitle, urlData )
+						enabledStatus=""
+						urlData=""
+						repoTitle=""
+					}
+					gsub( /\[|\]/, "", $1 ) # strip out the brackets
+					repoTitle = $1 " ~ "
+				}
+				/^(sync-uri)/ {
+					sub( /sync-uri[[:space:]]*=[[:space:]]*/, "", $1 ) # strip out the field starter
+					urlData = $1
+				}
+				# note: enabled = 1. enabled = 0 means disabled
+				/^auto-sync[[:space:]]*=/ {
+					sub( /auto-sync[[:space:]]*=[[:space:]]*/, "", $1 ) # strip out the field starter
+					enabledStatus = $1
+				}
+				# print out the line if all 3 values are found, otherwise if a new
+				# repoTitle is hit above, it will print out the line there instead
+				{ 
+					if ( urlData != "" && enabledStatus != "" && repoTitle != "" ){
+						if ( enabledStatus !~ /enabled[[:space:]]*=[[:space:]]*0/ ){
+							print_line( repoFile, repoTitle, urlData )
+						}
+						enabledStatus=""
+						urlData=""
+						repoTitle=""
+					}
+				}
+				END {
+					# print the last one if there is data for it
+					if ( urlData != ""  && repoTitle != "" ){
+						print_line( repoFile, repoTitle, urlData )
+					}
+				}
+				' $repo_file )"
+				# then load the global for each file as it gets filled
+				get_repo_builder "$repo_data_working"
+			done
+		fi
 	elif [[ -d $pisi_dir && -n $( type -p pisi ) ]];then
 		REPO_DATA="$( pisi list-repo )"
 		if [[ -n $1 ]];then
