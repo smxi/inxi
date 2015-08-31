@@ -288,7 +288,8 @@ a huge milestone, or if inxi reaches 2.9.xx, when it will simply move up to
 The second digit(s), "2", means a new real feature has been added. Not a 
 tweaked existing feature, an actual new feature, which usually also has a new 
 argument option letter attached. The second number goes from 0 to 9, and then
-rolls over the first after 9.
+rolls over the first after 9. It could also be adding a very complicated 
+expansion of existing features, like Wayland. It depends.
 
 The third, "28", is for everything small, can cover bug fixes, tweaks to 
 existing features to add support for something, pretty much anything where you
@@ -312,7 +313,6 @@ had 2.2.11, you can know with some certainty that inxi has no major new
 features, just fine tunings and bug fixes. And if you see one with 2.3.2, you 
 will know that there is a new feature, almost, but not always, linked to one 
 or more new line output items. Sometimes a fine tuning can be quite 
-significant, like adding wayland support to -G/-S, sometimes it's a one line 
-code fix.
+significant, sometimes it's a one line code fix.
 
 ### EOF ###
