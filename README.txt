@@ -41,11 +41,12 @@ bad, I picked the most popular of the bad options. I miss googlecode already...
 
 PULL REQUESTS: inxi is VERY complicated and VERY hard to work on, so unless
 you have already talked to me about contributing, and, more important, shown 
-that you can actually work with this type of arcane code, please do not spend time
-trying to work on inxi, unless it's a trivial patch, to the current branch,
-current version. Please: NEVER even think about looking at or using previous
-inxi commits, previous to the current one, as a base for a patch. If you do,
-your patch / pull request will be rejected immediately, without any discussion.
+that you can actually work with this type of arcane code, please do not 
+spend time trying to work on inxi, unless it's a trivial patch, to the 
+current branch, current version. Please: NEVER even think about looking at or 
+using previous inxi commits, previous to the current one, as a base for a patch.
+If you do, your patch / pull request will be rejected immediately, without 
+any discussion.
 
 inxi has one and only one release, and that is the current one. All 
 previous releases are immediately obsolete on the commit of every new release.
