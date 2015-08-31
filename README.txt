@@ -235,6 +235,8 @@ code you downloaded for your package, if you do not, you won't be.
 
 Github makes that very easy: 
 https://github.com/smxi/inxi/tarball/[first 7 characters of commit id]
+EXAMPLE: https://github.com/smxi/inxi/tarball/1d37e0d
+(click it, you'll see the tarball download)
 
 This is a real link, to a real tarball, of a real commit. It's not a fiction,
 a fantasy, a misleading and potentially serious security hole, like a tag.
