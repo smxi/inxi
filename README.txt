@@ -252,9 +252,10 @@ confusion and misguided action is by tagging any one release, thus suggesting
 it is a static release). Thus I would have to tag every single commit since 
 I could never know when say, the Arch Linux maintainer is going to grab his
 code, or any other distribution maintainer. Further, I would have to go back
-and tag every past commit as well, since each and every one was and is, the 
-current release of inxi. That's without exception, no commit ever done trunk/
-master branch in inxi has ever not been the current release, by definition.
+and tag every past commit as well, since each and every one was at the time, 
+the current release of inxi. That's without exception, no commit ever done 
+trunk/master branch in inxi has ever not been the current release, by 
+definition.
 
 I wouldn't waste time on noting something that should be obvious to anyone
 with even a faint clue about code, or secure practices in terms of having a
