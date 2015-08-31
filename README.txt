@@ -64,9 +64,9 @@ inxi releases early, and releases often, when under development.
 ABOUT INXI - CORE COMMITMENT TO LONG TERM STABILITY
 
 inxi is a command line system information tool. It was forked from the ancient
-and mindbendingly perverse yet ingenius infobash, by locsmif. inxi is lower case,
-except when I create a text header here in a file like this, but it's always
-lower case. 
+and mindbendingly perverse yet ingenius infobash, by locsmif. inxi is lower 
+case, except when I create a text header here in a file like this, but it's 
+always lower case. 
 
 The primary purpose of inxi is for support, and admin use. inxi is used
 widely for forum and IRC support, which is I believe it's most common function.
@@ -75,9 +75,10 @@ If you are piping output to paste or post, then make sure to turn off the
 script colors with the -c 0 flag. Script colors in shell are characters.
 
 That was a buggy, impossible to update or maintain piece of software, so the
-fork fixed those core issues, and made it flexible enough to expand and increase
-the utility of. Which is what inxi has done. Locmsif has given his thumbs up
-to inxi, so don't be fooled by legacy infobash stuff you may see out there.
+fork fixed those core issues, and made it flexible enough to expand and 
+increase the utility of. Which is what inxi has done. Locmsif has given his
+thumbs up to inxi, so don't be fooled by legacy infobash stuff you may see 
+out there.
 
 With some pain, inxi has gotten to the point where some of its hardware
 tools are actually better, more accurate, and astoundingly, faster, than their 
@@ -142,19 +143,19 @@ keeping in mind that all patches to inxi must not break existing functionality
 for existing supported platforms, be they BSD or GNU/Linux.
 
 I like real BSDs, like OpenBSD, NetBSD, FreeBSD, etc, and prefer that the tools
-in inxi that can be made to work on BSDs, do work, but their refusal to even use
-the same tools or locations or syntaxes for system info simply makes it too
-hard for me to do that work. I will always accept patches that are well done 
-however from competent people, if they do not break GNU/Linux, and extend BSD 
-support. Keep in mind, all patches must be based on tool/file tests, not BSD
-version tests. inxi sets initial internal flags to identify that it is a BSD 
-system vs a GNU/Linux system, after that it tests for specific applications and
-resources.
+in inxi that can be made to work on BSDs, do work, but their refusal to even 
+use the same tools or locations or syntaxes for system info simply makes it 
+too hard for me to do that work. I will always accept patches that are well 
+done however from competent people, if they do not break GNU/Linux, and extend
+BSD support. Keep in mind, all patches must be based on tool/file tests, not 
+BSD version tests. inxi sets initial internal flags to identify that it is a 
+BSD system vs a GNU/Linux system, after that it tests for specific 
+applications and resources.
 
-Inxi will also start on Darwin, OSX's mutated version of a BSD, but my conclusion
-about darwin is that it is Unix in name only, and I will not spend a second of my
-time adding any further support for that crippled broken corporate pseudo-unix 
-system. Don't ask.
+Inxi will also start on Darwin, OSX's mutated version of a BSD, but my 
+conclusion about darwin is that it is Unix in name only, and I will not spend 
+a second of my time adding any further support for that crippled broken 
+corporate pseudo-unix system. Don't ask.
 
 If you want to run unix, then OSX is not unix, in my opinion.
 
@@ -255,8 +256,8 @@ with even a faint clue about code, or secure practices in terms of having a
 real pointer to the code you grabbed, in other words not a tag! But I will 
 note it here to avoid being asked again about tagging. A tag is a post-it
 sticky note, and should never be considered as a valid pointer, just a 
-convenience in some projects that works for some types of programming practices, 
-certainly not mine.
+convenience in some projects that works for some types of programming 
+practices, certainly not mine.
 
 All issue reports opened about tagging will be closed immediately (see issues
 70/74 if you must, you won't get any different answer by repeating the same bad 
@@ -299,11 +300,11 @@ in say, branch one: 2.2.28-b1-02, in other words, a branch 1 release, version 2.
 
 Inxi does not use the fiction of date based versioning because that imparts no
 useful information to the end user, when you look at say, 2.2.28, and you last
-had 2.2.11, you can know with some certainty that inxi has no major new features,
-just fine tunings and bug fixes. And if you see one with 2.3.2, you will know
-that there is a new feature, almost, but not always, linked to one or more new
-line output items. Sometimes a fine tuning can be quite significant, like adding
-wayland support to -G/-S, sometimes it's a one line code fix.
-
+had 2.2.11, you can know with some certainty that inxi has no major new 
+features, just fine tunings and bug fixes. And if you see one with 2.3.2, you 
+will know that there is a new feature, almost, but not always, linked to one 
+or more new line output items. Sometimes a fine tuning can be quite 
+significant, like adding wayland support to -G/-S, sometimes it's a one line 
+code fix.
 
 ### EOF ###
