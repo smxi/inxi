@@ -293,14 +293,16 @@ existing features to add support for something, pretty much anything where you
 want the end user to know that they are not up to date. The third goes from 0 
 to 99, then rolls over the second.
 
-The fourth, "6", is extra information from Tarball maintainer, when either the 
-third digit has not changed, but there is a change or a patch comes out, 
-and the Tarball maintainer has time to pack the change. I don't usually use 
-this last one in master branch, but you will see it frequently in branch one,
-two, etc development since that is used to confirm remote test system updates.
+The fourth, "6", is extra information about certain types of inxi updates. 
+I don't usually use this last one in master branch, but you will see it 
+frequently in branch one,two, etc development since that is used to confirm 
+remote test system updates.
 
 The fourth number, when used, will be alpha-numeric, a common version would be,
 in say, branch one: 2.2.28-b1-02, in other words, a branch 1 release, version 2.
+
+In the past, now and then the 4th, or 'patch', number, was used in trunk/master
+branches of inxi, but I've pretty much stopped doing that because it's confusing.
 
 inxi does not use the fiction of date based versioning because that imparts no
 useful information to the end user, when you look at say, 2.2.28, and you last
