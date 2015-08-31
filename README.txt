@@ -68,17 +68,17 @@ and mindbendingly perverse yet ingenius infobash, by locsmif. inxi is lower
 case, except when I create a text header here in a file like this, but it's 
 always lower case. 
 
-The primary purpose of inxi is for support, and admin use. inxi is used
-widely for forum and IRC support, which is I believe it's most common function.
-
-If you are piping output to paste or post, then make sure to turn off the
-script colors with the -c 0 flag. Script colors in shell are characters.
-
 That was a buggy, impossible to update or maintain piece of software, so the
 fork fixed those core issues, and made it flexible enough to expand and 
 increase the utility of. Which is what inxi has done. Locmsif has given his
 thumbs up to inxi, so don't be fooled by legacy infobash stuff you may see 
 out there.
+
+The primary purpose of inxi is for support, and admin use. inxi is used
+widely for forum and IRC support, which is I believe it's most common function.
+
+If you are piping output to paste or post, then make sure to turn off the
+script colors with the -c 0 flag. Script colors in shell are characters.
 
 With some pain, inxi has gotten to the point where some of its hardware
 tools are actually better, more accurate, and astoundingly, faster, than their 
