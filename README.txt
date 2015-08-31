@@ -257,12 +257,12 @@ the current release of inxi. That's without exception, no commit ever done
 in the trunk/master branch of inxi has ever not been the current release, by 
 definition.
 
-I wouldn't waste time on noting something that should be obvious to anyone
-with even a faint clue about code, or secure practices in terms of having a
-real pointer to the code you grabbed, in other words not a tag! But I will 
-note it here to avoid being asked again about tagging. A tag is a post-it
-sticky note, and should never be considered as a valid pointer, just a 
-convenience in some projects that works for some types of programming 
+I shouldn't need to waste time noting something that should be obvious to 
+anyone with even a faint clue about code, or secure practices in terms of 
+having a real pointer to the code you grabbed, in other words not a tag! 
+But I will note it here to avoid being asked again about tagging. A tag 
+is a post-it sticky note, and should never be considered as a valid pointer, 
+just a convenience in some projects that works for some types of programming 
 practices, certainly not mine.
 
 All issue reports opened about tagging will be closed immediately (see issues
