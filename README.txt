@@ -122,16 +122,16 @@ candidates for this core stability requirement as they change or break their
 APIs with new releases, along with not being parts of a generic core GNU/Linux
 install.
 
+This is why, for example, some Bash 4 things that would be nice to have in
+inxi are not used, to not break backward compatibility. It is a show stopper
+bug if an inxi update breaks something that was working in an old system.
+
 But why gawk instead of awk? That is an issue that has plagued inxi for a
 long time, the bottom line is this: both bash and awk are such inferior
 languages overall that the only way to really get them to work in a complex
 scenario like inxi is to use the most advanced version of awk possible, which 
 is gnu awk, aka, gawk. Gawk has: case insensitive switches (critical for 
 parsing garbage random system data), gensub (search and replace like sed).
-
-This is why, for example, some Bash 4 things that would be nice to have in
-inxi are not used, to not break backward compatibility. It is a show stopper
-bug if an inxi update breaks something that was working in an old system.
 
 =====================================================================
 BSD SUPPORT
