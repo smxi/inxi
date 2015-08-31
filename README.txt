@@ -74,7 +74,7 @@ out there.
 
 inxi is lower case, except when I create a text header here in a file like 
 this, but it's always lower case. Sometimes to follow convention I will use
-upper case Inxi to start a sentence, but i find it a bad idea since 
+upper case inxi to start a sentence, but i find it a bad idea since 
 invariably, someone will repeat that and type it in as the command name.
 
 The primary purpose of inxi is for support, and admin use. inxi is used
@@ -155,7 +155,7 @@ BSD version tests. inxi sets initial internal flags to identify that it is a
 BSD system vs a GNU/Linux system, after that it tests for specific 
 applications and resources.
 
-Inxi will also start on Darwin, OSX's mutated version of a BSD, but my 
+inxi will also start on Darwin, OSX's mutated version of a BSD, but my 
 conclusion about darwin is that it is Unix in name only, and I will not spend 
 a second of my time adding any further support for that crippled broken 
 corporate pseudo-unix system. Don't ask.
@@ -165,7 +165,7 @@ If you want to run unix, then OSX is not unix, in my opinion.
 =====================================================================
 INXI FEATURES AND FUNCTIONALITY
 
-Inxi's functionality continues to grow over time, but it's also important
+inxi's functionality continues to grow over time, but it's also important
 to understand that each core new feature usually requires about 30 days work
 to get it stable. So new features are not trivial things, nor is it acceptable
 to submit a patch that works only on your personal system. One inxi feature
@@ -301,7 +301,7 @@ two, etc development since that is used to confirm remote test system updates.
 The fourth number, when used, will be alpha-numeric, a common version would be,
 in say, branch one: 2.2.28-b1-02, in other words, a branch 1 release, version 2.
 
-Inxi does not use the fiction of date based versioning because that imparts no
+inxi does not use the fiction of date based versioning because that imparts no
 useful information to the end user, when you look at say, 2.2.28, and you last
 had 2.2.11, you can know with some certainty that inxi has no major new 
 features, just fine tunings and bug fixes. And if you see one with 2.3.2, you 
