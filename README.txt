@@ -75,7 +75,8 @@ out there.
 inxi is lower case, except when I create a text header here in a file like 
 this, but it's always lower case. Sometimes to follow convention I will use
 upper case inxi to start a sentence, but i find it a bad idea since 
-invariably, someone will repeat that and type it in as the command name.
+invariably, someone will repeat that and type it in as the command name, then
+someone will copy that, and complain that the command: Inxi doesn't exist...
 
 The primary purpose of inxi is for support, and admin use. inxi is used
 widely for forum and IRC support, which is I believe it's most common function.
