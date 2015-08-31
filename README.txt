@@ -68,9 +68,8 @@ and mindbendingly perverse yet ingenius infobash, by locsmif.
 
 That was a buggy, impossible to update or maintain piece of software, so the
 fork fixed those core issues, and made it flexible enough to expand and 
-increase the utility of. Which is what inxi has done. Locmsif has given his
-thumbs up to inxi, so don't be fooled by legacy infobash stuff you may see 
-out there.
+expand the utility of the original ideas. Locmsif has given his thumbs up to 
+inxi, so don't be fooled by legacy infobash stuff you may see out there.
 
 inxi is lower case, except when I create a text header here in a file like 
 this, but it's always lower case. Sometimes to follow convention I will use
