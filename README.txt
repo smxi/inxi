@@ -64,15 +64,18 @@ inxi releases early, and releases often, when under development.
 ABOUT INXI - CORE COMMITMENT TO LONG TERM STABILITY
 
 inxi is a command line system information tool. It was forked from the ancient
-and mindbendingly perverse yet ingenius infobash, by locsmif. inxi is lower 
-case, except when I create a text header here in a file like this, but it's 
-always lower case. 
+and mindbendingly perverse yet ingenius infobash, by locsmif. 
 
 That was a buggy, impossible to update or maintain piece of software, so the
 fork fixed those core issues, and made it flexible enough to expand and 
 increase the utility of. Which is what inxi has done. Locmsif has given his
 thumbs up to inxi, so don't be fooled by legacy infobash stuff you may see 
 out there.
+
+inxi is lower case, except when I create a text header here in a file like 
+this, but it's always lower case. Sometimes to follow convention I will use
+upper case Inxi to start a sentence, but i find it a bad idea since 
+invariably, someone will repeat that and type it in as the command name.
 
 The primary purpose of inxi is for support, and admin use. inxi is used
 widely for forum and IRC support, which is I believe it's most common function.
