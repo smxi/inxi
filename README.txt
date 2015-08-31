@@ -254,7 +254,7 @@ I could never know when say, the Arch Linux maintainer is going to grab his
 code, or any other distribution maintainer. Further, I would have to go back
 and tag every past commit as well, since each and every one was at the time, 
 the current release of inxi. That's without exception, no commit ever done 
-trunk/master branch in inxi has ever not been the current release, by 
+in the trunk/master branch of inxi has ever not been the current release, by 
 definition.
 
 I wouldn't waste time on noting something that should be obvious to anyone
