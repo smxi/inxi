@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.2.33
-####  Date: 2016-01-30
+####  Version: 2.2.34
+####  Date: 2016-02-21
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -494,6 +494,7 @@ DEV_DISK_LABEL=''
 DEV_DISK_MAPPER=''
 DEV_DISK_UUID=''
 DMIDECODE_DATA=''
+DNSTOOL=''
 DOWNLOADER='wget'
 IRC_CLIENT=''
 IRC_CLIENT_VERSION=''
@@ -635,7 +636,7 @@ BAN_LIST_CPU='@||cpu |cpu deca|dual core|dual-core|tri core|tri-core|quad core|q
 # this is for bash arrays AND avoiding * in arrays: ( fred * greg ) expands to the contents of the directory
 BAN_LIST_ARRAY=',|\*'
 
-SENSORS_GPU_SEARCH='intel|radeon|nouveau'
+SENSORS_GPU_SEARCH='amdgpu|intel|radeon|nouveau'
 
 ### USB networking search string data, because some brands can have other products than
 ### wifi/nic cards, they need further identifiers, with wildcards.
@@ -841,6 +842,10 @@ initialize_data()
 	fi
 	
 	initialize_paths
+	
+	if type -p dig &>/dev/null;then
+		DNSTOOL='dig'
+	fi
 	
 	# set downloaders. 
 	if ! type -p wget &>/dev/null;then
@@ -2225,6 +2230,7 @@ check_recommends_items()
 	xrandr:x11-xserver-utils~xrandr~x11-server-utils~:-G_single_screen_resolution
 	'
 	local recommended_apps='
+	dig:dnsutils~dnsutils~bind-utils:-i_first_wlan_ip_default_test
 	dmidecode:dmidecode~dmidecode~dmidecode~:-M_if_no_sys_machine_data;_-m_memory 
 	file:file~file~file~:-o_unmounted_file_system
 	hciconfig:bluez~bluez-utils~bluez-utils~:-n_-i_bluetooth_data
@@ -5714,7 +5720,7 @@ get_graphics_driver()
 	eval $LOGFS
 	
 	# list is from sgfxi plus non-free drivers
-	local driver_list='apm|ark|ati|chips|cirrus|cyrix|fbdev|fglrx|glint|i128|i740|intel|i810|imstt|mach64|mga|neomagic|nsc|nvidia|nv|openchrome|nouveau|radeon|radeonhd|rendition|s3virge|s3|savage|siliconmotion|sisusb|sis|tdfx|tga|trident|tseng|unichrome|vboxvideo|vesa|vga|via|voodoo|vmware|v4l'
+	local driver_list='amdgpu|apm|ark|ati|chips|cirrus|cyrix|fbdev|fglrx|glint|i128|i740|intel|i810|imstt|mach64|mga|neomagic|nsc|nvidia|nv|openchrome|nouveau|radeon|radeonhd|rendition|s3virge|s3|savage|siliconmotion|sisusb|sis|tdfx|tga|trident|tseng|unichrome|vboxvideo|vesa|vga|via|voodoo|vmware|v4l'
 	local driver='' driver_string='' xorg_log_data='' status='' a_temp=''
 
 	if [[ $B_XORG_LOG == 'true' ]];then
@@ -7386,7 +7392,7 @@ get_networking_usb_data()
 get_networking_wan_ip_data()
 {
 	eval $LOGFS
-	local ip='' ip_data='' downloader_error=0 ua=''
+	local ip='' ip_data='' downloader_error=0 ua='' b_ipv4_good=true
 	
 	# get ip using wget redirect to stdout. This is a clean, text only IP output url,
 	# single line only, ending in the ip address. May have to modify this in the future
@@ -7394,34 +7400,43 @@ get_networking_wan_ip_data()
 	# awk has bad regex handling so checking it with grep -E instead
 	# ip=$( echo  2001:0db8:85a3:0000:0000:8a2e:0370:7334 | gawk  --re-interval '
 	# ip=$( wget -q -O - $WAN_IP_URL | gawk  --re-interval '
-	case $DOWNLOADER in
-		curl)
-			if [[ -n $( grep 'smxi.org' <<< $WAN_IP_URL ) ]];then
-				ua="-A s-tools/inxi-ip"
-			fi
-			ip_data="$( curl $ua -y $DL_TIMEOUT -s $WAN_IP_URL )" || downloader_error=$?
-			;;
-		fetch)
-			ip_data="$( fetch -T $DL_TIMEOUT -q -o - $WAN_IP_URL )" || downloader_error=$?
-			;;
-		ftp)
-			ip_data="$( ftp -o - $WAN_IP_URL 2>/dev/null )" || downloader_error=$?
-			;;
-		wget)
-			if [[ -n $( grep 'smxi.org' <<< $WAN_IP_URL ) ]];then
-				ua="-U s-tools/inxi-ip"
-			fi
-			ip_data="$( wget $ua -T $DL_TIMEOUT -q -O - $WAN_IP_URL )" || downloader_error=$?
-			;;
-		no-downloader)
-			downloader_error=1
-			;;
-	esac
-	ip=$( gawk  --re-interval '
-	{
-		#gsub("\n","",$2")
-		print $NF
-	}' <<< "$ip_data" )
+	# this generates a direct dns based ipv4 ip address, but if opendns.com goes down, the fall
+	# note: consistently slower than domain based: dig +short +time=1 +tries=1 myip.opendns.com. A @208.67.222.222
+	# backs will still work. 
+	if [[ -n $DNSTOOL ]];then
+		ip=$( dig +short +time=1 +tries=1 myip.opendns.com @resolver1.opendns.com 2>/dev/null)
+	fi
+	if [[ $ip == '' ]];then
+		case $DOWNLOADER in
+			curl)
+				if [[ -n $( grep 'smxi.org' <<< $WAN_IP_URL ) ]];then
+					ua="-A s-tools/inxi-ip"
+				fi
+				ip_data="$( curl $ua -y $DL_TIMEOUT -s $WAN_IP_URL )" || downloader_error=$?
+				;;
+			fetch)
+				ip_data="$( fetch -T $DL_TIMEOUT -q -o - $WAN_IP_URL )" || downloader_error=$?
+				;;
+			ftp)
+				ip_data="$( ftp -o - $WAN_IP_URL 2>/dev/null )" || downloader_error=$?
+				;;
+			wget)
+				if [[ -n $( grep 'smxi.org' <<< $WAN_IP_URL ) ]];then
+					ua="-U s-tools/inxi-ip"
+				fi
+				ip_data="$( wget $ua -T $DL_TIMEOUT -q -O - $WAN_IP_URL )" || downloader_error=$?
+				;;
+			no-downloader)
+				downloader_error=1
+				;;
+		esac
+		ip=$( gawk  --re-interval '
+		{
+			#gsub("\n","",$2")
+			print $NF
+		}' <<< "$ip_data" )
+	fi
+	
 	# validate the data
 	if [[ -z $ip ]];then
 		ip='None Detected!'
