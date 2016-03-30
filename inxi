@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.2.36
-####  Date: 2016-03-21
+####  Version: 2.2.37
+####  Date: 2016-03-30
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -710,7 +710,7 @@ main()
 
 	# note: this only works if it's run from inside konversation as a script builtin or something
 	# only do this if inxi has been started as a konversation script, otherwise bypass this	
-#	KONVI=3 ## for testing puroses
+	#	KONVI=3 ## for testing puroses
 	if [[ $KONVI -eq 1 || $KONVI -eq 3 ]];then
 		if [[ $KONVI -eq 1 ]]; then ## dcop Konversation (ie 1.x < 1.2(qt3))	
 			DCPORT="$1"
@@ -1758,7 +1758,10 @@ debug_data_collector()
 		get_repo_data "$SCRIPT_DATA_DIR/$debug_data_dir"
 		
 		if type -p shopt &>/dev/null;then
-			shopt -s nullglob;a_distro_ids=(/etc/*[-_]{release,version});shopt -u nullglob;echo ${a_distro_ids[@]} &> $debug_data_dir/etc-distro-files.txt
+			shopt -s nullglob
+			a_distro_ids=(/etc/*[-_]{release,version})
+			shopt -u nullglob
+			echo ${a_distro_ids[@]} &> $debug_data_dir/etc-distro-files.txt
 			for distro_file in ${a_distro_ids[@]} /etc/issue
 			do
 				if [[ -f $distro_file ]];then
@@ -5101,7 +5104,7 @@ get_display_manager()
 get_distro_data()
 {
 	eval $LOGFS
-	local i='' j='' distro='' distro_file='' a_distro_glob='' a_temp=''
+	local i='' j='' distro='' distro_file='' a_distro_glob='' a_temp='' b_osr='false'
 	
 	# may need modification if archbsd / debian can be id'ed with /etc files
 	if [[ -n $BSD_TYPE ]];then
@@ -5174,6 +5177,7 @@ get_distro_data()
 		distro=$( get_distro_lsb_os_release_data 'lsb-file' )
 	elif [[ $distro_file == 'os-release' ]];then
 		distro=$( get_distro_lsb_os_release_data 'os-release-file' )
+		b_osr='true'
 	# then if the distro id file was found and it's not in the exluded primary distro file list, read it
 	elif [[ -n $distro_file && -s /etc/$distro_file && " $DISTROS_EXCLUDE_LIST " != *" $distro_file "* ]];then
 		# new opensuse uses os-release, but older ones may have a similar syntax, so just use the first line
@@ -5187,9 +5191,12 @@ get_distro_data()
 		fi
 	# otherwise try  the default debian/ubuntu /etc/issue file
 	elif [[ -f /etc/issue ]];then
-		# lsb gives more manageable and accurate output than issue, but mint should use issue for now
+		# os-release/lsb gives more manageable and accurate output than issue, but mint should use issue for now
 		# some bashism, boolean must be in parenthesis to work correctly, ie [[ $(boolean) ]] not [[ $boolean ]]
-		if [[ $B_LSB_FILE == 'true' ]] && [[ -z $( grep -i 'mint' /etc/issue ) ]];then
+		if [[ $B_OS_RELEASE_FILE == 'true' ]] && [[ -z $( grep -i 'mint' /etc/issue ) ]];then
+			distro=$( get_distro_lsb_os_release_data 'os-release-file' )
+			b_osr='true'
+		elif [[ $B_LSB_FILE == 'true' ]] && [[ -z $( grep -i 'mint' /etc/issue ) ]];then
 			distro=$( get_distro_lsb_os_release_data 'lsb-file' )
 		else
 			distro=$( gawk '
@@ -5212,20 +5219,28 @@ get_distro_data()
 			fi
 		fi
 	fi
-	
+	# a final check. If a long value, before assigning the debugger output, if os-release
+	# exists then let's use that if it wasn't tried already. Maybe that will be better.
 	if [[ ${#distro} -gt 80 ]] && [[ $B_HANDLE_CORRUPT_DATA != 'true' ]];then
-		distro="${RED}/etc/$distro_file corrupted, use -% to override${NORMAL}"
+		if [[ $B_OS_RELEASE_FILE == 'true' && $b_osr == 'false' ]];then
+			distro=$( get_distro_lsb_os_release_data 'os-release-file' )
+		fi
+		if [[ ${#distro} -gt 80 ]];then
+			distro="${RED}/etc/$distro_file corrupted, use -% to override${NORMAL}"
+		fi
 	fi
 	## note: would like to actually understand the method even if it's not used
 	# : ${distro:=Unknown distro o_O}
 	## test for /etc/lsb-release as a backup in case of failure, in cases where > one version/release file
 	## were found but the above resulted in null distro value
-	if [[ -z $distro ]] && [[ $B_LSB_FILE == 'true' ]];then
-		distro=$( get_distro_lsb_os_release_data 'lsb-file' )
-	fi
+	# Because os-release is now more common, we'll test for it first.
 	if [[ -z $distro ]] && [[ $B_OS_RELEASE_FILE == 'true' ]];then
 		distro=$( get_distro_lsb_os_release_data 'os-release-file' )
 	fi
+	if [[ -z $distro ]] && [[ $B_LSB_FILE == 'true' ]];then
+		distro=$( get_distro_lsb_os_release_data 'lsb-file' )
+	fi
+	
 	# now some final null tries
 	if [[ -z $distro ]];then
 		# if the file was null but present, which can happen in some cases, then use the file name itself to 
