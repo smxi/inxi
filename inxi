@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.2.38
-####  Date: 2016-03-31
+####  Version: 2.3.0
+####  Date: 2016-04-18
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -254,6 +254,7 @@ ORIGINAL_IFS="$IFS"
 ## Initialize
 A_ALSA_DATA=''
 A_AUDIO_DATA=''
+A_BATTERY_DATA=''
 A_CMDL=''
 A_CPU_CORE_DATA=''
 A_CPU_DATA=''
@@ -334,6 +335,8 @@ B_SHOW_BASIC_RAID='false'
 B_SHOW_BASIC_CPU='false'
 B_SHOW_BASIC_DISK='false'
 B_SHOW_BASIC_OPTICAL='false'
+B_SHOW_BATTERY='false'
+B_SHOW_BATTERY_FORCED='false'
 B_SHOW_CPU='false'
 B_SHOW_DISPLAY_DATA='false'
 B_SHOW_DISK_TOTAL='false'
@@ -1816,6 +1819,17 @@ debug_data_collector()
 		else
 			touch $debug_data_dir/strings-absent
 		fi
+		local id_dir='/sys/class/power_supply/' 
+		local ids=$( ls $id_dir 2>/dev/null )
+		if [[ -n $ids ]];then
+			for batid in $ids 
+			do
+				cat $id_dir$batid'/uevent' &> $debug_data_dir/sys-power-supply-$batid.txt
+			done
+		else
+			touch $debug_data_dir/sys-power-supply-none
+		fi
+		
 		# leaving this commented out to remind that some systems do not
 		# support strings --version, but will just simply hang at that command
 		# which you can duplicate by simply typing: strings then hitting enter, you will get hang.
@@ -2535,7 +2549,7 @@ get_parameters()
 	# no need to run through these if there are no args
 	# reserved for future use: -g for extra Graphics; -m for extra Machine; -d for extra Disk
 	elif [[ -n $1 ]];then
-		while getopts Abc:CdDfFGhHiIlmMnNopPrRsSt:uUv:V${weather_flag}xy:zZ%@:!: opt
+		while getopts AbBc:CdDfFGhHiIlmMnNopPrRsSt:uUv:V${weather_flag}xy:zZ%@:!: opt
 		do
 			case $opt in
 			A)	B_SHOW_AUDIO='true'
@@ -2548,8 +2562,13 @@ get_parameters()
 				B_SHOW_GRAPHICS='true'
 				B_SHOW_INFO='true'
 				B_SHOW_MACHINE='true'
+				B_SHOW_BATTERY='true'
 				B_SHOW_NETWORK='true'
 				B_SHOW_SYSTEM='true'
+				;;
+			B)	B_SHOW_BATTERY_FORCED='true'
+				B_SHOW_BATTERY='true'
+				use_short='false'
 				;;
 			c)	if [[ $OPTARG =~ ^[0-9][0-9]?$ ]];then
 					case $OPTARG in
@@ -2614,6 +2633,7 @@ get_parameters()
 				B_SHOW_GRAPHICS='true'
 				B_SHOW_INFO='true'
 				B_SHOW_MACHINE='true'
+				B_SHOW_BATTERY='true'
 				B_SHOW_NETWORK='true'
 				B_SHOW_PARTITIONS='true'
 				B_SHOW_RAID='true'
@@ -2640,6 +2660,7 @@ get_parameters()
 				use_short='false'
 				;;
 			M)	B_SHOW_MACHINE='true'
+				B_SHOW_BATTERY='true'
 				use_short='false'
 				;;
 			n)	B_SHOW_ADVANCED_NETWORK='true'
@@ -2706,6 +2727,7 @@ get_parameters()
 					if [[ $OPTARG -ge 2 ]];then
 						B_SHOW_BASIC_DISK='true'
 						B_SHOW_BASIC_RAID='true'
+						B_SHOW_BATTERY='true'
 						B_SHOW_MACHINE='true'
 						B_SHOW_NETWORK='true'
 					fi
@@ -2950,11 +2972,12 @@ show_options()
 	# print_screen_output " "
 	print_lines_basic "0" "" "$SCRIPT_NAME supports the following options. You can combine them, or list them one by one. Examples: $SCRIPT_NAME^-v4^-c6 OR $SCRIPT_NAME^-bDc^6. If you start $SCRIPT_NAME with no arguments, it will show the short form."
 	print_screen_output " "
-	print_lines_basic "0" "" "The following options if used without -F, -b, or -v will show just option line(s): A, C, D, G, I, M, N, P, R, S, f, i, m, n, o, p, l, u, r, s, t - you can use these alone or together to show just the line(s) you want to see. If you use them with -v^[level], -b or -F, it will show the full output for that line along with the output for the chosen verbosity level."
+	print_lines_basic "0" "" "The following options if used without -F, -b, or -v will show just option line(s): A, B, C, D, G, I, M, N, P, R, S, f, i, m, n, o, p, l, u, r, s, t - you can use these alone or together to show just the line(s) you want to see. If you use them with -v^[level], -b or -F, it will show the full output for that line along with the output for the chosen verbosity level."
 	print_screen_output "- - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
 	print_screen_output "Output Control Options:"
 	print_lines_basic "1" "-A" "Audio/sound card information."
-	print_lines_basic "1" "-b" "Basic output, short form. Like $SCRIPT_NAME^-v^2, only minus hard disk names."
+	print_lines_basic "1" "-b" "Basic output, short form. Like $SCRIPT_NAME^-v^2, only minus hard disk names ."
+	print_lines_basic "1" "-B" "Battery info, shows charge, condition, plus extra information (if battery present)."
 	print_lines_basic "1" "-c" "Color schemes. Scheme number is required. Color selectors run a color selector option prior to $SCRIPT_NAME starting which lets you set the config file value for the selection."
 	print_lines_basic "1" "" "Supported color schemes: 0-$color_scheme_count Example:^$SCRIPT_NAME^-c^11"
 	print_lines_basic "1" "" "Color selectors for each type display (NOTE: irc and global only show safe color set):"
@@ -2994,8 +3017,8 @@ show_options()
 	print_lines_basic "1" "" "Supported levels: 0-$VERBOSITY_LEVELS Example: $SCRIPT_NAME^-v^4"
 	print_lines_basic "2" "0" "Short output, same as: $SCRIPT_NAME"
 	print_lines_basic "2" "1" "Basic verbose, -S + basic CPU + -G + basic Disk + -I."
-	print_lines_basic "2" "2" "Networking card (-N), Machine (-M) data, shows basic hard disk data (names only), and, if present, basic raid (devices only, and if inactive, notes that). similar to: $SCRIPT_NAME^-b"
-	print_lines_basic "2" "3" "Advanced CPU (-C), network (-n) data, and switches on -x advanced data option."
+	print_lines_basic "2" "2" "Networking card (-N), Machine (-M) data, if present, Battery (-B), basic hard disk data (names only), and, if present, basic raid (devices only, and if inactive, notes that). similar to: $SCRIPT_NAME^-b"
+	print_lines_basic "2" "3" "Advanced CPU (-C), battery, network (-n) data, and switches on -x advanced data option."
 	print_lines_basic "2" "4" "$partition_string_u size/filled data (-P) for (if present): /, /home, /var/, /boot. Shows full disk data (-D)."
 	print_lines_basic "2" "5" "Audio card (-A); sensors^(-s), memory/ram^(-m), $partition_string label^(-l) and UUID^(-u), short form of optical drives, standard raid data (-R)."
 	print_lines_basic "2" "6" "Full $partition_string (-p), unmounted $partition_string (-o), optical drive (-d), full raid; triggers -xx."
@@ -3007,6 +3030,7 @@ show_options()
 		print_lines_basic "1" "-W" "<location> Supported options for <location>: postal code; city, state/country; latitude, longitude. Only use if you want the weather somewhere other than the machine running $SCRIPT_NAME. Use only ascii characters, replace spaces in city/state/country names with '+'. Example:^$SCRIPT_NAME^-W^new+york,ny"
 	fi
 	print_lines_basic "1" "-x" "Adds the following extra data (only works with verbose or line output, not short form):"
+	print_lines_basic "2" "-B" "Vendor/model, status (if available)"
 	print_lines_basic "2" "-C" "CPU Flags, Bogomips on Cpu;"
 	print_lines_basic "2" "-d" "Extra optical drive data; adds rev version to optical drive."
 	print_lines_basic "2" "-D" "Hdd temp with disk data if you have hddtemp installed, if you are root OR if you have added to /etc/sudoers (sudo v. 1.7 or newer) Example:^<username>^ALL^=^NOPASSWD:^/usr/sbin/hddtemp"
@@ -3025,6 +3049,7 @@ show_options()
 	fi
 	print_lines_basic "1" "-xx" "Show extra, extra data (only works with verbose or line output, not short form):"
 	print_lines_basic "2" "-A" "Chip vendor:product ID for each audio device."
+	print_lines_basic "2" "-B" "serial number, voltage (if available)."
 	print_lines_basic "2" "-C" "Minimum CPU speed, if available."
 	print_lines_basic "2" "-D" "Disk serial number."
 	print_lines_basic "2" "-G" "Chip vendor:product ID for each video card."
@@ -3039,6 +3064,7 @@ show_options()
 	fi
 	print_lines_basic "2" "-@ 11-14" "Automatically uploads debugger data tar.gz file to ftp.techpatterns.com. EG: $SCRIPT_NAME^-xx@14"
 	print_lines_basic "1" "-xxx" "Show extra, extra, extra data (only works with verbose or line output, not short form):"
+	print_lines_basic "2" "-B" "chemistry, cycles, location (if available)."
 	print_lines_basic "2" "-m" "Width of memory bus, data and total (if present and greater than data); Detail, if present, for Type; module voltage, if available."
 	print_lines_basic "2" "-S" "Panel/shell information in desktop output, if in X (like gnome-shell, cinnamon, mate-panel)."
 	if [[ $B_ALLOW_WEATHER == 'true' ]];then
@@ -3971,6 +3997,229 @@ get_audio_alsa_data()
 	fi
 	a_temp=${A_ALSA_DATA[@]}
 	log_function_data "A_ALSA_DATA: $a_temp"
+	eval $LOGFE
+}
+
+get_battery_data()
+{
+	eval $LOGFS
+	local a_temp='' id_file='' count=0
+	local id_dir='/sys/class/power_supply/' 
+	local ids=$( ls $id_dir 2>/dev/null )  battery_file='' 
+	
+	# ids='BAT0 BAT1 BAT2'
+	if [[ -n $ids && $B_FORCE_DMIDECODE == 'false' ]];then
+		for idx in $ids
+		do
+			battery_file=$id_dir$idx'/uevent'
+			if [[ -r $battery_file ]];then
+				#  echo $battery_file
+				count=$(( $count + 1 ))
+				IFS=$'\n'
+				battery_data=$( 
+				gawk -F '=' '
+				BEGIN {
+					IGNORECASE=1
+					name=""
+					status=""
+					present=""
+					chemistry=""
+					cycles=""
+					voltage_min_design=""
+					voltage_now=""
+					power_now=""
+					charge_full_design=""
+					charge_full=""
+					charge_now=""
+					capacity=""
+					capacity_level=""
+					model=""
+					company=""
+					serial=""
+					of_orig=""
+					location=""
+				}
+				{
+					gsub(/'"$BAN_LIST_NORMAL"'|,|battery|unknown/, "", $2)
+					gsub(/^ +| +$/, "", $2)
+				}
+				$1 ~ /^POWER_SUPPLY_NAME$/ {
+					name=$NF
+				}
+				$1 ~ /^POWER_SUPPLY_STATUS$/ {
+					status=$NF
+				}
+				$1 ~ /^POWER_SUPPLY$/ {
+					present=$NF
+				}
+				$1 ~ /^POWER_SUPPLY_TECHNOLOGY$/ {
+					chemistry=$NF
+				}
+				$1 ~ /^POWER_SUPPLY_CYCLE_COUNT$/ {
+					cycles=$NF
+				}
+				$1 ~ /^POWER_SUPPLY_VOLTAGE_MIN_DESIGN$/ {
+					voltage_min_design = $NF / 1000000
+					voltage_min_design = sprintf( "%.1f", voltage_min_design )
+				}
+				$1 ~ /^POWER_SUPPLY_VOLTAGE_NOW$/ {
+					voltage_now = $NF / 1000000
+					voltage_now = sprintf( "%.1f", voltage_now )
+				}
+				$1 ~ /^POWER_SUPPLY_POWER_NOW$/ {
+					power_now=$NF
+				}
+				$1 ~ /^POWER_SUPPLY_ENERGY_FULL_DESIGN$/ {
+					charge_full_design = $NF / 1000000
+					charge_full_design = sprintf( "%.1f", charge_full_design )
+				}
+				$1 ~ /^POWER_SUPPLY_ENERGY_FULL$/ {
+					charge_full = $NF / 1000000
+					charge_full = sprintf( "%.1f", charge_full )
+				}
+				$1 ~ /^POWER_SUPPLY_ENERGY_NOW$/ {
+					charge_now = $NF / 1000000
+					charge_now = sprintf( "%.1f", charge_now )
+				}
+				$1 ~ /^POWER_SUPPLY_CHARGE_FULL_DESIGN$/ {
+					charge_full_design = $NF / 100000
+					charge_full_design = sprintf( "%.1f", charge_full_design )
+				}
+				$1 ~ /^POWER_SUPPLY_CHARGE_FULL$/ {
+					charge_full = $NF / 100000
+					charge_full = sprintf( "%.1f", charge_full )
+				}
+				$1 ~ /^POWER_SUPPLY_CHARGE_NOW$/ {
+					charge_now = $NF / 100000
+					charge_now = sprintf( "%.1f", charge_now )
+				}
+				$1 ~ /^POWER_SUPPLY_CAPACITY$/ {
+					if ( $NF != "" ){
+						capacity=$NF "%"
+					}
+				}
+				$1 ~ /^POWER_SUPPLY_CAPACITY_LEVEL$/ {
+					capacity_level=$NF
+				}
+				$1 ~ /^POWER_SUPPLY_MODEL_NAME$/ {
+					model=$NF
+				}
+				$1 ~ /^POWER_SUPPLY_MANUFACTURER$/ {
+					company=$NF
+				}
+				$1 ~ /^POWER_SUPPLY_SERIAL_NUMBER$/ {
+					serial=$NF
+				}
+				END {
+					if (charge_now != "" && charge_full != "" ){
+						capacity = 100*charge_now/charge_full
+						capacity = sprintf( "%.1f%", capacity )
+					}
+					if (charge_full_design != "" && charge_full != "" ){
+						of_orig=100*charge_full/charge_full_design
+						of_orig = sprintf( "%.0f%", of_orig )
+					}
+					entry = name "," status "," present "," chemistry "," cycles "," voltage_min_design "," voltage_now "," 
+					entry = entry power_now "," charge_full_design "," charge_full "," charge_now "," capacity "," 
+					entry = entry capacity_level "," of_orig "," model "," company "," serial "," location
+					print entry
+				}' < $battery_file )
+				# <<< "$data" )
+				# < $battery_file ) 
+				A_BATTERY_DATA[$count]=$battery_data
+				IFS="$ORIGINAL_IFS"
+			fi
+		done
+	elif [[ $B_FORCE_DMIDECODE == 'true'  ]] || [[ ! -d $id_dir && -z $ids ]];then
+		get_dmidecode_data
+		if [[ -n $DMIDECODE_DATA ]];then
+			if [[ $DMIDECODE_DATA == 'dmidecode-error-'* ]];then
+				A_BATTERY_DATA[0]=$DMIDECODE_DATA
+			# please note: only dmidecode version 2.11 or newer supports consistently the -s flag
+			else
+				IFS=$'\n'
+				# NOTE: this logic has a flaw, which is multiple batteries, which won't work without
+				# gawk arrays, but sorry, too much of a pain given how little useful data from dmidecode
+				A_BATTERY_DATA=( $( gawk -F ':' '
+				BEGIN {
+					IGNORECASE=1
+					name=""
+					status=""
+					present=""
+					chemistry=""
+					cycles=""
+					voltage_min_design=""
+					voltage_now=""
+					power_now=""
+					charge_full_design=""
+					charge_full=""
+					charge_now=""
+					capacity=""
+					capacity_level=""
+					model=""
+					company=""
+					serial=""
+					of_orig=""
+					location=""
+					bItemFound="false"
+				}
+				{
+					gsub(/'"$BAN_LIST_NORMAL"'|,|battery|unknown/, "", $2)
+					gsub(/^ +| +$/, "", $1)
+					gsub(/^ +| +$/, "", $2)
+				}
+				/^Portable Battery/ {
+					while ( getline && !/^$/ ) {
+						if ( $1 ~ /^Location/ ) { location=$2 }
+						if ( $1 ~ /^Manufacturer/ ) { company=$2 }
+						if ( $1 ~ /^Serial/ ) { serial=$2 }
+						if ( $1 ~ /^Name/ ) { model=$2 }
+						if ( $1 ~ /^Design Capacity/ ) { 
+							sub(/^[[:space:]]*mwh/, "", $2)
+							charge_full_design = $NF / 1000
+							charge_full_design = sprintf( "%.1f", charge_full_design )
+						}
+						if ( $1 ~ /^Design Voltage/ ) { 
+							sub(/^[[:space:]]*mv/, "", $2)
+							voltage_min_design = $NF / 1000
+							voltage_min_design = sprintf( "%.1f", voltage_min_design )
+						}
+						if ( $1 ~ /^SBDS Chemistry/ ) { chemistry=$2 }
+					}
+					testString=company serial model charge_full_design voltage_min_design
+					if ( testString != ""  ) {
+						bItemFound="true"
+						exit # exit loop, we are not handling > 1 batteries
+					}
+				}
+				END {
+					if ( bItemFound == "true" ) {
+						name="BAT-1"
+						if (charge_now != "" && charge_full != "" ){
+							capacity = 100*charge_now/charge_full
+							capacity = sprintf( "%.1f%", capacity )
+						}
+						if (charge_full_design != "" && charge_full != "" ){
+							of_orig=100*charge_full/charge_full_design
+							of_orig = sprintf( "%.0f%", of_orig )
+						}
+						entry = name "," status "," present "," chemistry "," cycles "," voltage_min_design "," voltage_now "," 
+						entry = entry power_now "," charge_full_design "," charge_full "," charge_now "," capacity "," 
+						entry = entry capacity_level "," of_orig "," model "," company "," serial "," location
+						print entry
+					}
+				}' <<< "$DMIDECODE_DATA" ) )
+				IFS="$ORIGINAL_IFS"
+			fi
+		fi
+	fi
+	# echo $array_string
+	
+	#echo ${#A_BATTERY_DATA[@]}
+	a_temp=${A_BATTERY_DATA[@]}
+	
+ 	# echo $a_temp
+	log_function_data "A_BATTERY_DATA: $a_temp"
 	eval $LOGFE
 }
 
@@ -5440,7 +5689,7 @@ get_dmidecode_data()
 			fi
 			# these tests first, because bsd error messages like this (note how many : are in the string)
 			# inxi: line 4928: /usr/local/sbin/dmidecode: Permission denied
-			if [[ ${#dmiData} -lt 100  ]];then
+			if [[ ${#dmiData} -lt 200  ]];then
 				if [[ -z ${dmiData/*Permission denied*/} ]];then
 				# if [[ -n $( grep -i 'Permission denied' <<< "$dmiData" ) ]];then
 					DMIDECODE_DATA='dmidecode-error-requires-root'
@@ -11170,6 +11419,9 @@ print_it_out()
 		if [[ $B_SHOW_MACHINE == 'true' ]];then
 			print_machine_data
 		fi
+		if [[ $B_SHOW_BATTERY == 'true' ]];then
+			print_battery_data
+		fi
 		if [[ $B_SHOW_BASIC_CPU == 'true' || $B_SHOW_CPU == 'true' ]];then
 			print_cpu_data
 		fi
@@ -11507,6 +11759,188 @@ print_audio_data()
 	eval $LOGFE
 }
 
+print_battery_data()
+{
+	eval $LOGFS
+	local line_starter='Battery' print_data='' 
+	get_battery_data
+	if [[ -n ${A_BATTERY_DATA[@]} ]];then
+		local battery_data='' battery_string=''
+		local present='' chemistry='' cycles='' voltage_min_design='' voltage_now=''
+		local power_now='' charge_full_design='' charge_full='' charge_now='' capacity=''
+		local capacity_level='' model='' company='' serial='' of_orig='' model='' condition=''
+		local power=''
+		
+		# echo ${A_BATTERY_DATA[@]}
+		for (( i=0; i< ${#A_BATTERY_DATA[@]}; i++ ))
+		do
+			battery_data='' 
+			print_data=''
+			battery_string=''
+			charge=''
+			model=''
+			condition=''
+			voltage=''
+			
+			name=''
+			status=''
+			present=''
+			chemistry=''
+			cycles=''
+			voltage_min_design=''
+			voltage_now=''
+			power_now=''
+			charge_full_design=''
+			charge_full=''
+			charge_now=''
+			capacity=''
+			capacity_level=''
+			of_orig=''
+			model=''
+			company=''
+			serial=''
+			location='' # dmidecode only
+			IFS=","
+			a_battery_working=( ${A_BATTERY_DATA[i]} )
+			IFS="$ORIGINAL_IFS"
+			bat_id="$(( $i + 1 ))"
+			
+			if [[ -n ${a_battery_working[10]} ]];then
+				charge="${a_battery_working[10]} Wh "
+			fi
+			if [[ -n ${a_battery_working[11]} ]];then
+				charge="$charge${a_battery_working[11]} "
+			fi
+			if [[ $charge == '' ]];then
+				charge='N/A '
+			fi
+			charge="${C1}charge$SEP3${C2} $charge"
+			if [[ -n ${a_battery_working[9]} ]];then
+				condition="${a_battery_working[9]}"
+			else
+				condition='NA'
+			fi
+			if [[ -n ${a_battery_working[8]} ]];then
+				condition="$condition/${a_battery_working[8]} Wh "
+			else
+				condition="$condition/NA Wh "
+			fi
+			if [[ -n ${a_battery_working[13]} ]];then
+				condition="$condition(${a_battery_working[13]}) "
+			fi
+			if [[ $condition == '' ]];then
+				condition='N/A '
+			fi
+			condition="${C1}condition$SEP3${C2} $condition"
+			if [[ $B_EXTRA_DATA == 'true' ]];then
+				if [[ -n ${a_battery_working[15]} ]];then
+					model="${a_battery_working[15]} "
+				fi
+				if [[ -n ${a_battery_working[14]} ]];then
+					model="$model${a_battery_working[14]} "
+				fi
+				if [[ $model == '' ]];then
+					model='N/A '
+				fi
+				model="${C1}model$SEP3${C2} $model"
+			
+				if [[ -n ${a_battery_working[1]} ]];then
+					status="${a_battery_working[1]} "
+				else
+					status="N/A "
+				fi
+				status="${C1}status$SEP3${C2} $status"
+			fi
+			if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+				if [[ -n ${a_battery_working[16]} ]];then
+					serial="${a_battery_working[16]} "
+				else 
+					serial='N/A '
+				fi
+				serial="${C1}serial$SEP3${C2} $serial"
+				if [[ -n ${a_battery_working[6]} ]];then
+					voltage="${a_battery_working[6]}"
+				fi
+				if [[ -n ${a_battery_working[5]} ]];then
+					if [[ $voltage == '' ]];then
+						voltage='NA'
+					fi
+					voltage="$voltage/${a_battery_working[5]} "
+				fi
+				if [[ $voltage == '' ]];then
+					voltage='NA '
+				fi
+				voltage="${C1}volts$SEP3${C2} $voltage"
+			fi
+			if [[ $B_EXTRA_EXTRA_EXTRA_DATA == 'true' ]];then
+				if [[ -n ${a_battery_working[3]} ]];then
+					chemistry="${a_battery_working[3]} "
+				fi
+				if [[ -n ${a_battery_working[4]} ]];then
+					cycles="${C1}cycles$SEP3${C2} ${a_battery_working[4]} "
+				fi
+				# location is dmidecode only
+				if [[ -n ${a_battery_working[17]} ]];then
+					location="${C1}loc$SEP3${C2} ${a_battery_working[17]} "
+				fi
+			fi
+			if [[ -n ${a_battery_working[15]} ]];then
+				battery_string="${C1}${a_battery_working[0]}$SEP3${C2} $charge$condition"
+				battery_data="$model$chemistry$serial$status$cycles$location"
+			fi
+			
+			if [[ ${A_BATTERY_DATA[0]} == 'dmidecode-error-'* ]];then
+				error_string=$( print_dmidecode_error 'bat' "${A_BATTERY_DATA[0]}" )
+				battery_string=${C2}$error_string
+				battery_data=''
+				voltage=''
+			fi
+			
+			if [[ -n $battery_string ]];then
+				if [[ $( calculate_line_length "$battery_string$voltage$battery_data" ) -lt $COLS_INNER ]];then
+					#echo one
+					print_data=$( create_print_line "$line_starter" "$battery_string$voltage$battery_data" )
+					print_screen_output "$print_data"
+				# print the line
+				else
+					# keep the driver on the same line no matter what, looks weird alone on its own line
+					if [[ $( calculate_line_length "$battery_string$voltage$battery_data" ) -gt $COLS_INNER ]];then
+						if [[ $( calculate_line_length "$battery_string$voltage" ) -gt $COLS_INNER ]];then
+							print_data=$( create_print_line "$line_starter" "$battery_string" )
+							print_screen_output "$print_data"
+							line_starter=' '
+							battery_string=''
+							print_data=$( create_print_line "$line_starter" "$voltage" )
+							print_screen_output "$print_data"
+							voltage=''
+						else 
+							print_data=$( create_print_line "$line_starter" "$battery_string$voltage" )
+							print_screen_output "$print_data"
+							line_starter=' '
+							voltage=''
+							battery_string=''
+						fi
+						#echo two
+						if [[ $battery_data != '' ]];then
+							print_data=$( create_print_line "$line_starter" "$battery_data" )
+							print_screen_output "$print_data"
+						fi
+					else
+						#echo three
+						print_data=$( create_print_line "$line_starter" "$battery_string$voltage$battery_data" )
+						print_screen_output "$print_data"
+					fi
+				fi
+				line_starter=' '
+			fi
+		done
+	elif [[ $B_SHOW_BATTERY_FORCED == 'true' ]];then
+		print_data=$( create_print_line "$line_starter" "No battery data found in /sys or dmidecode. Is one present?" )
+		print_screen_output "$print_data"
+	fi
+	eval $LOGFE
+}
+
 print_cpu_data()
 {
 	eval $LOGFS
@@ -11781,19 +12215,21 @@ print_cpu_flags_full()
 	eval $LOGFE
 }
 
-# args: $1 - type [sys/default]; $2 - get_dmidecode_data error return
+# args: $1 - type [sys/bat/default]; $2 - get_dmidecode_data error return
 print_dmidecode_error()
 {
 	eval $LOGFS
 	local error_message='Unknown dmidecode error.'
 	local sysDmiError='Using '
 	
-	if [[ $1 == 'sys' ]];then
+	if [[ $1 == 'sys' || $1 == 'bat' ]];then
 		if [[ $B_FORCE_DMIDECODE == 'true' ]];then
 			sysDmiError='Forcing '
 		# dragonfly has /sys, but it's empty
-		elif [[ $BSD_TYPE == '' || -d /sys/devices ]];then
+		elif [[ $1 == 'sys' ]] && [[ $BSD_TYPE == '' || -d /sys/devices ]];then
 			sysDmiError='No /sys/class/dmi; using '
+		#elif [[ $1 == 'bat' ]] && [[ $BSD_TYPE == '' || -d /sys/devices ]];then
+		#	sysDmiError='No /sys/ battery; using '
 		else
 			sysDmiError='Using '
 		fi
@@ -11804,6 +12240,8 @@ print_dmidecode_error()
 		error_message="${sysDmiError}dmidecode: dmidecode is not installed."
 	elif [[ $2 == 'dmidecode-error-no-smbios-dmi-data' ]];then
 		error_message="${sysDmiError}dmidecode: no smbios data available. Old system?"
+	elif [[ $2 == 'dmidecode-error-no-battery-data' ]];then
+		error_message="${sysDmiError}dmidecode: no battery data available."
 	elif [[ $2 == 'dmidecode-error-unknown-error' ]];then
 		error_message="${sysDmiError}dmidecode: unknown error occured"
 	fi
