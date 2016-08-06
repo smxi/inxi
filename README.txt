@@ -103,7 +103,7 @@ mission of inxi: to always work on all systems all the time. Well, all
 linux systems with the core tools inxi requires to operate installed. Ie, 
 not android, yet. What this means is this: you can have a 10 year old box,
 or probably 15, not sure, and you can install today's inxi on it, and it
-will run. It won't run fast, but it will run. I test inxi on a 200mghz 
+will run. It won't run fast, but it will run. I test inxi on a 200 MHz 
 laptop from about 1998 to keep it honest. That's also what was used to
 optimize the code.
 
