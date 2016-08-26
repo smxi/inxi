@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.3.0
-####  Date: 2016-04-18
+####  Version: 2.3.1
+####  Date: 2016-08-25
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -2050,6 +2050,10 @@ debug_data_collector()
 				touch $debug_data_dir/kde-about-distro-absent
 			fi
 			echo $XDG_CURRENT_DESKTOP &> $debug_data_dir/xdg-current-desktop.txt
+			echo $XDG_SESSION_DESKTOP &> $debug_data_dir/xdg-session-desktop.txt
+			echo $DESKTOP_SESSION &> $debug_data_dir/desktop-session.txt
+			echo $GDMSESSION &> $debug_data_dir/gdmsession.txt
+			
 		fi
 		if [[ $1 == 'disk' || $1 == 'all' ]];then
 			echo 'Collecting dev, label, disk, uuid data, df...'
@@ -3000,12 +3004,12 @@ show_options()
 	print_lines_basic "1" "-I" "Information: processes, uptime, memory, irc client (or shell type), $SCRIPT_NAME version."
 	print_lines_basic "1" "-l" "$partition_string_u labels. Default: short $partition_string -P. For full -p output, use: -pl (or -plu)."
 	print_lines_basic "1" "-m" "Memory (RAM) data. Physical system memory array(s), capacity, how many devices (slots) supported, and individual memory devices (sticks of memory etc). For devices, shows device locator, size, speed, type (like: DDR3). Also see -x, -xx, -xxx"
-	print_lines_basic "1" "-M" "Machine data. Motherboard, Bios, and if present, System Builder (Like Lenovo). Older systems/kernels without the required /sys data can use dmidecode instead, run as root. Dmidecode can be forced with -! 33"
+	print_lines_basic "1" "-M" "Machine data. Motherboard, Bios, and if present, System Builder (Like Lenovo). Shows UEFI/BIOS/UEFI [Legacy}. Older systems/kernels without the required /sys data can use dmidecode instead, run as root. Dmidecode can be forced with -! 33"
 	print_lines_basic "1" "-n" "Advanced Network card information. Same as -Nn. Shows interface, speed, mac id, state, etc."
 	print_lines_basic "1" "-N" "Network card information. With -x, shows PCI BusID, Port number."
 	print_lines_basic "1" "-o" "Unmounted $partition_string information (includes UUID and LABEL if available). Shows file system type if you have file installed, if you are root OR if you have added to /etc/sudoers (sudo v. 1.7 or newer) Example:^<username>^ALL^=^NOPASSWD:^/usr/bin/file^"
 	print_lines_basic "1" "-p" "Full $partition_string information (-P plus all other detected ${partition_string}s)."
-	print_lines_basic "1" "-P" "Basic $partition_string information (shows what -v^4 would show, but without extra data). Shows, if detected: / /boot /home /tmp /usr /var. Use -p to see all mounted ${partition_string}s."
+	print_lines_basic "1" "-P" "Basic $partition_string information (shows what -v^4 would show, but without extra data). Shows, if detected: / /boot /home /opt /tmp /usr /var /var/log /var/tmp . Use -p to see all mounted ${partition_string}s."
 	print_lines_basic "1" "-r" "Distro repository data. Supported repo types: APT; PACMAN; PISI; PORTAGE; PORTS (BSDs); SLACKPKG; URPMQ; YUM; ZYPP."
 	print_lines_basic "1" "-R" "RAID data. Shows RAID devices, states, levels, and components, and extra data with -x/-xx. md-raid: If device is resyncing, shows resync progress line as well."
 	print_lines_basic "1" "-s" "Sensors output (if sensors installed/configured): mobo/cpu/gpu temp; detected fan speeds. Gpu temp only for Fglrx/Nvidia drivers. Nvidia shows screen number for > 1 screens."
@@ -4909,6 +4913,19 @@ get_desktop_environment()
 			fi
 		fi
 		desktop_environment="Unity"
+	elif [[ $XDG_CURRENT_DESKTOP == *Budgie* ]];then
+		version=$( get_program_version 'budgie-desktop' '^budgie-desktop' '2' )
+		# not certain will always have version, so keep output right if not
+		if [[ -n $version ]];then
+			version="$version "
+		fi
+		if [[ $B_EXTRA_DATA == 'true' ]];then
+			toolkit=$( get_de_gtk_data )
+			if [[ -n $toolkit ]];then
+				version="$version(Gtk $toolkit)"
+			fi
+		fi
+		desktop_environment="Budgie"
 	elif [[ $XDG_CURRENT_DESKTOP == 'LXQt' ]];then
 # 		if type -p lxqt-about &>/dev/null;then
 # 			version=$( get_program_version 'lxqt-about' '^lxqt-about' '2' )
@@ -7030,7 +7047,7 @@ get_machine_data()
 {
 	eval $LOGFS
 	local a_temp='' separator='' id_file='' file_data='' array_string=''
-	local id_dir='/sys/class/dmi/id/' dmi_data='' 
+	local id_dir='/sys/class/dmi/id/' dmi_data='' firmware_type='BIOS'
 	local machine_files="
 	sys_vendor product_name product_version product_serial product_uuid 
 	board_vendor board_name board_version board_serial 
@@ -7042,6 +7059,11 @@ get_machine_data()
 		"
 	fi
 	if [[ -d $id_dir && $B_FORCE_DMIDECODE == 'false' ]];then
+		if [[ -d /sys/firmware/efi ]];then
+			firmware_type='UEFI'
+		elif [[ -n $(ls /sys/firmware/acpi/tables/UEFI* 2>/dev/null ) ]];then
+			firmware_type='BIOS [UEFI]'
+		fi
 		for id_file in $machine_files
 		do
 			file_data=''
@@ -7069,6 +7091,15 @@ get_machine_data()
 			array_string="$array_string$separator$file_data"
 			separator=','
 		done
+		if [[ $array_string != '' ]];then
+			# note: dmidecode has two more data types possible, so always add 2 more
+			if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+				array_string="$array_string,,"
+			else
+				array_string="$array_string,,,,,,"
+			fi
+			array_string="$array_string,$firmware_type"
+		fi
 	else
 		get_dmidecode_data
 		if [[ -n $DMIDECODE_DATA ]];then
@@ -7083,15 +7114,16 @@ get_machine_data()
 					baseboardProductName=""
 					baseboardSerialNumber=""
 					baseboardVersion=""
-					biosReleaseDate=""
-					biosRevision="" # only available from dmidecode
-					biosRomSize="" # only available from dmidecode
-					biosVendor=""
-					biosVersion=""
 					chassisManufacturer=""
 					chassisSerialNumber=""
 					chassisType=""
 					chassisVersion=""
+					firmwareReleaseDate=""
+					firmwareRevision="" # only available from dmidecode
+					firmwareRomSize="" # only available from dmidecode
+					firmwareType="BIOS"
+					firmwareVendor=""
+					firmwareVersion=""
 					systemManufacturer=""
 					systemProductName=""
 					systemVersion=""
@@ -7107,13 +7139,14 @@ get_machine_data()
 				}
 				/^Bios Information/ {
 					while ( getline && !/^$/ ) {
-						if ( $1 ~ /^Release Date/ ) { biosReleaseDate=$2 }
-						if ( $1 ~ /^BIOS Revision/ ) { biosRevision=$2 }
-						if ( $1 ~ /^ROM Size/ ) { biosRomSize=$2 }
-						if ( $1 ~ /^Vendor/ ) { biosVendor=$2 }
-						if ( $1 ~ /^Version/ ) { biosVersion=$2 }
+						if ( $1 ~ /^Release Date/ ) { firmwareReleaseDate=$2 }
+						if ( $1 ~ /^BIOS Revision/ ) { firmwareRevision=$2 }
+						if ( $1 ~ /^ROM Size/ ) { firmwareRomSize=$2 }
+						if ( $1 ~ /^Vendor/ ) { firmwareVendor=$2 }
+						if ( $1 ~ /^Version/ ) { firmwareVersion=$2 }
+						if ( $1 ~ /^UEFI is supported/ ) { firmwareType="UEFI" }
 					}
-					testString=biosReleaseDate biosRevision biosRomSize biosVendor biosVersion
+					testString=firmwareReleaseDate firmwareRevision firmwareRomSize firmwareVendor firmwareVersion
 					if ( testString != ""  ) {
 						bItemFound="true"
 					}
@@ -7168,10 +7201,10 @@ get_machine_data()
 					if ( bItemFound == "true" ) {
 						fullString = systemManufacturer "," systemProductName "," systemVersion "," systemSerialNumber 
 						fullString = fullString "," systemUuid "," baseboardManufacturer "," baseboardProductName 
-						fullString = fullString "," baseboardVersion "," baseboardSerialNumber "," biosVendor
-						fullString = fullString "," biosVersion "," biosReleaseDate "," chassisManufacturer
+						fullString = fullString "," baseboardVersion "," baseboardSerialNumber "," firmwareVendor
+						fullString = fullString "," firmwareVersion "," firmwareReleaseDate "," chassisManufacturer
 						fullString = fullString "," chassisType "," chassisVersion "," chassisSerialNumber 
-						fullString = fullString ","  biosRevision "," biosRomSize
+						fullString = fullString ","  firmwareRevision "," firmwareRomSize "," firmwareType
 						
 						print fullString
 					}
@@ -8189,7 +8222,7 @@ get_partition_data()
 	}
 	# this handles yet another fredforfaen special case where a mounted drive
 	# has the search string in its name
-	$NF ~ /^\/$|^\/boot$|^\/var$|^\/home$|^\/tmp$|^\/usr$/ {
+	$NF ~ /^\/$|^\/boot$|^\/var$|^\/var\/tmp$|^\/var\/log$|^\/home$|^\/opt$|^\/tmp$|^\/usr$/ {
 		# note, older df in bsd do not have file system column
 		if ( NF == "7" && $(NF - 1) ~ /[0-9]+%/ ) {
 			fileSystem=$(NF - 5)
@@ -8207,7 +8240,7 @@ get_partition_data()
 	}
 	# skip all these, including the first, header line. Use the --exclude-type
 	# to handle new filesystems types we do not want listed here
-	$NF !~ /^\/$|^\/boot$|^\/var$|^\/home$|^\/tmp$|^\/usr$|^filesystem/ {
+	$NF !~ /^\/$|^\/boot$|^\/var$|^\/var\/tmp$|^\/var\/log$|^\/home$|^\/opt$|^\/tmp$|^\/usr$|^filesystem/ {
 		# this is to avoid file systems with spaces in their names, that will make
 		# the test show the wrong data in each of the fields, if no x%, then do not use
 		# using 3 cases, first default, standard, 2nd, 3rd, handles one and two spaces in name
@@ -12773,7 +12806,7 @@ print_machine_data()
 {
 	eval $LOGFS
 	
-	local system_line='' mobo_line='' bios_line='' chassis_line=''
+	local system_line='' mobo_line='' bios_line='' chassis_line='' #firmware_type='BIOS'
 	local mobo_vendor='' mobo_model='' mobo_version='' mobo_serial=''
 	local bios_vendor='' bios_version='' bios_date='' bios_rom='' error_string=''
 	local system_vendor='' product_name='' product_version='' product_serial='' product_uuid=''
@@ -12787,9 +12820,11 @@ print_machine_data()
 	## keys for machine data are:
 	# 0-sys_vendor 1-product_name 2-product_version 3-product_serial 4-product_uuid 
 	# 5-board_vendor 6-board_name 7-board_version 8-board_serial 
-	# 9-bios_vendor 10-bios_version 11-bios_date 
+	# 9-bios_vendor 10-bios_version 11-bios_date
 	## with extra data: 
 	# 12-chassis_vendor 13-chassis_type 14-chassis_version 15-chassis_serial
+	## unused: 16-firmware_revision  17-firmware_romsize
+	# 
 	# a null array always has a count of 1
 	if [[ ${#A_MACHINE_DATA[@]} -gt 1 ]];then
 		# note: in some case a mobo/version will match a product name/version, do not print those
@@ -12834,6 +12869,10 @@ print_machine_data()
 				fi
 			fi
 		fi
+		# echo ${A_MACHINE_DATA[@]}
+		if [[ -n ${A_MACHINE_DATA[18]} ]];then
+			firmware_type=${A_MACHINE_DATA[18]}
+		fi
 		if [[ -n ${A_MACHINE_DATA[5]} ]];then
 			mobo_vendor=${A_MACHINE_DATA[5]}
 		else
@@ -12872,7 +12911,7 @@ print_machine_data()
 			bios_rom=" ${C1}rom size$SEP3${C2} ${A_MACHINE_DATA[17]}"
 		fi
 		mobo_line="${C1}Mobo$SEP3${C2} $mobo_vendor ${C1}model$SEP3${C2} $mobo_model$mobo_version$mobo_serial"
-		bios_line="${C1}Bios$SEP3${C2} $bios_vendor ${C1}v$SEP3${C2} $bios_version ${C1}date$SEP3${C2} $bios_date$bios_rom"
+		bios_line="${C1}$firmware_type$SEP3${C2} $bios_vendor ${C1}v$SEP3${C2} $bios_version ${C1}date$SEP3${C2} $bios_date$bios_rom"
 		if [[ $( calculate_line_length "$mobo_line$bios_line" ) -lt $COLS_INNER ]];then
 			mobo_line="$mobo_line $bios_line"
 			bios_line=''
