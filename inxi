@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.3.1
-####  Date: 2016-08-25
+####  Version: 2.3.2
+####  Date: 2016-10-20
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -186,6 +186,7 @@
 ####  raid mdstat: http://www-01.ibm.com/support/docview.wss?uid=isg3T1011259
 ####               http://www.howtoforge.com/replacing_hard_disks_in_a_raid1_array
 ####               https://raid.wiki.kernel.org/index.php/Mdstat
+####  dmi data: http://www.dmtf.org/sites/default/files/standards/documents/DSP0134_2.7.0.pdf
 ########################################################################
 ####  TESTING FLAGS
 ####  inxi supports advanced testing triggers to do various things, using -! <arg>
@@ -316,7 +317,7 @@ B_PCICONF='false'
 B_PCICONF_SET='false'
 # kde qdbus
 B_QDBUS='false'
-B_PORTABLE='false'
+B_POSSIBLE_PORTABLE='false'
 B_RAID_SET='false'
 B_ROOT='false'
 B_RUN_COLOR_SELECTOR='false'
@@ -885,7 +886,7 @@ initialize_data()
 		# found a case of battery existing but having nothing in it on desktop mobo
 		# not all laptops show the first. /proc/acpi/battery is deprecated.
 		if [[ -n $( ls /proc/acpi/battery 2>/dev/null ) || -n $( ls /sys/class/power_supply/ 2>/dev/null )  ]];then
-			B_PORTABLE='true'
+			B_POSSIBLE_PORTABLE='true'
 		fi
 	fi
 	if [[ -e $FILE_CPUINFO ]]; then
@@ -1858,6 +1859,12 @@ debug_data_collector()
 		else
 			touch $debug_data_dir/clang-absent
 		fi
+		if type -p systemd-detect-virt &>/dev/null;then
+			systemd-detect-virt &> $debug_data_dir/systemd-detect-virt-info.txt
+		else
+			touch $debug_data_dir/systemd-detect-virt-absent
+		fi
+		
 		cat /etc/src.conf &> $debug_data_dir/bsd-etc-src-conf.txt
 		cat /etc/make.conf &> $debug_data_dir/bsd-etc-make-conf.txt
 		cat /etc/issue &> $debug_data_dir/etc-issue.txt
@@ -3004,7 +3011,7 @@ show_options()
 	print_lines_basic "1" "-I" "Information: processes, uptime, memory, irc client (or shell type), $SCRIPT_NAME version."
 	print_lines_basic "1" "-l" "$partition_string_u labels. Default: short $partition_string -P. For full -p output, use: -pl (or -plu)."
 	print_lines_basic "1" "-m" "Memory (RAM) data. Physical system memory array(s), capacity, how many devices (slots) supported, and individual memory devices (sticks of memory etc). For devices, shows device locator, size, speed, type (like: DDR3). Also see -x, -xx, -xxx"
-	print_lines_basic "1" "-M" "Machine data. Motherboard, Bios, and if present, System Builder (Like Lenovo). Shows UEFI/BIOS/UEFI [Legacy}. Older systems/kernels without the required /sys data can use dmidecode instead, run as root. Dmidecode can be forced with -! 33"
+	print_lines_basic "1" "-M" "Machine data. Device type (desktop, server, laptop, VM etc.), Motherboard, Bios, and if present, System Builder (Like Lenovo). Shows UEFI/BIOS/UEFI [Legacy}. Older systems/kernels without the required /sys data can use dmidecode instead, run as root. Dmidecode can be forced with -! 33"
 	print_lines_basic "1" "-n" "Advanced Network card information. Same as -Nn. Shows interface, speed, mac id, state, etc."
 	print_lines_basic "1" "-N" "Network card information. With -x, shows PCI BusID, Port number."
 	print_lines_basic "1" "-o" "Unmounted $partition_string information (includes UUID and LABEL if available). Shows file system type if you have file installed, if you are root OR if you have added to /etc/sudoers (sudo v. 1.7 or newer) Example:^<username>^ALL^=^NOPASSWD:^/usr/bin/file^"
@@ -5330,6 +5337,158 @@ get_de_gtk_data()
 	eval $LOGFE
 }
 
+get_device_data()
+{
+	eval $LOGFS
+	
+	local device='un-determined'
+	local chasis_id='' dmi_device=''
+	
+	# first: linked version
+	if [[ -e /sys/class/dmi/id/chassis_type ]];then
+		chasis_id=$(cat /sys/class/dmi/id/chassis_type)
+	elif [[ -e /sys/devices/virtual/dmi/id/chassis_type ]];then
+		chasis_id=$(cat /sys/devices/virtual/dmi/id/chassis_type)
+	fi
+	# src: http://www.dmtf.org/sites/default/files/standards/documents/DSP0134_2.7.0.pdf
+	# https://www.404techsupport.com/2012/03/pizza-box-lunch-box-and-other-pc-case-form-factors-identified-by-wmi/
+	if [[ $chasis_id != '' ]];then
+		case $chasis_id in
+			1)
+				device=$(get_device_vm)
+				;;
+			2)
+				device='unknown'
+				;;
+			# note: 13 is all-in-one which we take as a mac type system
+			3|4|6|7|13|15|24)
+				device='desktop'
+				;;
+			# note: lenovo T420 shows as 10, notebook,  but it's not a notebook
+			9|10|16)
+				device='laptop'
+				;;
+			14)
+				device='notebook'
+				;;
+			8|11)
+				device='portable'
+				;;
+			5|17|23|25)
+				device='server'
+				;;
+			27|28|29)
+				device='blade'
+				;;
+			12)
+				device='docking-station'
+				;;
+			18)
+				device='expansion-chassis'
+				;;
+			19)
+				device='sub-chassis'
+				;;
+			20)
+				device='bus-expansion'
+				;;
+			21)
+				device='peripheral'
+				;;
+			22)
+				device='RAID'
+				;;
+			26)
+				device='compact-PCI'
+				;;
+		esac
+	else
+		if ! type -p dmidecode &>/dev/null;then
+			device='dmidecode-missing'
+		elif [[ $B_ROOT == 'false' ]];then
+			device='dmidecode-use-root'
+		else 
+			get_dmidecode_data
+			if [[ -n $DMIDECODE_DATA ]];then
+				if [[ $DMIDECODE_DATA == 'dmidecode-error-'* ]];then
+					device='dmidecode-no-info'
+				else
+					dmi_device=$( gawk '
+					BEGIN {
+						IGNORECASE=1
+						device="test"
+					}
+					/^Chassis Information/ {
+						device= $1
+						while (getline && !/^$/ ) {
+							if ( $1 ~ /^Type/ ) {
+								sub(/Type:\s*/,"",$0)
+								device = $0
+								break
+							}
+						}
+					}
+					END {
+						print device
+					}' <<< "$DMIDECODE_DATA" )
+					if [[ -n $dmi_device ]];then
+						device=$dmi_device
+					fi
+					if [[ $device == 'Other' ]];then
+						device=$(get_device_vm)
+					fi
+				fi
+			fi
+		fi
+	fi
+	echo $device
+	
+	eval $LOGFE
+}
+
+get_device_vm()
+{
+	eval $LOGFS
+	
+	local vm='other-vm?' vm_data='' vm_test=''
+	
+	# https://www.freedesktop.org/software/systemd/man/systemd-detect-virt.html
+	if type -p systemd-detect-virt &>/dev/null;then
+		vm_test=$(systemd-detect-virt 2>/dev/null)
+		if [[ -n $vm_test && $vm_test != 'none' ]];then
+			vm=$vm_test
+		fi
+	else
+		if [[ -e /proc/vz ]];then
+			vm='openvz'
+		elif [[ -e /proc/xen ]];then
+			vm='xen'
+		fi
+		if [[ $vm == 'other-vm?' ]];then
+			vm_data=$vm_data$Lspci_v_Data
+			vm_data=$vm_data$Sysctl_a_Data
+			vm_data=$vm_data$Dmesg_Boot_Data
+			if [[ -e /dev/disk/by-id ]];then
+				vm_data=$vm_data$(ls -l /dev/disk/by-id 2>/dev/null )
+			fi
+			if [[ -n $( grep -iEs 'innotek|vbox|virtualbox' <<< $vm_data ) ]];then
+				vm='virtualbox'
+			elif [[ -n $( grep -is 'vmware' <<< $vm_data ) ]];then
+				vm='vmware'
+			elif [[ -n $( grep -is 'qemu' <<< $vm_data ) ]];then
+				vm='qemu-or-kvm'
+			elif [[ -e /proc/cpuinfo && -n $( grep -is '^flags.*hypervisor' /proc/cpuinfo ) ]];then
+				vm='virtual-machine'
+			elif [[ -e /dev/vda || -e /dev/vdb || -e /dev/xvda || -e /dev/xvdb ]];then
+				vm='virtual-machine'
+			fi
+		fi
+	fi
+	
+	echo $vm
+	
+	eval $LOGFE
+}
 
 # see which dm has started if any
 get_display_manager()
@@ -12813,6 +12972,7 @@ print_machine_data()
 	local chassis_vendor='' chassis_type='' chassis_version='' chassis_serial='' 
 	local b_skip_system='false' b_skip_chassis='false'
 	local sysDmiNull='No /sys/class/dmi machine data: try newer kernel, or install dmidecode'
+	local device=$(get_device_data)
 	# set A_MACHINE_DATA
 	get_machine_data
 	
@@ -12833,7 +12993,7 @@ print_machine_data()
 		if [[ -z ${A_MACHINE_DATA[0]} ]];then
 			b_skip_system='true'
 		else
-			if [[ $B_PORTABLE != 'true'  ]];then
+			if [[ $B_POSSIBLE_PORTABLE != 'true'  ]];then
 				# ibm / ibm can be true; dell / quantum is false, so in other words, only do this
 				# in case where the vendor is the same and the version is the same and not null, 
 				# otherwise the version information is going to be different in all cases I think
@@ -12917,14 +13077,11 @@ print_machine_data()
 			bios_line=''
 		fi
 		if [[ $b_skip_system == 'true' ]];then
-			system_line=$mobo_line
+			system_line="${C1}Device$SEP3${C2} $device $mobo_line"
 			mobo_line=''
 		else
 			# this has already been tested for above so we know it's not null
 			system_vendor=${A_MACHINE_DATA[0]}
-			if [[ $B_PORTABLE == 'true' ]];then
-				system_vendor="$system_vendor (portable)"
-			fi
  			if [[ -n ${A_MACHINE_DATA[1]} ]];then
 				product_name=${A_MACHINE_DATA[1]}
 			else
@@ -12936,7 +13093,7 @@ print_machine_data()
 			if [[ -n ${A_MACHINE_DATA[3]} && $B_OUTPUT_FILTER != 'true' ]];then
 				product_serial=" ${C1}serial$SEP3${C2} ${A_MACHINE_DATA[3]} "
 			fi
-			system_line="${C1}System$SEP3${C2} $system_vendor ${C1}product$SEP3${C2} $product_name$product_version$product_serial"
+			system_line="${C1}Device$SEP3${C2} $device ${C1}System$SEP3${C2} $system_vendor ${C1}product$SEP3${C2} $product_name$product_version$product_serial"
 			if [[ -n $chassis_line && $( calculate_line_length "$system_line$chassis_line" ) -lt $COLS_INNER ]];then
 				system_line="$system_line $chassis_line"
 				chassis_line=''
