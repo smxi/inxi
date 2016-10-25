@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.3.2
-####  Date: 2016-10-23
+####  Version: 2.3.3
+####  Date: 2016-10-25
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -5457,12 +5457,15 @@ get_device_vm()
 	local vm='other-vm?' vm_data='' vm_test=''
 	
 	# https://www.freedesktop.org/software/systemd/man/systemd-detect-virt.html
+	# note: unknown is how reliable this tool is
 	if type -p systemd-detect-virt &>/dev/null;then
-		vm_test=$(systemd-detect-virt 2>/dev/null)
+		vm_test=$(systemd-detect-virt 2>/dev/null | sed 's/none//' )
 		if [[ -n $vm_test && $vm_test != 'none' ]];then
 			vm=$vm_test
 		fi
-	else
+	fi
+	# some simple to detect linux vm id's
+	if [[ $vm == 'other-vm?' ]];then
 		if [[ -e /proc/vz ]];then
 			vm='openvz'
 		elif [[ -e /proc/xen ]];then
@@ -5470,22 +5473,45 @@ get_device_vm()
 		elif [[ -e /dev/vzfs ]];then
 			vm='virtuozzo'
 		fi
-		if [[ $vm == 'other-vm?' ]];then
-			vm_data=$vm_data$Lspci_v_Data
-			vm_data=$vm_data$Sysctl_a_Data
-			vm_data=$vm_data$Dmesg_Boot_Data
-			if [[ -e /dev/disk/by-id ]];then
-				vm_data=$vm_data$(ls -l /dev/disk/by-id 2>/dev/null )
-			fi
-			if [[ -n $( grep -iEs 'innotek|vbox|virtualbox' <<< $vm_data ) ]];then
-				vm='virtualbox'
-			elif [[ -n $( grep -is 'vmware' <<< $vm_data ) ]];then
+	fi
+	# this will catch many Linux systems and some BSDs
+	if [[ $vm == 'other-vm?' ]];then
+		vm_data=$vm_data$Lspci_v_Data
+		vm_data=$vm_data$Sysctl_a_Data
+		vm_data=$vm_data$Dmesg_Boot_Data
+		if [[ -e /dev/disk/by-id ]];then
+			vm_data=$vm_data$(ls -l /dev/disk/by-id 2>/dev/null )
+		fi
+		if [[ -n $( grep -iEs 'innotek|vbox|virtualbox' <<< $vm_data ) ]];then
+			vm='virtualbox'
+		elif [[ -n $( grep -is 'vmware' <<< $vm_data ) ]];then
+			vm='vmware'
+		elif [[ -n $( grep -is 'qemu' <<< $vm_data ) ]];then
+			vm='qemu-or-kvm'
+		elif [[ -n $( grep -s 'Virtual HD' <<< $vm_data ) ]];then
+			vm='hyper-v'
+		elif [[ -e /proc/cpuinfo && -n $( grep -is '^flags.*hypervisor' /proc/cpuinfo ) ]];then
+			vm='virtual-machine'
+		elif [[ -e /dev/vda || -e /dev/vdb || -e /dev/xvda || -e /dev/xvdb ]];then
+			vm='virtual-machine'
+		fi
+	fi
+	# this may catch some BSD and fringe Linux cases
+	if [[ $vm == 'other-vm?' && $B_ROOT == 'true' ]];then
+		if [[ -n $DMIDECODE_DATA && $DMIDECODE_DATA != 'dmidecode-error-'* ]];then
+			product_name=$(dmidecode -s system-product-name 2>/dev/null )
+			system_manufacturer=$( dmidecode -s system-manufacturer 2>/dev/null )
+			if [[ $product_name == 'VMware'* ]];then
 				vm='vmware'
-			elif [[ -n $( grep -is 'qemu' <<< $vm_data ) ]];then
-				vm='qemu-or-kvm'
-			elif [[ -e /proc/cpuinfo && -n $( grep -is '^flags.*hypervisor' /proc/cpuinfo ) ]];then
-				vm='virtual-machine'
-			elif [[ -e /dev/vda || -e /dev/vdb || -e /dev/xvda || -e /dev/xvdb ]];then
+			elif [[ $product_name == 'VirtualBox'* ]];then
+				vm='virtualbox'
+			elif [[ $product_name == 'KVM'* ]];then
+				vm='kvm'
+			elif [[ $product_name == 'Bochs'* ]];then
+				vm='qemu'
+			elif [[ $system_manufacturer == 'Xen' ]];then
+				vm='xen'
+			elif [[ -n $( grep -i 'hypervisor' <<< "$DMIDECODE_DATA" ) ]];then
 				vm='virtual-machine'
 			fi
 		fi
