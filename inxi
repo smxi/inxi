@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.3.5
-####  Date: 2016-12-02
+####  Version: 2.3.6
+####  Date: 2016-12-19
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -470,18 +470,18 @@ HDDTEMP_PATH=''
 MODINFO_PATH=''
 SUDO_PATH=''
 
-SCRIPT_DATA_DIR="$HOME/.inxi"
 ALTERNATE_FTP='' # for data uploads
 ALTERNATE_WEATHER_LOCATION='' # weather alternate location
-LOG_FILE="$SCRIPT_DATA_DIR/inxi.log"
-LOG_FILE_1="$SCRIPT_DATA_DIR/inxi.1.log"
-LOG_FILE_2="$SCRIPT_DATA_DIR/inxi.2.log"
+SCRIPT_CONFIG_DIR=''
+SCRIPT_DATA_DIR=''
+LOG_FILE='inxi.log'
+LOG_FILE_1='inxi.1.log'
+LOG_FILE_2='inxi.2.log'
 MAN_FILE_DOWNLOAD='https://github.com/smxi/inxi/raw/master/inxi.1.gz'
-MAN_FILE_LOCATION='/usr/share/man/man1'
 SCRIPT_NAME='inxi'
 SCRIPT_PATCH_NUMBER=''
-SCRIPT_PATH='' #filled-in in Main
-SCRIPT_VERSION_NUMBER=""	#filled-in in Main
+SCRIPT_PATH='' # filled-in in Main
+SCRIPT_VERSION_NUMBER='' # filled-in in Main
 SCRIPT_DOWNLOAD='https://github.com/smxi/inxi/raw/master/'
 SCRIPT_DOWNLOAD_BRANCH_1='https://github.com/smxi/inxi/raw/one/'
 SCRIPT_DOWNLOAD_BRANCH_2='https://github.com/smxi/inxi/raw/two/'
@@ -677,6 +677,10 @@ USB_NETWORK_SEARCH="$USB_NETWORK_SEARCH|050d:935b|0bda:8189|0bda:8197"
 ########################################################################
 main()
 {
+	# Source user config variables override /etc/inxi.conf variables
+	# this must be set first so log paths are present.
+	set_user_paths
+	
 	eval $LOGFS
 	
 	local color_scheme='' kde_config_app=''
@@ -691,10 +695,11 @@ main()
 	if [[ -s /etc/$SCRIPT_NAME.conf ]];then
 		source /etc/$SCRIPT_NAME.conf
 	fi
-	# Source user config variables override /etc/inxi.conf variables
-	if [[ -s $HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf ]];then
-		source $HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf
+	
+	if [[ -s $SCRIPT_CONFIG_DIR/$SCRIPT_NAME.conf ]];then
+		source $SCRIPT_CONFIG_DIR/$SCRIPT_NAME.conf
 	fi
+	
 	set_display_width 'live' # can be reset with -y
 	
 	# echo SCHEME $SCHEME
@@ -824,6 +829,49 @@ main()
 	# weechat's executor plugin forced me to do this, and rightfully so, because else the exit code
 	# from the last command is taken..
 	exit 0
+}
+
+set_user_paths()
+{
+	local b_conf='false' b_data='false'
+	
+	if [[ -n $XDG_CONFIG_HOME ]];then
+		SCRIPT_CONFIG_DIR=$XDG_CONFIG_HOME
+		b_conf=true
+	elif [[ -d $HOME/.config ]];then
+		SCRIPT_CONFIG_DIR=$HOME/.config
+		b_conf=true
+	else 
+		SCRIPT_CONFIG_DIR="$HOME/.$SCRIPT_NAME"
+	fi
+	if [[ -n $XDG_DATA_HOME ]];then
+		SCRIPT_DATA_DIR=$XDG_DATA_HOME/$SCRIPT_NAME
+		b_data=true
+	elif [[ -d $HOME/.local/share ]];then
+		SCRIPT_DATA_DIR=$HOME/.local/share/$SCRIPT_NAME
+		b_data=true
+	else 
+		SCRIPT_DATA_DIR="$HOME/.$SCRIPT_NAME"
+	fi
+	# note, this used to be created/checked in specific instance, but we'll just do it
+	# universally so it's done at script start.
+	if [[ ! -d $SCRIPT_DATA_DIR ]];then
+		mkdir $SCRIPT_DATA_DIR
+	fi
+	
+	if [[ $b_conf == 'true' && -f $HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf ]];then
+		mv -f $HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf $SCRIPT_CONFIG_DIR
+		echo "Moved $SCRIPT_NAME.conf from $HOME/.$SCRIPT_NAME to $SCRIPT_CONFIG_DIR"
+	fi
+	if [[ $b_data == 'true' && -d $HOME/.$SCRIPT_NAME ]];then
+		mv -f $HOME/.$SCRIPT_NAME/* $SCRIPT_DATA_DIR
+		rm -Rf $HOME/.$SCRIPT_NAME
+		echo "Moved data dir $HOME/.$SCRIPT_NAME to $SCRIPT_DATA_DIR"
+	fi
+	
+	LOG_FILE=$SCRIPT_DATA_DIR/$LOG_FILE
+	LOG_FILE_1=$SCRIPT_DATA_DIR/$LOG_FILE_1
+	LOG_FILE_2=$SCRIPT_DATA_DIR/$LOG_FILE_2
 }
 
 #### -------------------------------------------------------------------
@@ -1210,7 +1258,7 @@ select_default_color_scheme()
 {
 	eval $LOGFS
 	local spacer='  ' options='' user_selection='' config_variable=''
-	local config_file="$HOME/.$SCRIPT_NAME/$SCRIPT_NAME.conf"
+	local config_file="$SCRIPT_CONFIG_DIR/$SCRIPT_NAME.conf"
 	local irc_clear="[0m" 
 	local irc_gui='Unset' irc_console='Unset' irc_x_term='Unset'
 	local console='Unset' virt_term='Unset' global='Unset' 
@@ -1307,9 +1355,6 @@ select_default_color_scheme()
 			set_color_scheme $user_selection
 			# make file/directory first if missing
 			if [[ ! -f $config_file ]];then
-				if [[ ! -d $HOME/.$SCRIPT_NAME ]];then
-					mkdir $HOME/.$SCRIPT_NAME
-				fi
 				touch $config_file
 			fi
 			if [[ -z $( grep -s "$config_variable=" $config_file ) ]];then
@@ -1533,9 +1578,6 @@ log_function_data()
 # will have max 3 files, inxi.log, inxi.1.log, inxi.2.log
 create_rotate_logfiles()
 {
-	if [[ ! -d $SCRIPT_DATA_DIR ]];then
-		mkdir $SCRIPT_DATA_DIR
-	fi
 	# do the rotation if logfile exists
 	if [[ -f $LOG_FILE ]];then
 		# copy if present second to third
@@ -1561,7 +1603,8 @@ script_self_updater()
 {
 	eval $LOGFS
 	local downloader_error=0 file_contents='' downloader_man_error=0 
-	local man_file_path="$MAN_FILE_LOCATION/inxi.1.gz"
+	local man_file_location=$( set_man_location )
+	local man_file_path="$man_file_location/inxi.1.gz" 
 	
 	if [[ $B_IRC == 'true' ]];then
 		print_screen_output "Sorry, you can't run the $SCRIPT_NAME self updater option (-$3) in an IRC client."
@@ -1603,14 +1646,14 @@ script_self_updater()
 			print_screen_output "To run the new version, just start $SCRIPT_NAME again."
 			print_screen_output "----------------------------------------"
 			print_screen_output "Starting download of man page file now."
-			if [[ ! -d $MAN_FILE_LOCATION ]];then
-				print_screen_output "The required man directory was not detected on your system, unable to continue: $MAN_FILE_LOCATION"
+			if [[ ! -d $man_file_location ]];then
+				print_screen_output "The required man directory was not detected on your system, unable to continue: $man_file_location"
 			else
 				if [[ $B_ROOT == 'true' ]];then
 					print_screen_output "Checking Man page download URL..."
 					if [[ -f /usr/share/man/man8/inxi.8.gz ]];then
 						print_screen_output "Updating man page location to man1."
-						mv -f /usr/share/man/man8/inxi.8.gz /usr/share/man/man1/inxi.1.gz 
+						mv -f /usr/share/man/man8/inxi.8.gz $man_file_location/inxi.1.gz 
 						if type -p mandb &>/dev/null;then
 							exec $( type -p mandb ) -q 
 						fi
@@ -1650,7 +1693,7 @@ script_self_updater()
 						print_screen_output "Man file download URL failed, unable to continue: $MAN_FILE_DOWNLOAD"
 					fi
 				else
-					print_screen_output "Updating / Installing the Man page requires root user, writing to: $MAN_FILE_LOCATION"
+					print_screen_output "Updating / Installing the Man page requires root user, writing to: $man_file_location"
 					print_screen_output "If you want the man page, you'll have to run $SCRIPT_NAME -$3 as root."
 				fi
 			fi
@@ -1669,6 +1712,40 @@ script_self_updater()
 		fi
 	fi
 	eval $LOGFS
+}
+
+set_man_location()
+{
+	local location='' default_location='/usr/share/man/man1' 
+	local man_paths=$(man --path 2>/dev/null) man_local='/usr/local/share/man'
+	local b_use_local=false
+	
+	if [[ -n "$man_paths" && -n $( grep $man_local <<< "$man_paths" ) ]];then
+		b_use_local=true
+	fi
+	
+	# for distro installs, existing inxi man manual installs, do nothing
+	if [[ -f $default_location/inxi.1.gz ]];then
+		location=$default_location
+	else
+		if [[ $b_use_local == 'true' ]];then
+			if [[ ! -d $man_local/man1 ]];then
+				mkdir $man_local/man1
+			fi
+			location="$man_local/man1"
+		fi
+# 		print_screen_output "Updating man page location to man1."
+# 		mv -f /usr/share/man/man1/inxi.1.gz /usr/local/share/man/man1/inxi.1.gz 
+# 		if type -p mandb &>/dev/null;then
+# 			exec $( type -p mandb ) -q 
+# 		fi
+	fi
+	
+	if [[ -z "$location" ]];then
+		location=$default_location
+	fi
+	
+	echo $location
 }
 
 # args: $1 - debug data type: sys|xorg|disk
@@ -1706,11 +1783,6 @@ debug_data_collector()
 			ftp_upload=$ALTERNATE_FTP
 		fi
 		echo "Starting debugging data collection type: $1"
-		echo -n "Checking/creating required directories... "
-		if [[ ! -d $SCRIPT_DATA_DIR ]];then
-			mkdir $SCRIPT_DATA_DIR
-		fi
-		echo 'completed'
 		cd $SCRIPT_DATA_DIR
 		if [[ -d $SCRIPT_DATA_DIR/$debug_data_dir ]];then
 			echo 'Deleting previous xiin data directory...'
@@ -1887,6 +1959,10 @@ debug_data_collector()
 		# bsd data
 		cat /var/run/dmesg.boot &> $debug_data_dir/bsd-var-run-dmesg.boot.txt 
 		echo $COLS_INNER &> $debug_data_dir/cols-inner.txt
+		echo $XDG_CONFIG_HOME &> $debug_data_dir/xdg_config_home.txt
+		echo $XDG_CONFIG_DIRS &> $debug_data_dir/xdg_config_dirs.txt
+		echo $XDG_DATA_HOME &> $debug_data_dir/xdg_data_home.txt
+		echo $XDG_DATA_DIRS &> $debug_data_dir/xdg_data_dirs.txt
 		
 		check_recommends_user_output &> $debug_data_dir/check-recommends-user-output.txt
 		# first download and verify xiin
@@ -7134,6 +7210,24 @@ get_init_data()
 	
 	a_temp=${A_INIT_DATA[@]}
 	log_function_data "A_INIT_DATA: $a_temp"
+	
+	eval $LOGFE
+}
+
+# note: useless because this is just absurdly inaccurate, too bad...
+get_install_date()
+{
+	eval $LOGFS
+	
+	local installed=''
+	
+	if ls -al --time-style '+FORMAT %Y-%m-%d' /usr 2>/dev/null;then
+		installed=$(ls -al --time-style '+FORMAT %Y-%m-%d' / | awk '/lost\+found/ {print $7;exit}' )
+# 	elif 
+# 		:
+	fi
+	
+	echo $installed
 	
 	eval $LOGFE
 }
