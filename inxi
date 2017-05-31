@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.3.10
+####  Version: 2.3.11
 ####  Date: 2017-05-31
 ####  Patch Number: 00
 ########################################################################
@@ -3131,7 +3131,7 @@ show_options()
 	print_lines_basic "2" "-D" "Hdd temp with disk data if you have hddtemp installed, if you are root OR if you have added to /etc/sudoers (sudo v. 1.7 or newer) Example:^<username>^ALL^=^NOPASSWD:^/usr/sbin/hddtemp"
 	print_lines_basic "2" "-G" "Direct rendering status for Graphics (in X)."
 	print_lines_basic "2" "-G" "(for single gpu, nvidia driver) screen number gpu is running on."
-	print_lines_basic "2" "-i" "IPv6 as well for LAN interface (IF) devices."
+	print_lines_basic "2" "-i" "For IPv6, show additional IP v6 scope addresses: Global, Site, Temporary, Unknown."
 	print_lines_basic "2" "-I" "System GCC, default. With -xx, also show other installed GCC versions. If running in console, not in IRC client, shows shell version number, if detected. Init/RC Type and runlevel (if available)."
 	print_lines_basic "2" "-m" "Part number; Max memory module size (if available)."
 	print_lines_basic "2" "-N -A" "Version/port(s)/driver version (if available) for Network/Audio;"
@@ -8093,7 +8093,9 @@ get_networking_local_ip_data()
 		gawk -v ipTool=$ip_tool -v bsdType=$BSD_TYPE '
 		BEGIN {
 			IGNORECASE=1
+			addIpV6 = ""
 			interface=""
+			ipExtV6=""
 			ifIp=""
 			ifIpV6=""
 			ifMask=""
@@ -8116,10 +8118,12 @@ get_networking_local_ip_data()
 			ifIp=""
 			ifIpV6=""
 			ifMask=""
+			ipExtV6=""
 			aInterfaces[interface]++
-
+			
 			while (getline && !/^$/ ) {
 				addIpV6 = ""
+				addExtV6 = ""
 				if ( ipTool == "ifconfig" ) {
 					if (/inet addr:/) {
 						ifIp = gensub( /addr:([0-9\.]+)/, "\\1", "g", $2 )
@@ -8128,7 +8132,20 @@ get_networking_local_ip_data()
 						}
 					}
 					if (/inet6 addr:/) {
-						addIpV6 = $3
+						# ^fe80:
+						if ( $2 ~ /^fe80/) { 
+							addIpV6 = $2
+						}
+						else if ( $0 ~ /<global>/ || $0 ~ /Scope:Global/ ) { 
+							addExtV6 = "sg~" $2
+						}
+						# ^fec0:
+						else if ( $0 ~ /<site>/ || $0 ~ /Scope:Site/ || $2 ~ /^fec0/ || $2 ~ /^fc00/) { 
+							addExtV6 = "ss~" $2
+						}
+						else {
+							addExtV6 = "su~" $2
+						}
 					}
 					if ( bsdType == "bsd" ) {
 						if ( $1 == "inet" ) {
@@ -8137,9 +8154,23 @@ get_networking_local_ip_data()
 								ifMask = $4
 							}
 						}
-						if ( $0 ~ /inet6.*%/ ) {
-							sub(/%.*/,"",$2)
-							addIpV6 = $2
+						if ( $0 ~ /inet6.*%/ ){
+							if ( $2 ~ /^fe80/ ) {
+								sub(/%.*/,"",$2)
+								addIpV6 = $2
+							}
+							else if ( $2 ~ /^fec0/ || $2 ~ /^fc00/ ) {
+								sub(/%.*/,"",$2)
+								addExtV6 = "ss~" $2
+							}
+# 							else if ( $2 ~ /^2/ ) {
+# 								sub(/%.*/,"",$2)
+# 								addExtV6 = "sg~" $2
+# 							}
+							else {
+								sub(/%.*/,"",$2)
+								addExtV6 = "sg~" $2
+							}
 						}
 					}
 				}
@@ -8147,25 +8178,47 @@ get_networking_local_ip_data()
 					if ( $1 == "inet" ) {
 						ifIp = $2
 					}
-					if ( $1 == "inet6" && $0 !~ / temporary/) { # filter out IPv6 privacy addresses
-						addIpV6 = $2
+					if ( $1 == "inet6" ){
+						# filter out deprecated IPv6 privacy addresses
+						if ( $0 ~ / temporary deprecated/) { 
+							addExtV6 = ""
+						}
+						else if ( $0 ~ /scope global temporary/) { 
+							addExtV6 = "st~" $2
+						}
+						else if ( $0 ~ /scope global/) { 
+							addExtV6 = "sg~" $2
+						}
+						# ^fe80:
+						else if ( $2 ~ /^fe80/ || $0 ~ /scope link/) { 
+							addIpV6 = $2
+						}
+						# ^fec0:
+						else if ( $2 ~ /^fec0/ || $2 ~ /^fc00/ || $0 ~ /scope site/) { 
+							addExtV6 = "ss~" $2
+						}
+						else {
+							addExtV6 = "su~" $2
+						}
 					}
 				}
-
-				if ( addIpV6 != "" && addIpV6 !~ /^fe80:/ ) { # filter out IPv6 link-local
+				if ( addIpV6 != "" ) {
 					if ( ifIpV6 == "" ) {
 						ifIpV6 = addIpV6
 					}
 					else {
-						ifIpV6 = ifIpV6 "," addIpV6
+						ifIpV6 = ifIpV6 "^" addIpV6
 					}
+				}
+				if ( ipExtV6 != "" ){
+					ipExtV6 = ipExtV6 "^" addExtV6
 				}
 			}
 			# slice off the digits that are sometimes tacked to the end of the address, 
 			# like: /64 or /24
 			sub(/\/[0-9]+/, "", ifIp)
-			gsub(/\/[0-9]+/, "", ifIpV6)
-			ipAddresses[interface] = ifIp "," ifMask "," ifIpV6
+			gsub(/\/[0-9]+/, "", ifIpV6) #
+			ipAddresses[interface] = ifIp "," ifMask "," ifIpV6 "," ipExtV6
 		}
 		END {
 			j=0
@@ -13557,61 +13610,87 @@ print_networking_ip_data()
 			if [[ -n ${a_interfaces_working[1]} ]];then
 				if [[ $B_OUTPUT_FILTER == 'true' ]];then
 					if_ip=$FILTER_STRING
+					# we could filter each ipv6 extra address, but that can lead to 
+					# a LOT of pointless output depending on the ip tool used and how 
+					# many deprecated addresses there are, so just delete the values
+					a_interfaces_working[4]=''
 				else
 					if_ip=${a_interfaces_working[1]}
 				fi
 			fi
 			if_ip_string=" ${C1}ip-v4$SEP3${C2} $if_ip"
-			if [[ $B_EXTRA_DATA == 'true' ]];then
-				if [[ -n ${a_interfaces_working[3]} ]];then
-					if [[ $B_OUTPUT_FILTER == 'true' ]];then
-						if_ipv6=$FILTER_STRING
-					else
-						# may be more than one address here; get them all as one string
-						if_ipv6=${a_interfaces_working[@]:3}
-					fi
+			# this is now going to always show as IPv6 starts to really be used globally
+			if [[ -n ${a_interfaces_working[3]} ]];then
+				if [[ $B_OUTPUT_FILTER == 'true' ]];then
+					if_ipv6=$FILTER_STRING
+				else
+					# may be more than one address here; get them all as one string
+					# but this is only the LINK scope, not Site or Global or Temporary
+					if_ipv6=${a_interfaces_working[3]/^/, }
 				fi
-				if_ipv6_string=" ${C1}ip-v6$SEP3${C2} $if_ipv6"
 			fi
+			if_ipv6_string=" ${C1}ip-v6-link$SEP3${C2} $if_ipv6"
 		fi
 		if [[ -n ${a_interfaces_working[0]} ]];then
 			if_id=${a_interfaces_working[0]}
 		fi
 		if_string="${C1}IF$SEP3${C2} $if_id$if_ip_string$if_ipv6_string "
-		# first line, print wan on its own line if too long
+		# first line, print wan on its own line, then the next item
 		if [[ $i -eq 0 ]];then
-			if [[ $( calculate_line_length "$wan_ip_data$if_string" ) -gt $COLS_INNER ]];then
-				full_string=$( create_print_line " " "$wan_ip_data" )
-				print_screen_output "$full_string"
-				wan_ip_data=''
-				full_string=$( create_print_line " " "$if_string" )
-				print_screen_output "$full_string"
-				if_string=''
-			else
-				full_string=$( create_print_line " " "$wan_ip_data$if_string" )
-				print_screen_output "$full_string"
-				wan_ip_data=''
-				if_string=''
-			fi
-		else 
-			if [[ $( calculate_line_length "$if_string_holding$if_string" ) -gt $COLS_INNER ]];then
-				if [[ -n $if_string_holding ]];then
-					full_string=$( create_print_line " " "$if_string_holding" )
-					print_screen_output "$full_string"
-				fi
-				if_string_holding="$if_string"
-			else
-				if_string_holding="$if_string_holding$if_string"
+			full_string=$( create_print_line " " "$wan_ip_data" )
+			print_screen_output "$full_string"
+			wan_ip_data=''
+		fi
+		full_string=$( create_print_line " " "$if_string" )
+		print_screen_output "$full_string"
+		if_string=''
+		if [[ ${a_interfaces_working[4]} != '' ]];then
+			IFS="^"
+			a_ipv6_ext=(${a_interfaces_working[4]})
+			IFS="$ORIGINAL_IFS"
+			if [[ $B_EXTRA_DATA == 'true' ]];then
+				for (( j=0; j < ${#a_ipv6_ext[@]}; j++ ))
+				do
+					print_ipv6_ext_line ${a_ipv6_ext[j]}
+				done
 			fi
 		fi
 		((i++))
 	done
 	
-	# then print out anything not printed already
-	if [[ -n $if_string_holding ]];then
-		full_string=$( create_print_line " " "$if_string_holding" )
-		print_screen_output "$full_string"
+	eval $LOGFE
+}
+print_ipv6_ext_line()
+{
+	eval $LOGFS
+	
+	local full_string='' ip_starter='' ip_data='' ip=''
+	
+	case $1 in
+		sg~*)
+			ip_starter="ip-v6-global"
+			ip=${1/sg~/}
+			;;
+		ss~*)
+			ip_starter="ip-v6-site"
+			ip=${1/ss~/}
+			;;
+		st~*)
+			ip_starter="ip-v6-temporary"
+			ip=${1/st~/}
+			;;
+		su~*)
+			ip_starter="ip-v6-unknown"
+			ip=${1/su~/}
+			;;
+	esac
+	if [[ $B_OUTPUT_FILTER == 'true' ]];then
+		ip=$FILTER_STRING
 	fi
+	ip_data="${C1}$ip_starter$SEP3${C2} $ip"
+	full_string=$( create_print_line " " "$ip_data" )
+	print_screen_output "$full_string"
+	
 	eval $LOGFE
 }
 
