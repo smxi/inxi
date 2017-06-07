@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.3.11
-####  Date: 2017-05-31
+####  Version: 2.3.12
+####  Date: 2017-06-06
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -2144,7 +2144,18 @@ debug_data_collector()
 			echo $XDG_SESSION_DESKTOP &> $debug_data_dir/xdg-session-desktop.txt
 			echo $DESKTOP_SESSION &> $debug_data_dir/desktop-session.txt
 			echo $GDMSESSION &> $debug_data_dir/gdmsession.txt
-			
+			# wayland data collectors:
+			echo $XDG_SESSION_TYPE &> $debug_data_dir/xdg-session-type.txt
+			echo $WAYLAND_DISPLAY &> $debug_data_dir/wayland-display.txt
+			echo $GDK_BACKEND &> $debug_data_dir/gdk-backend.txt
+			echo $QT_QPA_PLATFORM &> $debug_data_dir/qt-qpa-platform.txt
+			echo $CLUTTER_BACKEND &> $debug_data_dir/clutter-backend.txt
+			echo $SDL_VIDEODRIVER &> $debug_data_dir/sdl-videodriver.txt
+			if type -p loginctl &>/dev/null;then
+				loginctl --no-pager list-sessions &> $debug_data_dir/loginctl-list-sessions.txt
+			else
+				touch $debug_data_dir/loginctl-absent
+			fi
 		fi
 		if [[ $1 == 'disk' || $1 == 'all' ]];then
 			echo 'Collecting dev, label, disk, uuid data, df...'
@@ -3147,7 +3158,7 @@ show_options()
 	print_lines_basic "2" "-B" "serial number, voltage (if available)."
 	print_lines_basic "2" "-C" "Minimum CPU speed, if available."
 	print_lines_basic "2" "-D" "Disk serial number."
-	print_lines_basic "2" "-G" "Chip vendor:product ID for each video card."
+	print_lines_basic "2" "-G" "Chip vendor:product ID for each video card; (mir/wayland only) compositor (alpha test)."
 	print_lines_basic "2" "-I" "Other detected installed gcc versions (if present). System default runlevel. Adds parent program (or tty) for shell info if not in IRC (like Konsole or Gterm). Adds Init/RC (if found) version number."
 	print_lines_basic "2" "-m" "Manufacturer, Serial Number, single/double bank (if found)."
 	print_lines_basic "2" "-M" "Chassis information, bios rom size (dmidecode only), if data for either is available."
@@ -4453,6 +4464,7 @@ get_cpu_data()
 			nr = 0
 			count = 0
 			bArm = "false"
+			bProcInt = "false" # this will avoid certain double counts with processor/Processor lines
 			# ARM cpus are erratic in /proc/cpuinfo this hack can sometimes resolve it. Linux only.
 			sysSpeed="'$(get_cpu_speed_hack)'"
 			speed = 0
@@ -4467,14 +4479,20 @@ get_cpu_data()
 			gsub(/^ +| +$/, "", $NF)
 			if ( $NF ~ "^[0-9]+$" ) {
 				nr = $NF
+				bProcInt = "true"
 			}
 			else {
-				if ( $NF ~ "^ARM" ) {
+				# note: alternate: 
+				# Processor	: AArch64 Processor rev 4 (aarch64)
+				if ( $NF ~ "^(ARM|AArch)" ) {
 					bArm = "true"
 				}
-				count += 1
-				nr = count - 1
-				cpu[nr, "model"] = $NF
+				# this protects against double processor lines, one int, one string
+				if ( bProcInt == "false" ){
+					count += 1
+					nr = count - 1
+					cpu[nr, "model"] = $NF
+				}
 			}
 		}
 		/^model name|^cpu\t+:/ {
@@ -4795,6 +4813,7 @@ get_cpu_ht_multicore_smp_data()
 			arm_count = 0
 			nr = 0
 			bArm = "false"
+			bProcInt = "false" # this will avoid certain double counts with processor/Processor lines
 			bXeon = "false"
 		}
 		# hack to handle xeons which can have buggy /proc/cpuinfo files
@@ -4809,23 +4828,33 @@ get_cpu_ht_multicore_smp_data()
 			}
 		}
 		# array of logical processors, both HT and physical
+		# IMPORTANT: some variants have two lines, one the actual cpu id number,
+		# the other a misnamed model name line.
+		# processor : 0 
+		# Processor : AArch64 Processor rev 4 (aarch64)
 		/^processor/ {
 			gsub(/'"$BAN_LIST_ARRAY"'/, " ", $NF)
 			gsub(/^ +| +$/, "", $NF)
 			if ( $NF ~ "^[0-9]+$" ) {
 				a_processor_id[proc_iter] = $NF
 				proc_iter++
+				bProcInt = "true"
 			}
 			else {
 				# note, for dual core, this can be off by one because the first
 				# line says: Processor : Arm.. but subsequent say: processor : 0 and so on as usual
-				if ( $NF ~ "^ARM" ) {
+				# Processor	: AArch64 Processor rev 4 (aarch64)
+				if ( $NF ~ "^(ARM|AArch)" ) {
 					bArm = "true"
+					
 				}
-				arm_count += 1
-				nr = arm_count - 1
-				# note: do not iterate because new ARM syntax puts cpu in processsor : 0 syntax
-				a_processor_id[proc_iter] = nr
+				# this protects against double processor lines, one int, one string
+				if ( bProcInt == "false" ){
+					arm_count += 1
+					nr = arm_count - 1
+					# note: do not iterate because new ARM syntax puts cpu in processsor : 0 syntax
+					a_processor_id[proc_iter] = nr
+				}
 			}
 		}
 		# array of physical cpu ids, note, this will be unset for vm cpus in many cases
@@ -6501,7 +6530,19 @@ get_graphics_res_data()
 get_graphics_display_server_data()
 {
 	eval $LOGFS
-	local vendor='' version='' a_temp='' xdpy_info='' a_display_vendor_working=''
+	local vendor='' vendor_version='' a_temp='' xdpy_info='' a_display_vendor_working='' 
+	# note: this may not always be set, it won't be out of X, for example
+	local server=$XDG_SESSION_TYPE compositor='' compositor_version=''
+	
+	if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+		compositor=$(get_graphics_display_compositor) compositor_version=''
+	fi
+	
+	if [[ $server == '' ]];then
+		if [[ -n $WAYLAND_DISPLAY ]];then
+			server='wayland'
+		fi
+	fi
 
 	if [[ $B_SHOW_DISPLAY_DATA == 'true' && $B_ROOT != 'true' ]];then
 		# X vendor and version detection.
@@ -6532,19 +6573,22 @@ get_graphics_display_server_data()
 			gsub(/0+/, ".", $2)
 			vendorRelease = $2
 		}
+		/(supported pixmap|keycode range|number of extensions|^screen)/ {
+			exit # we are done with the info we want, no reason to read the rest
+		}
 		END {
 			print vendorString "," version "," vendorRelease
 		}' ) )
 		vendor=${a_display_vendor_working[0]}
-		version=${a_display_vendor_working[1]}
+		vendor_version=${a_display_vendor_working[1]}
 
 		# this gives better output than the failure last case, which would only show:
 		# for example: X.org: 1.9 instead of: X.org: 1.9.0
-		if [[ -z $version ]];then
-			version=$( get_graphics_display_server_version )
+		if [[ -z $vendor_version ]];then
+			vendor_version=$( get_graphics_display_x_version )
 		fi
-		if [[ -z $version ]];then
-			version=${a_display_vendor_working[2]}
+		if [[ -z $vendor_version ]];then
+			vendor_version=${a_display_vendor_working[2]}
 		fi
 		
 		# some distros, like fedora, report themselves as the xorg vendor, so quick check
@@ -6554,22 +6598,89 @@ get_graphics_display_server_data()
 		fi
 		IFS="$ORIGINAL_IFS"
 		A_DISPLAY_SERVER_DATA[0]="$vendor"
-		A_DISPLAY_SERVER_DATA[1]="$version"
+		A_DISPLAY_SERVER_DATA[1]="$vendor_version"
+		A_DISPLAY_SERVER_DATA[2]="$server"
+		A_DISPLAY_SERVER_DATA[3]="$compositor"
+		A_DISPLAY_SERVER_DATA[4]="$compositor_version"
 	else
-		version=$( get_graphics_display_server_version )
-		if [[ -n $version ]];then
+		vendor_version=$( get_graphics_display_x_version )
+		if [[ -n $vendor_version ]];then
 			vendor='X.org'
 			A_DISPLAY_SERVER_DATA[0]="$vendor"
-			A_DISPLAY_SERVER_DATA[1]="$version"
+			A_DISPLAY_SERVER_DATA[1]="$vendor_version"
+			A_DISPLAY_SERVER_DATA[2]="$server"
+			A_DISPLAY_SERVER_DATA[3]="$compositor"
+			A_DISPLAY_SERVER_DATA[4]="$compositor_version"
 		fi
 	fi
 	a_temp=${A_DISPLAY_SERVER_DATA[@]}
 	log_function_data "A_DISPLAY_SERVER_DATA: $a_temp"
 	eval $LOGFE
 }
+get_graphics_display_compositor()
+{
+	eval $LOGFS
+	local compositor=''
+	local ps_aux="$( ps aux)"
+	
+	if [[ -n $( grep 'mutter' <<< "$ps_aux" ) ]];then
+		compositor='mutter'
+	elif [[ -n $( grep 'gnome-shell' <<< "$ps_aux" ) ]];then
+		compositor='gnome-shell'
+	elif [[ -n $( grep 'kwin' <<< "$ps_aux" ) ]];then
+		compositor='kwin'
+	elif [[ -n $( grep 'moblin' <<< "$ps_aux" ) ]];then
+		compositor='moblin'
+	elif [[ -n $( grep 'kmscon' <<< "$ps_aux" ) ]];then
+		compositor='kmscon'
+	elif [[ -n $( grep 'sway' <<< "$ps_aux" ) ]];then
+		compositor='sway'
+	elif [[ -n $( grep 'grefson' <<< "$ps_aux" ) ]];then
+		compositor='grefson'
+	elif [[ -n $( grep 'westford' <<< "$ps_aux" ) ]];then
+		compositor='westford'
+	elif [[ -n $( grep 'rustland' <<< "$ps_aux" ) ]];then
+		compositor='rustland'
+	elif [[ -n $( grep 'fireplace' <<< "$ps_aux" ) ]];then
+		compositor='fireplace'
+	elif [[ -n $( grep 'wayhouse' <<< "$ps_aux" ) ]];then
+		compositor='wayhouse'
+	elif [[ -n $( grep 'weston' <<< "$ps_aux" ) ]];then
+		compositor='weston'
+	elif [[ -n $( grep 'compton' <<< "$ps_aux" ) ]];then
+		compositor='compton'
+	elif [[ -n $( grep 'compiz' <<< "$ps_aux" ) ]];then
+		compositor='compiz'
+	elif [[ -n $( grep 'swc' <<< "$ps_aux" ) ]];then
+		compositor='swc'
+	elif [[ -n $( grep 'dwc' <<< "$ps_aux" ) ]];then
+		compositor='dwc'
+	fi
+	
+	log_function_data "compositor: $compositor"
+	echo $compositor
+	eval $LOGFE
+}
+# $1 - compositor
+get_graphics_display_wayland_version()
+{
+	eval $LOGFS
+	
+	local version=''
+	
+	case $1 in
+		mutter)
+			:
+			;;
+	esac
+	log_function_data "version: $version"
+	echo $version
+	
+	eval $LOGFE
+}
 
 # if other tests fail, try this one, this works for root, out of X also
-get_graphics_display_server_version()
+get_graphics_display_x_version()
 {
 	eval $LOGFS
 	local version='' x_data=''
@@ -12456,7 +12567,7 @@ print_cpu_data()
 				cpu_data="$cpu_data${C2} ${C1}cache$SEP3${C2} $cpu_cache"
 				cpu_2_data="$cpu_flags$bmip_data"
 			else
-				cpu_data="$cpu_data${C2} (ARM)$bmip_data"
+				cpu_data="$cpu_data${C2} (ARM) $bmip_data"
 			fi
 		fi
 		# we don't this printing out extra line unless > 1 cpu core
@@ -12649,7 +12760,7 @@ print_graphics_data()
 	eval $LOGFS
 	local graphics_data='' card_id='' i='' root_alert='' root_x_string='' a_graphics_working=''
 	local b_is_mesa='false' display_full_string='' card_bus_id='' card_data=''
-	local res_tty='Resolution' xorg_data='' display_vendor_string='' chip_id=''
+	local res_tty='Resolution' xorg_data='' display_server_string='' chip_id=''
 	local spacer='' driver='' driver_string='' driver_plural='' direct_render_string=''
 	local separator_loaded='' separator_unloaded='' separator_failed='' 
 	local loaded='' unloaded='' failed='' display_server_string=''
@@ -12658,8 +12769,12 @@ print_graphics_data()
 	
 	# set A_DISPLAY_SERVER_DATA
 	get_graphics_display_server_data
+	
 	local display_vendor=${A_DISPLAY_SERVER_DATA[0]}
 	local display_version=${A_DISPLAY_SERVER_DATA[1]}
+	local display_server=${A_DISPLAY_SERVER_DATA[2]}
+	local compositor=${A_DISPLAY_SERVER_DATA[3]} compositor_string=''
+	
 	# set A_GLX_DATA
 	get_graphics_glx_data
 	local glx_renderer="${A_GLX_DATA[0]}"
@@ -12730,11 +12845,19 @@ print_graphics_data()
 	fi
 	# note: fix this, we may find a display server that has no version
 	if [[ -z $display_vendor || -z $display_version ]];then
-		display_vendor_string="N/A"
+		display_server_string="N/A"
 	else
-		display_vendor_string="$display_vendor $display_version"
+		display_server_string="$display_vendor $display_version"
 	fi
-	display_server_string="${C1}Display Server${SEP3}${C2} $display_vendor_string "
+	if [[ $display_server != '' ]];then
+		display_server_string="$display_server ($display_server_string)"
+	fi
+	
+	if [[ $B_EXTRA_EXTRA_DATA == '' && $compositor != '' ]] &&\
+	   [[ $display_server == 'wayland' || $display_server == 'mir'  ]];then
+		compositor_string="${C1}compositor$SEP3${C2} $compositor "
+	fi
+	display_server_string="${C1}Display Server${SEP3}${C2} $display_server_string $compositor_string"
 	driver_string="${C1}driver$driver_plural$SEP3${C2}$driver "
 
 	if [[ $B_ROOT == 'true' ]];then
