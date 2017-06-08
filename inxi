@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.3.12
-####  Date: 2017-06-06
+####  Version: 2.3.13
+####  Date: 2017-06-08
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -3100,7 +3100,7 @@ show_options()
 	print_lines_basic "1" "-D" "Full hard Disk info, not only model, ie: /dev/sda ST380817AS 80.0GB. See also -x and -xx. Disk total used percentage includes swap partition size(s)."
 	print_lines_basic "1" "-f" "All cpu flags, triggers -C. Not shown with -F to avoid spamming. ARM cpus show 'features'."
 	print_lines_basic "1" "-F" "Full output for $SCRIPT_NAME. Includes all Upper Case line letters, plus -s and -n. Does not show extra verbose options like -d -f -l -m -o -p -r -t -u -x"
-	print_lines_basic "1" "-G" "Graphic card information (card, display server type/version, resolution, glx renderer, version)."
+	print_lines_basic "1" "-G" "Graphic card information (card, display server type/version, resolution, glx renderer, GL core profile version)."
 	print_lines_basic "1" "-i" "Wan IP address, and shows local interfaces (requires ifconfig 
 	network tool). Same as -Nni. Not shown with -F for user security reasons, you shouldn't paste your local/wan IP."
 	print_lines_basic "1" "-I" "Information: processes, uptime, memory, irc client (or shell type), $SCRIPT_NAME version."
@@ -3158,7 +3158,7 @@ show_options()
 	print_lines_basic "2" "-B" "serial number, voltage (if available)."
 	print_lines_basic "2" "-C" "Minimum CPU speed, if available."
 	print_lines_basic "2" "-D" "Disk serial number."
-	print_lines_basic "2" "-G" "Chip vendor:product ID for each video card; (mir/wayland only) compositor (alpha test)."
+	print_lines_basic "2" "-G" "Chip vendor:product ID for each video card; (mir/wayland only) compositor (alpha test); OpenGL compatibility version, if free drivers and available."
 	print_lines_basic "2" "-I" "Other detected installed gcc versions (if present). System default runlevel. Adds parent program (or tty) for shell info if not in IRC (like Konsole or Gterm). Adds Init/RC (if found) version number."
 	print_lines_basic "2" "-m" "Manufacturer, Serial Number, single/double bank (if found)."
 	print_lines_basic "2" "-M" "Chassis information, bios rom size (dmidecode only), if data for either is available."
@@ -6396,7 +6396,6 @@ get_graphics_glx_data()
 	if [[ $B_SHOW_DISPLAY_DATA == 'true' && $B_ROOT != 'true' ]];then
 		IFS=$'\n'
 		A_GLX_DATA=( $( glxinfo | gawk -F ': ' '
-		# note: function declarations go before BEGIN? It appears so, confirm.
 		# the real question here though is why this function is even here, seems
 		# just to be a complicated way to pack/print a variable, but maybe the
 		# original idea was to handle > 1 cases of detections I guess
@@ -6414,6 +6413,7 @@ get_graphics_glx_data()
 
 		BEGIN {
 			IGNORECASE=1
+			compatVersion=""
 		}
 		/opengl renderer/ {
 			gsub(/'"$BAN_LIST_NORMAL"'/, "", $2)
@@ -6436,16 +6436,32 @@ get_graphics_glx_data()
 		# /opengl version/ && ( f || $2 !~ /mesa/ ) {
 		/opengl version/ {
 			# fglrx started appearing with this extra string, does not appear to communicate anything of value
-			sub(/Compatibility Profile Context/, "- CPC", $2 )
+			sub(/(Compatibility Profile Context|\(Compatibility Profile\))/, "", $2 )
 			gsub(/ [ \t]+/, " ", $2) # get rid of the created white spaces
 			gsub(/^ +| +$/, "", $2)
 			$2 && b[$2]
+			# note: this is going to be off if ever multi opengl versions appear, never seen one
+			compatVersion=gensub(/^([^ \t]+)[ \t].*/,"\\1","g",$2)
+		}
+		
+		/opengl core profile version/ {
+			gsub(/'"$BAN_LIST_NORMAL"'/, "", $2)
+			# fglrx started appearing with this extra string, does not appear to communicate anything of value
+			sub(/(Core Profile Context|\(Core Profile\))/, "", $2 )
+			gsub(/ [ \t]+/, " ", $2) # get rid of the created white spaces
+			gsub(/^ +| +$/, "", $2)
+			$2 && d[$2]
 		}
 		/direct rendering/ {
 			$2 && c[$2]
 		}
 		END {
-			printf( "%s\n%s\n%s\n", join( a, ", " ), join( b, ", " ), join( c, ", " ) )
+			dr = join( c, ", " )
+			oglr = join( a, ", " )
+			oglv = join( b, ", " )
+			oglcpv = join( d, ", " )
+			# output processing done in print functions
+			printf( "%s\n%s\n%s\n%s\n%s\n", oglr, oglv, dr, oglcpv, compatVersion )
 		}' ) )
 		IFS="$ORIGINAL_IFS"
 
@@ -12783,11 +12799,13 @@ print_graphics_data()
 	
 	# set A_GLX_DATA
 	get_graphics_glx_data
-	local glx_renderer="${A_GLX_DATA[0]}"
+	local opengl_renderer="${A_GLX_DATA[0]}"
 	local glx_version="${A_GLX_DATA[1]}"
 	# this can contain a long No case debugging message, so it's being sliced off
 	# note: using grep -ioE '(No|Yes)' <<< ${A_GLX_DATA[2]} did not work in Arch, no idea why
-	local glx_direct_render=$( gawk '{print $1}' <<< "${A_GLX_DATA[2]}" )
+	local direct_rendering=$( gawk '{print $1}' <<< "${A_GLX_DATA[2]}" )
+	local glx_core_version="${A_GLX_DATA[3]}"
+	local glx_core_version_nu="${A_GLX_DATA[4]}"
 	
 	# set A_GRAPHICS_CARD_DATA
 	if [[ $BSD_TYPE == 'bsd' ]];then
@@ -12968,26 +12986,32 @@ print_graphics_data()
 		print_screen_output "$graphics_data"
 		line_starter=' '
 	fi
-	# if [[ -z $glx_renderer || -z $glx_version ]];then
+	# if [[ -z $opengl_renderer || -z $glx_version ]];then
 	# 	b_is_mesa='true'
 	# fi
 
 	## note: if glx render or display_version have no content, then mesa is true
 	# if [[ $B_SHOW_DISPLAY_DATA == 'true' ]] && [[ $b_is_mesa != 'true' ]];then
 	if [[ $B_SHOW_DISPLAY_DATA == 'true' && $B_ROOT != 'true' ]];then
-		if [[ -z $glx_renderer ]];then
-			glx_renderer='N/A'
+		if [[ -z $opengl_renderer ]];then
+			opengl_renderer='N/A'
 		fi
 		if [[ -z $glx_version ]];then
 			glx_version='N/A'
+		else
+			if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+				if [[ $glx_core_version_nu != '' && $glx_core_version != '' && $glx_core_version != $glx_version ]];then
+					glx_version=" $glx_version (oglcv$SEP3 $glx_core_version_nu)"
+				fi
+			fi
 		fi
-		if [[ -z $glx_direct_render ]];then
-			glx_direct_render='N/A'
+		if [[ -z $direct_rendering ]];then
+			direct_rendering='N/A'
 		fi
 		if [[ $B_HANDLE_CORRUPT_DATA == 'true' || $B_EXTRA_DATA == 'true' ]];then
-			direct_render_string=" ${C1}Direct Rendering$SEP3${C2} $glx_direct_render"
+			direct_render_string=" ${C1}Direct Rendering$SEP3${C2} $direct_rendering"
 		fi
-		part_1_data="${C1}GLX Renderer$SEP3${C2} $glx_renderer "
+		part_1_data="${C1}GLX Renderer$SEP3${C2} $opengl_renderer "
 		part_2_data="${C1}GLX Version$SEP3${C2} $glx_version$direct_render_string"
 		# echo $line_starter
 		if [[ $( calculate_line_length "$part_1_data$part_2_data" ) -gt $COLS_INNER ]];then
