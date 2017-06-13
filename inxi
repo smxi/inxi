@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.3.19
-####  Date: 2017-06-10
+####  Version: 2.3.20
+####  Date: 2017-06-12
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -3115,7 +3115,7 @@ show_options()
 	print_lines_basic "2" "98" "Console IRC not in  X"
 	print_lines_basic "2" "99" "Global - Overrides/removes all settings. Setting specific removes global."
 	print_lines_basic "1" "-C" "CPU output, including per CPU clockspeed and max CPU speed (if available)."
-	print_lines_basic "1" "-d" "Optical drive data. Same as -Dd. See also -x and -xx."
+	print_lines_basic "1" "-d" "Optical drive data (and floppy disks, if present). Same as -Dd. See also -x and -xx."
 	print_lines_basic "1" "-D" "Full hard Disk info, not only model, ie: /dev/sda ST380817AS 80.0GB. See also -x and -xx. Disk total used percentage includes swap partition size(s)."
 	print_lines_basic "1" "-f" "All cpu flags, triggers -C. Not shown with -F to avoid spamming. ARM cpus show 'features'."
 	print_lines_basic "1" "-F" "Full output for $SCRIPT_NAME. Includes all Upper Case line letters, plus -s and -n. Does not show extra verbose options like -d -f -l -m -o -p -r -t -u -x"
@@ -8428,7 +8428,7 @@ get_optical_drive_data()
 	local a_temp='' sys_uevent_path='' proc_cdrom='' link_list=''
 	local separator='' linked='' working_disk='' disk='' item_string='' proc_info_string='' 
 	local dev_disks_full=''
-	dev_disks_full="$( ls /dev/dvd* /dev/cd* /dev/scd* /dev/sr* 2>/dev/null | grep -vE 'random' )"
+	dev_disks_full="$( ls /dev/dvd* /dev/cd* /dev/scd* /dev/sr* /dev/fd[0-9] 2>/dev/null | grep -vE 'random' )"
 	## Not using this now because newer kernel is NOT linking all optical drives. Some, but not all
 	# Some systems don't support xargs -L plus the unlinked optical drive unit make this not a good option
 	# get the actual disk dev location, first try default which is easier to run, need to preserve line breaks
@@ -11412,8 +11412,8 @@ get_unmounted_partition_data()
 		if [[ $B_RAID_SET != 'true' ]];then
 			get_raid_data
 		fi
-		# sr0 type cd drives are showing up now as unmounted partitions
-		mounted_partitions="scd[0-9]+|sr[0-9]+|cdrom[0-9]*|cdrw[0-9]*|dvd[0-9]*|dvdrw[0-9]*"
+		# sr0 type cd drives are showing up now as unmounted partitions.
+		mounted_partitions="scd[0-9]+|sr[0-9]+|cdrom[0-9]*|cdrw[0-9]*|dvd[0-9]*|dvdrw[0-9]*|fd[0-9]|ram[0-9]*"
 		# create list for slicing out the mounted partitions
 		for (( i=0; i < ${#A_PARTITION_DATA[@]}; i++ ))
 		do
@@ -11436,18 +11436,18 @@ get_unmounted_partition_data()
 				mounted_partitions="$mounted_partitions$separator$raid_partitions"
 			fi
 		done
-	
-		A_UNMOUNTED_PARTITION_DATA=( $( grep -Ev '[[:space:]]('$mounted_partitions')$' $FILE_PARTITIONS | gawk '
+		# grep -Ev '[[:space:]]('$mounted_partitions')$' $FILE_PARTITIONS | 
+		A_UNMOUNTED_PARTITION_DATA=( $( gawk '
 		BEGIN {
 			IGNORECASE=1
 		}
 		# note that size 1 means it is a logical extended partition container
 		# lvm might have dm-1 type syntax
 		# need to exclude loop type file systems, squashfs for example
-		/[a-z][0-9]+$|dm-[0-9]+$/ && $3 != 1 && $NF !~ /loop/ {
+		/[a-z][0-9]+$|dm-[0-9]+$/ && $3 != 1 && $NF !~ /loop/ && $NF !~ /('$mounted_partitions')/ {
 			size = sprintf( "%.2f", $3*1024/1000**3 )
 			print $4 "," size "G"
-		}' ) )
+		}' $FILE_PARTITIONS ) )
 
 		for (( i=0; i < ${#A_UNMOUNTED_PARTITION_DATA[@]}; i++ ))
 		do
@@ -13911,6 +13911,7 @@ print_optical_drive_data()
 	local a_drives='' drive_data='' counter='' dev_string='/dev/' speed_string='x'
 	local drive_id='' drive_links='' vendor='' speed='' multisession='' mcn='' audio=''
 	local dvd='' state='' rw_support='' rev='' separator='' drive_string='' part_2_data=''
+	local drive_type='Optical' fd_counter=0 opt_counter=0 b_floppy='false'
 	if [[ -z $BSD_TYPE ]];then
 		get_optical_drive_data
 	else
@@ -13946,43 +13947,56 @@ print_optical_drive_data()
 				drive_string="No optical drives detected."
 				B_SHOW_FULL_OPTICAL='false'
 			else
-				if [[ ${#A_OPTICAL_DRIVE_DATA[@]} -gt 1 ]];then
-					counter="-$(( i + 1 ))"
+				if [[ -n ${a_drives[0]/fd*/} ]];then
+					opt_counter=$(( $opt_counter + 1 ))
+					counter="-$opt_counter"
+					drive_type='Optical'
+					b_floppy='false'
+				else
+					fd_counter=$(( $fd_counter + 1 ))
+					counter="-$fd_counter"
+					drive_type='Floppy'
+					b_floppy='true'
 				fi
 				if [[ -z ${a_drives[0]} ]];then
 					drive_id='N/A'
 				else
 					drive_id="$dev_string${a_drives[0]}"
 				fi
-				drive_links=$( sed 's/~/,/g' <<< ${a_drives[1]} )
-				if [[ -z $drive_links ]];then
-					drive_links='N/A'
-				fi
-				if [[ -n ${a_drives[2]} ]];then
-					vendor=${a_drives[2]}
-					if [[ -n ${a_drives[3]} ]];then
-						vendor="$vendor ${a_drives[3]}"
+				if [[ $b_floppy == 'false' ]];then
+					drive_links=$( sed 's/~/,/g' <<< ${a_drives[1]} )
+					if [[ -z $drive_links ]];then
+						drive_links='N/A'
 					fi
-				fi
-				if [[ -z $vendor ]];then
-					if [[ -n ${a_drives[3]} ]];then
-						vendor=${a_drives[3]}
-					else
-						vendor='N/A'
+					if [[ -n ${a_drives[2]} ]];then
+						vendor=${a_drives[2]}
+						if [[ -n ${a_drives[3]} ]];then
+							vendor="$vendor ${a_drives[3]}"
+						fi
 					fi
-				fi
-				if [[ $B_EXTRA_DATA == 'true' ]];then
-					if [[ -n ${a_drives[4]} ]];then
-						rev=${a_drives[4]}
-					else
-						rev='N/A'
+					if [[ -z $vendor ]];then
+						if [[ -n ${a_drives[3]} ]];then
+							vendor=${a_drives[3]}
+						else
+							vendor='N/A'
+						fi
 					fi
-					rev="${C1}rev$SEP3${C2} $rev "
+					if [[ $B_EXTRA_DATA == 'true' ]];then
+						if [[ -n ${a_drives[4]} ]];then
+							rev=${a_drives[4]}
+						else
+							rev='N/A'
+						fi
+						rev="${C1}rev$SEP3${C2} $rev "
+					fi
+					drive_string="$drive_id ${C1}model$SEP3${C2} $vendor "
+					part_2_data="$rev${C1}dev-links$SEP3${C2} $drive_links"
+				else
+					drive_string="$drive_id"
+					part_2_data=''
 				fi
-				drive_string="$drive_id ${C1}model$SEP3${C2} $vendor "
-				part_2_data="$rev${C1}dev-links$SEP3${C2} $drive_links"
 			fi
-			drive_data="${C1}Optical${counter}$SEP3${C2} $drive_string"
+			drive_data="${C1}$drive_type${counter}$SEP3${C2} $drive_string"
 			if [[ $( calculate_line_length "$drive_data$part_2_data" ) -lt $COLS_INNER ]];then
 				drive_data=$( create_print_line "$Line_Starter" "$drive_data$part_2_data" )
 				print_screen_output "$drive_data"
@@ -14024,7 +14038,7 @@ print_optical_drive_data()
 			# 12 - dvdr
 			# 13 - dvdram
 			# 14 - state
-			if [[ $B_SHOW_FULL_OPTICAL == 'true' ]];then
+			if [[ $B_SHOW_FULL_OPTICAL == 'true' && $b_floppy == 'false' ]];then
 				if [[ -z ${a_drives[5]} ]];then
 					speed='N/A'
 				else
