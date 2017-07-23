@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.3.23
-####  Date: 2017-06-29
+####  Version: 2.3.24
+####  Date: 2017-07-23
 ####  Patch Number: 00
 ########################################################################
 ####  SPECIAL THANKS
@@ -6323,6 +6323,8 @@ get_graphics_card_data()
 		IGNORECASE=1
 		busId=""
 		trueCard=""
+		card=""
+		driver=""
 	}
 	# not using 3D controller yet, needs research: |3D controller |display controller
 	# note: this is strange, but all of these can be either a separate or the same
@@ -6330,14 +6332,23 @@ get_graphics_card_data()
 	# cards are  either the same or different. We want only the .0 version as a valid
 	# card. .1 would be for example: Display Adapter with bus id x:xx.1, not the right one
 	/vga compatible controller|3D controller|Display controller/ {
+		trueCard=""
 		gsub(/'"$BAN_LIST_NORMAL"'/, "", $NF)
 		gsub(/'"$BAN_LIST_ARRAY"'/, " ", $NF)
 		gsub(/^ +| +$/, "", $NF)
 		gsub(/ [ \t]+/, " ", $NF)
+		card=$NF
 		busId=gensub(/^([0-9a-f:\.]+) (.+)$/,"\\1",1,$1)
 		trueCard=gensub(/(.*)\.([0-9]+)$/,"\\2",1,busId)
+		while (!/^$/) {
+			getline
+			if ( $1 ~ /Kernel driver in use/ ){
+				driver=$2
+			}
+		}
 		if ( trueCard == 0 ) {
-			print $NF "," busId
+			print card "," busId "," driver
+			# print card "," busId "," driver > "/dev/tty"
 		}
 	}' <<< "$Lspci_v_Data" ) )
 	IFS="$ORIGINAL_IFS"
@@ -12848,10 +12859,10 @@ print_graphics_data()
 {
 	eval $LOGFS
 	local graphics_data='' card_id='' i='' root_alert='' root_x_string='' a_graphics_working=''
-	local b_is_mesa='false' display_full_string='' card_bus_id='' card_data=''
-	local res_tty='Resolution' xorg_data='' display_server_string='' chip_id=''
+	local b_is_mesa='false' display_full_string='' card_bus_id='' card_data='' 
+	local res_tty='Resolution' xorg_data='' display_server_string='' chip_id='' sep_pci=''
 	local spacer='' driver='' driver_string='' driver_plural='' direct_render_string=''
-	local separator_loaded='' separator_unloaded='' separator_failed='' 
+	local sep_loaded='' sep_unloaded='' sep_failed='' b_pci_driver='false'
 	local loaded='' unloaded='' failed='' display_server_string='' b_force_tty='false'
 	local line_starter='Graphics:' part_1_data='' part_2_data='' b_advanced='true'
 	local screen_resolution="$( get_graphics_res_data 'reg' )"
@@ -12892,7 +12903,8 @@ print_graphics_data()
 	get_graphics_driver
 	
 	if [[ ${#A_GRAPHIC_DRIVERS[@]} -eq 0 ]];then
-		driver=' N/A'
+		driver=''
+		b_pci_driver='true'
 	else
 		for (( i=0; i < ${#A_GRAPHIC_DRIVERS[@]}; i++ ))
 		do
@@ -12901,16 +12913,16 @@ print_graphics_data()
 			IFS="$ORIGINAL_IFS"
 			case ${a_graphics_working[1]} in
 				loaded)
-					loaded="$loaded$separator_loaded${a_graphics_working[0]}"
-					separator_loaded=','
+					loaded="$loaded$sep_loaded${a_graphics_working[0]}"
+					sep_loaded=','
 					;;
 				unloaded)
-					unloaded="$unloaded$separator_unloaded${a_graphics_working[0]}"
-					separator_unloaded=','
+					unloaded="$unloaded$sep_unloaded${a_graphics_working[0]}"
+					sep_unloaded=','
 					;;
 				failed)
-					failed="$failed$separator_failed${a_graphics_working[0]}"
-					separator_failed=','
+					failed="$failed$sep_failed${a_graphics_working[0]}"
+					sep_failed=','
 					;;		
 			esac
 		done
@@ -12926,7 +12938,7 @@ print_graphics_data()
 	fi
 	# sometimes for some reason there is no driver found but the array is started
 	if [[ -z $driver ]];then
-		driver=' N/A'
+		b_pci_driver='true'
 	fi
 	if [[ ${#A_GRAPHIC_DRIVERS[@]} -gt 1 ]];then
 		driver_plural='s'
@@ -12954,9 +12966,7 @@ print_graphics_data()
 	   [[ $display_server == 'wayland' || $display_server == 'mir'  ]];then
 		compositor_string="${C1}compositor$SEP3${C2} $compositor "
 	fi
-	display_server_string="${C1}Display Server${SEP3}${C2} $display_server_string $compositor_string"
-	driver_string="${C1}driver$driver_plural$SEP3${C2}$driver "
-
+	
 	if [[ $glx_renderer == '' && $B_ROOT == 'true' ]];then
 		root_x_string='for root '
 		b_advanced='false'
@@ -12972,7 +12982,6 @@ print_graphics_data()
 	if [[ $b_force_tty == 'true' || $B_SHOW_DISPLAY_DATA != 'true' || $B_RUNNING_IN_DISPLAY != 'true' ]];then
 		res_tty='tty size'
 	fi
-	
 	if [[ -n $root_x_string ]];then
 		root_x_string="${C1}Advanced Data$SEP3${C2} N/A $root_x_string"
 	fi
@@ -12985,6 +12994,15 @@ print_graphics_data()
 			IFS="$ORIGINAL_IFS"
 			card_bus_id=''
 			card_data=${a_graphics_working[0]}
+			if [[ $b_pci_driver == 'true' && ${a_graphics_working[2]} != '' ]];then
+				if [[ $sep_pci == ',' ]];then
+					driver_plural='s'
+				else
+					driver=' ' # front pad to match other matches
+				fi
+				driver=$driver$sep_pci${a_graphics_working[2]}
+				sep_pci=','
+			fi
 			if [[ $B_EXTRA_DATA == 'true' ]];then
 				if [[ -n ${a_graphics_working[1]} ]];then
 					card_bus_id="${a_graphics_working[1]}"
@@ -13048,6 +13066,12 @@ print_graphics_data()
 	fi
 	line_starter=' '
 	graphics_data=''
+	if [[ $driver == '' ]];then
+		driver=' N/A'
+	fi
+	
+	display_server_string="${C1}Display Server${SEP3}${C2} $display_server_string $compositor_string"
+	driver_string="${C1}driver$driver_plural$SEP3${C2}$driver "
 	
 	part_1_data="$display_server_string$driver_string"
 	part_2_data="${C1}$res_tty$SEP3${C2} $screen_resolution $root_x_string"
