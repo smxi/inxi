@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ########################################################################
 ####  Script Name: inxi
-####  Version: 2.3.26
+####  Version: 2.3.27
 ####  Date: 2017-07-28
 ####  Patch Number: 00
 ########################################################################
@@ -3156,7 +3156,7 @@ show_options()
 	fi
 	print_lines_basic "1" "-x" "Adds the following extra data (only works with verbose or line output, not short form):"
 	print_lines_basic "2" "-B" "Vendor/model, status (if available)"
-	print_lines_basic "2" "-C" "CPU Flags, Bogomips on Cpu;CPU microarchitecture if found, like: (Sandy Bridge)"
+	print_lines_basic "2" "-C" "CPU Flags, Bogomips on Cpu;CPU microarchitecture / revision if found, like: (Sandy Bridge rev.2)"
 	print_lines_basic "2" "-d" "Extra optical drive data; adds rev version to optical drive."
 	print_lines_basic "2" "-D" "Hdd temp with disk data if you have hddtemp installed, if you are root OR if you have added to /etc/sudoers (sudo v. 1.7 or newer) Example:^<username>^ALL^=^NOPASSWD:^/usr/sbin/hddtemp"
 	print_lines_basic "2" "-G" "Direct rendering status for Graphics (in X)."
@@ -4354,7 +4354,7 @@ get_battery_data()
 	eval $LOGFE
 }
 
-## args: $1 type [intel|amd|centaur|arm]; $2 family [hex]; $3 model id [hex]
+## args: $1 type [intel|amd|centaur|arm]; $2 family [hex]; $3 model id [hex]; 
 get_cpu_architecture()
 {
 	eval $LOGFS
@@ -4421,12 +4421,12 @@ get_cpu_architecture()
 				16)
 					case $3 in
 						0)arch='Jaguar';;
-						30)arch='Jaguar Puma';;
+						30)arch='Puma';;
 					esac
 					;;
 				17)
 					case $3 in
-						*)arch='Zen';;
+						1)arch='Zen';;
 					esac
 					;;
 			esac
@@ -4477,8 +4477,8 @@ get_cpu_architecture()
 						1)arch='P6 Pro';;
 						3|5|6)arch='P6 II';;
 						7|8|A|B)arch='P6 III';;
-						9|15)arch='Pentium M';;
-						D)arch='Pentium M';; # Dothan
+						9|15)arch='Mobile';; # pentium M
+						D)arch='Mobile Dothan';; # Pentium M
 						E)arch='Core Yonah';;
 						F)arch='Core 2';;
 						17|1D)arch='Core Penryn';;
@@ -4491,6 +4491,7 @@ get_cpu_architecture()
 						3A|3E)arch='Ivy Bridge';;
 						3C|3F|45|46)arch='Haswell';;
 						3D)arch='Broadwell';;
+						4E)arch='Skylake';;
 					esac
 					;;
 				B)
@@ -4501,7 +4502,7 @@ get_cpu_architecture()
 				F)
 					case $3 in
 						0|1|2)arch='Netburst';;
-						3|4|6)arch='Nocona Prescott';;
+						3|4|6)arch='Netburst Prescott';; # Nocona
 					esac
 					;;
 			esac
@@ -4653,6 +4654,7 @@ get_cpu_data()
 			type=""
 			family=""
 			model_nu=""
+			rev=""
 		}
 		# TAKE STRONGER NOTE: \t+ does NOT always work, MUST be [ \t]+
 		# TAKE NOTE: \t+ will work for $FILE_CPUINFO, but SOME ARBITRARY FILE used for TESTING might contain SPACES!
@@ -4694,6 +4696,10 @@ get_cpu_data()
 		/^cpu family/ && ( family == ""){
 			gsub(/^ +| +$/, "", $NF)
 			family=toupper( sprintf("%x", $NF) )
+		}
+		/^(stepping|cpu revission)/ && ( rev == "" ){
+			gsub(/^ +| +$/, "", $NF)
+			rev=$NF
 		}
 		/^model[ \t]*:/ && ( model_nu == ""){
 			gsub(/^ +| +$/, "", $NF)
@@ -4790,8 +4796,8 @@ get_cpu_data()
 				print "N/A," min "," max "," type "," family "," model_nu
 			}
 			else {
-				# print speed "," min "," max  "," type "," family "," model_nu > "/dev/tty"
-				print speed "," min "," max  "," type "," family "," model_nu
+				# print speed "," min "," max  "," type "," family "," model_nu "," rev > "/dev/tty"
+				print speed "," min "," max  "," type "," family "," model_nu "," rev
 			}
 		} 
 		' $FILE_CPUINFO ) )
@@ -4946,7 +4952,7 @@ get_cpu_data_bsd()
 			sub(/\.[0-9]+/,"",max)
 			print cpuModel "," cpuClock "," cpuCache "," cpuFlags "," cpuBogomips ","  cpuVendor
 			# triggers print case, for architecture, check source for syntax
-			print cpuClock "," min "," max ",,," 
+			print cpuClock "," min "," max ",,,," 
 		}' <<< "$Sysctl_a_Data" ) )
 		IFS="$ORIGINAL_IFS"
 	fi
@@ -5799,7 +5805,8 @@ get_device_vm()
 	local vm='other-vm?' vm_data='' vm_test=''
 	
 	# https://www.freedesktop.org/software/systemd/man/systemd-detect-virt.html
-	# note: unknown is how reliable this tool is
+	# note: returns bosh for qemu-kvm so if that's the result, let the other tests 
+	# run
 	if type -p systemd-detect-virt &>/dev/null;then
 		vm_test=$(systemd-detect-virt 2>/dev/null | sed 's/none//' )
 		if [[ -n $vm_test && $vm_test != 'none' ]];then
@@ -5807,17 +5814,27 @@ get_device_vm()
 		fi
 	fi
 	# some simple to detect linux vm id's
-	if [[ $vm == 'other-vm?' ]];then
+	if [[ $vm == 'other-vm?' || $vm == 'bochs' ]];then
 		if [[ -e /proc/vz ]];then
 			vm='openvz'
 		elif [[ -e /proc/xen ]];then
 			vm='xen'
 		elif [[ -e /dev/vzfs ]];then
 			vm='virtuozzo'
+		elif type -p lsmod &>/dev/null;then
+			vm_data="$( lsmod 2>/dev/null )"
+			if [[  -n $( grep -i 'kqemu' <<< "$vm_data" ) ]];then
+				vm='kqemu'
+			elif [[ -n $( grep -i 'kvm' <<< "$vm_data" ) ]];then
+				vm='kvm'
+			elif [[ -n $( grep -i 'qemu' <<< "$vm_data" ) ]];then
+				vm='qemu'
+			fi
+			vm_data=''
 		fi
 	fi
 	# this will catch many Linux systems and some BSDs
-	if [[ $vm == 'other-vm?' ]];then
+	if [[ $vm == 'other-vm?' || $vm == 'bochs' ]];then
 		vm_data=$vm_data$Lspci_v_Data
 		vm_data=$vm_data$Sysctl_a_Data
 		vm_data=$vm_data$Dmesg_Boot_Data
@@ -6811,14 +6828,14 @@ get_graphics_display_server_data()
 	eval $LOGFS
 	local vendor='' vendor_version='' a_temp='' xdpy_info='' a_display_vendor_working='' 
 	# note: this may not always be set, it won't be out of X, for example
-	local server=$XDG_SESSION_TYPE compositor='' compositor_version=''
+	local server="$XDG_SESSION_TYPE" compositor='' compositor_version=''
 	
 	if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
-		compositor=$(get_graphics_display_compositor) compositor_version=''
+		compositor="$(get_graphics_display_compositor)" compositor_version=''
 	fi
 	
 	if [[ $server == '' ]];then
-		if [[ -n $WAYLAND_DISPLAY ]];then
+		if [[ -n "$WAYLAND_DISPLAY" ]];then
 			server='wayland'
 		fi
 	fi
@@ -8504,8 +8521,8 @@ get_networking_local_ip_data()
 			gsub(/^ +| +$/, "", $0)
 			gsub(/ [ \t]+/, " ", $0)
 			interface = $1
-			# prep this this for ip addr: eth0: 
-			sub(/:/, "", interface)
+			# prep this this for ip addr: eth0: but NOT eth0:1
+			sub(/:$/, "", interface)
 			ifIpV4=""
 			ifIpV6=""
 			ifMask=""
@@ -12753,7 +12770,7 @@ print_cpu_data()
 	local cpu_physical_count='' cpu_core_count='' cpu_core_alpha='' cpu_type=''
 	local cpu_2_data='' working_cpu='' temp1='' per_cpu_cores='' current_max_clock_nu=''
 	local line_starter="CPU:" multi_cpu_starter="${C1}clock speeds$SEP3${C2} "
-	local speed_starter='speed' arch='' arm=' (ARM)'
+	local speed_starter='speed' arch='' arm=' (ARM)' rev=''
 
 	##print_screen_output "A_CPU_DATA[0]=\"${A_CPU_DATA[0]}\""
 	# Array A_CPU_DATA always has one extra element: max clockfreq found.
@@ -12769,8 +12786,14 @@ print_cpu_data()
 	
 	if [[ $B_EXTRA_DATA == 'true' && ${a_cpu_info[3]} != '' ]];then
 		arch=$( get_cpu_architecture "${a_cpu_info[3]}" "${a_cpu_info[4]}" "${a_cpu_info[5]}" )
+		# note: arm model names usually say what revision it is
+		if [[ ${a_cpu_info[3]} != 'arm' && "${a_cpu_info[6]}" != '' ]];then
+			if [[ -n "${arch/*rev*/}" ]];then
+				rev=" rev.${a_cpu_info[6]}"
+			fi
+		fi
 		if [[ "$arch" != '' ]];then
-			arch=" ($arch)"
+			arch=" ($arch$rev)"
 			arm='' # note: to avoid redundant output, only show this without -x option
 		fi
 	fi
