@@ -2,8 +2,8 @@
 ########################################################################
 SELF_NAME='inxi' 
 # don't quote the following, parsers grab these too
-SELF_VERSION=2.3.32
-SELF_DATE=2017-08-03
+SELF_VERSION=2.3.33
+SELF_DATE=2017-08-04
 SELF_PATCH=00
 ########################################################################
 ####  SPECIAL THANKS
@@ -2033,6 +2033,8 @@ debug_data_collector()
 			echo 'Collecting networking data...'
 			ifconfig &> $debug_data_dir/ifconfig.txt
 			ip addr &> $debug_data_dir/ip-addr.txt
+			# f="$( find /sys -mindepth 1  -type f  -exec gawk 'END { print  FILENAME ":[" $0 "]"}' 2>/dev/null {} \; )" 2>/dev/null;echo "$f"
+			# https://stackoverflow.com/questions/5119946/find-exec-with-multiple-commands
 			if [[ $b_run_xiin == 'true' && -z $BSD_TYPE ]];then
 				echo $Line
 				echo "Running $xiin_file tool now on /sys..."
@@ -4275,15 +4277,17 @@ get_battery_data()
 				END {
 					# note:voltage_now fluctuates, which will make capacity numbers change a bit
 					# if any of these values failed, the math will be wrong, but no way to fix that
+					# tests show more systems give right capacity/charge with voltage_min_design 
+					# than with voltage_now
 					if (b_ma == "true" && voltage_min_design != ""){
 						if (charge_now != ""){
-							energy_now=charge_now*voltage_now
+							energy_now=charge_now*voltage_min_design
 						}
 						if (charge_full != ""){
-							energy_full=charge_full*voltage_now
+							energy_full=charge_full*voltage_min_design
 						}
 						if (charge_full_design != ""){
-							energy_full_design=charge_full_design*voltage_now
+							energy_full_design=charge_full_design*voltage_min_design
 						}
 					}
 					if (energy_now != "" && energy_full != "" ){
@@ -5369,13 +5373,13 @@ get_desktop_environment()
 	# did we find it? If not, start the xprop tests
 	if [[ -z $desktop_environment ]];then
 		if type -p xprop &>/dev/null;then
-			xprop_root="$( xprop -root $DISPLAY_OPT 2>/dev/null )"
+			xprop_root="$( xprop -root $DISPLAY_OPT 2>/dev/null | tr '[:upper:]' '[:lower:]' )"
 		fi
 		# note that cinnamon split from gnome, and and can now be id'ed via xprop,
 		# but it will still trigger the next gnome true case, so this needs to go before gnome test
 		# eventually this needs to be better organized so all the xprop tests are in the same
 		# section, but this is good enough for now.
-		if [[ -n $xprop_root && -n $( grep -is '^_MUFFIN' <<< "$xprop_root" ) ]];then
+		if [[ -n $xprop_root && -z ${xprop_root/*_muffin*/} ]];then
 			version=$( get_program_version 'cinnamon' '^cinnamon' '2' )
 			# not certain cinn will always have version, so keep output right if not
 			if [[ -n $version ]];then
@@ -5388,7 +5392,7 @@ get_desktop_environment()
 				fi
 			fi
 			desktop_environment="Cinnamon"
-		elif [[ $XDG_CURRENT_DESKTOP == 'MATE' ]] || [[ -n $xprop_root && -n $( grep -is '^_MARCO' <<< "$xprop_root" ) ]];then
+		elif [[ $XDG_CURRENT_DESKTOP == 'MATE' ]] || [[ -n $xprop_root && -z ${xprop_root/*_marco*/} ]];then
 			version=$( get_program_version 'mate-about' '^MATE[[:space:]]DESKTOP' 'NF' )
 			# not certain cinn/mate will always have version, so keep output right if not
 			if [[ -n $version ]];then
@@ -5423,7 +5427,7 @@ get_desktop_environment()
 			if [[ -n $xprop_root ]];then
 				# String: "This is xfdesktop version 4.2.12"
 				# alternate: xfce4-about --version > xfce4-about 4.10.0 (Xfce 4.10)
-				if [[ -n $( grep -Eis '\"xfce4\"' <<< "$xprop_root" ) ]];then
+				if [[ -z ${xprop_root/*\"xfce4\"*/} ]];then
 					version=$( get_program_version 'xfdesktop' 'xfdesktop[[:space:]]version' '5' )
 					# arch linux reports null, so use alternate if null
 					if [[ -z $version ]];then
@@ -5440,7 +5444,7 @@ get_desktop_environment()
 					fi
 					desktop_environment="Xfce"
 				# when 5 is released, the string may need updating
-				elif [[ -n $( grep -is '\"xfce5\"' <<< "$xprop_root" ) ]];then
+				elif [[ -z ${xprop_root/*\"xfce5\"*/} ]];then
 					version=$( get_program_version 'xfdesktop' 'xfdesktop[[:space:]]version' '5' )
 					# arch linux reports null, so use alternate if null
 					if [[ -z $version ]];then
@@ -5457,7 +5461,7 @@ get_desktop_environment()
 					fi
 					desktop_environment="Xfce"
 				# case where no xfce number exists, just xfce
-				elif [[ -n $( grep -is 'xfce' <<< "$xprop_root" ) ]];then
+				elif [[ -z ${xprop_root/*xfce*/} ]];then
 					version=$( get_program_version 'xfdesktop' 'xfdesktop[[:space:]]version' '5' )
 					# arch linux reports null, so use alternate if null
 					if [[ -z $version ]];then
@@ -5477,14 +5481,14 @@ get_desktop_environment()
 						fi
 					fi
 					desktop_environment="Xfce"
-				elif [[ -n $( grep -is 'BLACKBOX_PID' <<< "$xprop_root" ) ]];then
+				elif [[ -z ${xprop_root/*blackbox_pid*/} ]];then
 					if [[ -z "${Ps_aux_Data/*fluxbox*/}" ]];then
 						version=$( get_program_version 'fluxbox' '^fluxbox' '2' )
 						desktop_environment='Fluxbox'
 					else
 						desktop_environment='Blackbox'
 					fi
-				elif [[ -n $( grep -is 'OPENBOX_PID' <<< "$xprop_root" ) ]];then
+				elif [[ -z ${xprop_root/*openbox_pid*/}  ]];then
 					# note: openbox-lxde --version may be present, but returns openbox data
 					version=$( get_program_version 'openbox' '^openbox' '2' )
 					if [[ $XDG_CURRENT_DESKTOP == 'LXDE' || -z "${Ps_aux_Data/*\/lxsession*/}" ]];then
@@ -5493,7 +5497,7 @@ get_desktop_environment()
 						fi
 						desktop_environment='LXDE'
 					elif [[  $XDG_CURRENT_DESKTOP == 'Razor' || $XDG_CURRENT_DESKTOP == 'LXQt' ]] || \
-						[[ -n $( grep -Eis '(razor-desktop|lxqt-session)' <<< "$Ps_aux_Data" ) ]];then
+						[[ -n $( grep -Es '(razor-desktop|lxqt-session)' <<< "$Ps_aux_Data" ) ]];then
 						if [[ -z "${Ps_aux_Data/*lxqt-session*/}" ]];then
 							desktop_environment='LXQt'
 						elif [[ -z "${Ps_aux_Data/*razor-desktop*/}" ]];then
@@ -5507,24 +5511,26 @@ get_desktop_environment()
 					else
 						desktop_environment='Openbox' 
 					fi
-				elif [[ -n $( grep -is 'ICEWM' <<< "$xprop_root" ) ]];then
+				elif [[ -z ${xprop_root/*icewm*/} ]];then
 					version=$( get_program_version 'icewm' '^icewm' '2' )
 					desktop_environment='IceWM'
-				elif [[ -n $( grep -is 'ENLIGHTENMENT' <<< "$xprop_root" ) ]];then
+				elif [[ -z ${xprop_root/*enlightenment*/} ]];then
 					# no -v or --version but version is in xprop -root
 					# ENLIGHTENMENT_VERSION(STRING) = "Enlightenment 0.16.999.49898"
 					version=$( grep -is 'ENLIGHTENMENT_VERSION' <<< "$xprop_root" | cut -d '"' -f 2 | gawk '{print $2}' )
 					desktop_environment='Enlightenment'
-				elif [[ -n $( grep -is '^I3_' <<< "$xprop_root" ) ]];then
+				# need to check starts line because it's so short
+				elif [[ -n $( grep -s '^i3_' <<< "$xprop_root" ) ]];then
 					version=$( get_program_version 'i3' '^i3' '3' )
 					desktop_environment='i3'
-				elif [[ -n $( grep -is 'WINDOWMAKER' <<< "$xprop_root" ) ]];then
+				elif [[ -z ${xprop_root/*windowmaker*/} ]];then
 					version=$( get_program_version 'wmaker' '^Window[[:space:]]*Maker' 'NF' )
 					if [[ -n $version ]];then
 						version="$version "
 					fi
 					desktop_environment="WindowMaker"
-				elif [[ -n $( grep -is '^_WM2' <<< "$xprop_root" ) ]];then
+				# need to check starts line because it's so short
+				elif [[ -n $( grep -s '^_wm2' <<< "$xprop_root" ) ]];then
 					# note; there isn't actually a wm2 version available but error handling should cover it and return null
 					# maybe one day they will add it?
 					version=$( get_program_version 'wm2' '^wm2' 'NF' )
@@ -5563,9 +5569,9 @@ get_desktop_environment()
 				elif [[ -z "${Ps_aux_Data/*spectrwm*/}" ]];then
 					version=$( get_program_version 'spectrwm' '^spectrwm.*welcome.*spectrwm' '5' )
 					desktop_environment='Spectrwm' # no --version for this one
-				elif [[ -n $( grep -Eis '([[:space:]]|/)twm' <<< "$Ps_aux_Data" ) ]];then
+				elif [[ -n $( grep -Es '([[:space:]]|/)twm' <<< "$Ps_aux_Data" ) ]];then
 					desktop_environment='Twm' # no --version for this one
-				elif [[ -n $( grep -Eis '([[:space:]]|/)dwm' <<< "$Ps_aux_Data" ) ]];then
+				elif [[ -n $( grep -Es '([[:space:]]|/)dwm' <<< "$Ps_aux_Data" ) ]];then
 					version=$( get_program_version 'dwm' '^dwm' '1' )
 					desktop_environment='dwm'
 				elif [[ -z "${Ps_aux_Data/*wmii2*/}" ]];then
@@ -5575,7 +5581,7 @@ get_desktop_environment()
 				elif [[ -z "${Ps_aux_Data/*wmii*/}" ]];then
 					version=$( get_program_version 'wmii' '^wmii' '1' )
 					desktop_environment='wmii'
-				elif [[ -n $( grep -Eis '([[:space:]]|/)jwm' <<< "$Ps_aux_Data" ) ]];then
+				elif [[ -n $( grep -Es '([[:space:]]|/)jwm' <<< "$Ps_aux_Data" ) ]];then
 					version=$( get_program_version 'jwm' '^jwm' '2' )
 					desktop_environment='JWM'
 				elif [[ -z "${Ps_aux_Data/*sawfish*/}" ]];then
