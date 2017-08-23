@@ -2,8 +2,8 @@
 ########################################################################
 SELF_NAME='inxi' 
 # don't quote the following, parsers grab these too
-SELF_VERSION=2.3.36
-SELF_DATE=2017-08-16
+SELF_VERSION=2.3.37
+SELF_DATE=2017-08-23
 SELF_PATCH=00
 ########################################################################
 ####  SPECIAL THANKS
@@ -52,7 +52,6 @@ SELF_PATCH=00
 ####  If you don't understand what Free Software is, please read (or reread)
 ####  this page: http://www.gnu.org/philosophy/free-sw.html
 ########################################################################
-
 ####
 #### PACKAGE NAME NOTES
 ####  * Package names in (...) are the Debian Squeeze package name. Check your 
@@ -1323,7 +1322,7 @@ select_default_color_scheme()
 				;;
 		esac
 		set_color_scheme $i
-		print_screen_output "$irc_clear $i)$spacer${C1}Card:${C2} nVidia G86 [GeForce 8400 GS] ${C1}X.Org${C2} 1.7.7"
+		print_screen_output "$irc_clear $i)$spacer${C1}Card:${C2} nVidia G86 [GeForce 8400 GS] ${C1}Display Server${C2} x11 (X.Org 1.7.7)"
 	done
 	set_color_scheme 0
 	
@@ -1764,12 +1763,12 @@ set_man_location()
 # args: $1 - debug data type: sys|xorg|disk
 debug_data_collector()
 {
-	local xiin_app='' xiin_data_file='' error='' b_run_xiin='false' b_xiin_downloaded='false'
+	local xiin_app='' sys_data_file='' error='' b_run_xiin='false' b_xiin_downloaded='false'
 	local Debug_Data_Dir='' bsd_string='' xorg_d_files='' xorg_file='' a_distro_ids=''
 	local completed_gz_file='' Xiin_File='xiin.py' ftp_upload='ftp.techpatterns.com/incoming'
 	local Line='-------------------------' 
 	local start_directory=$( pwd )
-	local host='' debug_i='' root_string=''
+	local host='' debug_i='' root_string='' b_perl_worked='false' b_uploaded='false'
 	
 	if (( "$BASH" >= 4 ));then
 		host="${HOSTNAME,,}"
@@ -1802,7 +1801,7 @@ debug_data_collector()
 		echo "Starting debugging data collection type: $1"
 		cd $SELF_DATA_DIR
 		if [[ -d $SELF_DATA_DIR/$Debug_Data_Dir ]];then
-			echo 'Deleting previous xiin data directory...'
+			echo "Deleting previous $SELF_NAME debugger data directory..."
 			rm -rf $SELF_DATA_DIR/$Debug_Data_Dir
 		fi
 		mkdir $SELF_DATA_DIR/$Debug_Data_Dir
@@ -1891,6 +1890,7 @@ debug_data_collector()
 		ps aux &> $Debug_Data_Dir/ps-aux.txt
 		ps -e &> $Debug_Data_Dir/ps-e.txt
 		ps -p 1 &> $Debug_Data_Dir/ps-p-1.txt
+		echo "Collecting init data..."
 		cat /proc/1/comm &> $Debug_Data_Dir/proc-1-comm.txt
 		runlevel &> $Debug_Data_Dir/runlevel.txt
 		if type -p rc-status &>/dev/null;then
@@ -1961,7 +1961,11 @@ debug_data_collector()
 		else
 			touch $Debug_Data_Dir/systemd-detect-virt-absent
 		fi
-		
+		if type -p perl &>/dev/null;then
+			perl -MFile::Find=find -MFile::Spec::Functions -Tlwe 'find { wanted => sub { print canonpath $_ if /\.pm\z/ }, no_chdir => 1 }, @INC' &> $Debug_Data_Dir/perl-modules.txt
+		else
+			touch $Debug_Data_Dir/perl-missing.txt
+		fi
 		cat /etc/src.conf &> $Debug_Data_Dir/bsd-etc-src-conf.txt
 		cat /etc/make.conf &> $Debug_Data_Dir/bsd-etc-make-conf.txt
 		cat /etc/issue &> $Debug_Data_Dir/etc-issue.txt
@@ -2163,19 +2167,19 @@ debug_data_collector()
 			ifconfig &> $Debug_Data_Dir/ifconfig.txt
 			ip addr &> $Debug_Data_Dir/ip-addr.txt
 		fi
-				# first download and verify xiin
+		# create the error file in case it's needed
 		if [[ $B_UPLOAD_DEBUG_DATA == 'true' || $1 == 'disk' || $1 == 'sys' || $1 == 'all' ]];then
 			touch $SELF_DATA_DIR/$Debug_Data_Dir/xiin-error.txt
 		fi
 		# note, only bash 4> supports ;;& for case, so using if/then here
 		if [[ -z $BSD_TYPE ]] && [[ $1 == 'disk' || $1 == 'sys' || $1 == 'all' ]];then
 			echo $Line
-			xiin_data_file=$SELF_DATA_DIR/$Debug_Data_Dir/xiin-sys.txt
-			touch $xiin_data_file
+			sys_data_file=$SELF_DATA_DIR/$Debug_Data_Dir/xiin-sys.txt
+			touch $sys_data_file
 			if type -p perl &>/dev/null;then
 				echo "Collecting data from /sys..."
 				echo -n "Using Perl: " && perl --version | grep -oE 'v[0-9.]+'
-				xiin_data="$( perl -e '
+				sys_traverse_data="$( perl -e '
 				use File::Find;
 				use strict;
 				# use warnings;
@@ -2222,17 +2226,18 @@ debug_data_collector()
 					# print scalar @content . "\n";
 					print "$result";
 				} ' )"
-				if [[ -z "$xiin_data" ]];then
+				if [[ -z "$sys_traverse_data" ]];then
 					echo -e "ERROR: failed to generate /sys data - removing data file.\nContinuing with incomplete data collection."
 					echo "Continuing with incomplete data collection."
-					rm -f $xiin_data_file
+					rm -f $sys_data_file
 					echo "/sys data generation failed. No data collected." >> $Debug_Data_Dir/xiin-error.txt
 				else
+					b_perl_worked='true'
 					echo 'Completed /sys data collection.'
-					echo -n "$xiin_data" > $xiin_data_file
+					echo -n "$sys_traverse_data" > $sys_data_file
 				fi
 			fi
-			if [[ -z "$xiin_data" ]];then
+			if [[ -z "$sys_traverse_data" ]];then
 				download_xiin 'sys'
 				if [[ $? -eq 0 ]];then
 					b_run_xiin='true'
@@ -2240,11 +2245,11 @@ debug_data_collector()
 					echo "Running $Xiin_File tool now on /sys..."
 					echo -n "Using " && python --version
 					python --version &> $Debug_Data_Dir/python-version.txt
-					python ./$Xiin_File -d /sys -f $xiin_data_file
+					python ./$Xiin_File -d /sys -f $sys_data_file
 					if [[ $? -ne 0 ]];then
 						error=$?
 						echo -e "ERROR: $Xiin_File exited with error $error - removing data file.\nContinuing with incomplete data collection."
-						rm -f $xiin_data_file
+						rm -f $sys_data_file
 						echo "$Xiin_File data generation failed with python error $error" >> $Debug_Data_Dir/xiin-error.txt
 					fi
 				fi
@@ -2253,7 +2258,7 @@ debug_data_collector()
 		fi
 		# has to be before gz cleanup
 		if [[ $B_UPLOAD_DEBUG_DATA == 'true' ]];then
-			if [[ $b_xiin_downloaded == 'false' ]];then
+			if [[ $b_xiin_downloaded == 'false' && $b_perl_worked == 'false' ]];then
 				echo $Line
 				download_xiin 'upload'
 				if [[ $? -eq 0 ]];then
@@ -2290,18 +2295,30 @@ debug_data_collector()
 			echo $completed_gz_file
 			if [[ $B_UPLOAD_DEBUG_DATA == 'true' ]];then
 				echo $Line
-				if [[ $b_run_xiin == 'true' ]];then
-					echo "Running automatic upload of data to remote server $ftp_upload now..."
-					python ./$Xiin_File --version
-					python ./$Xiin_File -u $completed_gz_file $ftp_upload
+				if [[ $b_perl_worked == 'true' ]];then
+					upload_debugger_data "$completed_gz_file"
 					if [[ $? -gt 0 ]];then
-						echo $Line
-						echo "Error: looks like the ftp upload failed. Error number: $?"
-						# echo "The ftp upload failed. Error number: $?" >> $Debug_Data_Dir/xiin-error.txt
+						echo "Error: looks like the Perl ftp upload failed. Error number: $?"
+					else
+						b_uploaded='true'
+						echo "Hurray! Looks like the Perl ftp upload worked!"
 					fi
-				else
-					echo 'Unable to run the automatic ftp upload because of an error with the xiin download.'
-					# echo "Unable to run the automoatic ftp upload because of an error with the xiin download" >> $Debug_Data_Dir/xiin-error.txt
+				fi
+				if [[ $b_uploaded == 'false' ]];then
+					if [[ $b_run_xiin == 'true' ]];then
+						echo "Running automatic upload of data to remote server $ftp_upload now..."
+						python ./$Xiin_File --version
+						python ./$Xiin_File -u $completed_gz_file $ftp_upload
+						if [[ $? -gt 0 ]];then
+							echo $Line
+							echo "Error: looks like the Python ftp upload failed. Error number: $?"
+							# echo "The ftp upload failed. Error number: $?" >> $Debug_Data_Dir/xiin-error.txt
+						fi
+					else
+						echo 'Unable to run the automatic ftp upload because no uploaders appear to be working or available.'
+						# that has been removed at this point, so no more logging
+						# echo "Unable to run the automoatic ftp upload because of an error with the xiin download" >> $Debug_Data_Dir/xiin-error.txt
+					fi
 				fi
 			else
 				echo 'You can upload this here using most file managers: ftp.techpatterns.com/incoming'
@@ -2312,6 +2329,50 @@ debug_data_collector()
 		echo 'This feature only available in console or shell client! Exiting now.'
 	fi
 	exit 0
+}
+
+## args: $1 - debugger file name
+upload_debugger_data()
+{
+	local result='' debugger_file=$1 
+	
+	if ! type -p perl &>/dev/null;then
+		echo "Perl is not installed!"
+		return 2
+	elif ! perl -MNet::FTP -e 1 &>/dev/null;then
+		echo "Required Perl module Net::FTP not installed."
+		return 3
+	fi
+	export debugger_file
+	echo "Starting Perl Uploader..."
+	
+	result="$( perl -e '
+	use strict;
+	use warnings;
+	use Net::FTP;
+	my ($ftp, $host, $user, $pass, $dir, $fpath, $error);
+	$host = "ftp.techpatterns.com";
+	$user = "anonymous";
+	$pass = "anonymous\@techpatterns.com";
+	$dir = "incoming";
+	$fpath = $ENV{debugger_file};
+	$ftp = Net::FTP->new($host, Debug => 0);
+	$ftp->login($user, $pass) || die $ftp->message;
+	$ftp->binary();
+	$ftp->cwd($dir);
+	print "Connected to FTP server.\n";
+	$ftp->put($fpath) || die $ftp->message;
+	$ftp->quit;
+	print "Uploaded file.\n";
+	print $ftp->message;
+	' )"
+	
+	echo "$result"
+	if [[ "$result" == *Goodbye* ]];then
+		return 0
+	else
+		return 1
+	fi
 }
 # $1 - download type [sys|upload]
 download_xiin()
@@ -2417,7 +2478,7 @@ check_recommends_user_output()
 	echo "Gawk version: $gawk_version"
 	echo "Sed version: $sed_version"
 	echo "Sudo version: $sudo_version"
-	echo "Python version: $python_version"
+	echo "Python version: $python_version (deprecated)"
 	echo "Perl version: $perl_versio"
 	echo $Line
 	
@@ -2889,7 +2950,6 @@ get_parameters()
 				use_short='false'
 				;;
 			M)	B_SHOW_MACHINE='true'
-				B_SHOW_BATTERY='true'
 				use_short='false'
 				;;
 			n)	B_SHOW_ADVANCED_NETWORK='true'
@@ -3333,9 +3393,9 @@ show_options()
 	print_lines_basic "2" "10" "Color logging."
 	print_lines_basic "1" "" "The following create a tar.gz file of system data, plus collecting the inxi output to file. To automatically upload debugger data tar.gz file to ftp.techpatterns.com: inxi^-xx@^<11-14>"
 	print_lines_basic "1" "" "For alternate ftp upload locations: Example:^inxi^-!^ftp.yourserver.com/incoming^-xx@^14"
-	print_lines_basic "2" "11" "With data file of xiin read of /sys."
+	print_lines_basic "2" "11" "With data file of tree traverse read of /sys."
 	print_lines_basic "2" "12" "With xorg conf and log data, xrandr, xprop, xdpyinfo, glxinfo etc."
-	print_lines_basic "2" "13" "With data from dev, disks, ${partition_string}s, etc., plus xiin data file."
+	print_lines_basic "2" "13" "With data from dev, disks, ${partition_string}s, etc., plus /sys tree traverse data file."
 	print_lines_basic "2" "14" "Everything, full data collection."
 	print_screen_output " "
 	print_screen_output "Advanced Options:"
