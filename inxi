@@ -2,8 +2,8 @@
 ########################################################################
 SELF_NAME='inxi' 
 # don't quote the following, parsers grab these too
-SELF_VERSION=2.3.37
-SELF_DATE=2017-08-23
+SELF_VERSION=2.3.38
+SELF_DATE=2017-09-07
 SELF_PATCH=00
 ########################################################################
 ####  SPECIAL THANKS
@@ -2161,6 +2161,11 @@ debug_data_collector()
 			cat /proc/ide/*/* &> $Debug_Data_Dir/proc-ide-hdx-cat.txt
 			cat /etc/fstab &> $Debug_Data_Dir/etc-fstab.txt
 			cat /etc/mtab &> $Debug_Data_Dir/etc-mtab.txt
+			if type -p nvme &>/dev/null; then
+				touch $Debug_Data_Dir/nvme-present
+			else
+				touch $Debug_Data_Dir/nvme-absent
+			fi
 		fi
 		if [[ $1 == 'disk' || $1 == 'sys' || $1 == 'all' ]];then
 			echo 'Collecting networking data...'
@@ -2175,9 +2180,16 @@ debug_data_collector()
 		if [[ -z $BSD_TYPE ]] && [[ $1 == 'disk' || $1 == 'sys' || $1 == 'all' ]];then
 			echo $Line
 			sys_data_file=$SELF_DATA_DIR/$Debug_Data_Dir/xiin-sys.txt
+			echo "Getting file paths in /sys..."
+			ls_sys 1
+			ls_sys 2
+			ls_sys 3
+			ls_sys 4
+			# note, this generates more lines than the full sys parsing, so only use if requird
+			# ls_sys 5 
 			touch $sys_data_file
 			if type -p perl &>/dev/null;then
-				echo "Collecting data from /sys..."
+				echo "Parsing /sys files..."
 				echo -n "Using Perl: " && perl --version | grep -oE 'v[0-9.]+'
 				sys_traverse_data="$( perl -e '
 				use File::Find;
@@ -2329,6 +2341,38 @@ debug_data_collector()
 		echo 'This feature only available in console or shell client! Exiting now.'
 	fi
 	exit 0
+}
+## args: $1 - level
+ls_sys()
+{
+	local files=''
+	case $1 in
+		1)files='/sys/';;
+		2)files='/sys/*/';;
+		3)files='/sys/*/*/';;
+		4)files='/sys/*/*/*/';; # this should be enough for most use cases
+		5)files='/sys/*/*/*/*/';; # very large file, shows best shortcuts though
+		6)files='/sys/*/*/*/*/*/';; # slows down too much, too big, can cause ls error
+		7)files='/sys/*/*/*/*/*/*/';; # impossibly big, will fail
+	esac
+	ls -l $files | awk '{ 
+		if (NF > 7) {
+			if ($1 ~/^d/){
+				f="d - "
+			}
+			else if ($1 ~/^l/){
+				f="l - "
+			}
+			else {
+				f="f - "
+			}
+			# includes -> target for symbolic link if present
+			print "\t" f $9 " "  $10 " " $11
+		} 
+		else if (!/^total / ) { 
+			print $0
+		} 
+	}' &> $Debug_Data_Dir/sys-level-$1.txt
 }
 
 ## args: $1 - debugger file name
@@ -3352,7 +3396,7 @@ show_options()
 	print_lines_basic "2" "-A" "Chip vendor:product ID for each audio device."
 	print_lines_basic "2" "-B" "serial number, voltage (if available)."
 	print_lines_basic "2" "-C" "Minimum CPU speed, if available."
-	print_lines_basic "2" "-D" "Disk serial number."
+	print_lines_basic "2" "-D" "Disk serial number; Firmware rev. if available."
 	print_lines_basic "2" "-G" "Chip vendor:product ID for each video card; (mir/wayland only) compositor (alpha test); OpenGL compatibility version, if free drivers and available."
 	print_lines_basic "2" "-I" "Other detected installed gcc versions (if present). System default runlevel. Adds parent program (or tty) for shell info if not in IRC (like Konsole or Gterm). Adds Init/RC (if found) version number."
 	print_lines_basic "2" "-m" "Manufacturer, Serial Number, single/double bank (if found)."
@@ -4577,6 +4621,7 @@ get_cpu_architecture()
 {
 	eval $LOGFS
 	case $1 in
+		# https://en.wikipedia.org/wiki/List_of_AMD_CPU_microarchitectures
 		amd)
 			case $2 in
 				4)
@@ -4618,16 +4663,16 @@ get_cpu_architecture()
 					;;
 				11)
 					case $3 in
-						3)ARCH='K8 rev.E+';;
+						3)ARCH='Turion X2 Ultra';;
 					esac
 					;;
-				12)
+				12) # might also need cache handling like 14/16
 					case $3 in
-						1)ARCH='K10';;
-						*)ARCH='K10';;
+						1)ARCH='Fusion';;
+						*)ARCH='Fusion';;
 					esac
 					;;
-				14)
+				14) # SOC, apu
 					case $3 in
 						1|2)ARCH='Bobcat';;
 						*)ARCH='Bobcat';;
@@ -4635,17 +4680,17 @@ get_cpu_architecture()
 					;;
 				15)
 					case $3 in
-						0|1)ARCH='Bulldozer';;
-						2|10|13)ARCH='Piledriver';;
-						30|38)ARCH='Steamroller';;
-						60|65|70)ARCH='Excavator';;
+						0|1|2|3|4|5|6|7|8|9|A|B|C|D|E|F)ARCH='Bulldozer';;
+						10|11|12|13|14|15|16|17|18|19|1A|1B|1C|1D|1E|1F)ARCH='Piledriver';;
+						30|31|32|33|34|35|36|37|38|39|3A|3B|3C|3D|3E|3F)ARCH='Steamroller';;
+						60|61|62|63|64|65|66|67|68|69|6A|6B|6C|6D|6E|6F|70|71|72|73|74|75|76|77|78|79|7A|7B|7C|7D|7E|7F)ARCH='Excavator';;
 						*)ARCH='Bulldozer';;
 					esac
 					;;
-				16)
+				16) # SOC, apu
 					case $3 in
-						0)ARCH='Jaguar';;
-						30)ARCH='Puma';;
+						0|1|2|3|4|5|6|7|8|9|A|B|C|D|E|F)ARCH='Jaguar';;
+						30|31|32|33|34|35|36|37|38|39|3A|3B|3C|3D|3E|3F)ARCH='Puma';;
 						*)ARCH='Jaguar';;
 					esac
 					;;
@@ -4720,10 +4765,13 @@ get_cpu_architecture()
 						3C|3F|45|46)ARCH='Haswell';;
 						3D|47|4F|56)ARCH='Broadwell';;
 						4E|55|9E)ARCH='Skylake';;
+						5E)ARCH='Skylake-S';;
 						4C|5D)ARCH='Airmont';;
 						8E|9E)ARCH='Kaby Lake';;
 						57)ARCH='Knights Landing';;
 						85)ARCH='Knights Mill';;
+						# product codes: https://en.wikipedia.org/wiki/List_of_Intel_microprocessors
+						# coming: coffee lake; cannonlake; icelake; tigerlake
 					esac
 					;;
 				B)
@@ -7394,12 +7442,13 @@ get_hdd_data_basic()
 			printf( $NF",%.1fGB,,\n", driveSize )
 		}
 		# See http://lanana.org/docs/device-list/devices-2.6+.txt for major numbers used below
+		# See https://www.mjmwired.net/kernel/Documentation/devices.txt for kernel 4.x device numbers
 		# $1 ~ /^(3|22|33|8)$/ && $2 % 16 == 0  {
 		#	size += $3
 		# }
 		# special case from this data: 8     0  156290904 sda
-		# note: vm has 252/253/254 known starter, grsec has 202
-		$1 ~ /^(3|8|22|33|202|252|253|254)$/ && $NF ~ /[hsv]d[a-z]+$/ && ( $2 % 16 == 0 || $2 % 16 == 8 ) {
+		# note: known starters: vm: 252/253/254; grsec: 202; nvme: 259
+		$1 ~ /^(3|8|22|33|202|252|253|254|259)$/ && $NF ~ /(nvme[0-9]+n[0-9]+|[hsv]d[a-z]+)$/ && ( $2 % 16 == 0 || $2 % 16 == 8 ) {
 			size += $3
 		}
 		END {
@@ -7446,21 +7495,22 @@ get_hard_drive_data_advanced()
 	local a_temp_working='' a_temp_scsi='' temp_holder='' temp_name='' i='' j=''
 	local sd_ls_by_id='' ls_disk_by_id='' ls_disk_by_path='' usb_exists='' a_temp=''
 	local firewire_exists='' thunderbolt_exists='' thunderbolt_exists='' hdd_temp hdd_serial=''
+	local firmware_rev='' working_path='' block_type=''
 
 	## check for all ide type drives, non libata, only do it if hdx is in array
 	## this is now being updated for new /sys type paths, this may handle that ok too
-	if [[ -n $( grep -E 'hd[a-z]' <<< ${A_HDD_DATA[@]} ) ]];then
+	if [[ -n $( grep -Es 'hd[a-z]' <<< ${A_HDD_DATA[@]} ) ]];then
 		# remember, we're using the last array item to store the total size of disks
 		for (( i=0; i < ${#A_HDD_DATA[@]} - 1; i++ ))
 		do
 			IFS=","
 			a_temp_working=( ${A_HDD_DATA[i]} )
 			IFS="$ORIGINAL_IFS"
-			if [[ -n $( grep -E '^hd[a-z]' <<< ${a_temp_working[0]} ) ]];then
+			if [[ -z ${a_temp_working[0]/*hd[a-z]*/} ]];then
 				if [[ -e /proc/ide/${a_temp_working[0]}/model ]];then
 					a_temp_working[2]="$( remove_erroneous_chars /proc/ide/${a_temp_working[0]}/model )"
 				else
-					a_temp_working[2]="Name n/a"
+					a_temp_working[2]=''
 				fi
 				# these loops are to easily extend the cpu array created in the gawk script above with more fields per cpu.
 				for (( j=0; j < ${#a_temp_working[@]}; j++ ))
@@ -7509,23 +7559,42 @@ get_hard_drive_data_advanced()
 		log_function_data 'cat' "$FILE_SCSI"
 	fi
 	IFS="$ORIGINAL_IFS"
-
 	## then we'll loop through that array looking for matches.
-	if [[ -n $( grep -E 'sd[a-z]' <<< ${A_HDD_DATA[@]} ) ]];then
+	if [[ -n $( grep -Es 'sd[a-z]|nvme' <<< ${A_HDD_DATA[@]} ) ]];then
 		# first pack the main ls variable so we don't have to keep using ls /dev...
 		# not all systems have /dev/disk/by-id
 		ls_disk_by_id="$( ls -l /dev/disk/by-id 2>/dev/null )"
 		ls_disk_by_path="$( ls -l /dev/disk/by-path 2>/dev/null )"
 		for (( i=0; i < ${#A_HDD_DATA[@]} - 1; i++ ))
 		do
-			if [[ -n $( grep -E '^sd[a-z]' <<< ${A_HDD_DATA[$i]} ) ]];then
+			firmware_rev=''
+			hdd_temp=''
+			hdd_serial=''
+			temp_name=''
+			working_path=''
+			block_type=''
+			if [[ -z ${A_HDD_DATA[$i]/*nvme*/} ]];then
+				block_type='nvme'
+			elif [[ -z ${A_HDD_DATA[$i]/*sd[a-z]*/} ]];then
+				block_type='sdx'
+			fi
+			if [[ -n $block_type ]];then
 				IFS=","
 				a_temp_working=( ${A_HDD_DATA[$i]} )
 				IFS="$ORIGINAL_IFS"
+				if [[ $block_type == 'sdx' ]];then
+					working_path=/sys/block/${a_temp_working[0]}/device/
+				elif [[ $block_type == 'nvme' ]];then
+					# this results in:
+					# /sys/devices/pci0000:00/0000:00:03.2/0000:06:00.0/nvme/nvme0/nvme0n1
+					# but we want to go one level down so slice off trailing nvme0n1
+					working_path=$(readlink -f /sys/block/${a_temp_working[0]} 2>/dev/null )
+					working_path=${working_path%nvme*}
+				fi
 				# /sys/block/[sda,hda]/device/model
 				# this is handles the new /sys data types first
-				if [[ -e /sys/block/${a_temp_working[0]}/device/model ]];then
-					temp_name="$( remove_erroneous_chars /sys/block/${a_temp_working[0]}/device/model )"
+				if [[ -e ${working_path}model ]];then
+					temp_name="$( remove_erroneous_chars ${working_path}model )"
 					temp_name=$( cut -d '-' -f 1 <<< ${temp_name// /_} )
 				elif [[ ${#a_temp_scsi[@]} -gt 0 ]];then
 					for (( j=0; j < ${#a_temp_scsi[@]}; j++ ))
@@ -7546,15 +7615,14 @@ get_hard_drive_data_advanced()
 						fi
 					done
 				fi
-				
-				if [[ -z $temp_name ]];then
-					temp_name="Name n/a"
-				# maybe remove this from the conditional, detection of usb may not depend on the name
-				else # 
+				# I don't know identifier for thunderbolt in /dev/disk/by-id / /dev/disk/by-path
+				if [[ -n $temp_name && -n "$ls_disk_by_id" ]];then
 					usb_exists=$( grep -Em1 "usb-.*$temp_name.*${a_temp_working[0]}$" <<< "$ls_disk_by_id" )
 					firewire_exists=$( grep -Em1 "ieee1394-.*$temp_name.*${a_temp_working[0]}$" <<< "$ls_disk_by_id" )
 					# thunderbolt_exists=$( grep -Em1 "ieee1394-.*$temp_name.*${a_temp_working[0]}$" <<< "$ls_disk_by_id" )
 					# note: sometimes with wwn- numbering usb does not appear in by-id but it does in by-path
+				fi
+				if [[ -n "$ls_disk_by_path" ]];then
 					if [[ -z $usb_exists ]];then
 						usb_exists=$( grep -Em1 "usb-.*${a_temp_working[0]}$" <<< "$ls_disk_by_path" )
 					fi
@@ -7569,7 +7637,6 @@ get_hard_drive_data_advanced()
 					fi
 				fi
 				a_temp_working[2]=$temp_name
-				# these loops are to easily extend the cpu array created in the gawk script above with more fields per cpu.
 				for (( j=0; j < ${#a_temp_working[@]}; j++ ))
 				do
 					if [[ $j -gt 0 ]];then
@@ -7584,15 +7651,21 @@ get_hard_drive_data_advanced()
 				a_temp_working=( ${A_HDD_DATA[i]} )
 				# echo "a:" ${a_temp_working[@]}
 				IFS="$ORIGINAL_IFS"
-				hdd_temp=''
-				hdd_serial=''
+				
 				if [[ -n ${a_temp_working[1]} ]];then
 					hdd_temp=$( get_hdd_temp_data "/dev/${a_temp_working[0]}" )
 				fi
 				if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
-					hdd_serial=$( get_hdd_serial_number "${a_temp_working[0]}" )
+					if [[ -e ${working_path}serial ]];then
+						hdd_serial="$( remove_erroneous_chars ${working_path}serial )"
+					else
+						hdd_serial=$( get_hdd_serial_number "${a_temp_working[0]}" )
+					fi
+					if [[ -e ${working_path}firmware_rev ]];then
+						firmware_rev="$( remove_erroneous_chars ${working_path}firmware_rev )"
+					fi
 				fi
-				A_HDD_DATA[i]="${a_temp_working[0]},${a_temp_working[1]},${a_temp_working[2]},${a_temp_working[3]},$hdd_serial,$hdd_temp"
+				A_HDD_DATA[i]="${a_temp_working[0]},${a_temp_working[1]},${a_temp_working[2]},${a_temp_working[3]},$hdd_serial,$hdd_temp,$firmware_rev"
 				# echo b: ${A_HDD_DATA[i]}
 			fi
 		done
@@ -7669,7 +7742,7 @@ get_hard_drive_data_bsd()
 				if ( aDisks[aIds[key], "model"] !~ /raid/ ) {
 					workingSize = aDisks[aIds[key], "size"]/1000
 					workingSize = sprintf( "%.1fGB", workingSize )
-					print aDisks[aIds[key], "id"] "," workingSize "," aDisks[aIds[key], "model"] "," "," aDisks[aIds[key], "serial"] "," 
+					print aDisks[aIds[key], "id"] "," workingSize "," aDisks[aIds[key], "model"] "," "," aDisks[aIds[key], "serial"] ",," 
 				}
 			}
 			size = size/1000                # calculate size in GB size
@@ -7716,10 +7789,11 @@ get_hdd_serial_number()
 	get_partition_dev_data 'id'
 	
 	# lrwxrwxrwx 1 root root  9 Apr 26 09:32 scsi-SATA_ST3160827AS_5MT2HMH6 -> ../../sdc
+	# exception: ata-InnoDisk_Corp._-_mSATA_3ME3_BCA34401050060191 -> ../../sda
 	# exit on the first instance
 	hdd_serial=$( gawk '
 	/'$1'$/ {
-		serial=gensub( /^(.+)_([^_]+)$/, "\\2", 1, $9 )
+		serial=gensub( /(.+)_([^_]+)$/, "\\2", 1, $9 )
 		print serial
 		exit
 	}' <<< "$DEV_DISK_ID" )
@@ -7734,29 +7808,45 @@ get_hdd_serial_number()
 get_hdd_temp_data()
 {
 	eval $LOGFS
-	local hdd_temp='' sudo_command='' 
+	local hdd_temp='' sudo_command='' device=$1
 	
-	if [[ $B_HDDTEMP_TESTED != 'true' ]];then
-		B_HDDTEMP_TESTED='true'
-		HDDTEMP_PATH=$( type -p hddtemp )
-	fi
 	if [[ $B_SUDO_TESTED != 'true' ]];then
 		B_SUDO_TESTED='true'
 		SUDO_PATH=$( type -p sudo )
 	fi
-	
-	if [[ -n $HDDTEMP_PATH && -n $1 ]];then
-		# only use sudo if not root, -n option requires sudo -V 1.7 or greater. sudo will just error out
-		# which is the safest course here for now, otherwise that interactive sudo password thing is too annoying
-		# important: -n makes it non interactive, no prompt for password
-		if [[ $B_ROOT != 'true' && -n $SUDO_PATH ]];then
-			sudo_command='sudo -n '
+	# only use sudo if not root, -n option requires sudo -V 1.7 or greater. sudo will just error out
+	# which is the safest course here for now, otherwise that interactive sudo password thing is too annoying
+	# important: -n makes it non interactive, no prompt for password
+	if [[ $B_ROOT != 'true' && -n $SUDO_PATH ]];then
+		sudo_command='sudo -n '
+	fi
+	# try this to see if hddtemp gives result for the base name
+	if [[ -z ${device/*nvme*/} ]];then
+		if type -p nvme &>/dev/null;then
+			device=${device%n[0-9]}
+			# this will fail if regular user and no sudo present, but that's fine, it will just return null
+			hdd_temp=$(  eval $sudo_command nvme smart-log $device 2>/dev/null | gawk -F ':' '
+			BEGIN {
+				IGNORECASE=1
+			}
+			# other rows may have: Temperature sensor 1 :
+			/^temperature\s*:/ {
+				gsub(/^[[:space:]]+|[[:space:]]*C$/,"",$2)
+				print $2
+			}' )
 		fi
-		# this will fail if regular user and no sudo present, but that's fine, it will just return null
-		hdd_temp=$( eval $sudo_command $HDDTEMP_PATH -nq -u C $1 )
-		if [[ -n $hdd_temp && -n $( grep -E '^([0-9\.]+)$' <<< $hdd_temp ) ]];then
-			echo $hdd_temp
+	else
+		if [[ $B_HDDTEMP_TESTED != 'true' ]];then
+			B_HDDTEMP_TESTED='true'
+			HDDTEMP_PATH=$( type -p hddtemp )
 		fi
+		if [[ -n $HDDTEMP_PATH && -n $device ]];then
+			# this will fail if regular user and no sudo present, but that's fine, it will just return null
+			hdd_temp=$( eval $sudo_command $HDDTEMP_PATH -nq -u C $device )
+		fi
+	fi
+	if [[ -n $hdd_temp && -z ${hdd_temp//[0-9]/} ]];then
+		echo $hdd_temp
 	fi
 	eval $LOGFE
 }
@@ -8654,12 +8744,11 @@ get_networking_wan_ip_data()
 	# get ip using wget redirect to stdout. This is a clean, text only IP output url,
 	# single line only, ending in the ip address. May have to modify this in the future
 	# to handle ipv4 and ipv6 addresses but should not be necessary.
-	# awk has bad regex handling so checking it with grep -E instead
 	# ip=$( echo  2001:0db8:85a3:0000:0000:8a2e:0370:7334 | gawk  --re-interval '
 	# ip=$( wget -q -O - $WAN_IP_URL | gawk  --re-interval '
-	# this generates a direct dns based ipv4 ip address, but if opendns.com goes down, the fall
+	# this generates a direct dns based ipv4 ip address, but if opendns.com goes down, 
+	# the fall backs will still work. 
 	# note: consistently slower than domain based: dig +short +time=1 +tries=1 myip.opendns.com. A @208.67.222.222
-	# backs will still work. 
 	if [[ -n $DNSTOOL ]];then
 		ip=$( dig +short +time=1 +tries=1 myip.opendns.com @resolver1.opendns.com 2>/dev/null)
 	fi
@@ -12623,7 +12712,6 @@ print_short_data()
 		fi
 	fi
 	
-
 	#set_color_scheme 12
 	if [[ $B_IRC == 'true' ]];then
 		for i in $C1 $C2 $CN
@@ -13110,7 +13198,10 @@ print_cpu_data()
 			# note that we need to multiply by number of actual cpus here to get true cache size
 			if [[ -n ${a_cpu_working[2]} ]];then
 				if [[ -z $BSD_TYPE ]];then
-					if [[ $cpu_vendor != 'intel' ]];then
+					# AMD SOS chips appear to report full L2 cache per core
+					if [[ "${a_cpu_info[3]}" == 'amd' ]] && [[ "${a_cpu_info[4]}" == '14' || "${a_cpu_info[4]}" == '16' ]];then
+						cpu_cache=$( calculate_multicore_data "${a_cpu_working[2]}" "$cpu_physical_count"  )
+					elif [[ $cpu_vendor != 'intel' ]];then
 						cpu_cache=$( calculate_multicore_data "${a_cpu_working[2]}" "$(( $cpu_core_count * $cpu_physical_count ))"  )
 					else
 						cpu_cache=$( calculate_multicore_data "${a_cpu_working[2]}" "$cpu_physical_count"  )
@@ -13663,7 +13754,7 @@ print_hard_disk_data()
 {
 	eval $LOGFS
 	local hdd_data='' hdd_data_2='' a_hdd_working='' hdd_temp_data='' hdd_string=''
-	local hdd_serial='' dev_string='/dev/'
+	local hdd_serial='' dev_string='/dev/' firmware_rev=''
 	local dev_data='' size_data='' hdd_model='' usb_data='' hdd_name=''
 	local Line_Starter='Drives:' # inherited by print_optical_drives
 	# load A_HDD_DATA - this will also populate the full bsd disk data array values
@@ -13728,6 +13819,12 @@ print_hard_disk_data()
 							hdd_serial='N/A'
 						fi
 						hdd_serial="${C1}serial$SEP3${C2} $hdd_serial "
+						if [[ -n ${a_hdd_working[6]} ]];then
+							firmware_rev=${a_hdd_working[6]}
+							firmware_rev="${C1}firmware$SEP3${C2} $firmware_rev "
+						else
+							firmware_rev=''
+						fi
 					fi
 					dev_data="$dev_string${a_hdd_working[0]} "
 				fi
@@ -13740,7 +13837,7 @@ print_hard_disk_data()
 				hdd_name="${C1}model$SEP3${C2} $hdd_name_temp"
 				hdd_string="${C1}ID-$((i+1))$SEP3${C2} $usb_data$dev_data$hdd_name$size_data"
 				part_1_data="$hdd_model$hdd_string "
-				part_2_data="$hdd_serial$hdd_temp_data"
+				part_2_data="$hdd_serial$hdd_temp_data$firmware_rev"
 				## Forcing the capacity to print on its own row, and the first drive on its own
 				## then each disk prints on its own line, or two lines, depending on console/output width
 				if [[ $i -eq 0 ]];then
