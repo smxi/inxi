@@ -8,7 +8,7 @@ use strict;
 use warnings;
 use Net::FTP;
 
-# args: 1 - path to debugger file; 
+# args: 1 - path to file to be uploaded
 sub upload_file {
 	my ($path) = @_;
 	my ($ftp, $host, $user, $pass, $dir, $fpath, $error);
