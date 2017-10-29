@@ -18,7 +18,7 @@ development is going on.
 The main purpose for this branch is to have the ability to test 
 changes on various systems by use of the inxi -! 11 command.
 
-You can verify you are rnning the branch one version because it will
+You can verify you are running the branch one version because it will
 show -b1 after the main inxi version number, like so:
 
 2.3.40-b1
