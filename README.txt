@@ -1,6 +1,15 @@
 README for inxi - a command line system information tool
 
 =====================================================================
+If you do not want to get the full master with gz history data, which
+gets bigger every year, you can clone inxi current using the: 
+master-plain branch. 
+
+git clone https://github.com/smxi/inxi --branch master-plain --single-branch
+
+This branch does not have inxi.1.gz or inxi.tar.gz, and so does not 
+suffer from the size inflation that master has. 
+=====================================================================
 SUPPORT INFO:
 
 Do not ask for basic help that reading the inxi -h / --help menus, or 
