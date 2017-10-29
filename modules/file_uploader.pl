@@ -9,7 +9,7 @@ use warnings;
 use Net::FTP;
 
 # args: 1 - path to debugger file; 
-sub upload_debugger_data {
+sub upload_file {
 	my ($path) = @_;
 	my ($ftp, $host, $user, $pass, $dir, $fpath, $error);
 	$host = "ftp.techpatterns.com";
