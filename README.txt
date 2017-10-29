@@ -17,6 +17,13 @@ requirement, but that combination, with the lack of any real way
 to pass data, create complex arrays, etc, has always been a huge 
 headache to work with.
 
+However, unlike in 2007, when the basic logic of inxi was started,
+and Perl 6 was looming as a full replacement for Perl 5, in 2017, 
+Perl 5 is now a standalone project, and seems to have a bright 
+future, and given that 5.10 is now old enough to satisfy the basic
+run anywhere on anything option, that would be the basic perl version
+that would be used and tested against.
+
 Also, with the proper setup, inxi perl could be developed in discreet 
 modules, which would be combined to form the final inxi prior to 
 commit.
