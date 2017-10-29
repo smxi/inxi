@@ -36,3 +36,7 @@ the gawk blocks are largely directly translatable to Perl.
 But this branch will be the home for perl related inxi development.
 
 =====================================================================
+
+Clone just this branch:
+
+git clone https://github.com/smxi/inxi --branch inxi-perl --single-branch
