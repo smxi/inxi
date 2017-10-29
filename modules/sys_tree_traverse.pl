@@ -1,5 +1,9 @@
 #!/usr/bin/env perl
 
+# File: sys_tree_traverse.pl
+# Version: 1.0
+# Date 2017-10-29
+
 use File::Find;
 use strict;
 # use warnings;
