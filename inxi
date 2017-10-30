@@ -2,8 +2,8 @@
 ########################################################################
 SELF_NAME='inxi' 
 # don't quote the following, parsers grab these too
-SELF_VERSION=2.3.41
-SELF_DATE=2017-10-29
+SELF_VERSION=2.3.42
+SELF_DATE=2017-10-30
 SELF_PATCH=00
 ########################################################################
 ####  SPECIAL THANKS
@@ -1763,23 +1763,21 @@ set_man_location()
 # args: $1 - debug data type: sys|xorg|disk
 debug_data_collector()
 {
-	local xiin_app='' sys_data_file='' error='' b_run_xiin='false' b_xiin_downloaded='false'
-	local Debug_Data_Dir='' bsd_string='' xorg_d_files='' xorg_file='' a_distro_ids=''
-	local completed_gz_file='' Xiin_File='xiin.py' ftp_upload='ftp.techpatterns.com/incoming'
+	local sys_data_file='' error='' Debug_Data_Dir='' bsd_string='' 
+	local xorg_d_files='' xorg_file='' a_distro_ids=''
+	local completed_gz_file='' ftp_upload='ftp.techpatterns.com/incoming'
 	local Line='-------------------------' 
 	local start_directory=$( pwd )
-	local host='' debug_i='' root_string='' b_perl_worked='false' b_uploaded='false'
+	local host='' debug_i='' root_string='' b_traverse_worked='false' b_uploaded='false'
 	
 	if (( "$BASH" >= 4 ));then
 		host="${HOSTNAME,,}"
 	else 
 		host=$( tr '[A-Z]' '[a-z]' <<< "$HOSTNAME" )
 	fi
-	
 	if [[ $B_DEBUG_I == 'true' ]];then
 		debug_i='i'
 	fi
-	
 	if [[ -n $host ]];then
 		host=${host// /-}
 	else
@@ -1791,9 +1789,7 @@ debug_data_collector()
 	if [[ $( whoami ) == 'root' ]];then
 		root_string='-root'
 	fi
-	
 	Debug_Data_Dir="inxi$bsd_string-$host-$(date +%Y%m%d-%H%M%S)-$1$root_string" 
-	
 	if [[ $B_IRC == 'false' ]];then
 		if [[ -n $ALTERNATE_FTP ]];then
 			ftp_upload=$ALTERNATE_FTP
@@ -1809,7 +1805,6 @@ debug_data_collector()
 			echo 'Deleting previous tar.gz file...'
 			rm -f $SELF_DATA_DIR/$Debug_Data_Dir.tar.gz
 		fi
-		
 		echo 'Collecting system info: sensors, lsusb, lspci, lspci -v data, plus /proc data'
 		echo 'also checking for dmidecode data: note, you must be root to have dmidecode work.'
 		echo "Data going into: $SELF_DATA_DIR/$Debug_Data_Dir"
@@ -1854,9 +1849,7 @@ debug_data_collector()
 		# diskinfo -v <disk>
 		# fdisk <disk>
 		dmidecode &> $Debug_Data_Dir/dmidecode.txt
-		
 		get_repo_data "$SELF_DATA_DIR/$Debug_Data_Dir"
-		
 		if type -p shopt &>/dev/null;then
 			shopt -s nullglob
 			a_distro_ids=(/etc/*[-_]{release,version})
@@ -2058,7 +2051,6 @@ debug_data_collector()
 			else
 				touch $Debug_Data_Dir/xorg-absent
 			fi
-			
 			echo $GNOME_DESKTOP_SESSION_ID &> $Debug_Data_Dir/gnome-desktop-session-id.txt
 			# kde 3 id
 			echo $KDE_FULL_SESSION &> $Debug_Data_Dir/kde3-full-session.txt
@@ -2174,12 +2166,12 @@ debug_data_collector()
 		fi
 		# create the error file in case it's needed
 		if [[ $B_UPLOAD_DEBUG_DATA == 'true' || $1 == 'disk' || $1 == 'sys' || $1 == 'all' ]];then
-			touch $SELF_DATA_DIR/$Debug_Data_Dir/xiin-error.txt
+			touch $SELF_DATA_DIR/$Debug_Data_Dir/sys-dir-error.txt
 		fi
 		# note, only bash 4> supports ;;& for case, so using if/then here
 		if [[ -z $BSD_TYPE ]] && [[ $1 == 'disk' || $1 == 'sys' || $1 == 'all' ]];then
 			echo $Line
-			sys_data_file=$SELF_DATA_DIR/$Debug_Data_Dir/xiin-sys.txt
+			sys_data_file=$SELF_DATA_DIR/$Debug_Data_Dir/sys-dir-traverse.txt
 			echo "Getting file paths in /sys..."
 			ls_sys 1
 			ls_sys 2
@@ -2242,39 +2234,11 @@ debug_data_collector()
 					echo -e "ERROR: failed to generate /sys data - removing data file.\nContinuing with incomplete data collection."
 					echo "Continuing with incomplete data collection."
 					rm -f $sys_data_file
-					echo "/sys data generation failed. No data collected." >> $Debug_Data_Dir/xiin-error.txt
+					echo "/sys data generation failed. No data collected." >> $Debug_Data_Dir/sys-dir-error.txt
 				else
-					b_perl_worked='true'
+					b_traverse_worked='true'
 					echo 'Completed /sys data collection.'
 					echo -n "$sys_traverse_data" > $sys_data_file
-				fi
-			fi
-			if [[ -z "$sys_traverse_data" ]];then
-				download_xiin 'sys'
-				if [[ $? -eq 0 ]];then
-					b_run_xiin='true'
-					b_xiin_downloaded='true'
-					echo "Running $Xiin_File tool now on /sys..."
-					echo -n "Using " && python --version
-					python --version &> $Debug_Data_Dir/python-version.txt
-					python ./$Xiin_File -d /sys -f $sys_data_file
-					if [[ $? -ne 0 ]];then
-						error=$?
-						echo -e "ERROR: $Xiin_File exited with error $error - removing data file.\nContinuing with incomplete data collection."
-						rm -f $sys_data_file
-						echo "$Xiin_File data generation failed with python error $error" >> $Debug_Data_Dir/xiin-error.txt
-					fi
-				fi
-			fi
-			
-		fi
-		# has to be before gz cleanup
-		if [[ $B_UPLOAD_DEBUG_DATA == 'true' ]];then
-			if [[ $b_xiin_downloaded == 'false' && $b_perl_worked == 'false' ]];then
-				echo $Line
-				download_xiin 'upload'
-				if [[ $? -eq 0 ]];then
-					b_run_xiin='true'
 				fi
 			fi
 		fi
@@ -2307,29 +2271,13 @@ debug_data_collector()
 			echo $completed_gz_file
 			if [[ $B_UPLOAD_DEBUG_DATA == 'true' ]];then
 				echo $Line
-				if [[ $b_perl_worked == 'true' ]];then
+				if [[ $b_traverse_worked == 'true' ]];then
 					upload_debugger_data "$completed_gz_file"
 					if [[ $? -gt 0 ]];then
 						echo "Error: looks like the Perl ftp upload failed. Error number: $?"
 					else
 						b_uploaded='true'
 						echo "Hurray! Looks like the Perl ftp upload worked!"
-					fi
-				fi
-				if [[ $b_uploaded == 'false' ]];then
-					if [[ $b_run_xiin == 'true' ]];then
-						echo "Running automatic upload of data to remote server $ftp_upload now..."
-						python ./$Xiin_File --version
-						python ./$Xiin_File -u $completed_gz_file $ftp_upload
-						if [[ $? -gt 0 ]];then
-							echo $Line
-							echo "Error: looks like the Python ftp upload failed. Error number: $?"
-							# echo "The ftp upload failed. Error number: $?" >> $Debug_Data_Dir/xiin-error.txt
-						fi
-					else
-						echo 'Unable to run the automatic ftp upload because no uploaders appear to be working or available.'
-						# that has been removed at this point, so no more logging
-						# echo "Unable to run the automoatic ftp upload because of an error with the xiin download" >> $Debug_Data_Dir/xiin-error.txt
 					fi
 				fi
 			else
@@ -2342,7 +2290,7 @@ debug_data_collector()
 	fi
 	exit 0
 }
-## args: $1 - level
+## args: $1 - depth
 ls_sys()
 {
 	local files=''
@@ -2372,7 +2320,7 @@ ls_sys()
 		else if (!/^total / ) { 
 			print $0
 		} 
-	}' &> $Debug_Data_Dir/sys-level-$1.txt
+	}' &> $Debug_Data_Dir/sys-dir-depth-$1.txt
 }
 
 ## args: $1 - debugger file name
@@ -2419,67 +2367,6 @@ upload_debugger_data()
 		return 1
 	fi
 }
-# $1 - download type [sys|upload]
-download_xiin()
-{
-	local xiin_download='' xiin_url="https://github.com/smxi/inxi/raw/xiin/$Xiin_File" 
-	local downloader_error=0 download_type='uploader'
-	
-	if [[ $1 == 'sys' ]];then
-		download_type='tree traverse'
-	fi
-	touch $Debug_Data_Dir/download_xiin.txt
-	echo "download_xiin: \$1 - $1" >> $Debug_Data_Dir/download_xiin.txt
-	echo "Downloading required $download_type tool $Xiin_File..."
-	if [[ -f xiin && ! -f $Xiin_File ]];then
-		mv -f xiin $Xiin_File
-	fi
-	# -Nc is creating really weird download anomalies, so using -O instead
-	case $DOWNLOADER in
-		curl)
-			xiin_download="$( curl $NO_SSL_OPT -s $xiin_url )" || downloader_error=$?
-			;;
-		fetch)
-			xiin_download="$( fetch $NO_SSL_OPT -q -o - $xiin_url )" || downloader_error=$?
-			;;
-		ftp)
-			xiin_download="$( ftp $NO_SSL_OPT -o - $xiin_url 2>/dev/null )" || downloader_error=$?
-			;;
-		wget)
-			xiin_download="$( wget $NO_SSL_OPT -q -O - $xiin_url )" || downloader_error=$?
-			;;
-		no-downloader)
-			downloader_error=100
-			;;
-	esac
-	# if nothing got downloaded kick out error, otherwise we'll use an older version
-	if [[ $downloader_error -gt 0 && ! -f $Xiin_File ]];then
-		echo -e "ERROR: Failed to download required file: $Xiin_File\nMaybe the remote site is down or your networking is broken?"
-		if [[ $1 == 'sys' ]];then
-			echo "Continuing with incomplete data collection."
-		else
-			echo "$SELF_NAME will be unable to automatically upload the debugger data."
-		fi
-		echo "$Xiin_File download failed and no existing $Xiin_File: error: $downloader_error" >> $Debug_Data_Dir/xiin-error.txt
-		return 1
-	elif [[ -n $( grep -s '# EOF' <<< "$xiin_download" ) || -f $Xiin_File ]];then
-		if [[ -n $( grep -s '# EOF' <<< "$xiin_download" ) ]];then
-			echo "Updating $Xiin_File from remote location"
-			echo "$xiin_download" > $Xiin_File
-		else
-			echo "Using local $Xiin_File due to download failure"
-		fi
-		return 0
-	else
-		if [[ $1 == 'sys' ]];then
-			echo -e "ERROR: $Xiin_File downloaded but the program file data is corrupted.\nContinuing with incomplete data collection."
-		else
-			echo -e "ERROR: $Xiin_File downloaded but the program file data is corrupted.\nWill not be able to automatically upload debugger data file."
-		fi
-		echo "$Xiin_File downloaded but the program file data is corrupted." >> $Debug_Data_Dir/xiin-error.txt
-		return 2
-	fi
-}
 
 check_recommends_user_output()
 {
@@ -2524,7 +2411,7 @@ check_recommends_user_output()
 	echo "Gawk version: $gawk_version"
 	echo "Sed version: $sed_version"
 	echo "Sudo version: $sudo_version"
-	echo "Python version: $python_version (deprecated)"
+	echo "Python version: $python_version (legacy, no longer used)"
 	echo "Perl version: $perl_version"
 	echo $Line
 	
