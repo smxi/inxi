@@ -1,13 +1,14 @@
 #!/usr/bin/env perl
 
 # File: sys_tree_traverse.pl
-# Version: 1.0
-# Date 2017-10-29
+# Version: 1.1
+# Date 2017-10-31
 
-use File::Find;
 use strict;
-# use warnings;
-use 5.010;
+use warnings;
+use 5.008;
+use File::Find;
+
 my @content = (); 
 find( \&wanted, "/sys");
 process_data( @content );

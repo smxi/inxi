@@ -6,6 +6,7 @@
 
 use strict;
 use warnings;
+use 5.008;
 use Net::FTP;
 
 # args: 1 - path to file to be uploaded
