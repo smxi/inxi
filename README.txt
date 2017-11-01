@@ -4,7 +4,7 @@ README for heavily experimental inxi Perl version.
 Whether we ever make any progress on this is a totally open question,
 but I was sufficiently impressed switching from xiin python script
 to creating two small perl functions to do the primary /sys debugging
-actions that Perl for inxi struck me as an increasingly interessting
+actions that Perl for inxi struck me as an increasingly interesting
 idea. Plus, Perl was so comically, absurdly, fast, that I could not
 ignore it.
 
@@ -20,9 +20,12 @@ headache to work with.
 However, unlike in 2007, when the basic logic of inxi was started,
 and Perl 6 was looming as a full replacement for Perl 5, in 2017, 
 Perl 5 is now a standalone project, and seems to have a bright 
-future, and given that 5.10 is now old enough to satisfy the basic
+future, and given that 5.8 is now old enough to satisfy the basic
 run anywhere on anything option, that would be the basic perl version
-that would be used and tested against.
+that would be used and tested against. I've vacillated a bit between
+5.10 and 5.8, but after more research, I've realized there will 
+always be old Redhat servers etc out there that are running Perl 5.8,
+and there is not a huge gain to using 5.10 from what I can see.
 
 Also, with the proper setup, inxi perl could be developed in discreet 
 modules, which would be combined to form the final inxi prior to 
