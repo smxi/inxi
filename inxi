@@ -2,8 +2,8 @@
 ########################################################################
 SELF_NAME='inxi' 
 # don't quote the following, parsers grab these too
-SELF_VERSION=2.3.45
-SELF_DATE=2017-11-21
+SELF_VERSION=2.3.46
+SELF_DATE=2017-11-26
 SELF_PATCH=00
 ########################################################################
 ####  SPECIAL THANKS
@@ -61,8 +61,8 @@ SELF_PATCH=00
 ####
 ####  DEPENDENCIES
 ####  * bash >=3.0 (bash); df, readlink, stty, tr, uname, wc (coreutils);
-####    gawk (gawk); grep (grep); lspci (pciutils);
-####    ps, find (findutils)
+####    gawk (gawk); grep (grep); lspci (pciutils); ps; find (findutils);
+####    perl (Modules: [HTTP::Tiny IF NO wget/curl/fetch/ftp]; Net::FTP; File::Find);
 ####  * Also the proc filesystem should be present and mounted for Linux
 ####  * Some features, like -M and -d will not work, or will work incompletely,
 ####    if /sys is missing
@@ -290,6 +290,7 @@ B_COLOR_SCHEME_SET='false'
 B_CONSOLE_IRC='false'
 # triggers full display of cpu flags
 B_CPU_FLAGS_FULL='false'
+B_CURL='true'
 # test for dbus irc client
 B_DBUS_CLIENT='false'
 # kde dcop
@@ -303,6 +304,7 @@ B_DMIDECODE_SET='false'
 B_EXTRA_DATA='false'
 # triggered by -xx
 B_EXTRA_EXTRA_DATA='false'
+B_FETCH='true'
 B_FORCE_DMIDECODE='false'
 B_ID_SET='false'
 # override certain errors due to currupted data
@@ -381,6 +383,7 @@ B_USB_NETWORKING='false'
 # set to true here for debug logging from script start
 B_USE_LOGGING='false'
 B_UUID_SET='false'
+B_WGET='true'
 B_XORG_LOG='false'
 
 ## Directory/file exist flags; test as [[ $(boolean) ]] not [[ $boolean ]]
@@ -917,30 +920,12 @@ initialize_data()
 	else
 		error_handler 6
 	fi
-	
 	initialize_paths
-	
 	if type -p dig &>/dev/null;then
 		DNSTOOL='dig'
 	fi
 	# set downloaders. 
-	if ! type -p wget &>/dev/null;then
-		# first check for bsd stuff
-		if type -p fetch &>/dev/null;then
-			DOWNLOADER='fetch'
-			NO_SSL=' --no-verify-peer'
-		elif type -p curl &>/dev/null;then
-			DOWNLOADER='curl'
-			NO_SSL=' --insecure'
-		elif [[ $BSD_VERSION == 'openbsd' ]] && type -p ftp &>/dev/null;then
-			DOWNLOADER='ftp'
-		else
-			DOWNLOADER='no-downloader'
-		fi
-	else
-		NO_SSL=' --no-check-certificate'
-	fi
-	
+ 	set_downloader
 	if [[ -n $BSD_TYPE ]];then
 		if [[ -e $FILE_DMESG_BOOT ]];then
 			B_DMESG_BOOT_FILE='true'
@@ -1006,6 +991,30 @@ initialize_data()
 		B_ROOT='true'
 	fi
 	eval $LOGFE
+}
+set_downloader()
+{
+	# curl/wget are faster than HTTP::Tiny
+	if $B_CURL == 'true' && type -p curl &>/dev/null;then
+		DOWNLOADER='curl'
+		NO_SSL=' --insecure'
+	# wget has had some issues with not testing their code leading to -O failure
+	elif $B_WGET == 'true' && type -p wget &>/dev/null;then
+		DOWNLOADER='wget'
+		NO_SSL=' --no-check-certificate'
+	# check for bsd stuff
+	elif $B_FETCH == 'true' && type -p fetch &>/dev/null;then
+		DOWNLOADER='fetch'
+		NO_SSL=' --no-verify-peer'
+	# this is much slower than curl or wget
+	elif type -p perl &>/dev/null && perl -MHTTP::Tiny -e 1 &>/dev/null;then
+ 		DOWNLOADER='perl' # does not use ssl by default
+	elif [[ $BSD_VERSION == 'openbsd' ]] && type -p ftp &>/dev/null;then
+		DOWNLOADER='ftp'
+	else
+		DOWNLOADER='no-downloader'
+	fi
+	# echo $DOWNLOADER
 }
 
 # args: $1 - default OR override default cols max integer count
@@ -1633,6 +1642,9 @@ script_self_updater()
 		ftp)
 			file_contents="$( ftp $NO_SSL_OPT -o - $1$SELF_NAME 2>/dev/null )" || downloader_error=$?
 			;;
+		perl)
+			file_contents="$( download_file 'stdout' $1$SELF_NAME )" || downloader_error=$?
+			;;
 		wget)
 			file_contents="$( wget $NO_SSL_OPT -q -O - $1$SELF_NAME )" || downloader_error=$?
 			;;
@@ -1670,9 +1682,14 @@ script_self_updater()
 							exec $( type -p mandb ) -q 
 						fi
 					fi
-					if [[ $DOWNLOADER == 'wget' ]];then
-						wget $NO_SSL_OPT -q --spider $MAN_FILE_DOWNLOAD || downloader_man_error=$?
-					fi
+					case $DOWNLOADER in
+						perl)
+							download_file 'spider' $MAN_FILE_DOWNLOAD || downloader_man_error=$?
+							;;
+						wget)
+							wget $NO_SSL_OPT -q --spider $MAN_FILE_DOWNLOAD || downloader_man_error=$?
+							;;
+					esac
 					if [[ $downloader_man_error -eq 0 ]];then
 						if [[ $DOWNLOADER == 'wget' ]];then
 							print_screen_output "Man file download URL verified: $MAN_FILE_DOWNLOAD"
@@ -1687,6 +1704,9 @@ script_self_updater()
 								;;
 							ftp)
 								ftp $NO_SSL_OPT -o $man_file_path $MAN_FILE_DOWNLOAD 2>/dev/null || downloader_man_error=$?
+								;;
+							perl)
+								download_file 'file' $MAN_FILE_DOWNLOAD $man_file_path || downloader_man_error=$?
 								;;
 							wget)
 								wget $NO_SSL_OPT -q -O $man_file_path $MAN_FILE_DOWNLOAD || downloader_man_error=$?
@@ -1763,9 +1783,10 @@ set_man_location()
 # args: $1 - debug data type: sys|xorg|disk
 debug_data_collector()
 {
-	local sys_data_file='' error='' Debug_Data_Dir='' bsd_string='' 
+	local b_inxi='true' b_recommends='true' b_repo='true'
+	local sys_data_file='' error='' bsd_string='' sys_traverse_data=''
 	local xorg_d_files='' xorg_file='' a_distro_ids=''
-	local completed_gz_file='' ftp_upload='ftp.techpatterns.com/incoming'
+	local completed_gz_file='' Ftp_Upload='ftp.techpatterns.com/incoming'
 	local Line='-------------------------' 
 	local start_directory=$( pwd )
 	local host='' debug_i='' root_string='' b_traverse_worked='false' b_uploaded='false'
@@ -1789,25 +1810,29 @@ debug_data_collector()
 	if [[ $( whoami ) == 'root' ]];then
 		root_string='-root'
 	fi
-	Debug_Data_Dir="inxi$bsd_string-$host-$(date +%Y%m%d-%H%M%S)-$1$root_string" 
+	local Debug_Data_Dir="$SELF_NAME$bsd_string-$host-$(date +%Y%m%d-%H%M%S)-$1$root_string" 
+	local debug_gz="$Debug_Data_Dir.tar.gz"
+	
 	if [[ $B_IRC == 'false' ]];then
 		if [[ -n $ALTERNATE_FTP ]];then
-			ftp_upload=$ALTERNATE_FTP
+			Ftp_Upload=$ALTERNATE_FTP
 		fi
-		echo "Starting debugging data collection type: $1"
+		echo "Starting $SELF_NAME debugging data collection type: $1"
 		cd $SELF_DATA_DIR
 		if [[ -d $SELF_DATA_DIR/$Debug_Data_Dir ]];then
 			echo "Deleting previous $SELF_NAME debugger data directory..."
 			rm -rf $SELF_DATA_DIR/$Debug_Data_Dir
 		fi
 		mkdir $SELF_DATA_DIR/$Debug_Data_Dir
-		if [[ -f $SELF_DATA_DIR/$Debug_Data_Dir.tar.gz ]];then
+		if [[ -f $SELF_DATA_DIR/$debug_gz ]];then
 			echo 'Deleting previous tar.gz file...'
-			rm -f $SELF_DATA_DIR/$Debug_Data_Dir.tar.gz
+			rm -f $SELF_DATA_DIR/$debug_gz
 		fi
-		echo 'Collecting system info: sensors, lsusb, lspci, lspci -v data, plus /proc data'
-		echo 'also checking for dmidecode data: note, you must be root to have dmidecode work.'
 		echo "Data going into: $SELF_DATA_DIR/$Debug_Data_Dir"
+		echo 'Note: for dmidecode data you must be root.'
+		echo $Line
+		echo "Collecting system data..."
+		
 		# bsd tools http://cb.vu/unixtoolbox.xhtml
 		# freebsd
 		if type -p pciconf &>/dev/null;then
@@ -1849,19 +1874,6 @@ debug_data_collector()
 		# diskinfo -v <disk>
 		# fdisk <disk>
 		dmidecode &> $Debug_Data_Dir/dmidecode.txt
-		get_repo_data "$SELF_DATA_DIR/$Debug_Data_Dir"
-		if type -p shopt &>/dev/null;then
-			shopt -s nullglob
-			a_distro_ids=(/etc/*[-_]{release,version})
-			shopt -u nullglob
-			echo ${a_distro_ids[@]} &> $Debug_Data_Dir/etc-distro-files.txt
-			for distro_file in ${a_distro_ids[@]} /etc/issue
-			do
-				if [[ -f $distro_file ]];then
-					cat $distro_file &> $Debug_Data_Dir/distro-file${distro_file//\//-}
-				fi
-			done
-		fi
 		dmesg &> $Debug_Data_Dir/dmesg.txt
 		lscpu &> $Debug_Data_Dir/lscpu.txt
 		lspci &> $Debug_Data_Dir/lspci.txt
@@ -1879,12 +1891,9 @@ debug_data_collector()
 		else
 			touch $Debug_Data_Dir/hciconfig-absent
 		fi
-		ls /sys &> $Debug_Data_Dir/ls-sys.txt
 		ps aux &> $Debug_Data_Dir/ps-aux.txt
 		ps -e &> $Debug_Data_Dir/ps-e.txt
 		ps -p 1 &> $Debug_Data_Dir/ps-p-1.txt
-		echo "Collecting init data..."
-		cat /proc/1/comm &> $Debug_Data_Dir/proc-1-comm.txt
 		runlevel &> $Debug_Data_Dir/runlevel.txt
 		if type -p rc-status &>/dev/null;then
 			rc-status -a &> $Debug_Data_Dir/rc-status-a.txt
@@ -1910,17 +1919,6 @@ debug_data_collector()
 		else
 			touch $Debug_Data_Dir/strings-absent
 		fi
-		local id_dir='/sys/class/power_supply/' 
-		local ids=$( ls $id_dir 2>/dev/null )
-		if [[ -n $ids ]];then
-			for batid in $ids 
-			do
-				cat $id_dir$batid'/uevent' &> $Debug_Data_Dir/sys-power-supply-$batid.txt
-			done
-		else
-			touch $Debug_Data_Dir/sys-power-supply-none
-		fi
-		
 		# leaving this commented out to remind that some systems do not
 		# support strings --version, but will just simply hang at that command
 		# which you can duplicate by simply typing: strings then hitting enter, you will get hang.
@@ -1930,12 +1928,6 @@ debug_data_collector()
 			nvidia-smi -q -x &> $Debug_Data_Dir/nvidia-smi-xq.txt
 		else
 			touch $Debug_Data_Dir/nvidia-smi-absent
-		fi
-		head -n 1 /proc/asound/card*/codec* &> $Debug_Data_Dir/proc-asound-card-codec.txt
-		if [[ -f /proc/version ]];then
-			cat /proc/version &> $Debug_Data_Dir/proc-version.txt
-		else
-			touch $Debug_Data_Dir/proc-version-absent
 		fi
 		echo $CC &> $Debug_Data_Dir/cc-content.txt
 		ls /usr/bin/gcc* &> $Debug_Data_Dir/gcc-sys-versions.txt
@@ -1954,10 +1946,45 @@ debug_data_collector()
 		else
 			touch $Debug_Data_Dir/systemd-detect-virt-absent
 		fi
+		echo "Collecting Perl module data..."
 		if type -p perl &>/dev/null;then
-			perl -MFile::Find=find -MFile::Spec::Functions -Tlwe 'find { wanted => sub { print canonpath $_ if /\.pm\z/ }, no_chdir => 1 }, @INC' &> $Debug_Data_Dir/perl-modules.txt
+			perl -MFile::Find=find -MFile::Spec::Functions -Tlwe 'find { wanted => sub { print canonpath $_ if /\.pm\z/ }, no_chdir => 1 }, @INC' 2>/dev/null | sort &> $Debug_Data_Dir/perl-modules.txt
 		else
 			touch $Debug_Data_Dir/perl-missing.txt
+		fi
+		echo "Collecting system file data..."
+		ls /sys &> $Debug_Data_Dir/ls-sys.txt
+		cat /proc/1/comm &> $Debug_Data_Dir/proc-1-comm.txt
+		if [[ $b_repo == 'true' ]];then
+			get_repo_data "$SELF_DATA_DIR/$Debug_Data_Dir"
+		fi
+		head -n 1 /proc/asound/card*/codec* &> $Debug_Data_Dir/proc-asound-card-codec.txt
+		if [[ -f /proc/version ]];then
+			cat /proc/version &> $Debug_Data_Dir/proc-version.txt
+		else
+			touch $Debug_Data_Dir/proc-version-absent
+		fi
+		local id_dir='/sys/class/power_supply/' 
+		local ids=$( ls $id_dir 2>/dev/null )
+		if [[ -n $ids ]];then
+			for batid in $ids 
+			do
+				cat $id_dir$batid'/uevent' &> $Debug_Data_Dir/sys-power-supply-$batid.txt
+			done
+		else
+			touch $Debug_Data_Dir/sys-power-supply-none
+		fi
+		if type -p shopt &>/dev/null;then
+			shopt -s nullglob
+			a_distro_ids=(/etc/*[-_]{release,version})
+			shopt -u nullglob
+			echo ${a_distro_ids[@]} &> $Debug_Data_Dir/etc-distro-files.txt
+			for distro_file in ${a_distro_ids[@]} /etc/issue
+			do
+				if [[ -f $distro_file ]];then
+					cat $distro_file &> $Debug_Data_Dir/distro-file${distro_file//\//-}
+				fi
+			done
 		fi
 		cat /etc/src.conf &> $Debug_Data_Dir/bsd-etc-src-conf.txt
 		cat /etc/make.conf &> $Debug_Data_Dir/bsd-etc-make-conf.txt
@@ -1977,8 +2004,9 @@ debug_data_collector()
 		echo $XDG_CONFIG_DIRS &> $Debug_Data_Dir/xdg_config_dirs.txt
 		echo $XDG_DATA_HOME &> $Debug_Data_Dir/xdg_data_home.txt
 		echo $XDG_DATA_DIRS &> $Debug_Data_Dir/xdg_data_dirs.txt
-		
-		check_recommends_user_output &> $Debug_Data_Dir/check-recommends-user-output.txt
+		if [[ $b_recommends == 'true' ]];then
+			check_recommends_user_output &> $Debug_Data_Dir/check-recommends-user-output.txt
+		fi
 		if [[ $1 == 'xorg' || $1 == 'all' ]];then
 			if [[ $B_RUNNING_IN_DISPLAY != 'true' ]];then
 				echo 'Warning: only some of the data collection can occur if you are not in X'
@@ -1988,7 +2016,7 @@ debug_data_collector()
 				echo 'Warning: only some of the data collection can occur if you are running as Root user'
 				touch $Debug_Data_Dir/warning-root-user
 			fi
-			echo 'Collecting Xorg log and xorg.conf files'
+			echo 'Collecting Xorg log and xorg.conf files...'
 			if [[ -e $FILE_XORG_LOG ]];then
 				cat $FILE_XORG_LOG &> $Debug_Data_Dir/xorg-log-file.txt
 			else
@@ -2180,55 +2208,7 @@ debug_data_collector()
 			if type -p perl &>/dev/null;then
 				echo "Parsing /sys files..."
 				echo -n "Using Perl: " && perl --version | grep -oE 'v[0-9.]+'
-				sys_traverse_data="$( perl -e '
-				use File::Find;
-				use strict;
-				# use warnings;
-				use 5.008;
-				my @content = (); 
-				find( \&wanted, "/sys");
-				process_data( @content );
-				sub wanted {
-					return if -d; # not directory
-					return unless -e; # Must exist
-					return unless -r; # Must be readable
-					return unless -f; # Must be file
-					# note: a new file in 4.11 /sys can hang this, it is /parameter/ then
-					# a few variables. Since inxi does not need to see that file, we will
-					# not use it. Also do not need . files or __ starting files
-					return if $File::Find::name =~ /\/(\.[a-z]|__|parameters\/|debug\/)/;
-					# comment this one out if you experience hangs or if 
-					# we discover syntax of foreign language characters
-					# Must be ascii like. This is questionable and might require further
-					# investigation, it is removing some characters that we might want
-					return unless -T; 
-					# print $File::Find::name . "\n";
-					push @content, $File::Find::name;
-					return;
-				}
-				sub process_data {
-					my $result = "";
-					my $row = "";
-					my $fh;
-					my $data="";
-					my $sep="";
-					# no sorts, we want the order it comes in
-					# @content = sort @content; 
-					foreach (@content){
-						$data="";
-						$sep="";
-						open($fh, "<$_");
-						while ($row = <$fh>) {
-							chomp $row;
-							$data .= $sep . "\"" . $row . "\"";
-							$sep=", ";
-						}
-						$result .= "$_:[$data]\n";
-						# print "$_:[$data]\n"
-					}
-					# print scalar @content . "\n";
-					print "$result";
-				} ' )"
+				sys_traverse_data="$( sys_traverse_data )"
 				if [[ -z "$sys_traverse_data" ]];then
 					echo -e "ERROR: failed to generate /sys data - removing data file.\nContinuing with incomplete data collection."
 					echo "Continuing with incomplete data collection."
@@ -2241,37 +2221,40 @@ debug_data_collector()
 				fi
 			fi
 		fi
-		echo $Line
-		echo "Creating $SELF_NAME output file now. This can take a few seconds..."
-		echo "Starting $SELF_NAME from: $start_directory"
-		cd $start_directory
-		$SELF_PATH/$SELF_NAME -F${debug_i}Rfrploudmxxx -c 0 -@ 8 -y 120 > $SELF_DATA_DIR/$Debug_Data_Dir/inxi-F${debug_i}Rfrploudmxxxy120.txt
-		cp $LOG_FILE $SELF_DATA_DIR/$Debug_Data_Dir
-		if [[ -f $SELF_DATA_DIR/$Debug_Data_Dir.tar.gz ]];then
-			echo "Found and removing previous tar.gz data file: $Debug_Data_Dir.tar.gz"
-			rm -f $SELF_DATA_DIR/$Debug_Data_Dir.tar.gz
+		if [[ $b_inxi == 'true' ]];then
+			echo $Line
+			echo "Creating $SELF_NAME output file now. This can take a few seconds..."
+			echo "Starting $SELF_NAME from: $start_directory"
+			cd $start_directory
+			$SELF_PATH/$SELF_NAME -F${debug_i}Rfrploudmxxx -c 0 -@ 8 -y 120 > $SELF_DATA_DIR/$Debug_Data_Dir/inxi-F${debug_i}Rfrploudmxxxy120.txt
+			cp $LOG_FILE $SELF_DATA_DIR/$Debug_Data_Dir
+		elif type -p inxi &>/dev/null;then
+			echo $Line
+			echo "Creating basic inxi output file..."
+			inxi -Fxxx > $Debug_Data_Dir/inxi-Fxxx.txt
+		else 
+			touch $Debug_Data_Dir/inxi-absent.txt
 		fi
 		cd $SELF_DATA_DIR
-		echo 'Creating tar.gz compressed file of this material now. Contents:'
 		echo $Line
-		tar -cvzf $Debug_Data_Dir.tar.gz $Debug_Data_Dir
-		echo $Line
+		echo 'Creating tar.gz compressed file of this material...'
+		tar -czf $debug_gz $Debug_Data_Dir
 		echo 'Cleaning up leftovers...'
 		rm -rf $Debug_Data_Dir
 		echo 'Testing gzip file integrity...'
-		gzip -t $Debug_Data_Dir.tar.gz
+		gzip -t $debug_gz
 		if [[ $? -gt 0 ]];then
 			echo 'Data in gz is corrupted, removing gzip file, try running data collector again.'
-			rm -f $Debug_Data_Dir.tar.gz
+			rm -f $debug_gz
 			echo "Data in gz is corrupted, removed gzip file" >> $Debug_Data_Dir/gzip-error.txt
 		else
 			echo 'All done, you can find your data gzipped directory here:'
-			completed_gz_file=$SELF_DATA_DIR/$Debug_Data_Dir.tar.gz
+			completed_gz_file=$SELF_DATA_DIR/$debug_gz
 			echo $completed_gz_file
 			if [[ $B_UPLOAD_DEBUG_DATA == 'true' ]];then
 				echo $Line
 				if [[ $b_traverse_worked == 'true' ]];then
-					upload_debugger_data "$completed_gz_file"
+					upload_debugger_data "$completed_gz_file" "$Ftp_Upload"
 					if [[ $? -gt 0 ]];then
 						echo "Error: looks like the Perl ftp upload failed. Error number: $?"
 					else
@@ -2288,6 +2271,59 @@ debug_data_collector()
 		echo 'This feature only available in console or shell client! Exiting now.'
 	fi
 	exit 0
+}
+sys_traverse_data()
+{
+	local sys_traverse_data="$( perl -e '
+	use File::Find;
+	use strict;
+	# use warnings;
+	use 5.008;
+	my @content = (); 
+	find( \&wanted, "/sys");
+	process_data( @content );
+	sub wanted {
+		return if -d; # not directory
+		return unless -e; # Must exist
+		return unless -r; # Must be readable
+		return unless -f; # Must be file
+		# note: a new file in 4.11 /sys can hang this, it is /parameter/ then
+		# a few variables. Since inxi does not need to see that file, we will
+		# not use it. Also do not need . files or __ starting files
+		return if $File::Find::name =~ /\/(\.[a-z]|__|parameters\/|debug\/)/;
+		# comment this one out if you experience hangs or if 
+		# we discover syntax of foreign language characters
+		# Must be ascii like. This is questionable and might require further
+		# investigation, it is removing some characters that we might want
+		return unless -T; 
+		# print $File::Find::name . "\n";
+		push @content, $File::Find::name;
+		return;
+	}
+	sub process_data {
+		my $result = "";
+		my $row = "";
+		my $fh;
+		my $data="";
+		my $sep="";
+		# no sorts, we want the order it comes in
+		# @content = sort @content; 
+		foreach (@content){
+			$data="";
+			$sep="";
+			open($fh, "<$_");
+			while ($row = <$fh>) {
+				chomp $row;
+				$data .= $sep . "\"" . $row . "\"";
+				$sep=", ";
+			}
+			$result .= "$_:[$data]\n";
+			# print "$_:[$data]\n"
+		}
+		# print scalar @content . "\n";
+		print "$result";
+	} ' )"
+	echo "$sys_traverse_data"
 }
 sys_tree()
 {
@@ -2336,7 +2372,7 @@ ls_sys()
 	}' &> $Debug_Data_Dir/sys-ls-$1.txt
 }
 
-## args: $1 - debugger file name
+## args: $1 - debugger file name; $2 - ftp destination [does not work]
 upload_debugger_data()
 {
 	local result='' debugger_file=$1 
@@ -2371,7 +2407,7 @@ upload_debugger_data()
 	$ftp->quit;
 	print "Uploaded file $fpath.\n";
 	print $ftp->message;
-	' $debugger_file )" 
+	' $debugger_file  )" 
 	
 	echo "$result"
 	if [[ "$result" == *Goodbye* ]];then
@@ -2380,21 +2416,64 @@ upload_debugger_data()
 		return 1
 	fi
 }
+download_file()
+{
+	local retvalue=0
+	local data=$( perl -e 'use strict;
+	use warnings;
+	use 5.008;
+	use HTTP::Tiny;
+	sub get_file {
+		my ($type, $url, $file) = @_;
+		my $response = HTTP::Tiny->new->get($url);
+		my $return = 0;
+		my $debug = 0;
+		my $fh;
+		
+		if ($response->{success} == 0 ){
+			# print "Failed to connect to server/file!\n";
+			$return = 1;
+		}
+		else {
+			if ( $debug ){
+				print "$response->{success}\n";
+				print "$response->{status} $response->{reason}\n";
+				while (my ($key, $value) = each %{$response->{headers}}) {
+					for (ref $value eq "ARRAY" ? @$value : $value) {
+						print "$key: $_\n";
+					}
+				}
+			}
+			if ( $type eq "stdout" || $type eq "ua-stdout" ){
+				print "$response->{content}" if length $response->{content};
+			}
+			elsif ($type eq "spider"){
+				# do nothing, just use the return value
+			}
+			elsif ($type eq "file"){
+				open($fh, ">", $file);
+				print $fh $response->{content};
+				close $fh;
+			}
+		}
+		return $return;
+	}
+	get_file($ARGV[0],$ARGV[1],$ARGV[2]);' "$1" "$2" "$3" )
+	retvalue=$?
+	echo "$data"
+	return $retvalue
+}
+#download_file 'stdout' 'https://smxi.org/ip' '';echo $?; exit
 
 check_recommends_user_output()
 {
 	local Line=$LINE1
 	local gawk_version='N/A' sed_version='N/A' sudo_version='N/A' python_version='N/A'
-	local downloaders_bsd='' perl_version='N/A'
+	local perl_version='N/A'
 	
 	if [[ $B_IRC == 'true' ]];then
 		print_screen_output "Sorry, you can't run this option in an IRC client."
 		exit 1
-	fi
-	if [[ -n $BSD_TYPE ]];then
-		downloaders_bsd='
-		fetch:BSD-only~BSD-only~BSD-only~:-i_wan_ip;-w/-W;-U/-!_[11-15]_(BSDs)
-		ftp:ftp-OpenBSD-only~ftp-OpenBSD-only~ftp-OpenBSD-only~:-i_wan_ip;-w/-W;-U/-!_[11-15]_(OpenBSD_only)'
 	fi
 	initialize_paths
 	print_lines_basic "0" "" "$SELF_NAME will now begin checking for the programs it needs to operate. First a check of the main languages and tools $SELF_NAME uses. Python is only for debugging data uploads unless Perl is missing."
@@ -2472,15 +2551,23 @@ check_recommends_items()
 {
 	local item='' item_list='' item_string='' missing_items='' missing_string=''
 	local package='' application='' feature='' type='' starter='' finisher=''
-	local package_deb='' package_pacman='' package_rpm='' 
+	local package_deb='' package_pacman='' package_rpm='' downloaders_bsd='' 
 	local print_string='' separator='' width=56
 	local required_dirs='/proc /sys'
+	
+	if [[ -n $BSD_TYPE ]];then
+		downloaders_bsd='fetch:BSD-only~BSD-only~BSD-only~:-i_wan_ip;-w/-W;-U/-!_[11-15]_[OR]
+		ftp:ftp-OpenBSD-only~ftp-OpenBSD-only~ftp-OpenBSD-only~:-i_wan_ip;-w/-W;-U/-!_[11-15]_[OR]'
+	fi
 	# package-owner: 1 - debian/ubuntu; 2 - arch; 3 - yum/rpm
 	# pardus: pisi sf -q /usr/bin/package
+	# https://wiki.archlinux.org/index.php/Perl_Policy
+	# https://www.debian.org/doc/packaging-manuals/perl-policy/index.html
 	local required_apps='
 	df:coreutils~coreutils~coreutils~:partition_data 
 	gawk:gawk~gawk~gawk~:core_tool
 	grep:grep~grep~grep~:string_search 
+	perl:perl~perl~perl~:debugger_uploader;_debugger_/sys_traverse
 	lspci:pciutils~pciutils~pciutils~:hardware_data 
 	ps:procps~procps~procps~:process_data 
 	readlink:coreutils~coreutils~coreutils~: 
@@ -2496,7 +2583,7 @@ check_recommends_items()
 	xrandr:x11-xserver-utils~xrandr~x11-server-utils~:-G_single_screen_resolution
 	'
 	local recommended_apps='
-	dig:dnsutils~dnsutils~bind-utils:-i_first_wlan_ip_default_test
+	dig:dnsutils~dnsutils~bind-utils:-i_wlan_IP_(Default)
 	dmidecode:dmidecode~dmidecode~dmidecode~:-M_if_no_sys_machine_data;_-m_memory 
 	file:file~file~file~:-o_unmounted_file_system
 	hciconfig:bluez~bluez-utils~bluez-utils~:-n_-i_bluetooth_data-dev_only-not_used
@@ -2514,9 +2601,10 @@ check_recommends_items()
 	'
 	
 	local downloaders="
-	wget:wget~wget~wget~:-i_wan_ip;-w/-W;-U/-!_[11-15]_(if_supported)
-	curl:curl~curl~curl~:-i_wan_ip;-w/-W;-U/-!_[11-15]_(if_supported)
+	curl:curl~curl~curl~:-i_wan_ip;-w/-W;-U/-!_[11-15]_[Default|OR]
+	wget:wget~wget~wget~:-i_wan_ip;-w/-W;-U/-!_[11-15]_[OR]
 	$downloaders_bsd
+	perl:perl~perl~perl~:-i_wan_ip;-w/-W;-U/-!_[11-15]_[Module_HTTP::Tiny]
 	"
 	local recommended_dirs='
 	/sys/class/dmi/id:-M_system,_motherboard,_bios
@@ -2539,7 +2627,6 @@ check_recommends_items()
 	$FILE_SCSI:-D_Advanced_hard_disk_data_[used_rarely]
 	$FILE_XORG_LOG:-G_graphics_driver_load_status
 	"
-	
 	if [[ -n $COLS_INNER ]];then
 		if [[ $COLS_INNER -ge 90 ]];then
 			width=${#LINE1} # match width of $LINE1
@@ -2547,7 +2634,6 @@ check_recommends_items()
 			width=$(( $COLS_INNER - 11 ))
 		fi
 	fi
-	
 	case $1 in
 		downloaders)
 			item_list=$downloaders
@@ -2620,8 +2706,8 @@ check_recommends_items()
 			application=$( cut -d ':' -f 1 <<< $item )
 			package=$( cut -d ':' -f 2 <<< $item )
 			location=$( type -p $application )
-			if [[ $( awk -F ":" '{print NF-1}' <<< $item ) -eq 2 ]];then
-				feature=$( cut -d ':' -f 3 <<< $item )
+			if [[ $( awk -F ":" '{print NF-1}' <<< $item ) -ge 2 ]];then
+				feature=$( cut -d ':' -f 3-6 <<< $item )
 			else
 				feature=''
 			fi
@@ -3156,6 +3242,24 @@ get_parameters()
 						B_SHOW_DISPLAY_DATA='true'
 						B_RUNNING_IN_DISPLAY='true'
 						;;
+					41)
+						B_CURL='false'
+						set_downloader
+						;;
+					42)
+						B_FETCH='false'
+						set_downloader
+						;;
+					43)
+						B_WGET='false'
+						set_downloader
+						;;
+					44)
+						B_CURL='false'
+						B_FETCH='false'
+						B_WGET='false'
+						set_downloader
+						;;
 					ftp*)
 						ALTERNATE_FTP="$OPTARG"
 						;;
@@ -3347,6 +3451,10 @@ show_options()
 	print_lines_basic "1" "-! 33" "Forces use of dmidecode data instead of /sys where relevant (-M)."
 	print_lines_basic "1" "-! 34" "Skips SSL certificate checks for all downloader activies (wget/fetch/curl only). Must go before other options."
 	print_lines_basic "1" "-! 40" "Will try to get display data out of X. Default gets it from display :0. If you use this format: -! 40:1 it would get it from display 1 instead, or any display you specify as long as there is no space between -! 40 and the :[display-number]."
+	print_lines_basic "1" "-! 41" "Bypass curl as a downloader option."
+	print_lines_basic "1" "-! 42" "Bypass fetch as a downloader option."
+	print_lines_basic "1" "-! 43" "Bypass wget as a downloader option."
+	print_lines_basic "1" "-! 44" "Bypass curl, fetch, and wget as a downloader options. Forces Perl if HTTP::Tiny present."
 	
 	if [[ $1 == 'full' ]];then
 		print_screen_output " "
@@ -8662,6 +8770,12 @@ get_networking_wan_ip_data()
 			ftp)
 				ip_data="$( ftp $NO_SSL_OPT -o - $WAN_IP_URL 2>/dev/null )" || downloader_error=$?
 				;;
+			perl)
+				if [[ -n $( grep 'smxi.org' <<< $WAN_IP_URL ) ]];then
+					ua="s-tools/inxi-ip"
+				fi
+				ip_data="$( download_file 'ua-stdout' $WAN_IP_URL $ua )" || downloader_man_error=$?
+				;;
 			wget)
 				if [[ -n $( grep 'smxi.org' <<< $WAN_IP_URL ) ]];then
 					ua="-U s-tools/inxi-ip"
@@ -12035,6 +12149,9 @@ get_weather_data()
 				ftp)
 					location_data="$( ftp $NO_SSL_OPT -o - $location_site 2>/dev/null )" || downloader_error=$?
 					;;
+				perl)
+					location_data="$( download_file 'stdout' $location_site )" || downloader_error=$?
+					;;
 				wget)
 					location_data="$( wget $NO_SSL_OPT -t 1 -T $DL_TIMEOUT -q -O - $location_site )" || downloader_error=$?
 					;;
@@ -12171,6 +12288,9 @@ get_weather_data()
 					;;
 				ftp)
 					weather_data="$( ftp $NO_SSL_OPT -o - $weather_feed"$location" 2>/dev/null )" || downloader_error=$?
+					;;
+				perl)
+					weather_data="$( download_file 'stdout' "$weather_feed$location" )" || downloader_error=$?
 					;;
 				wget)
 					weather_data="$( wget $NO_SSL_OPT -t 1 -T $DL_TIMEOUT -q -O - $weather_feed"$location" )" || downloader_error=$?
