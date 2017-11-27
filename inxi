@@ -2,8 +2,8 @@
 ########################################################################
 SELF_NAME='inxi' 
 # don't quote the following, parsers grab these too
-SELF_VERSION=2.3.47
-SELF_DATE=2017-11-26
+SELF_VERSION=2.3.48
+SELF_DATE=2017-11-27
 SELF_PATCH=00
 ########################################################################
 ####  SPECIAL THANKS
@@ -685,8 +685,13 @@ USB_NETWORK_SEARCH="$USB_NETWORK_SEARCH|Actiontec.*Wireless|Actiontec.*Network|A
 USB_NETWORK_SEARCH="$USB_NETWORK_SEARCH|050d:935b|0bda:8189|0bda:8197"
 
 ########################################################################
-#### MAIN: Where it all begins
+#### STARTUP
 ########################################################################
+
+#### -------------------------------------------------------------------
+#### MAIN
+#### -------------------------------------------------------------------
+
 main()
 {
 	# This must be set first so log paths are present when logging starts.
@@ -827,7 +832,7 @@ main()
 	
 	# all the pre-start stuff is in place now
 	B_SCRIPT_UP='true'
-	script_debugger "Debugger: $SELF_NAME is up and running..."
+	self_debugger "Debugger: $SELF_NAME is up and running..."
 	
 	# then create the output
 	print_it_out
@@ -838,52 +843,91 @@ main()
 	exit 0
 }
 
-set_user_paths()
+#### -------------------------------------------------------------------
+#### INITIALIZE
+#### -------------------------------------------------------------------
+
+# No args taken.
+check_recommended_apps()
 {
-	local b_conf='false' b_data='false'
-	
-	if [[ -n $XDG_CONFIG_HOME ]];then
-		SELF_CONFIG_DIR=$XDG_CONFIG_HOME
-		b_conf=true
-	elif [[ -d $HOME/.config ]];then
-		SELF_CONFIG_DIR=$HOME/.config
-		b_conf=true
-	else 
-		SELF_CONFIG_DIR="$HOME/.$SELF_NAME"
+	eval $LOGFS
+	local bash_array_test=( "one" "two" )
+
+	# check for array ability of bash, this is only good for the warning at this time
+	# the boolean could be used later
+	# bash version 2.05b is used in DSL
+	# bash version 3.0 is used in Puppy Linux; it has a known array bug <reference to be placed here>
+	# versions older than 3.1 don't handle arrays
+	# distro's using below 2.05b are unknown, released in 2002
+	if [[ ${bash_array_test[1]} -eq "two" ]];then
+		B_BASH_ARRAY='true'
+	else
+		self_debugger "Suggestion: update to Bash v3.1 for optimal inxi output"
 	fi
-	if [[ -n $XDG_DATA_HOME ]];then
-		SELF_DATA_DIR=$XDG_DATA_HOME/$SELF_NAME
-		b_data=true
-	elif [[ -d $HOME/.local/share ]];then
-		SELF_DATA_DIR=$HOME/.local/share/$SELF_NAME
-		b_data=true
-	else 
-		SELF_DATA_DIR="$HOME/.$SELF_NAME"
+	# test for a few apps that bsds may not have after initial tests
+	if type -p lspci &>/dev/null;then
+		B_LSPCI='true'
 	fi
-	# note, this used to be created/checked in specific instance, but we'll just do it
-	# universally so it's done at script start.
-	if [[ ! -d $SELF_DATA_DIR ]];then
-		mkdir $SELF_DATA_DIR
+	if [[ -n $BSD_TYPE ]];then
+		if type -p sysctl &>/dev/null;then
+			B_SYSCTL='true'
+		fi
+		if type -p pciconf &>/dev/null;then
+			B_PCICONF='true'
+		fi
 	fi
-	
-	if [[ $b_conf == 'true' && -f $HOME/.$SELF_NAME/$SELF_NAME.conf ]];then
-		mv -f $HOME/.$SELF_NAME/$SELF_NAME.conf $SELF_CONFIG_DIR
-		echo "Moved $SELF_NAME.conf from $HOME/.$SELF_NAME to $SELF_CONFIG_DIR"
+	# now setting qdbus/dcop for first run, some systems can have both by the way
+	if type -p qdbus &>/dev/null;then
+		B_QDBUS='true'
 	fi
-	if [[ $b_data == 'true' && -d $HOME/.$SELF_NAME ]];then
-		mv -f $HOME/.$SELF_NAME/* $SELF_DATA_DIR
-		rm -Rf $HOME/.$SELF_NAME
-		echo "Moved data dir $HOME/.$SELF_NAME to $SELF_DATA_DIR"
+	if type -p dcop &>/dev/null;then
+		B_DCOP='true'
 	fi
-	
-	LOG_FILE=$SELF_DATA_DIR/$LOG_FILE
-	LOG_FILE_1=$SELF_DATA_DIR/$LOG_FILE_1
-	LOG_FILE_2=$SELF_DATA_DIR/$LOG_FILE_2
+	eval $LOGFE
 }
 
-#### -------------------------------------------------------------------
-#### basic tests: set script data, booleans, PATH, version numbers
-#### -------------------------------------------------------------------
+# Determine if any of the absolutely necessary tools are absent
+# No args taken.
+check_required_apps()
+{
+	eval $LOGFS
+	local app_name=''
+	# bc removed from deps for now
+	local depends="df gawk grep ps readlink tr uname wc"
+	
+	if [[ -z $BSD_TYPE  ]];then
+		depends="$depends lspci"
+	elif [[ $BSD_TYPE == 'bsd' ]];then
+		depends="$depends sysctl"
+		# debian-bsd has lspci but you must be root to run it
+	elif [[ $BSD_TYPE == 'debian-bsd' ]];then
+		depends="$depends sysctl lspci"
+	fi
+	# no need to add xprop because it will just give N/A if not there, but if we expand use of xprop,
+	# should add that here as a test, then use the B_SHOW_DISPLAY_DATA flag to trigger the tests in de function
+	local x_apps="xrandr xdpyinfo glxinfo" 
+
+	if [[ $B_RUNNING_IN_DISPLAY == 'true' ]];then
+		for app_name in $x_apps
+		do
+			if ! type -p $app_name &>/dev/null;then
+				self_debugger "Resuming in non X mode: $app_name not found. For package install advice run: $SELF_NAME --recommends"
+				B_SHOW_DISPLAY_DATA='false'
+				break
+			fi
+		done
+	fi
+
+	app_name=''
+
+	for app_name in $depends
+	do
+		if ! type -p $app_name &>/dev/null;then
+			error_handler 5 "$app_name"
+		fi
+	done
+	eval $LOGFE
+}
 
 # Set PATH data so we can access all programs as user. Set BAN lists.
 # initialize some boleans, these directories are used throughout the script
@@ -992,29 +1036,102 @@ initialize_data()
 	fi
 	eval $LOGFE
 }
-set_downloader()
+
+initialize_paths()
 {
-	# curl/wget are faster than HTTP::Tiny
-	if $B_CURL == 'true' && type -p curl &>/dev/null;then
-		DOWNLOADER='curl'
-		NO_SSL=' --insecure'
-	# wget has had some issues with not testing their code leading to -O failure
-	elif $B_WGET == 'true' && type -p wget &>/dev/null;then
-		DOWNLOADER='wget'
-		NO_SSL=' --no-check-certificate'
-	# check for bsd stuff
-	elif $B_FETCH == 'true' && type -p fetch &>/dev/null;then
-		DOWNLOADER='fetch'
-		NO_SSL=' --no-verify-peer'
-	# this is much slower than curl or wget
-	elif type -p perl &>/dev/null && perl -MHTTP::Tiny -e 1 &>/dev/null;then
- 		DOWNLOADER='perl' # does not use ssl by default
-	elif [[ $BSD_VERSION == 'openbsd' ]] && type -p ftp &>/dev/null;then
-		DOWNLOADER='ftp'
-	else
-		DOWNLOADER='no-downloader'
+	local path='' added_path='' b_path_found='' sys_path=''
+	# Extra path variable to make execute failures less likely, merged below
+	local extra_paths="/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:/opt/local/bin"
+	
+	# this needs to be set here because various options call the parent initialize function directly.
+	SELF_PATH=$( dirname "$0" )
+	# Fallback paths put into $extra_paths; This might, among others, help on gentoo.
+	# Now, create a difference of $PATH and $extra_paths and add that to $PATH:
+	IFS=":"
+	for path in $extra_paths
+	do
+		b_path_found='false'
+		for sys_path in $PATH
+		do
+			if [[ $path == $sys_path ]];then
+				b_path_found='true'
+			fi
+		done
+		if [[ $b_path_found == 'false' ]];then
+			added_path="$added_path:$path"
+		fi
+	done
+
+	IFS="$ORIGINAL_IFS"
+	PATH="$PATH$added_path"
+	# echo "PATH='$PATH'"
+	##/bin/sh -c 'echo "PATH in subshell=\"$PATH\""'
+}
+
+# arg: $1 - version number: main/patch/date
+parse_version_data()
+{
+	# note, this is only now used for self updater function
+	case $1 in
+		date)
+			SELF_DATE=$( gawk -F '=' '
+			/^SELF_DATE/ {
+				print $NF
+				exit
+			}' "$SELF_PATH/$SELF_NAME" )
+			;;
+		main)
+			SELF_VERSION=$( gawk -F '=' '
+			/^SELF_VERSION/ {
+				print $NF
+				exit
+			}' "$SELF_PATH/$SELF_NAME" )
+			;;
+		patch)
+			SELF_PATCH=$( gawk -F '=' '
+			/^SELF_PATCH/ {
+				print $NF
+				exit
+			}' "$SELF_PATH/$SELF_NAME" )
+			;;
+	esac
+}
+
+# Set the colorscheme
+# args: $1 = <scheme number>|<"none">
+set_color_scheme()
+{
+	eval $LOGFS
+	local i='' a_output_colors='' a_color_codes=''
+
+	if [[ $1 -ge ${#A_COLOR_SCHEMES[@]} ]];then
+		set -- 1
 	fi
-	# echo $DOWNLOADER
+	# Set a global variable to allow checking for chosen scheme later
+	SCHEME="$1"
+	if [[ $B_IRC == 'false' ]];then
+		a_color_codes=( $ANSI_COLORS )
+	else
+		a_color_codes=( $IRC_COLORS )
+	fi
+	for (( i=0; i < ${#A_COLORS_AVAILABLE[@]}; i++ ))
+	do
+		eval "${A_COLORS_AVAILABLE[i]}=\"${a_color_codes[i]}\""
+	done
+	IFS=","
+	a_output_colors=( ${A_COLOR_SCHEMES[$1]} )
+	IFS="$ORIGINAL_IFS"
+	# then assign the colors globally
+	C1="${!a_output_colors[0]}"
+	C2="${!a_output_colors[1]}"
+	CN="${!a_output_colors[2]}"
+	# ((COLOR_SCHEME++)) ## note: why is this? ##
+	# handle some explicit colors that are used for no color 0
+	if [[ $SCHEME -eq 0 ]];then
+		NORMAL=''
+		RED=''
+	fi
+	eval $LOGFE
 }
 
 # args: $1 - default OR override default cols max integer count
@@ -1067,208 +1184,81 @@ set_display_width()
 	# echo cm: $COLS_MAX ci: $COLS_INNER
 }
 
-# arg: $1 - version number: main/patch/date
-parse_version_data()
+set_downloader()
 {
-	# note, this is only now used for self updater function
-	case $1 in
-		date)
-			SELF_DATE=$( gawk -F '=' '
-			/^SELF_DATE/ {
-				print $NF
-				exit
-			}' "$SELF_PATH/$SELF_NAME" )
-			;;
-		main)
-			SELF_VERSION=$( gawk -F '=' '
-			/^SELF_VERSION/ {
-				print $NF
-				exit
-			}' "$SELF_PATH/$SELF_NAME" )
-			;;
-		patch)
-			SELF_PATCH=$( gawk -F '=' '
-			/^SELF_PATCH/ {
-				print $NF
-				exit
-			}' "$SELF_PATH/$SELF_NAME" )
-			;;
-	esac
-}
-
-initialize_paths()
-{
-	local path='' added_path='' b_path_found='' sys_path=''
-	# Extra path variable to make execute failures less likely, merged below
-	local extra_paths="/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:/opt/local/bin"
-	
-	# this needs to be set here because various options call the parent initialize function directly.
-	SELF_PATH=$( dirname "$0" )
-	# Fallback paths put into $extra_paths; This might, among others, help on gentoo.
-	# Now, create a difference of $PATH and $extra_paths and add that to $PATH:
-	IFS=":"
-	for path in $extra_paths
-	do
-		b_path_found='false'
-		for sys_path in $PATH
-		do
-			if [[ $path == $sys_path ]];then
-				b_path_found='true'
-			fi
-		done
-		if [[ $b_path_found == 'false' ]];then
-			added_path="$added_path:$path"
-		fi
-	done
-
-	IFS="$ORIGINAL_IFS"
-	PATH="$PATH$added_path"
-	# echo "PATH='$PATH'"
-	##/bin/sh -c 'echo "PATH in subshell=\"$PATH\""'
-}
-
-# No args taken.
-check_recommended_apps()
-{
-	eval $LOGFS
-	local bash_array_test=( "one" "two" )
-
-	# check for array ability of bash, this is only good for the warning at this time
-	# the boolean could be used later
-	# bash version 2.05b is used in DSL
-	# bash version 3.0 is used in Puppy Linux; it has a known array bug <reference to be placed here>
-	# versions older than 3.1 don't handle arrays
-	# distro's using below 2.05b are unknown, released in 2002
-	if [[ ${bash_array_test[1]} -eq "two" ]];then
-		B_BASH_ARRAY='true'
+	# curl/wget are faster than HTTP::Tiny
+	if $B_CURL == 'true' && type -p curl &>/dev/null;then
+		DOWNLOADER='curl'
+		NO_SSL=' --insecure'
+	# wget has had some issues with not testing their code leading to -O failure
+	elif $B_WGET == 'true' && type -p wget &>/dev/null;then
+		DOWNLOADER='wget'
+		NO_SSL=' --no-check-certificate'
+	# check for bsd stuff
+	elif $B_FETCH == 'true' && type -p fetch &>/dev/null;then
+		DOWNLOADER='fetch'
+		NO_SSL=' --no-verify-peer'
+	# this is much slower than curl or wget
+	elif type -p perl &>/dev/null && perl -MHTTP::Tiny -e 1 &>/dev/null;then
+ 		DOWNLOADER='perl' # does not use ssl by default
+	elif [[ $BSD_VERSION == 'openbsd' ]] && type -p ftp &>/dev/null;then
+		DOWNLOADER='ftp'
 	else
-		script_debugger "Suggestion: update to Bash v3.1 for optimal inxi output"
+		DOWNLOADER='no-downloader'
 	fi
-	# test for a few apps that bsds may not have after initial tests
-	if type -p lspci &>/dev/null;then
-		B_LSPCI='true'
-	fi
-	if [[ -n $BSD_TYPE ]];then
-		if type -p sysctl &>/dev/null;then
-			B_SYSCTL='true'
-		fi
-		if type -p pciconf &>/dev/null;then
-			B_PCICONF='true'
-		fi
-	fi
-	# now setting qdbus/dcop for first run, some systems can have both by the way
-	if type -p qdbus &>/dev/null;then
-		B_QDBUS='true'
-	fi
-	if type -p dcop &>/dev/null;then
-		B_DCOP='true'
-	fi
-	eval $LOGFE
+	# echo $DOWNLOADER
 }
 
-# Determine if any of the absolutely necessary tools are absent
-# No args taken.
-check_required_apps()
+set_user_paths()
 {
-	eval $LOGFS
-	local app_name=''
-	# bc removed from deps for now
-	local depends="df gawk grep ps readlink tr uname wc"
+	local b_conf='false' b_data='false'
 	
-	if [[ -z $BSD_TYPE  ]];then
-		depends="$depends lspci"
-	elif [[ $BSD_TYPE == 'bsd' ]];then
-		depends="$depends sysctl"
-		# debian-bsd has lspci but you must be root to run it
-	elif [[ $BSD_TYPE == 'debian-bsd' ]];then
-		depends="$depends sysctl lspci"
+	if [[ -n $XDG_CONFIG_HOME ]];then
+		SELF_CONFIG_DIR=$XDG_CONFIG_HOME
+		b_conf=true
+	elif [[ -d $HOME/.config ]];then
+		SELF_CONFIG_DIR=$HOME/.config
+		b_conf=true
+	else 
+		SELF_CONFIG_DIR="$HOME/.$SELF_NAME"
 	fi
-	# no need to add xprop because it will just give N/A if not there, but if we expand use of xprop,
-	# should add that here as a test, then use the B_SHOW_DISPLAY_DATA flag to trigger the tests in de function
-	local x_apps="xrandr xdpyinfo glxinfo" 
-
-	if [[ $B_RUNNING_IN_DISPLAY == 'true' ]];then
-		for app_name in $x_apps
-		do
-			if ! type -p $app_name &>/dev/null;then
-				script_debugger "Resuming in non X mode: $app_name not found. For package install advice run: $SELF_NAME --recommends"
-				B_SHOW_DISPLAY_DATA='false'
-				break
-			fi
-		done
+	if [[ -n $XDG_DATA_HOME ]];then
+		SELF_DATA_DIR=$XDG_DATA_HOME/$SELF_NAME
+		b_data=true
+	elif [[ -d $HOME/.local/share ]];then
+		SELF_DATA_DIR=$HOME/.local/share/$SELF_NAME
+		b_data=true
+	else 
+		SELF_DATA_DIR="$HOME/.$SELF_NAME"
 	fi
-
-	app_name=''
-
-	for app_name in $depends
-	do
-		if ! type -p $app_name &>/dev/null;then
-			error_handler 5 "$app_name"
-		fi
-	done
-	eval $LOGFE
+	# note, this used to be created/checked in specific instance, but we'll just do it
+	# universally so it's done at script start.
+	if [[ ! -d $SELF_DATA_DIR ]];then
+		mkdir $SELF_DATA_DIR
+	fi
+	
+	if [[ $b_conf == 'true' && -f $HOME/.$SELF_NAME/$SELF_NAME.conf ]];then
+		mv -f $HOME/.$SELF_NAME/$SELF_NAME.conf $SELF_CONFIG_DIR
+		echo "Moved $SELF_NAME.conf from $HOME/.$SELF_NAME to $SELF_CONFIG_DIR"
+	fi
+	if [[ $b_data == 'true' && -d $HOME/.$SELF_NAME ]];then
+		mv -f $HOME/.$SELF_NAME/* $SELF_DATA_DIR
+		rm -Rf $HOME/.$SELF_NAME
+		echo "Moved data dir $HOME/.$SELF_NAME to $SELF_DATA_DIR"
+	fi
+	
+	LOG_FILE=$SELF_DATA_DIR/$LOG_FILE
+	LOG_FILE_1=$SELF_DATA_DIR/$LOG_FILE_1
+	LOG_FILE_2=$SELF_DATA_DIR/$LOG_FILE_2
 }
 
-## note: this is now running inside each gawk sequence directly to avoid exiting gawk
-## looping in bash through arrays, then re-entering gawk to clean up, then writing back to array
-## in bash. For now I'll leave this here because there's still some interesting stuff to get re methods
-# Enforce boilerplate and buzzword filters
-# args: $1 - BAN_LIST_NORMAL/BAN_LIST_CPU; $2 - string to sanitize
-sanitize_characters()
-{
-	eval $LOGFS
-	# Cannot use strong quotes to unquote a string with pipes in it!
-	# bash will interpret the |'s as usual and try to run a subshell!
-	# Using weak quotes instead, or use '"..."'
-	echo "$2" | gawk "
-	BEGIN {
-		IGNORECASE=1
-	}
-	{
-		gsub(/${!1}/,\"\")
-		gsub(/ [ ]+/,\" \")    ## ([ ]+) with (space)
-		gsub(/^ +| +$/,\"\")   ## (pipe char) with (nothing)
-		print                  ## prints (returns) cleaned input
-	}"
-	eval $LOGFE
-}
+########################################################################
+#### UTILITIES
+########################################################################
 
-# Set the colorscheme
-# args: $1 = <scheme number>|<"none">
-set_color_scheme()
-{
-	eval $LOGFS
-	local i='' a_output_colors='' a_color_codes=''
-
-	if [[ $1 -ge ${#A_COLOR_SCHEMES[@]} ]];then
-		set -- 1
-	fi
-	# Set a global variable to allow checking for chosen scheme later
-	SCHEME="$1"
-	if [[ $B_IRC == 'false' ]];then
-		a_color_codes=( $ANSI_COLORS )
-	else
-		a_color_codes=( $IRC_COLORS )
-	fi
-	for (( i=0; i < ${#A_COLORS_AVAILABLE[@]}; i++ ))
-	do
-		eval "${A_COLORS_AVAILABLE[i]}=\"${a_color_codes[i]}\""
-	done
-	IFS=","
-	a_output_colors=( ${A_COLOR_SCHEMES[$1]} )
-	IFS="$ORIGINAL_IFS"
-	# then assign the colors globally
-	C1="${!a_output_colors[0]}"
-	C2="${!a_output_colors[1]}"
-	CN="${!a_output_colors[2]}"
-	# ((COLOR_SCHEME++)) ## note: why is this? ##
-	# handle some explicit colors that are used for no color 0
-	if [[ $SCHEME -eq 0 ]];then
-		NORMAL=''
-		RED=''
-	fi
-	eval $LOGFE
-}
+#### -------------------------------------------------------------------
+#### COLOR SELECTOR
+#### -------------------------------------------------------------------
 
 select_default_color_scheme()
 {
@@ -1420,365 +1410,12 @@ select_default_color_scheme()
 		print_screen_output "97 (irc, X, in terminal - $irc_x_term); 98 (irc, no X - $irc_console); 99 (global - $global)"
 		exit 0
 	fi
-
 	eval $LOGFE
 }
-
-########################################################################
-#### UTILITY FUNCTIONS
-########################################################################
 
 #### -------------------------------------------------------------------
-#### error handler, debugger, script updater
+#### DEBUGGERS
 #### -------------------------------------------------------------------
-
-# Error handling
-# args: $1 - error number; $2 - optional, extra information; $3 - optional extra info
-error_handler()
-{
-	eval $LOGFS
-	local error_message=''
-
-	# assemble the error message
-	case $1 in
-		2)	error_message="large flood danger, debug buffer full!"
-			;;
-		3)	error_message="unsupported color scheme number: $2"
-			;;
-		4)	error_message="unsupported verbosity level: $2"
-			;;
-		5)	error_message="dependency not met: $2 not found in path.\nFor distribution installation package names and missing apps information, run: $SELF_NAME --recommends"
-			;;
-		6)	error_message="/proc not found! Quitting..."
-			;;
-		7)	error_message="One of the options you entered in your script parameters: $2\nis not supported.The option may require extra arguments to work.\nFor supported options (and their arguments), check the help menu: $SELF_NAME -h"
-			;;
-		8)	error_message="the self-updater failed, $DOWNLOADER exited with error: $2.\nYou probably need to be root.\nHint, to make for easy updates without being root, do: chown <user name> $SELF_PATH/$SELF_NAME"
-			;;
-		9)	error_message="unsupported debugging level: $2"
-			;;
-		10)
-			error_message="the alt download url you provided: $2\nappears to be wrong, download aborted. Please note, the url\nneeds to end in /, without $SELF_NAME, like: http://yoursite.com/downloads/"
-			;;
-		11)
-			error_message="unsupported testing option argument: -! $2"
-			;;
-		12)
-			error_message="the git branch download url: $2\nappears to be empty currently. Make sure there is an actual source branch version\nactive before you try this again. Check https://github.com/smxi/inxi\nto verify the branch status."
-			;;
-		13)
-			error_message="The -t option requires the following extra arguments (no spaces between letters/numbers):\nc m cm [required], for example: -t cm8 OR -t cm OR -t c9\n(numbers: 1-20, > 5 throttled to 5 in irc clients) You entered: $2"
-			;;
-		14)
-			error_message="failed to write correctly downloaded $SELF_NAME to location $SELF_PATH.\nThis usually means you don't have permission to write to that location, maybe you need to be root?\nThe operation failed with error: $2"
-			;;
-		15)
-			error_message="failed set execute permissions on $SELF_NAME at location $SELF_PATH.\nThis usually means you don't have permission to set permissions on files there, maybe you need to be root?\nThe operation failed with error: $2"
-			;;
-		16)
-			error_message="$SELF_NAME downloaded but the file data is corrupted. Purged data and using current version."
-			;;
-		17)
-			error_message="All $SELF_NAME self updater features have been disabled by the distribution\npackage maintainer. This includes the option you used: $2"
-			;;
-		18)
-			error_message="The argument you provided for $2 does not have supported syntax.\nPlease use the following formatting:\n$3"
-			;;
-		19)
-			error_message="The option $2 has been deprecated. Please use $3 instead.\nSee -h for instructions and syntax."
-			;;
-		20)
-			error_message="The option you selected has been deprecated. $2\nSee the -h (help) menu for currently supported options."
-			;;
-		21)
-			error_message="Width option requires an integer value of 80 or more.\nYou entered: $2"
-			;;
-		*)	error_message="error unknown: $@"
-			set -- 99
-			;;
-	esac
-	# then print it and exit
-	print_screen_output "Error $1: $error_message"
-	eval $LOGFE
-	exit $1
-}
-
-# prior to script up set, pack the data into an array
-# then we'll print it out later.
-# args: $1 - $@ debugging string text
-script_debugger()
-{
-	eval $LOGFS
-	if [[ $B_SCRIPT_UP == 'true' ]];then
-		# only return if debugger is off and no pre start up errors have occurred
-		if [[ $DEBUG -eq 0 && $DEBUG_BUFFER_INDEX -eq 0 ]];then
-			return 0
-		# print out the stored debugging information if errors occurred
-		elif [[ $DEBUG_BUFFER_INDEX -gt 0 ]];then
-			for (( DEBUG_BUFFER_INDEX=0; DEBUG_BUFFER_INDEX < ${#A_DEBUG_BUFFER[@]}; DEBUG_BUFFER_INDEX++ ))
-			do
-				print_screen_output "${A_DEBUG_BUFFER[$DEBUG_BUFFER_INDEX]}"
-			done
-			DEBUG_BUFFER_INDEX=0
-		fi
-		# or print out normal debugger messages if debugger is on
-		if [[ $DEBUG -gt 0 ]];then
-			print_screen_output "$1"
-		fi
-	else
-		if [[ $B_DEBUG_FLOOD == 'true' && $DEBUG_BUFFER_INDEX -gt 10 ]];then
-			error_handler 2
-		# this case stores the data for later printout, will print out only
-		# at B_SCRIPT_UP == 'true' if array index > 0
-		else
-			A_DEBUG_BUFFER[$DEBUG_BUFFER_INDEX]="$1"
-			# increment count for next pre script up debugging error
-			(( DEBUG_BUFFER_INDEX++ ))
-		fi
-	fi
-	eval $LOGFE
-}
-
-# NOTE: no logging available until get_parameters is run, since that's what sets logging
-# in order to trigger earlier logging manually set B_USE_LOGGING to true in top variables.
-# $1 alone: logs data; $2 with or without $3 logs func start/end.
-# $1 type (fs/fe/cat/raw) or logged data; [$2 is $FUNCNAME; [$3 - function args]]
-log_function_data()
-{
-	if [ "$B_USE_LOGGING" == 'true' ];then
-		local logged_data='' spacer='   ' line='----------------------------------------'
-		case $1 in
-			fs)
-				logged_data="Function: $2 - Primary: Start"
-				if [ -n "$3" ];then
-					logged_data="$logged_data\n${spacer}Args: $3"
-				fi
-				spacer=''
-				;;
-			fe)
-				logged_data="Function: $2 - Primary: End"
-				spacer=''
-				;;
-			cat)
-				if [[ $B_LOG_FULL_DATA == 'true' ]];then
-					for cat_file in $2
-					do
-						logged_data="$logged_data\n$line\nFull file data: cat $cat_file\n\n$( cat $cat_file )\n$line\n"
-					done
-					spacer=''
-				fi
-				;;
-			raw)
-				if [[ $B_LOG_FULL_DATA == 'true' ]];then
-					logged_data="\n$line\nRaw system data:\n\n$2\n$line\n"
-					spacer=''
-				fi
-				;;
-			*)
-				logged_data="$1"
-				;;
-		esac
-		# Create any required line breaks and strip out escape color code, either ansi (case 1)or irc (case 2).
-		# This pattern doesn't work for irc colors, if we need that someone can figure it out
-		if [[ -n $logged_data ]];then
-			if [[ $B_LOG_COLORS != 'true' ]];then
-				echo -e "${spacer}$logged_data" | sed $SED_RX 's/\x1b\[[0-9]{1,2}(;[0-9]{1,2}){0,2}m//g' >> $LOG_FILE
-			else
-				echo -e "${spacer}$logged_data" >> $LOG_FILE
-			fi
-		fi
-	fi
-}
-
-# called in the initial -@ 10 script args setting so we can get logging as soon as possible
-# will have max 3 files, inxi.log, inxi.1.log, inxi.2.log
-create_rotate_logfiles()
-{
-	# do the rotation if logfile exists
-	if [[ -f $LOG_FILE ]];then
-		# copy if present second to third
-		if [[ -f $LOG_FILE_1 ]];then
-			mv -f $LOG_FILE_1 $LOG_FILE_2
-		fi
-		# then copy initial to second
-		mv -f $LOG_FILE $LOG_FILE_1
-	fi
-	# now create the logfile
-	touch $LOG_FILE
-	# and echo the start data
-	echo "=========================================================" >> $LOG_FILE
-	echo "START $SELF_NAME LOGGING:"                               >> $LOG_FILE
-	echo "Script started: $( date +%Y-%m-%d-%H:%M:%S )"              >> $LOG_FILE
-	echo "=========================================================" >> $LOG_FILE
-}
-
-# args: $1 - download url, not including file name; $2 - string to print out
-# $3 - update type option
-# note that $1 must end in / to properly construct the url path
-script_self_updater()
-{
-	eval $LOGFS
-	set_downloader
-	local downloader_error=0 file_contents='' downloader_man_error=0 
-	local man_file_location=$( set_man_location )
-	local man_file_path="$man_file_location/inxi.1.gz" 
-	
-	if [[ $B_IRC == 'true' ]];then
-		print_screen_output "Sorry, you can't run the $SELF_NAME self updater option (-$3) in an IRC client."
-		exit 1
-	fi
-	print_screen_output "Starting $SELF_NAME self updater."
-	print_screen_output "Currently running $SELF_NAME version number: $SELF_VERSION"
-	print_screen_output "Current version patch number: $SELF_PATCH"
-	print_screen_output "Current version release date: $SELF_DATE"
-	print_screen_output "Updating $SELF_NAME in $SELF_PATH using $2 as download source..."
-	case $DOWNLOADER in
-		curl)
-			file_contents="$( curl $NO_SSL_OPT -L -s $1$SELF_NAME )" || downloader_error=$?
-			;;
-		fetch)
-			file_contents="$( fetch $NO_SSL_OPT -q -o - $1$SELF_NAME )" || downloader_error=$?
-			;;
-		ftp)
-			file_contents="$( ftp $NO_SSL_OPT -o - $1$SELF_NAME 2>/dev/null )" || downloader_error=$?
-			;;
-		perl)
-			file_contents="$( download_file 'stdout' $1$SELF_NAME )" || downloader_error=$?
-			;;
-		wget)
-			file_contents="$( wget $NO_SSL_OPT -q -O - $1$SELF_NAME )" || downloader_error=$?
-			;;
-		no-downloader)
-			downloader_error=1
-			;;
-	esac
-
-	# then do the actual download
-	if [[  $downloader_error -eq 0 ]];then
-		# make sure the whole file got downloaded and is in the variable
-		if [[ -n $( grep '###\*\*EOF\*\*###' <<< "$file_contents" ) ]];then
-			echo "$file_contents" > $SELF_PATH/$SELF_NAME || error_handler 14 "$?"
-			chmod +x $SELF_PATH/$SELF_NAME || error_handler 15 "$?"
-			parse_version_data 'main'
-			parse_version_data 'patch'
-			parse_version_data 'date'
-			print_screen_output "Successfully updated to $2 version: $SELF_VERSION"
-			print_screen_output "New $2 version patch number: $SELF_PATCH"
-			print_screen_output "New $2 version release date: $SELF_DATE"
-			print_screen_output "To run the new version, just start $SELF_NAME again."
-			print_screen_output "----------------------------------------"
-			print_screen_output "Starting download of man page file now."
-			if [[ $B_MAN == 'false' ]];then
-				print_screen_output "Skipping man download because branch version is being used."
-			elif [[ ! -d $man_file_location ]];then
-				print_screen_output "The required man directory was not detected on your system, unable to continue: $man_file_location"
-			else
-				if [[ $B_ROOT == 'true' ]];then
-					print_screen_output "Checking Man page download URL..."
-					if [[ -f /usr/share/man/man8/inxi.8.gz ]];then
-						print_screen_output "Updating man page location to man1."
-						mv -f /usr/share/man/man8/inxi.8.gz $man_file_location/inxi.1.gz 
-						if type -p mandb &>/dev/null;then
-							exec $( type -p mandb ) -q 
-						fi
-					fi
-					case $DOWNLOADER in
-						perl)
-							download_file 'spider' $MAN_FILE_DOWNLOAD || downloader_man_error=$?
-							;;
-						wget)
-							wget $NO_SSL_OPT -q --spider $MAN_FILE_DOWNLOAD || downloader_man_error=$?
-							;;
-					esac
-					if [[ $downloader_man_error -eq 0 ]];then
-						if [[ $DOWNLOADER == 'wget' ]];then
-							print_screen_output "Man file download URL verified: $MAN_FILE_DOWNLOAD"
-						fi
-						print_screen_output "Downloading Man page file now."
-						case $DOWNLOADER in
-							curl)
-								curl $NO_SSL_OPT -L -s -o $man_file_path $MAN_FILE_DOWNLOAD || downloader_man_error=$?
-								;;
-							fetch)
-								fetch $NO_SSL_OPT -q -o $man_file_path $MAN_FILE_DOWNLOAD || downloader_man_error=$?
-								;;
-							ftp)
-								ftp $NO_SSL_OPT -o $man_file_path $MAN_FILE_DOWNLOAD 2>/dev/null || downloader_man_error=$?
-								;;
-							perl)
-								download_file 'file' $MAN_FILE_DOWNLOAD $man_file_path || downloader_man_error=$?
-								;;
-							wget)
-								wget $NO_SSL_OPT -q -O $man_file_path $MAN_FILE_DOWNLOAD || downloader_man_error=$?
-								;;
-							no-downloader)
-								downloader_man_error=1
-								;;
-						esac
-						if [[ $downloader_man_error -gt 0 ]];then
-							print_screen_output "Oh no! Something went wrong downloading the Man gz file at: $MAN_FILE_DOWNLOAD"
-							print_screen_output "Check the error messages for what happened. Error: $downloader_man_error"
-						else
-							print_screen_output "Download/install of man page successful. Check to make sure it works: man inxi"
-						fi
-					else
-						print_screen_output "Man file download URL failed, unable to continue: $MAN_FILE_DOWNLOAD"
-					fi
-				else
-					print_screen_output "Updating / Installing the Man page requires root user, writing to: $man_file_location"
-					print_screen_output "If you want the man page, you'll have to run $SELF_NAME -$3 as root."
-				fi
-			fi
-			exit 0
-		else
-			error_handler 16
-		fi
-	# now run the error handlers on any wget failure
-	else
-		if [[ $2 == 'source server' ]];then
-			error_handler 8 "$downloader_error"
-		elif [[ $2 == 'alt server' ]];then
-			error_handler 10 "$1"
-		else
-			error_handler 12 "$1"
-		fi
-	fi
-	eval $LOGFS
-}
-
-set_man_location()
-{
-	local location='' default_location='/usr/share/man/man1' 
-	local man_paths=$(man --path 2>/dev/null) man_local='/usr/local/share/man'
-	local b_use_local=false
-	
-	if [[ -n "$man_paths" && -n $( grep $man_local <<< "$man_paths" ) ]];then
-		b_use_local=true
-	fi
-	
-	# for distro installs, existing inxi man manual installs, do nothing
-	if [[ -f $default_location/inxi.1.gz ]];then
-		location=$default_location
-	else
-		if [[ $b_use_local == 'true' ]];then
-			if [[ ! -d $man_local/man1 ]];then
-				mkdir $man_local/man1
-			fi
-			location="$man_local/man1"
-		fi
-# 		print_screen_output "Updating man page location to man1."
-# 		mv -f /usr/share/man/man1/inxi.1.gz /usr/local/share/man/man1/inxi.1.gz 
-# 		if type -p mandb &>/dev/null;then
-# 			exec $( type -p mandb ) -q 
-# 		fi
-	fi
-	
-	if [[ -z "$location" ]];then
-		location=$default_location
-	fi
-	
-	echo $location
-}
 
 # args: $1 - debug data type: sys|xorg|disk
 debug_data_collector()
@@ -1789,7 +1426,11 @@ debug_data_collector()
 	local completed_gz_file='' Ftp_Upload='ftp.techpatterns.com/incoming'
 	local Line='-------------------------' 
 	local start_directory=$( pwd )
-	local host='' debug_i='' root_string='' b_traverse_worked='false' b_uploaded='false'
+	local host='' debug_i='' root_string='' b_uploaded='false'
+	
+	if [[ -n $ALTERNATE_FTP ]];then
+		Ftp_Upload=$ALTERNATE_FTP
+	fi
 	
 	if (( "$BASH" >= 4 ));then
 		host="${HOSTNAME,,}"
@@ -1810,13 +1451,11 @@ debug_data_collector()
 	if [[ $( whoami ) == 'root' ]];then
 		root_string='-root'
 	fi
+	
 	local Debug_Data_Dir="$SELF_NAME$bsd_string-$host-$(date +%Y%m%d-%H%M%S)-$1$root_string" 
 	local debug_gz="$Debug_Data_Dir.tar.gz"
 	
 	if [[ $B_IRC == 'false' ]];then
-		if [[ -n $ALTERNATE_FTP ]];then
-			Ftp_Upload=$ALTERNATE_FTP
-		fi
 		echo "Starting $SELF_NAME debugging data collection type: $1"
 		cd $SELF_DATA_DIR
 		if [[ -d $SELF_DATA_DIR/$Debug_Data_Dir ]];then
@@ -1953,7 +1592,6 @@ debug_data_collector()
 			touch $Debug_Data_Dir/perl-missing.txt
 		fi
 		echo "Collecting system file data..."
-		ls /sys &> $Debug_Data_Dir/ls-sys.txt
 		cat /proc/1/comm &> $Debug_Data_Dir/proc-1-comm.txt
 		if [[ $b_repo == 'true' ]];then
 			get_repo_data "$SELF_DATA_DIR/$Debug_Data_Dir"
@@ -2196,6 +1834,8 @@ debug_data_collector()
 		if [[ $B_UPLOAD_DEBUG_DATA == 'true' || $1 == 'disk' || $1 == 'sys' || $1 == 'all' ]];then
 			touch $SELF_DATA_DIR/$Debug_Data_Dir/sys-dir-error.txt
 		fi
+		# just on the off chance bsds start having a fake /sys
+		ls /sys &> $Debug_Data_Dir/sys-ls-1.txt
 		# note, only bash 4> supports ;;& for case, so using if/then here
 		if [[ -z $BSD_TYPE ]] && [[ $1 == 'disk' || $1 == 'sys' || $1 == 'all' ]];then
 			echo $Line
@@ -2215,7 +1855,6 @@ debug_data_collector()
 					rm -f $sys_data_file
 					echo "/sys data generation failed. No data collected." >> $Debug_Data_Dir/sys-dir-error.txt
 				else
-					b_traverse_worked='true'
 					echo 'Completed /sys data collection.'
 					echo -n "$sys_traverse_data" > $sys_data_file
 				fi
@@ -2253,14 +1892,12 @@ debug_data_collector()
 			echo $completed_gz_file
 			if [[ $B_UPLOAD_DEBUG_DATA == 'true' ]];then
 				echo $Line
-				if [[ $b_traverse_worked == 'true' ]];then
-					upload_debugger_data "$completed_gz_file" "$Ftp_Upload"
-					if [[ $? -gt 0 ]];then
-						echo "Error: looks like the Perl ftp upload failed. Error number: $?"
-					else
-						b_uploaded='true'
-						echo "Hurray! Looks like the Perl ftp upload worked!"
-					fi
+				upload_debugger_data "$completed_gz_file" "$Ftp_Upload"
+				if [[ $? -gt 0 ]];then
+					echo "Error: looks like the Perl ftp upload failed. Error number: $?"
+				else
+					b_uploaded='true'
+					echo "Hurray! Looks like the Perl ftp upload worked!"
 				fi
 			else
 				echo 'You can upload this here using most file managers: ftp.techpatterns.com/incoming'
@@ -2272,6 +1909,76 @@ debug_data_collector()
 	fi
 	exit 0
 }
+
+## args: $1 - depth
+ls_sys()
+{
+	local files=''
+	case $1 in
+		1)files='/sys/';;
+		2)files='/sys/*/';;
+		3)files='/sys/*/*/';;
+		4)files='/sys/*/*/*/';; # this should be enough for most use cases
+		5)files='/sys/*/*/*/*/';; # very large file, shows best shortcuts though
+		6)files='/sys/*/*/*/*/*/';; # slows down too much, too big, can cause ls error
+		7)files='/sys/*/*/*/*/*/*/';; # impossibly big, will fail
+	esac
+	ls -l $files 2>/dev/null | awk '{ 
+		if (NF > 7) {
+			if ($1 ~/^d/){
+				f="d - "
+			}
+			else if ($1 ~/^l/){
+				f="l - "
+			}
+			else {
+				f="f - "
+			}
+			# includes -> target for symbolic link if present
+			print "\t" f $9 " "  $10 " " $11
+		} 
+		else if (!/^total / ) { 
+			print $0
+		} 
+	}' &> $Debug_Data_Dir/sys-ls-$1.txt
+}
+
+# prior to script up set, pack the data into an array
+# then we'll print it out later.
+# args: $1 - $@ debugging string text
+self_debugger()
+{
+	eval $LOGFS
+	if [[ $B_SCRIPT_UP == 'true' ]];then
+		# only return if debugger is off and no pre start up errors have occurred
+		if [[ $DEBUG -eq 0 && $DEBUG_BUFFER_INDEX -eq 0 ]];then
+			return 0
+		# print out the stored debugging information if errors occurred
+		elif [[ $DEBUG_BUFFER_INDEX -gt 0 ]];then
+			for (( DEBUG_BUFFER_INDEX=0; DEBUG_BUFFER_INDEX < ${#A_DEBUG_BUFFER[@]}; DEBUG_BUFFER_INDEX++ ))
+			do
+				print_screen_output "${A_DEBUG_BUFFER[$DEBUG_BUFFER_INDEX]}"
+			done
+			DEBUG_BUFFER_INDEX=0
+		fi
+		# or print out normal debugger messages if debugger is on
+		if [[ $DEBUG -gt 0 ]];then
+			print_screen_output "$1"
+		fi
+	else
+		if [[ $B_DEBUG_FLOOD == 'true' && $DEBUG_BUFFER_INDEX -gt 10 ]];then
+			error_handler 2
+		# this case stores the data for later printout, will print out only
+		# at B_SCRIPT_UP == 'true' if array index > 0
+		else
+			A_DEBUG_BUFFER[$DEBUG_BUFFER_INDEX]="$1"
+			# increment count for next pre script up debugging error
+			(( DEBUG_BUFFER_INDEX++ ))
+		fi
+	fi
+	eval $LOGFE
+}
+
 sys_traverse_data()
 {
 	local sys_traverse_data="$( perl -e '
@@ -2325,6 +2032,7 @@ sys_traverse_data()
 	} ' )"
 	echo "$sys_traverse_data"
 }
+
 sys_tree()
 {
 	if type -p tree &>/dev/null;then
@@ -2333,43 +2041,11 @@ sys_tree()
 			tree -a -L 10 /sys/$branch > $Debug_Data_Dir/sys-tree-$branch-10.txt
 		done
 	else
-		ls_sys 1
+		# ls_sys 1
 		ls_sys 2
 		ls_sys 3
 		ls_sys 4
 	fi
-}
-## args: $1 - depth
-ls_sys()
-{
-	local files=''
-	case $1 in
-		1)files='/sys/';;
-		2)files='/sys/*/';;
-		3)files='/sys/*/*/';;
-		4)files='/sys/*/*/*/';; # this should be enough for most use cases
-		5)files='/sys/*/*/*/*/';; # very large file, shows best shortcuts though
-		6)files='/sys/*/*/*/*/*/';; # slows down too much, too big, can cause ls error
-		7)files='/sys/*/*/*/*/*/*/';; # impossibly big, will fail
-	esac
-	ls -l $files 2>/dev/null | awk '{ 
-		if (NF > 7) {
-			if ($1 ~/^d/){
-				f="d - "
-			}
-			else if ($1 ~/^l/){
-				f="l - "
-			}
-			else {
-				f="f - "
-			}
-			# includes -> target for symbolic link if present
-			print "\t" f $9 " "  $10 " " $11
-		} 
-		else if (!/^total / ) { 
-			print $0
-		} 
-	}' &> $Debug_Data_Dir/sys-ls-$1.txt
 }
 
 ## args: $1 - debugger file name; $2 - ftp destination [does not work]
@@ -2409,13 +2085,20 @@ upload_debugger_data()
 	print $ftp->message;
 	' $debugger_file  )" 
 	
-	echo "$result"
+	if [[ "$result" != '' ]];then
+		echo "$result"
+	fi
 	if [[ "$result" == *Goodbye* ]];then
 		return 0
 	else
 		return 1
 	fi
 }
+
+#### -------------------------------------------------------------------
+#### DOWNLOADER
+#### -------------------------------------------------------------------
+
 download_file()
 {
 	local retvalue=0
@@ -2465,7 +2148,163 @@ download_file()
 	fi
 	return $retvalue
 }
-#download_file 'stdout' 'https://smxi.org/ip' '';echo $?; exit
+# download_file 'stdout' 'https://cnn.com/robots.txt' '';echo $?; exit
+
+#### -------------------------------------------------------------------
+#### ERROR HANDLER
+#### -------------------------------------------------------------------
+
+# Error handling
+# args: $1 - error number; $2 - optional, extra information; $3 - optional extra info
+error_handler()
+{
+	eval $LOGFS
+	local error_message=''
+
+	# assemble the error message
+	case $1 in
+		2)	error_message="large flood danger, debug buffer full!"
+			;;
+		3)	error_message="unsupported color scheme number: $2"
+			;;
+		4)	error_message="unsupported verbosity level: $2"
+			;;
+		5)	error_message="dependency not met: $2 not found in path.\nFor distribution installation package names and missing apps information, run: $SELF_NAME --recommends"
+			;;
+		6)	error_message="/proc not found! Quitting..."
+			;;
+		7)	error_message="One of the options you entered in your script parameters: $2\nis not supported.The option may require extra arguments to work.\nFor supported options (and their arguments), check the help menu: $SELF_NAME -h"
+			;;
+		8)	error_message="the self-updater failed, $DOWNLOADER exited with error: $2.\nYou probably need to be root.\nHint, to make for easy updates without being root, do: chown <user name> $SELF_PATH/$SELF_NAME"
+			;;
+		9)	error_message="unsupported debugging level: $2"
+			;;
+		10)
+			error_message="the alt download url you provided: $2\nappears to be wrong, download aborted. Please note, the url\nneeds to end in /, without $SELF_NAME, like: http://yoursite.com/downloads/"
+			;;
+		11)
+			error_message="unsupported testing option argument: -! $2"
+			;;
+		12)
+			error_message="the git branch download url: $2\nappears to be empty currently. Make sure there is an actual source branch version\nactive before you try this again. Check https://github.com/smxi/inxi\nto verify the branch status."
+			;;
+		13)
+			error_message="The -t option requires the following extra arguments (no spaces between letters/numbers):\nc m cm [required], for example: -t cm8 OR -t cm OR -t c9\n(numbers: 1-20, > 5 throttled to 5 in irc clients) You entered: $2"
+			;;
+		14)
+			error_message="failed to write correctly downloaded $SELF_NAME to location $SELF_PATH.\nThis usually means you don't have permission to write to that location, maybe you need to be root?\nThe operation failed with error: $2"
+			;;
+		15)
+			error_message="failed set execute permissions on $SELF_NAME at location $SELF_PATH.\nThis usually means you don't have permission to set permissions on files there, maybe you need to be root?\nThe operation failed with error: $2"
+			;;
+		16)
+			error_message="$SELF_NAME downloaded but the file data is corrupted. Purged data and using current version."
+			;;
+		17)
+			error_message="All $SELF_NAME self updater features have been disabled by the distribution\npackage maintainer. This includes the option you used: $2"
+			;;
+		18)
+			error_message="The argument you provided for $2 does not have supported syntax.\nPlease use the following formatting:\n$3"
+			;;
+		19)
+			error_message="The option $2 has been deprecated. Please use $3 instead.\nSee -h for instructions and syntax."
+			;;
+		20)
+			error_message="The option you selected has been deprecated. $2\nSee the -h (help) menu for currently supported options."
+			;;
+		21)
+			error_message="Width option requires an integer value of 80 or more.\nYou entered: $2"
+			;;
+		*)	error_message="error unknown: $@"
+			set -- 99
+			;;
+	esac
+	# then print it and exit
+	print_screen_output "Error $1: $error_message"
+	eval $LOGFE
+	exit $1
+}
+
+#### -------------------------------------------------------------------
+#### LOGGING
+#### -------------------------------------------------------------------
+
+# called in the initial -@ 10 script args setting so we can get logging as soon as possible
+# will have max 3 files, inxi.log, inxi.1.log, inxi.2.log
+create_rotate_logfiles()
+{
+	# do the rotation if logfile exists
+	if [[ -f $LOG_FILE ]];then
+		# copy if present second to third
+		if [[ -f $LOG_FILE_1 ]];then
+			mv -f $LOG_FILE_1 $LOG_FILE_2
+		fi
+		# then copy initial to second
+		mv -f $LOG_FILE $LOG_FILE_1
+	fi
+	# now create the logfile
+	touch $LOG_FILE
+	# and echo the start data
+	echo "=========================================================" >> $LOG_FILE
+	echo "START $SELF_NAME LOGGING:"                               >> $LOG_FILE
+	echo "Script started: $( date +%Y-%m-%d-%H:%M:%S )"              >> $LOG_FILE
+	echo "=========================================================" >> $LOG_FILE
+}
+
+# NOTE: no logging available until get_parameters is run, since that's what sets logging
+# in order to trigger earlier logging manually set B_USE_LOGGING to true in top variables.
+# $1 alone: logs data; $2 with or without $3 logs func start/end.
+# $1 type (fs/fe/cat/raw) or logged data; [$2 is $FUNCNAME; [$3 - function args]]
+log_function_data()
+{
+	if [ "$B_USE_LOGGING" == 'true' ];then
+		local logged_data='' spacer='   ' line='----------------------------------------'
+		case $1 in
+			fs)
+				logged_data="Function: $2 - Primary: Start"
+				if [ -n "$3" ];then
+					logged_data="$logged_data\n${spacer}Args: $3"
+				fi
+				spacer=''
+				;;
+			fe)
+				logged_data="Function: $2 - Primary: End"
+				spacer=''
+				;;
+			cat)
+				if [[ $B_LOG_FULL_DATA == 'true' ]];then
+					for cat_file in $2
+					do
+						logged_data="$logged_data\n$line\nFull file data: cat $cat_file\n\n$( cat $cat_file )\n$line\n"
+					done
+					spacer=''
+				fi
+				;;
+			raw)
+				if [[ $B_LOG_FULL_DATA == 'true' ]];then
+					logged_data="\n$line\nRaw system data:\n\n$2\n$line\n"
+					spacer=''
+				fi
+				;;
+			*)
+				logged_data="$1"
+				;;
+		esac
+		# Create any required line breaks and strip out escape color code, either ansi (case 1)or irc (case 2).
+		# This pattern doesn't work for irc colors, if we need that someone can figure it out
+		if [[ -n $logged_data ]];then
+			if [[ $B_LOG_COLORS != 'true' ]];then
+				echo -e "${spacer}$logged_data" | sed $SED_RX 's/\x1b\[[0-9]{1,2}(;[0-9]{1,2}){0,2}m//g' >> $LOG_FILE
+			else
+				echo -e "${spacer}$logged_data" >> $LOG_FILE
+			fi
+		fi
+	fi
+}
+
+#### -------------------------------------------------------------------
+#### RECOMMENDS
+#### -------------------------------------------------------------------
 
 check_recommends_user_output()
 {
@@ -2548,6 +2387,8 @@ check_recommends_user_output()
 	
 	echo 'All tests completed.' 
 }
+
+# Should come after above for debugging tests
 # args: $1 - check item
 check_recommends_items()
 {
@@ -2766,8 +2607,259 @@ check_recommends_items()
 }
 
 #### -------------------------------------------------------------------
-#### print / output cleaners
+#### UPDATER
 #### -------------------------------------------------------------------
+
+# args: $1 - download url, not including file name; $2 - string to print out
+# $3 - update type option
+# note that $1 must end in / to properly construct the url path
+self_updater()
+{
+	eval $LOGFS
+	set_downloader
+	local downloader_error=0 file_contents='' downloader_man_error=0 
+	local man_file_location=$( set_man_location )
+	local man_file_path="$man_file_location/inxi.1.gz" 
+	
+	if [[ $B_IRC == 'true' ]];then
+		print_screen_output "Sorry, you can't run the $SELF_NAME self updater option (-$3) in an IRC client."
+		exit 1
+	fi
+	print_screen_output "Starting $SELF_NAME self updater."
+	print_screen_output "Currently running $SELF_NAME version number: $SELF_VERSION"
+	print_screen_output "Current version patch number: $SELF_PATCH"
+	print_screen_output "Current version release date: $SELF_DATE"
+	print_screen_output "Updating $SELF_NAME in $SELF_PATH using $2 as download source..."
+	case $DOWNLOADER in
+		curl)
+			file_contents="$( curl $NO_SSL_OPT -L -s $1$SELF_NAME )" || downloader_error=$?
+			;;
+		fetch)
+			file_contents="$( fetch $NO_SSL_OPT -q -o - $1$SELF_NAME )" || downloader_error=$?
+			;;
+		ftp)
+			file_contents="$( ftp $NO_SSL_OPT -o - $1$SELF_NAME 2>/dev/null )" || downloader_error=$?
+			;;
+		perl)
+			file_contents="$( download_file 'stdout' $1$SELF_NAME )" || downloader_error=$?
+			;;
+		wget)
+			file_contents="$( wget $NO_SSL_OPT -q -O - $1$SELF_NAME )" || downloader_error=$?
+			;;
+		no-downloader)
+			downloader_error=1
+			;;
+	esac
+
+	# then do the actual download
+	if [[  $downloader_error -eq 0 ]];then
+		# make sure the whole file got downloaded and is in the variable
+		if [[ -n $( grep '###\*\*EOF\*\*###' <<< "$file_contents" ) ]];then
+			echo "$file_contents" > $SELF_PATH/$SELF_NAME || error_handler 14 "$?"
+			chmod +x $SELF_PATH/$SELF_NAME || error_handler 15 "$?"
+			parse_version_data 'main'
+			parse_version_data 'patch'
+			parse_version_data 'date'
+			print_screen_output "Successfully updated to $2 version: $SELF_VERSION"
+			print_screen_output "New $2 version patch number: $SELF_PATCH"
+			print_screen_output "New $2 version release date: $SELF_DATE"
+			print_screen_output "To run the new version, just start $SELF_NAME again."
+			print_screen_output "----------------------------------------"
+			print_screen_output "Starting download of man page file now."
+			if [[ $B_MAN == 'false' ]];then
+				print_screen_output "Skipping man download because branch version is being used."
+			elif [[ ! -d $man_file_location ]];then
+				print_screen_output "The required man directory was not detected on your system, unable to continue: $man_file_location"
+			else
+				if [[ $B_ROOT == 'true' ]];then
+					print_screen_output "Checking Man page download URL..."
+					if [[ -f /usr/share/man/man8/inxi.8.gz ]];then
+						print_screen_output "Updating man page location to man1."
+						mv -f /usr/share/man/man8/inxi.8.gz $man_file_location/inxi.1.gz 
+						if type -p mandb &>/dev/null;then
+							exec $( type -p mandb ) -q 
+						fi
+					fi
+					case $DOWNLOADER in
+						perl)
+							download_file 'spider' $MAN_FILE_DOWNLOAD || downloader_man_error=$?
+							;;
+						wget)
+							wget $NO_SSL_OPT -q --spider $MAN_FILE_DOWNLOAD || downloader_man_error=$?
+							;;
+					esac
+					if [[ $downloader_man_error -eq 0 ]];then
+						if [[ $DOWNLOADER == 'wget' ]];then
+							print_screen_output "Man file download URL verified: $MAN_FILE_DOWNLOAD"
+						fi
+						print_screen_output "Downloading Man page file now."
+						case $DOWNLOADER in
+							curl)
+								curl $NO_SSL_OPT -L -s -o $man_file_path $MAN_FILE_DOWNLOAD || downloader_man_error=$?
+								;;
+							fetch)
+								fetch $NO_SSL_OPT -q -o $man_file_path $MAN_FILE_DOWNLOAD || downloader_man_error=$?
+								;;
+							ftp)
+								ftp $NO_SSL_OPT -o $man_file_path $MAN_FILE_DOWNLOAD 2>/dev/null || downloader_man_error=$?
+								;;
+							perl)
+								download_file 'file' $MAN_FILE_DOWNLOAD $man_file_path || downloader_man_error=$?
+								;;
+							wget)
+								wget $NO_SSL_OPT -q -O $man_file_path $MAN_FILE_DOWNLOAD || downloader_man_error=$?
+								;;
+							no-downloader)
+								downloader_man_error=1
+								;;
+						esac
+						if [[ $downloader_man_error -gt 0 ]];then
+							print_screen_output "Oh no! Something went wrong downloading the Man gz file at: $MAN_FILE_DOWNLOAD"
+							print_screen_output "Check the error messages for what happened. Error: $downloader_man_error"
+						else
+							print_screen_output "Download/install of man page successful. Check to make sure it works: man inxi"
+						fi
+					else
+						print_screen_output "Man file download URL failed, unable to continue: $MAN_FILE_DOWNLOAD"
+					fi
+				else
+					print_screen_output "Updating / Installing the Man page requires root user, writing to: $man_file_location"
+					print_screen_output "If you want the man page, you'll have to run $SELF_NAME -$3 as root."
+				fi
+			fi
+			exit 0
+		else
+			error_handler 16
+		fi
+	# now run the error handlers on any wget failure
+	else
+		if [[ $2 == 'source server' ]];then
+			error_handler 8 "$downloader_error"
+		elif [[ $2 == 'alt server' ]];then
+			error_handler 10 "$1"
+		else
+			error_handler 12 "$1"
+		fi
+	fi
+	eval $LOGFS
+}
+
+set_man_location()
+{
+	local location='' default_location='/usr/share/man/man1' 
+	local man_paths=$(man --path 2>/dev/null) man_local='/usr/local/share/man'
+	local b_use_local=false
+	
+	if [[ -n "$man_paths" && -n $( grep $man_local <<< "$man_paths" ) ]];then
+		b_use_local=true
+	fi
+	
+	# for distro installs, existing inxi man manual installs, do nothing
+	if [[ -f $default_location/inxi.1.gz ]];then
+		location=$default_location
+	else
+		if [[ $b_use_local == 'true' ]];then
+			if [[ ! -d $man_local/man1 ]];then
+				mkdir $man_local/man1
+			fi
+			location="$man_local/man1"
+		fi
+# 		print_screen_output "Updating man page location to man1."
+# 		mv -f /usr/share/man/man1/inxi.1.gz /usr/local/share/man/man1/inxi.1.gz 
+# 		if type -p mandb &>/dev/null;then
+# 			exec $( type -p mandb ) -q 
+# 		fi
+	fi
+	
+	if [[ -z "$location" ]];then
+		location=$default_location
+	fi
+	
+	echo $location
+}
+
+########################################################################
+#### OUTPUT
+########################################################################
+
+#### -------------------------------------------------------------------
+#### FILTERS
+#### -------------------------------------------------------------------
+
+# this removes newline and pipes.
+# args: $1 - string to clean
+remove_erroneous_chars()
+{
+	eval $LOGFS
+	## RS is input record separator
+	## gsub is substitute;
+	gawk '
+	BEGIN {
+		RS=""
+	}
+	{
+		gsub(/\n$/,"")         ## (newline; end of string) with (nothing)
+		gsub(/\n/," ");        ## (newline) with (space)
+		gsub(/^ *| *$/, "")    ## (pipe char) with (nothing)
+		gsub(/  +/, " ")       ## ( +) with (space)
+		gsub(/ [ ]+/, " ")     ## ([ ]+) with (space)
+		gsub(/^ +| +$/, "")    ## (pipe char) with (nothing)
+		printf $0
+	}' "$1"      ## prints (returns) cleaned input
+	eval $LOGFE
+}
+## note: this is now running inside each gawk sequence directly to avoid exiting gawk
+## looping in bash through arrays, then re-entering gawk to clean up, then writing back to array
+## in bash. For now I'll leave this here because there's still some interesting stuff to get re methods
+# Enforce boilerplate and buzzword filters
+# args: $1 - BAN_LIST_NORMAL/BAN_LIST_CPU; $2 - string to sanitize
+sanitize_characters()
+{
+	eval $LOGFS
+	# Cannot use strong quotes to unquote a string with pipes in it!
+	# bash will interpret the |'s as usual and try to run a subshell!
+	# Using weak quotes instead, or use '"..."'
+	echo "$2" | gawk "
+	BEGIN {
+		IGNORECASE=1
+	}
+	{
+		gsub(/${!1}/,\"\")
+		gsub(/ [ ]+/,\" \")    ## ([ ]+) with (space)
+		gsub(/^ +| +$/,\"\")   ## (pipe char) with (nothing)
+		print                  ## prints (returns) cleaned input
+	}"
+	eval $LOGFE
+}
+
+#### -------------------------------------------------------------------
+#### PRINT
+#### -------------------------------------------------------------------
+
+# args: $1 - string to strip color code characters out of
+# returns count of string length minus colors
+# note; this cleanup may not be working on bsd sed
+calculate_line_length()
+{
+	local string=$1
+	# ansi: [1;34m irc: \x0312
+	# note: using special trick for bsd sed, tr - NOTE irc sed must use " double quote
+	string=$( sed -e 's/'$ESC'\[[0-9]\{1,2\}\(;[0-9]\{1,2\}\)\{0,2\}m//g' -e "s/\\\x0[0-9]\{1,3\}//g" <<< $string )
+	#echo $string
+	LINE_LENGTH=${#string}
+	# echo ${#string}
+}
+
+## this handles all verbose line construction with indentation/line starter
+## args: $1 - null (, actually: " ") or line starter; $2 - line content
+create_print_line()
+{
+	eval $LOGFS
+	# convoluted, yes, but it works to trim spaces off end
+	local line=${2%${2##*[![:space:]]}}
+	printf "${C1}%-${INDENT}s${C2} %s" "$1" "$line${CN}"
+	eval $LOGFE
+}
 
 # inxi speaks through here. When run by Konversation script alias mode, uses DCOP
 # for dcop to work, must use 'say' operator, AND colors must be evaluated by echo -e
@@ -2811,43 +2903,131 @@ print_screen_output()
 	eval $LOGFE
 }
 
-## this handles all verbose line construction with indentation/line starter
-## args: $1 - null (, actually: " ") or line starter; $2 - line content
-create_print_line()
+# uses $TERM_COLUMNS to set width using $COLS_MAX as max width
+# IMPORTANT: Must come after print_screen_output for debugging purposes
+# IMPORTANT: minimize use of subshells here or the output is too slow
+# IMPORTANT: each text chunk must be a continuous line, no line breaks. For anyone who uses a 
+# code editor that can't do visual (not hard coded) line wrapping, upgrade to one that can.
+# args: $1 - 0 1 2 3 4 for indentation level; $2 -line starter, like -m; $3 - content of block.
+print_lines_basic()
 {
-	eval $LOGFS
-	# convoluted, yes, but it works to trim spaces off end
-	local line=${2%${2##*[![:space:]]}}
-	printf "${C1}%-${INDENT}s${C2} %s" "$1" "$line${CN}"
-	eval $LOGFE
+	local line_width=$COLS_MAX
+	local print_string='' indent_inner='' indent_full='' indent_x='' 
+	local indent_working='' indent_working_full=''
+	local line_starter='' line_1_starter='' line_x_starter='' 
+	# note: to create a padded string below
+	local fake_string=' ' temp_count='' line_count='' spacer=''
+	local indent_main=6 indent_x='' b_indent_x='true' 
+	
+	case $1 in
+		# for no options, start at left edge
+		0)	indent_full=0
+			line_1_starter=''
+			line_x_starter=''
+			b_indent_x='false'
+			;;
+		1)	indent_full=$indent_main
+			temp_count=${#2}
+			if [[ $temp_count -le $indent_full ]];then
+				indent_working=$indent_full
+			else
+				indent_working=$temp_count #$(( $temp_count + 1 ))
+			fi
+			line_1_starter="$( sed -e :a -e "s/^.\{1,$indent_working\}$/& /;ta" <<< $2 )"
+			;;
+		# first left pad 2 and 3, then right pad them
+		2)	indent_full=$(( $indent_main + 6 ))
+			indent_inner=3
+			temp_count=${#2}
+			if [[ $temp_count -le $indent_inner ]];then
+				indent_working=$indent_inner
+				#indent_working_full=$indent_full
+			else
+				indent_working=$(( $temp_count + 1 ))
+				#indent_working_full=$(( $indent_full - $indent_inner - 1 ))
+			fi
+			line_1_starter="$( sed -e :a -e "s/^.\{1,$indent_working\}$/& /;ta" <<< $2 )"
+			line_1_starter="$( sed -e :a -e "s/^.\{1,$indent_full\}$/ &/;ta" <<< "$line_1_starter" )"
+			;;
+		3)	indent_full=$(( $indent_main + 8 ))
+			indent_inner=3
+			temp_count=${#2}
+			if [[ $temp_count -le $indent_inner ]];then
+				indent_working=$indent_inner
+			else
+				indent_working=$(( $temp_count + 1 ))
+			fi
+			line_1_starter="$( sed -e :a -e "s/^.\{1,$indent_working\}$/& /;ta" <<< $2 )"
+			line_1_starter="$( sed -e :a -e "s/^.\{1,$indent_full\}$/ &/;ta" <<< "$line_1_starter" )"
+			;;
+		# for long options
+		4)	indent_full=$(( $indent_main + 8 ))
+			temp_count=${#2}
+			if [[ $temp_count -lt $indent_full ]];then
+				indent_working=$indent_full
+			else
+				indent_working=$temp_count #$(( $temp_count + 1 ))
+			fi
+			line_1_starter="$( sed -e :a -e "s/^.\{1,$indent_working\}$/& /;ta" <<< $2 )"
+			;;
+	esac
+	
+	if [[ $b_indent_x == 'true' ]];then
+		indent_x=$(( $indent_full + 1 ))
+		line_x_starter="$(printf "%${indent_x}s" '')"
+	fi
+	
+	line_count=$(( $line_width - $indent_full ))
+	
+	# bash loop is slow, only run this if required
+	if [[ ${#3} -gt $line_count ]];then
+		for word in $3
+		do
+			temp_string="$print_string$spacer$word"
+			spacer=' '
+			if [[ ${#temp_string} -lt $line_count ]];then
+				print_string=$temp_string # lose any white space start/end
+				# echo -n $(( $line_width - $indent_full ))
+			else
+				if [[ -n $line_1_starter ]];then
+					line_starter="$line_1_starter"
+					line_1_starter=''
+				else
+					line_starter="$line_x_starter"
+				fi
+				# clean up forced connections, ie, stuff we don't want wrapping
+				print_string=${print_string//\^/ }
+				print_screen_output "$line_starter$print_string"
+				print_string="$word$spacer" # needed to handle second word on new line
+				temp_string=''
+				spacer=''
+			fi
+		done
+	else
+		# echo no loop
+		print_string=$3
+	fi
+	# print anything left over
+	if [[ -n $print_string ]];then
+		if [[ -n $line_1_starter ]];then
+			line_starter="$line_1_starter"
+			line_1_starter=''
+		else
+			line_starter="$line_x_starter"
+		fi
+		print_string=${print_string//\^/ }
+		print_screen_output "$line_starter$print_string"
+	fi
 }
+# print_lines_basic '1' '-m' 'let us teest this string and lots more and stuff and more stuff and x is wy and z is x and fred is dead and gus is alive an yes we have to go now'
+# print_lines_basic '2' '7' 'and its substring this string and lots more and stuff and more stuff and x is wy and z is x and fred is dead and gus is alive an yes we have to go now'
+# print_lines_basic '2' '12' 'and its sss substring'
+# print_lines_basic '3' '12' 'and its sss substring this string and lots more and stuff and more stuff and x is wy and z is x and fred is dead and gus is alive an yes we have to go now'
+# exit
 
-# this removes newline and pipes.
-# args: $1 - string to clean
-remove_erroneous_chars()
-{
-	eval $LOGFS
-	## RS is input record separator
-	## gsub is substitute;
-	gawk '
-	BEGIN {
-		RS=""
-	}
-	{
-		gsub(/\n$/,"")         ## (newline; end of string) with (nothing)
-		gsub(/\n/," ");        ## (newline) with (space)
-		gsub(/^ *| *$/, "")    ## (pipe char) with (nothing)
-		gsub(/  +/, " ")       ## ( +) with (space)
-		gsub(/ [ ]+/, " ")     ## ([ ]+) with (space)
-		gsub(/^ +| +$/, "")    ## (pipe char) with (nothing)
-		printf $0
-	}' "$1"      ## prints (returns) cleaned input
-	eval $LOGFE
-}
-
-#### -------------------------------------------------------------------
-#### parameter handling, print usage functions.
-#### -------------------------------------------------------------------
+########################################################################
+#### OPTION AND VERSION HANDLERS
+########################################################################
 
 # Get the parameters. Note: standard options should be lower case, advanced or testing, upper
 # args: $1 - full script startup args: $@
@@ -2862,7 +3042,7 @@ get_parameters()
 		weather_flag=''
 	fi
 	if [[ $1 == '--version' ]];then
-		print_version_info
+		show_version_info
 		exit 0
 	elif [[ $1 == '--help' ]];then
 		show_options
@@ -3089,12 +3269,12 @@ get_parameters()
 				fi
 				;;
 			U)	if [[ $B_ALLOW_UPDATE == 'true' ]];then
-					script_self_updater "$SELF_DOWNLOAD" 'source server' "$opt"
+					self_updater "$SELF_DOWNLOAD" 'source server' "$opt"
 				else
 					error_handler 17 "-$opt"
 				fi
 				;;
-			V)	print_version_info
+			V)	show_version_info
 				exit 0
 				;;
 			w)	B_SHOW_WEATHER=true
@@ -3196,23 +3376,23 @@ get_parameters()
 						if [[ $B_ALLOW_UPDATE == 'true' ]];then
 							case $OPTARG in
 								10)
-									script_self_updater "$SELF_DOWNLOAD_DEV" 'dev server' "$opt $OPTARG"
+									self_updater "$SELF_DOWNLOAD_DEV" 'dev server' "$opt $OPTARG"
 									B_MAN='false'
 									;;
 								11)
-									script_self_updater "$SELF_DOWNLOAD_BRANCH_1" 'branch one server' "$opt $OPTARG"
+									self_updater "$SELF_DOWNLOAD_BRANCH_1" 'branch one server' "$opt $OPTARG"
 									B_MAN='false'
 									;;
 								12)
-									script_self_updater "$SELF_DOWNLOAD_BRANCH_2" 'branch two server' "$opt $OPTARG"
+									self_updater "$SELF_DOWNLOAD_BRANCH_2" 'branch two server' "$opt $OPTARG"
 									B_MAN='false'
 									;;
 								13)
-									script_self_updater "$SELF_DOWNLOAD_BRANCH_3" 'branch three server' "$opt $OPTARG"
+									self_updater "$SELF_DOWNLOAD_BRANCH_3" 'branch three server' "$opt $OPTARG"
 									B_MAN='false'
 									;;
 								http*)
-									script_self_updater "$OPTARG" 'alt server' "$opt <http...>"
+									self_updater "$OPTARG" 'alt server' "$opt <http...>"
 									B_MAN='false'
 									;;
 							esac
@@ -3478,129 +3658,8 @@ show_options()
 	print_screen_output " "
 }
 
-# uses $TERM_COLUMNS to set width using $COLS_MAX as max width
-# IMPORTANT: minimize use of subshells here or the output is too slow
-# IMPORTANT: each text chunk must be a continuous line, no line breaks. For anyone who uses a 
-# code editor that can't do visual (not hard coded) line wrapping, upgrade to one that can.
-# args: $1 - 0 1 2 3 4 for indentation level; $2 -line starter, like -m; $3 - content of block.
-print_lines_basic()
-{
-	local line_width=$COLS_MAX
-	local print_string='' indent_inner='' indent_full='' indent_x='' 
-	local indent_working='' indent_working_full=''
-	local line_starter='' line_1_starter='' line_x_starter='' 
-	# note: to create a padded string below
-	local fake_string=' ' temp_count='' line_count='' spacer=''
-	local indent_main=6 indent_x='' b_indent_x='true' 
-	
-	case $1 in
-		# for no options, start at left edge
-		0)	indent_full=0
-			line_1_starter=''
-			line_x_starter=''
-			b_indent_x='false'
-			;;
-		1)	indent_full=$indent_main
-			temp_count=${#2}
-			if [[ $temp_count -le $indent_full ]];then
-				indent_working=$indent_full
-			else
-				indent_working=$temp_count #$(( $temp_count + 1 ))
-			fi
-			line_1_starter="$( sed -e :a -e "s/^.\{1,$indent_working\}$/& /;ta" <<< $2 )"
-			;;
-		# first left pad 2 and 3, then right pad them
-		2)	indent_full=$(( $indent_main + 6 ))
-			indent_inner=3
-			temp_count=${#2}
-			if [[ $temp_count -le $indent_inner ]];then
-				indent_working=$indent_inner
-				#indent_working_full=$indent_full
-			else
-				indent_working=$(( $temp_count + 1 ))
-				#indent_working_full=$(( $indent_full - $indent_inner - 1 ))
-			fi
-			line_1_starter="$( sed -e :a -e "s/^.\{1,$indent_working\}$/& /;ta" <<< $2 )"
-			line_1_starter="$( sed -e :a -e "s/^.\{1,$indent_full\}$/ &/;ta" <<< "$line_1_starter" )"
-			;;
-		3)	indent_full=$(( $indent_main + 8 ))
-			indent_inner=3
-			temp_count=${#2}
-			if [[ $temp_count -le $indent_inner ]];then
-				indent_working=$indent_inner
-			else
-				indent_working=$(( $temp_count + 1 ))
-			fi
-			line_1_starter="$( sed -e :a -e "s/^.\{1,$indent_working\}$/& /;ta" <<< $2 )"
-			line_1_starter="$( sed -e :a -e "s/^.\{1,$indent_full\}$/ &/;ta" <<< "$line_1_starter" )"
-			;;
-		# for long options
-		4)	indent_full=$(( $indent_main + 8 ))
-			temp_count=${#2}
-			if [[ $temp_count -lt $indent_full ]];then
-				indent_working=$indent_full
-			else
-				indent_working=$temp_count #$(( $temp_count + 1 ))
-			fi
-			line_1_starter="$( sed -e :a -e "s/^.\{1,$indent_working\}$/& /;ta" <<< $2 )"
-			;;
-	esac
-	
-	if [[ $b_indent_x == 'true' ]];then
-		indent_x=$(( $indent_full + 1 ))
-		line_x_starter="$(printf "%${indent_x}s" '')"
-	fi
-	
-	line_count=$(( $line_width - $indent_full ))
-	
-	# bash loop is slow, only run this if required
-	if [[ ${#3} -gt $line_count ]];then
-		for word in $3
-		do
-			temp_string="$print_string$spacer$word"
-			spacer=' '
-			if [[ ${#temp_string} -lt $line_count ]];then
-				print_string=$temp_string # lose any white space start/end
-				# echo -n $(( $line_width - $indent_full ))
-			else
-				if [[ -n $line_1_starter ]];then
-					line_starter="$line_1_starter"
-					line_1_starter=''
-				else
-					line_starter="$line_x_starter"
-				fi
-				# clean up forced connections, ie, stuff we don't want wrapping
-				print_string=${print_string//\^/ }
-				print_screen_output "$line_starter$print_string"
-				print_string="$word$spacer" # needed to handle second word on new line
-				temp_string=''
-				spacer=''
-			fi
-		done
-	else
-		# echo no loop
-		print_string=$3
-	fi
-	# print anything left over
-	if [[ -n $print_string ]];then
-		if [[ -n $line_1_starter ]];then
-			line_starter="$line_1_starter"
-			line_1_starter=''
-		else
-			line_starter="$line_x_starter"
-		fi
-		print_string=${print_string//\^/ }
-		print_screen_output "$line_starter$print_string"
-	fi
-}
-# print_lines_basic '1' '-m' 'let us teest this string and lots more and stuff and more stuff and x is wy and z is x and fred is dead and gus is alive an yes we have to go now'
-# print_lines_basic '2' '7' 'and its substring this string and lots more and stuff and more stuff and x is wy and z is x and fred is dead and gus is alive an yes we have to go now'
-# print_lines_basic '2' '12' 'and its sss substring'
-# print_lines_basic '3' '12' 'and its sss substring this string and lots more and stuff and more stuff and x is wy and z is x and fred is dead and gus is alive an yes we have to go now'
-# exit
-
 ## print out version information for -V/--version
-print_version_info()
+show_version_info()
 {
 	# if not in PATH could be either . or directory name, no slash starting
 	local script_path=$SELF_PATH script_symbolic_start=''
@@ -3636,12 +3695,40 @@ print_version_info()
 }
 
 ########################################################################
-#### MAIN FUNCTIONS
+#### STARTUP DATA
 ########################################################################
 
-#### -------------------------------------------------------------------
-#### initial startup stuff
-#### -------------------------------------------------------------------
+# This needs some cleanup and comments, not quite understanding what is happening, although generally output is known
+# Parse the null separated commandline under /proc/<pid passed in $1>/cmdline
+# args: $1 - $PPID
+get_cmdline()
+{
+	eval $LOGFS
+	local i=0 ppid=$1
+
+	if [[ ! -e /proc/$ppid/cmdline ]];then
+		echo 0
+		return
+	fi
+	##print_screen_output "Marker"
+	##print_screen_output "\$ppid='$ppid' -=- $(< /proc/$ppid/cmdline)"
+	unset A_CMDL
+	## note: need to figure this one out, and ideally clean it up and make it readable
+	while read -d $'\0' L && [[ $i -lt 32 ]]
+	do
+		A_CMDL[i++]="$L" ## note: make sure this is valid - What does L mean? ##
+	done < /proc/$ppid/cmdline
+	##print_screen_output "\$i='$i'"
+	if [[ $i -eq 0 ]];then
+		A_CMDL[0]=$(< /proc/$ppid/cmdline)
+		if [[ -n ${A_CMDL[0]} ]];then
+			i=1
+		fi
+	fi
+	CMDL_MAX=$i
+	log_function_data "CMDL_MAX: $CMDL_MAX"
+	eval $LOGFE
+}
 
 # Determine where inxi was run from, set IRC_CLIENT and IRC_CLIENT_VERSION
 get_start_client()
@@ -3751,6 +3838,7 @@ get_start_client()
 	log_function_data "IRC_CLIENT: $IRC_CLIENT :: IRC_CLIENT_VERSION: $IRC_CLIENT_VERSION :: PPID: $PPID"
 	eval $LOGFE
 }
+
 # note: all variables set in caller so no need to pass
 get_irc_client_version()
 {
@@ -4028,6 +4116,43 @@ get_irc_client_version()
 	fi
 }
 
+## try to infer the use of Konversation >= 1.2, which shows $PPID improperly
+## no known method of finding Kovni >= 1.2 as parent process, so we look to see if it is running,
+## and all other irc clients are not running. As of 2014-03-25 this isn't used in my cases
+is_this_qt4_konvi()
+{
+	local konvi_qt4_client='' konvi_dbus_exist='' konvi_pid='' konvi_home_dir='' 
+	local konvi='' b_is_qt4=''
+	
+	# fringe cases can throw error, always if untested app, use 2>/dev/null after testing if present
+	if [[ $B_QDBUS == 'true' ]];then
+		konvi_dbus_exist=$( qdbus 2>/dev/null | grep "org.kde.konversation" )
+	fi
+	# sabayon uses /usr/share/apps/konversation as path
+	if [[ -n $konvi_dbus_exist ]] && [[ -e /usr/share/kde4/apps/konversation || -e  /usr/share/apps/konversation ]]; then
+		konvi_pid=$( ps -A | gawk 'BEGIN{IGNORECASE=1} /konversation/ { print $1 }' ) 
+		konvi_home_dir=$( readlink /proc/$konvi_pid/exe )
+		konvi=$( echo $konvi_home_dir | sed "s/\// /g" )
+		konvi=($konvi)
+
+		if [[ ${konvi[2]} == 'konversation' ]];then
+			# note: we need to change this back to a single dot number, like 1.3, not 1.3.2
+			konvi_qt4_client=$( konversation -v | grep -i 'konversation' | \
+			gawk '{ print $2 }' | cut -d '.' -f 1,2 )
+			if [[ $konvi_qt4_client > 1.1 ]]; then
+				b_is_qt4='true'
+			fi
+		fi
+	else
+		konvi_qt4="qt3"
+		b_is_qt4='false'
+	fi
+	log_function_data "b_is_qt4: $b_is_qt4"
+	echo $b_is_qt4
+	## for testing this module
+	#qdbus org.kde.konversation /irc say $1 $2 "getpid_dir: $konvi_qt4  qt4_konvi: $konvi_qt4_ver   verNum: $konvi_qt4_ver_num  pid: $konvi_pid ppid: $PPID  konvi_home_dir: ${konvi[2]}"
+}
+
 # args: $1 - App_Working_Name
 set_perl_python_client_data()
 {
@@ -4066,78 +4191,14 @@ set_perl_python_client_data()
 	fi
 }
 
-## try to infer the use of Konversation >= 1.2, which shows $PPID improperly
-## no known method of finding Kovni >= 1.2 as parent process, so we look to see if it is running,
-## and all other irc clients are not running. As of 2014-03-25 this isn't used in my cases
-is_this_qt4_konvi()
-{
-	local konvi_qt4_client='' konvi_dbus_exist='' konvi_pid='' konvi_home_dir='' 
-	local konvi='' b_is_qt4=''
-	
-	# fringe cases can throw error, always if untested app, use 2>/dev/null after testing if present
-	if [[ $B_QDBUS == 'true' ]];then
-		konvi_dbus_exist=$( qdbus 2>/dev/null | grep "org.kde.konversation" )
-	fi
-	# sabayon uses /usr/share/apps/konversation as path
-	if [[ -n $konvi_dbus_exist ]] && [[ -e /usr/share/kde4/apps/konversation || -e  /usr/share/apps/konversation ]]; then
-		konvi_pid=$( ps -A | gawk 'BEGIN{IGNORECASE=1} /konversation/ { print $1 }' ) 
-		konvi_home_dir=$( readlink /proc/$konvi_pid/exe )
-		konvi=$( echo $konvi_home_dir | sed "s/\// /g" )
-		konvi=($konvi)
-
-		if [[ ${konvi[2]} == 'konversation' ]];then
-			# note: we need to change this back to a single dot number, like 1.3, not 1.3.2
-			konvi_qt4_client=$( konversation -v | grep -i 'konversation' | \
-			gawk '{ print $2 }' | cut -d '.' -f 1,2 )
-			if [[ $konvi_qt4_client > 1.1 ]]; then
-				b_is_qt4='true'
-			fi
-		fi
-	else
-		konvi_qt4="qt3"
-		b_is_qt4='false'
-	fi
-	log_function_data "b_is_qt4: $b_is_qt4"
-	echo $b_is_qt4
-	## for testing this module
-	#qdbus org.kde.konversation /irc say $1 $2 "getpid_dir: $konvi_qt4  qt4_konvi: $konvi_qt4_ver   verNum: $konvi_qt4_ver_num  pid: $konvi_pid ppid: $PPID  konvi_home_dir: ${konvi[2]}"
-}
-
-# This needs some cleanup and comments, not quite understanding what is happening, although generally output is known
-# Parse the null separated commandline under /proc/<pid passed in $1>/cmdline
-# args: $1 - $PPID
-get_cmdline()
-{
-	eval $LOGFS
-	local i=0 ppid=$1
-
-	if [[ ! -e /proc/$ppid/cmdline ]];then
-		echo 0
-		return
-	fi
-	##print_screen_output "Marker"
-	##print_screen_output "\$ppid='$ppid' -=- $(< /proc/$ppid/cmdline)"
-	unset A_CMDL
-	## note: need to figure this one out, and ideally clean it up and make it readable
-	while read -d $'\0' L && [[ $i -lt 32 ]]
-	do
-		A_CMDL[i++]="$L" ## note: make sure this is valid - What does L mean? ##
-	done < /proc/$ppid/cmdline
-	##print_screen_output "\$i='$i'"
-	if [[ $i -eq 0 ]];then
-		A_CMDL[0]=$(< /proc/$ppid/cmdline)
-		if [[ -n ${A_CMDL[0]} ]];then
-			i=1
-		fi
-	fi
-	CMDL_MAX=$i
-	log_function_data "CMDL_MAX: $CMDL_MAX"
-	eval $LOGFE
-}
+########################################################################
+#### DATA PROCESSORS
+########################################################################
 
 #### -------------------------------------------------------------------
-#### get data types
+#### GET DATA
 #### -------------------------------------------------------------------
+
 ## create array of sound cards installed on system, and if found, use asound data as well
 get_audio_data()
 {
@@ -6253,7 +6314,7 @@ get_distro_data()
 	elif [[ ${#a_distro_glob[@]} -gt 1 ]];then
 		for i in $DISTROS_DERIVED $DISTROS_PRIMARY
 		do
-			# Only echo works with ${var[@]}, not print_screen_output() or script_debugger()
+			# Only echo works with ${var[@]}, not print_screen_output() or self_debugger()
 			# This is a known bug, search for the word "strange" inside comments
 			# echo "i='$i' a_distro_glob[@]='${a_distro_glob[@]}'"
 			if [[ " ${a_distro_glob[@]} " == *" $i "* ]];then
@@ -7955,7 +8016,7 @@ get_init_data()
 	eval $LOGFE
 }
 
-# note: useless because this is just absurdly inaccurate, too bad...
+# Note: useless because this is just absurdly inaccurate, too bad...
 get_install_date()
 {
 	eval $LOGFS
@@ -8410,7 +8471,6 @@ get_module_version_number()
 	log_function_data "module_version: $module_version"
 	eval $LOGFE
 }
-
 
 ## create array of network cards
 get_networking_data()
@@ -12448,22 +12508,8 @@ get_weather_data()
 # get_weather_data;exit
 
 #### -------------------------------------------------------------------
-#### special data handling for specific options and conditions
+#### SPECIAL DATA HANDLERS
 #### -------------------------------------------------------------------
-
-# args: $1 - string to strip color code characters out of
-# returns count of string length minus colors
-# note; this cleanup may not be working on bsd sed
-calculate_line_length()
-{
-	local string=$1
-	# ansi: [1;34m irc: \x0312
-	# note: using special trick for bsd sed, tr - NOTE irc sed must use " double quote
-	string=$( sed -e 's/'$ESC'\[[0-9]\{1,2\}\(;[0-9]\{1,2\}\)\{0,2\}m//g' -e "s/\\\x0[0-9]\{1,3\}//g" <<< $string )
-	#echo $string
-	LINE_LENGTH=${#string}
-	# echo ${#string}
-}
 
 ## multiply the core count by the data to be calculated, bmips, cache
 # args: $1 - string to handle; $2 - cpu count
@@ -12554,8 +12600,12 @@ process_cpu_flags()
 	eval $LOGFE
 }
 
+########################################################################
+#### PRINT DATA
+########################################################################
+
 #### -------------------------------------------------------------------
-#### print and processing of output data
+#### PRINT CONTROLLERS
 #### -------------------------------------------------------------------
 
 #### MASTER PRINT FUNCTION - triggers all line item print functions
@@ -12766,7 +12816,9 @@ print_short_data()
 	eval $LOGFE
 }
 
-#### LINE ITEM PRINT FUNCTIONS
+#### -------------------------------------------------------------------
+#### PRINT LINES
+#### -------------------------------------------------------------------
 
 # print sound card data
 print_audio_data()
@@ -16198,7 +16250,7 @@ print_weather_data()
 }
 
 ########################################################################
-#### SCRIPT EXECUTION
+#### LAUNCH
 ########################################################################
 
 main $@ ## From the End comes the Beginning
