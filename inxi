@@ -2,8 +2,8 @@
 ########################################################################
 SELF_NAME='inxi' 
 # don't quote the following, parsers grab these too
-SELF_VERSION=2.3.48
-SELF_DATE=2017-11-27
+SELF_VERSION=2.3.49
+SELF_DATE=2017-11-28
 SELF_PATCH=00
 ########################################################################
 ####  SPECIAL THANKS
@@ -261,7 +261,8 @@ A_CMDL=''
 A_CPU_CORE_DATA=''
 A_CPU_DATA=''
 A_CPU_TYPE_PCNT_CCNT=''
-A_DEBUG_BUFFER=''
+A_DEBUG_BUFFER=''xA9br8
+
 A_GCC_VERSIONS=''
 A_GLX_DATA=''
 A_GRAPHICS_CARD_DATA=''
@@ -276,7 +277,7 @@ A_OPTICAL_DRIVE_DATA=''
 A_PARTITION_DATA=''
 A_PCICONF_DATA=''
 A_PS_DATA=''
-A_RAID_DATA=''
+A_RAID_DATA=()
 A_SENSORS_DATA=''
 A_UNMOUNTED_PARTITION_DATA=''
 A_WEATHER_DATA=''
@@ -285,7 +286,6 @@ A_DISPLAY_SERVER_DATA=''
 ### BOOLEANS ###
 ## standard boolean flags ##
 B_BSD_DISK_SET='false'
-B_BSD_RAID='false'
 B_COLOR_SCHEME_SET='false'
 B_CONSOLE_IRC='false'
 # triggers full display of cpu flags
@@ -521,6 +521,7 @@ LSPCI_V_DATA=''
 LSPCI_N_DATA=''
 MEMORY=''
 PS_THROTTLED=''
+RAID_TYPE=''
 REPO_DATA=''
 SYSCTL_A_DATA=''
 UP_TIME=''
@@ -10121,238 +10122,256 @@ get_raid_data()
 {
 	eval $LOGFS
 	
-	local mdstat=''
-		
-	if [[ $B_MDSTAT_FILE == 'true' ]];then
-	 	mdstat="$( cat $FILE_MDSTAT 2>/dev/null )"
-	fi
+	local Mdstat=''
+	local Zpool_Path=$( type -p zpool 2>/dev/null )
 	
-	if [[ -n $mdstat ]];then
-		# need to make sure there's always a newline in front of each record type, and
-		# also correct possible weird formats for the output from older kernels etc.
-		mdstat="$( sed -e 's/^md/\nmd/' -e 's/^unused[[:space:]]/\nunused /' \
-		-e 's/read_ahead/\nread_ahead/' -e 's/^resync=/\nresync=/' -e 's/^Event/\nEvent/' \
-		-e 's/^[[:space:]]*$//' -e 's/[[:space:]]read_ahead/\nread_ahead/' <<< "$mdstat" )"
-		# some fringe cases do not end as expected, so need to add newlines plus EOF to make sure while loop doesn't spin
-		mdstat=$( echo -e "$mdstat\n\nEOF" )
-
-		IFS=$'\n'
-		A_RAID_DATA=( $(
-		gawk '
-		BEGIN {
-			IGNORECASE=1
-			RS="\n"
-		}
-		/^personalities/ {
-			KernelRaidSupport = gensub(/personalities[[:space:]]*:[[:space:]]*(.*)/, "\\1", 1, $0)
-			# clean off the brackets
-			gsub(/[\[\]]/,"",KernelRaidSupport)
-			print "KernelRaidSupport," KernelRaidSupport
-		}
-		/^read_ahead/ {
-			ReadAhead=gensub(/read_ahead (.*)/, "\\1", 1 )
-			print "ReadAhead," ReadAhead
-		}
-		/^Event:/ {
-			print "raidEvent," $NF
-		}
-		# print logic will search for this value and use it to print out the unused devices data
-		/^unused devices/ {
-			unusedDevices = gensub(/^unused devices:[[:space:]][<]?([^>]*)[>]?.*/, "\\1", 1, $0)
-			print "UnusedDevices," unusedDevices
-		}
-		
-		/^md/ {
-			# reset for each record loop through
-			deviceState = ""
-			bitmapValues = ""
-			blocks = ""
-			chunkSize = ""
-			components = ""
-			device = ""
-			deviceReport = ""
-			finishTime = ""
-			recoverSpeed = ""
-			recoveryProgressBar = ""
-			recoveryPercent = ""
-			raidLevel = ""
-			sectorsRecovered = ""
-			separator = ""
-			superBlock = ""
-			uData = ""
-			
-			while ( !/^[[:space:]]*$/  ) {
-				gsub(/'"$BAN_LIST_ARRAY"'/, " ", $0 )
-				gsub(/[[:space:]]+/, " ", $0 )
-				if ( $0 ~ /^md/ ) {
-					device = gensub(/(md.*)[[:space:]]?:/, "\\1", "1", $1 )
-				}
-				if ( $0 ~ /mirror|raid[0-9]+/ ) {
-					raidLevel = gensub(/(.*)raid([0-9]+)(.*)/, "\\2", "g", $0 )
-				}
-				if ( $0 ~ /(active \(auto-read-only\)|active|inactive)/ ) {
-					deviceState = gensub(/(.*) (active \(auto-read-only\)|active|inactive) (.*)/, "\\2", "1", $0 )
-				}
-				# gawk will not return all the components using gensub, only last one
-				separator = ""
-				for ( i=3; i<=NF; i++ ) {
-					if ( $i ~ /[hs]d[a-z][0-9]*(\[[0-9]+\])?(\([SF]\))?/ ) {
-						components = components separator $i
-						separator=" "
-					}
-				}
-				if ( $0 ~ /blocks/ ) {
-					blocks = gensub(/(.*[[:space:]]+)?([0-9]+)[[:space:]]blocks.*/, "\\2", "1", $0)
-				}
-				if ( $0 ~ /super[[:space:]][0-9\.]+/ ) {
-					superBlock = gensub(/.*[[:space:]]super[[:space:]]([0-9\.]+)[[:space:]].*/, "\\1", "1", $0)
-				}
-				if ( $0 ~ /algorithm[[:space:]][0-9\.]+/ ) {
-					algorithm = gensub(/.*[[:space:]]algorithm[[:space:]]([0-9\.]+)[[:space:]].*/, "\\1", "1", $0)
-				}
-				if ( $0 ~ /\[[0-9]+\/[0-9]+\]/ ) {
-					deviceReport = gensub(/.*[[:space:]]\[([0-9]+\/[0-9]+)\][[:space:]].*/, "\\1", "1", $0)
-					uData = gensub(/.*[[:space:]]\[([U_]+)\]/, "\\1", "1", $0)
-				}
-				# need to avoid this:  bitmap: 0/10 pages [0KB], 16384KB chunk
-				# while currently all the normal chunks are marked with k, not kb, this can change in the future
-				if ( $0 ~ /[0-9]+[k] chunk/ && $0 !~ /bitmap/ ) {
-					chunkSize = gensub(/(.*) ([0-9]+[k]) chunk.*/, "\\2", "1", $0)
-				}
-				if ( $0 ~ /^resync=/ ) {
-					sub(/resync=/,"")
-					print "resyncStatus," $0
-				}
-				if ( $0 ~ /\[[=]*>[\.]*\].*(resync|recovery)/ ) {
-					recoveryProgressBar = gensub(/.*(\[[=]*>[\.]*\]).*/, "\\1",1,$0)
-				}
-				if ( $0 ~ / (resync|recovery)[[:space:]]*=/ ) {
-					recoveryPercent = gensub(/.* (resync|recovery)[[:space:]]*=[[:space:]]*([0-9\.]+%).*/, "\\1~\\2", 1 )
-					if ( $0 ~ /[[:space:]]\([0-9]+\/[0-9]+\)/ ) {
-						sectorsRecovered = gensub(/.* \(([0-9]+\/[0-9]+)\).*/, "\\1", 1, $0 )
-					}
-					if ( $0 ~ /finish[[:space:]]*=/ ) {
-						finishTime = gensub(/.* finish[[:space:]]*=[[:space:]]*([[0-9\.]+)([a-z]+) .*/, "\\1 \\2", 1, $0 )
-					}
-					if ( $0 ~ /speed[[:space:]]*=/ ) {
-						recoverSpeed = gensub(/.* speed[[:space:]]*=[[:space:]]*([[0-9\.]+)([a-z]+\/[a-z]+)/, "\\1 \\2", 1, $0 )
-					}
-				}
-				if ( $0 ~ /bitmap/ ) {
-					bitmapValues = gensub(/(.*[[:space:]])?bitmap:(.*)/, "\\2", 1, $0 )
-				}
-				
-				getline
-			}
-			raidString = device "," deviceState "," raidLevel "," components "," deviceReport "," uData 
-			raidString = raidString "," blocks "," superBlock "," algorithm "," chunkSize "," bitmapValues
-			raidString = raidString "," recoveryProgressBar "," recoveryPercent "," sectorsRecovered "," finishTime "," recoverSpeed
-			
-			print raidString
-		}
-		' <<< "$mdstat" ) )
-		IFS="$ORIGINAL_IFS"
-	else
-		if [[ $BSD_TYPE == 'bsd' ]];then
-			get_raid_data_bsd
+	# note: zfs has been available for Linux for a while. BSD systems
+	# will not have mdraid.
+	if [[ -n $Zpool_Path ]];then
+		RAID_TYPE='zfs'
+		get_raid_data_zfs
+	fi
+	# because there's no way for inxi to handle > 1 types of
+	# software raid on one system, we simply have to assume that
+	# if it had zfs, it won't have mdraid. Note that systems with
+	# no actual mdraid but the kernel module running will have always
+	# an array count of at least 2, for the two header lines of mdraid
+	if [[ ${#A_RAID_DATA[@]} -eq 0 ]];then
+		if [[ $B_MDSTAT_FILE == 'true' ]];then
+			Mdstat="$( cat $FILE_MDSTAT 2>/dev/null )"
+		fi
+		if [[ -n $Mdstat ]];then
+			RAID_TYPE='mdraid'
+			get_raid_data_mdraid
 		fi
 	fi
 	B_RAID_SET='true'
 	a_temp=${A_RAID_DATA[@]}
 	log_function_data "A_RAID_DATA: $a_temp"
-# 	echo -e "A_RAID_DATA:\n${a_temp}"
+	# echo ${#A_RAID_DATA[@]}
+	# echo -e "A_RAID_DATA:\n${a_temp}"
 	
 	eval $LOGFE
 }
 
-get_raid_data_bsd()
+get_raid_data_mdraid()
 {
 	eval $LOGFS
-	local zpool_path=$( type -p zpool 2>/dev/null )
-	local zpool_data='' zpool_arg='v'
 	
-	if [[ -n $zpool_path ]];then
-		B_BSD_RAID='true'
-		# bsd sed does not support inserting a true \n so use this trick
-		# some zfs does not have -v
-		if $zpool_path list -v &>/dev/null;then
-			zpool_data="$( $zpool_path list -v 2>/dev/null | sed $SED_RX 's/^([^[:space:]])/\
-\1/' )"
-		else
-			zpool_data="$( $zpool_path list 2>/dev/null | sed $SED_RX 's/^([^[:space:]])/\
-\1/' )"
-			zpool_arg='no-v'
-		fi
-# 		echo "$zpool_data"
-		IFS=$'\n'
-		A_RAID_DATA=( $(
-		gawk '
-		BEGIN {
-			IGNORECASE=1
-			raidString=""
-			separator=""
-			components=""
-			reportSize=""
-			blocksAvailable=""
-			chunkRaidAllocated=""
-		}
-		/SIZE.*ALLOC/ {
-			sub(/.*ALLOC.*/,"", $0)
-		}
-		# gptid/d874c7e7-3f6d-11e4-b7dc-080027ea466c
-		/^[^[:space:]]/ {
-			components=""
-			separator=""
-			raidLevel=""
-			device=$1
-			deviceState=$7
-			reportSize=$2
-			blocksAvailable=$4
-			chunkRaidAllocated=$3
-			
-			getline
-			# raid level is the second item in the output, unless it is not, sometimes it is absent
-			if ( $1 != "" ) {
-				if ( $1 ~ /raid|mirror/ ) {
-					raidLevel="zfs " $1
-				}
-				else {
-					raidLevel="zfs-no-raid"
-					components = $1
+	# need to make sure there's always a newline in front of each record type, and
+	# also correct possible weird formats for the output from older kernels etc.
+	Mdstat="$( sed -e 's/^md/\nmd/' -e 's/^unused[[:space:]]/\nunused /' \
+	-e 's/read_ahead/\nread_ahead/' -e 's/^resync=/\nresync=/' -e 's/^Event/\nEvent/' \
+	-e 's/^[[:space:]]*$//' -e 's/[[:space:]]read_ahead/\nread_ahead/' <<< "$Mdstat" )"
+	# some fringe cases do not end as expected, so need to add newlines plus EOF to make sure while loop doesn't spin
+	Mdstat=$( echo -e "$Mdstat\n\nEOF" )
+	
+	IFS=$'\n'
+	A_RAID_DATA=( $(
+	gawk '
+	BEGIN {
+		IGNORECASE=1
+		RS="\n"
+	}
+	/^personalities/ {
+		KernelRaidSupport = gensub(/personalities[[:space:]]*:[[:space:]]*(.*)/, "\\1", 1, $0)
+		# clean off the brackets
+		gsub(/[\[\]]/,"",KernelRaidSupport)
+		print "KernelRaidSupport," KernelRaidSupport
+	}
+	/^read_ahead/ {
+		ReadAhead=gensub(/read_ahead (.*)/, "\\1", 1 )
+		print "ReadAhead," ReadAhead
+	}
+	/^Event:/ {
+		print "raidEvent," $NF
+	}
+	# print logic will search for this value and use it to print out the unused devices data
+	/^unused devices/ {
+		unusedDevices = gensub(/^unused devices:[[:space:]][<]?([^>]*)[>]?.*/, "\\1", 1, $0)
+		print "UnusedDevices," unusedDevices
+	}
+	
+	/^md/ {
+		# reset for each record loop through
+		deviceState = ""
+		bitmapValues = ""
+		blocks = ""
+		chunkSize = ""
+		components = ""
+		device = ""
+		deviceReport = ""
+		finishTime = ""
+		recoverSpeed = ""
+		recoveryProgressBar = ""
+		recoveryPercent = ""
+		raidLevel = ""
+		sectorsRecovered = ""
+		separator = ""
+		superBlock = ""
+		uData = ""
+		
+		while ( !/^[[:space:]]*$/  ) {
+			gsub(/'"$BAN_LIST_ARRAY"'/, " ", $0 )
+			gsub(/[[:space:]]+/, " ", $0 )
+			if ( $0 ~ /^md/ ) {
+				device = gensub(/(md.*)[[:space:]]?:/, "\\1", "1", $1 )
+			}
+			if ( $0 ~ /mirror|raid[0-9]+/ ) {
+				raidLevel = gensub(/(.*)raid([0-9]+)(.*)/, "\\2", "g", $0 )
+			}
+			if ( $0 ~ /(active \(auto-read-only\)|active|inactive)/ ) {
+				deviceState = gensub(/(.*) (active \(auto-read-only\)|active|inactive) (.*)/, "\\2", "1", $0 )
+			}
+			# gawk will not return all the components using gensub, only last one
+			separator = ""
+			for ( i=3; i<=NF; i++ ) {
+				if ( $i ~ /[hs]d[a-z][0-9]*(\[[0-9]+\])?(\([SF]\))?/ ) {
+					components = components separator $i
 					separator=" "
 				}
 			}
-			
-			while ( getline && $1 !~ /^$/ ) {
-				# https://blogs.oracle.com/eschrock/entry/zfs_hot_spares
-				if ($1 ~ /spares/) {
-					getline
+			if ( $0 ~ /blocks/ ) {
+				blocks = gensub(/(.*[[:space:]]+)?([0-9]+)[[:space:]]blocks.*/, "\\2", "1", $0)
+			}
+			if ( $0 ~ /super[[:space:]][0-9\.]+/ ) {
+				superBlock = gensub(/.*[[:space:]]super[[:space:]]([0-9\.]+)[[:space:]].*/, "\\1", "1", $0)
+			}
+			if ( $0 ~ /algorithm[[:space:]][0-9\.]+/ ) {
+				algorithm = gensub(/.*[[:space:]]algorithm[[:space:]]([0-9\.]+)[[:space:]].*/, "\\1", "1", $0)
+			}
+			if ( $0 ~ /\[[0-9]+\/[0-9]+\]/ ) {
+				deviceReport = gensub(/.*[[:space:]]\[([0-9]+\/[0-9]+)\][[:space:]].*/, "\\1", "1", $0)
+				uData = gensub(/.*[[:space:]]\[([U_]+)\]/, "\\1", "1", $0)
+			}
+			# need to avoid this:  bitmap: 0/10 pages [0KB], 16384KB chunk
+			# while currently all the normal chunks are marked with k, not kb, this can change in the future
+			if ( $0 ~ /[0-9]+[k] chunk/ && $0 !~ /bitmap/ ) {
+				chunkSize = gensub(/(.*) ([0-9]+[k]) chunk.*/, "\\2", "1", $0)
+			}
+			if ( $0 ~ /^resync=/ ) {
+				sub(/resync=/,"")
+				print "resyncStatus," $0
+			}
+			if ( $0 ~ /\[[=]*>[\.]*\].*(resync|recovery)/ ) {
+				recoveryProgressBar = gensub(/.*(\[[=]*>[\.]*\]).*/, "\\1",1,$0)
+			}
+			if ( $0 ~ / (resync|recovery)[[:space:]]*=/ ) {
+				recoveryPercent = gensub(/.* (resync|recovery)[[:space:]]*=[[:space:]]*([0-9\.]+%).*/, "\\1~\\2", 1 )
+				if ( $0 ~ /[[:space:]]\([0-9]+\/[0-9]+\)/ ) {
+					sectorsRecovered = gensub(/.* \(([0-9]+\/[0-9]+)\).*/, "\\1", 1, $0 )
 				}
-				# print $1
-				components = components separator $1
+				if ( $0 ~ /finish[[:space:]]*=/ ) {
+					finishTime = gensub(/.* finish[[:space:]]*=[[:space:]]*([[0-9\.]+)([a-z]+) .*/, "\\1 \\2", 1, $0 )
+				}
+				if ( $0 ~ /speed[[:space:]]*=/ ) {
+					recoverSpeed = gensub(/.* speed[[:space:]]*=[[:space:]]*([[0-9\.]+)([a-z]+\/[a-z]+)/, "\\1 \\2", 1, $0 )
+				}
+			}
+			if ( $0 ~ /bitmap/ ) {
+				bitmapValues = gensub(/(.*[[:space:]])?bitmap:(.*)/, "\\2", 1, $0 )
+			}
+			
+			getline
+		}
+		raidString = device "," deviceState "," raidLevel "," components "," deviceReport "," uData 
+		raidString = raidString "," blocks "," superBlock "," algorithm "," chunkSize "," bitmapValues
+		raidString = raidString "," recoveryProgressBar "," recoveryPercent "," sectorsRecovered "," finishTime "," recoverSpeed
+		
+		print raidString
+	}
+	' <<< "$Mdstat" ) )
+	IFS="$ORIGINAL_IFS"
+	
+	eval $LOGFE
+}
+
+get_raid_data_zfs()
+{
+	eval $LOGFS
+	
+	local zpool_data='' zpool_arg='v'
+	
+	# bsd sed does not support inserting a true \n so use this trick
+	# some zfs does not have -v
+	if $Zpool_Path list -v &>/dev/null;then
+		zpool_data="$( $Zpool_Path list -v 2>/dev/null | sed $SED_RX 's/^([^[:space:]])/\
+\1/' )"
+	else
+		zpool_data="$( $Zpool_Path list 2>/dev/null | sed $SED_RX 's/^([^[:space:]])/\
+\1/' )"
+		zpool_arg='no-v'
+	fi
+# 		echo "$zpool_data"
+	IFS=$'\n'
+	A_RAID_DATA=( $(
+	gawk '
+	BEGIN {
+		IGNORECASE=1
+		raidString=""
+		separator=""
+		components=""
+		reportSize=""
+		blocksAvailable=""
+		chunkRaidAllocated=""
+	}
+	/SIZE.*ALLOC/ {
+		sub(/.*ALLOC.*/,"", $0)
+	}
+	# gptid/d874c7e7-3f6d-11e4-b7dc-080027ea466c
+	/^[^[:space:]]/ {
+		components=""
+		separator=""
+		raidLevel=""
+		device=$1
+		deviceState=$7
+		reportSize=$2
+		blocksAvailable=$4
+		chunkRaidAllocated=$3
+		
+		getline
+		# raid level is the second item in the output, unless it is not, sometimes it is absent
+		if ( $1 != "" ) {
+			if ( $1 ~ /raid|mirror/ ) {
+				raidLevel="zfs " $1
+			}
+			else {
+				raidLevel="zfs-no-raid"
+				components = $1
 				separator=" "
 			}
-			# some issues if we use ~ here
-			gsub(/\//,"%",components)
+		}
+		
+		while ( getline && $1 !~ /^$/ ) {
+			# https://blogs.oracle.com/eschrock/entry/zfs_hot_spares
+			if ($1 ~ /spares/) {
+				getline
+			}
 			# print $1
-			raidString = device "," deviceState "," raidLevel "," components "," reportSize "," uData 
-			raidString = raidString "," blocksAvailable "," superBlock "," algorithm "," chunkRaidAllocated 
-			# none of these are used currently
-			raidString = raidString "," bitmapValues  "," recoveryProgressBar "," recoveryPercent 
-			raidString = raidString "," sectorsRecovered "," finishTime "," recoverSpeed
-			gsub(/~/,"",raidString)
-			print raidString
-		}' <<< "$zpool_data" ) )
-		IFS="$ORIGINAL_IFS"
-		# pass the zpool type, so we know how to get the components
-		get_raid_component_data_bsd "$zpool_arg"
-	fi
+			components = components separator $1
+			separator=" "
+		}
+		# some issues if we use ~ here
+		gsub(/\//,"%",components)
+		# print $1
+		raidString = device "," deviceState "," raidLevel "," components "," reportSize "," uData 
+		raidString = raidString "," blocksAvailable "," superBlock "," algorithm "," chunkRaidAllocated 
+		# none of these are used currently
+		raidString = raidString "," bitmapValues  "," recoveryProgressBar "," recoveryPercent 
+		raidString = raidString "," sectorsRecovered "," finishTime "," recoverSpeed
+		gsub(/~/,"",raidString)
+		print raidString
+	}' <<< "$zpool_data" ) )
+	IFS="$ORIGINAL_IFS"
+	# pass the zpool type, so we know how to get the components
+	get_raid_component_data_zfs "$zpool_arg"
+
 	eval $LOGFE
 }
 
 # note, we've already tested for zpool so no further tests required
 # args: $1 - zpool type, v will have a single row output, no-v has stacked for components
-get_raid_component_data_bsd()
+get_raid_component_data_zfs()
 {
 	eval $LOGFS
 	local a_raid_data='' array_string='' component='' component_string='' 
@@ -10440,7 +10459,7 @@ get_raid_component_data_bsd()
 	
 	eval $LOGFE
 }
-# get_raid_data_bsd;exit
+# get_raid_data_zfs;exit
 
 get_ram_data()
 {
@@ -15161,7 +15180,11 @@ print_raid_data()
 	local no_raid_detected='' dev_string='/dev/'
 	local empty_raid_data='' report_size='report' blocks_avail='blocks' chunk_raid_usage='chunk size'
 	
-	if [[ -n $BSD_TYPE ]];then
+	if [[ $B_RAID_SET != 'true' ]];then
+		get_raid_data
+	fi
+	# note, default first tesat is zfs, if empty, falls back to mdraid
+	if [[ $RAID_TYPE == 'zfs' ]];then
 		no_raid_detected='No zfs software RAID detected-other types not yet supported.'
 		empty_raid_data='No zfs RAID data available-other types not yet supported.'
 		report_size='size'
@@ -15171,14 +15194,9 @@ print_raid_data()
 		no_raid_detected="No RAID data: $FILE_MDSTAT missing-is md_mod kernel module loaded?"
 		empty_raid_data="No RAID devices: $FILE_MDSTAT, md_mod kernel module present"
 	fi
-	
 	if [[ $BSD_TYPE == 'bsd' ]];then
 		dev_string=''
 	fi
-	if [[ $B_RAID_SET != 'true' ]];then
-		get_raid_data
-	fi
-
 	for (( i=0; i < ${#A_RAID_DATA[@]}; i++ ))
 	do
 		IFS=","
@@ -15208,8 +15226,9 @@ print_raid_data()
 		super_blocks=''
 		u_data=''
 		
-		if [[ -n $( grep '^md' <<< ${a_raid_working[0]} ) && -z $BSD_TYPE ]] || \
-		[[ -n $BSD_TYPE && ${a_raid_working[0]} != '' ]];then
+		# we only want to print lines if anything showed up for md or zfs. 
+		if [[ $RAID_TYPE == 'mdraid' && -n $( grep '^md' <<< ${a_raid_working[0]} ) ]] || \
+		   [[ $RAID_TYPE == 'zfs' && ${a_raid_working[0]} != '' ]];then
 			if [[ $B_SHOW_BASIC_RAID == 'true' ]];then
 				if [[ $basic_raid != '' ]];then
 					basic_raid_plural='s'
@@ -15387,9 +15406,8 @@ print_raid_data()
 	if [[ $B_SHOW_BASIC_RAID == 'true' && $basic_raid != '' ]];then
 		a_raid_data[0]="${C1}Device$basic_raid_plural$SEP3${C2} $basic_raid"
 	fi
-	# note bsd temp test hack to make it run
-	if [[ $B_MDSTAT_FILE != 'true' && -z $BSD_TYPE ]] || \
-	[[ -n $BSD_TYPE && $B_BSD_RAID == 'false' ]];then
+	# This means no /proc/mdstat and no zfs_pool found
+	if [[ $RAID_TYPE == '' ]];then
 		if [[ $B_SHOW_RAID_R == 'true' ]];then
 			a_raid_data[0]="$no_raid_detected"
 		else
