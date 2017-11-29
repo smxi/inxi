@@ -2,7 +2,7 @@
 ########################################################################
 SELF_NAME='inxi' 
 # don't quote the following, parsers grab these too
-SELF_VERSION=2.3.49
+SELF_VERSION=2.3.50
 SELF_DATE=2017-11-28
 SELF_PATCH=00
 ########################################################################
@@ -1806,15 +1806,16 @@ debug_data_collector()
 			swapon -s &> $Debug_Data_Dir/swapon-s.txt
 			sysctl -b kern.geom.conftxt &> $Debug_Data_Dir/bsd-sysctl-b-kern.geom.conftxt.txt
 			sysctl -b kern.geom.confxml &> $Debug_Data_Dir/bsd-sysctl-b-kern.geom.confxml.txt
-			zfs list &> $Debug_Data_Dir/bsd-zfs-list.txt
-			zpool list &> $Debug_Data_Dir/bsd-zpool-list.txt
-			zpool list -v &> $Debug_Data_Dir/bsd-zpool-list-v.txt
+			zfs list &> $Debug_Data_Dir/zfs-list.txt
+			zpool list &> $Debug_Data_Dir/zpool-list.txt
+			zpool list -v &> $Debug_Data_Dir/zpool-list-v.txt
 			df -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 &> $Debug_Data_Dir/df-P-excludes.txt
 			df -P &> $Debug_Data_Dir/bsd-df-P-no-excludes.txt
 			cat /proc/mdstat &> $Debug_Data_Dir/proc-mdstat.txt
 			cat $FILE_PARTITIONS &> $Debug_Data_Dir/proc-partitions.txt
 			cat $FILE_SCSI &> $Debug_Data_Dir/proc-scsi.txt
 			cat $FILE_MOUNTS &> $Debug_Data_Dir/proc-mounts.txt
+			cat $FILE_MDSTAT &> $Debug_Data_Dir/proc-mdstat.txt
 			cat /proc/sys/dev/cdrom/info &> $Debug_Data_Dir/proc-cdrom-info.txt
 			ls /proc/ide/ &> $Debug_Data_Dir/proc-ide.txt
 			cat /proc/ide/*/* &> $Debug_Data_Dir/proc-ide-hdx-cat.txt
@@ -10305,7 +10306,7 @@ get_raid_data_zfs()
 # 		echo "$zpool_data"
 	IFS=$'\n'
 	A_RAID_DATA=( $(
-	gawk '
+	gawk -v bsdType="$BSD_TYPE" '
 	BEGIN {
 		IGNORECASE=1
 		raidString=""
@@ -10324,10 +10325,15 @@ get_raid_data_zfs()
 		separator=""
 		raidLevel=""
 		device=$1
-		deviceState=$7
 		reportSize=$2
-		blocksAvailable=$4
 		chunkRaidAllocated=$3
+		blocksAvailable=$4
+		if ( bsdType != "" ){
+			deviceState=$7
+		}
+		else {
+			deviceState=$9
+		}
 		
 		getline
 		# raid level is the second item in the output, unless it is not, sometimes it is absent
@@ -10388,6 +10394,7 @@ get_raid_component_data_zfs()
 		zpool_status=''
 		device=${a_raid_data[0]}
 		zpool_status="$( zpool status $device )"
+		log_function_data "zpool status $device:\n$zpool_status"
 		# we will remove ONLINE for status and only use OFFLINE/DEGRADED as tests
 		# for print output display of issues with components
 		# note: different zfs outputs vary, some have the components listed by line
@@ -15304,13 +15311,25 @@ print_raid_data()
 						if [[ $B_EXTRA_DATA != 'true' ]];then
 							component=$( sed 's/\[[0-9]\+\]//' <<< $component )
 						fi
-						# NOTE: for bsd zfs, states are: ONLINE,DEGRADED,OFFLINE (at least)
-						if [[ -n $( grep -E '(F|DEGRADED)' <<< $component ) ]];then
-							component=$( sed -e 's/(F)//' -e 's/F//' -e 's/DEGRADED//' <<<  $component )
+						# ZFS: states are: ONLINE,DEGRADED,FAULTED,OFFLINE,REMOVED,UNAVAIL (at least)
+						# MDRAID: states are: (F), F, (S), S
+						# F and S trigger false positives with ZFS, needs fixing
+						if [[ $RAID_TYPE == 'mdraid' && -n $( grep 'F' <<< $component ) ]] || \
+						   [[ $RAID_TYPE == 'zfs' && -n $( grep -E '(DEGRADED|FAULTED)' <<< $component ) ]];then
+						   if [[ $RAID_TYPE == 'mdraid' ]];then
+								component=$( sed -e 's/(F)//' -e 's/S//' <<<  $component )
+							else
+								component=$( sed -e 's/DEGRADED//' -e 's/FAULTED//' <<<  $component )
+							fi
 							failed="$failed $component"
 							component=''
-						elif [[ -n $( grep -E '(S|OFFLINE)' <<< $component ) ]];then
-							component=$( sed -e 's/(S)//' -e 's/S//' -e 's/OFFLINE//' <<<  $component )
+						elif [[ $RAID_TYPE == 'mdraid' && -n $( grep -E 'S' <<< $component ) ]] || \
+						     [[ $RAID_TYPE == 'zfs' && -n $( grep -E '(OFFLINE)' <<< $component )  ]];then
+							if [[ $RAID_TYPE == 'mdraid' ]];then
+								component=$( sed -e 's/(S)//' -e 's/S//' <<<  $component )
+							else
+								component=$( sed -e 's/OFFLINE//' <<<  $component )
+							fi
 							spare="$spare $component"
 							component=''
 						else
