@@ -2,8 +2,8 @@
 ########################################################################
 SELF_NAME='inxi' 
 # don't quote the following, parsers grab these too
-SELF_VERSION=2.3.50
-SELF_DATE=2017-11-28
+SELF_VERSION=2.3.51
+SELF_DATE=2017-11-31
 SELF_PATCH=00
 ########################################################################
 ####  SPECIAL THANKS
@@ -4953,13 +4953,7 @@ get_cpu_core_count_alpha()
 		2) CPU_COUNT_ALPHA='Dual';;
 		3) CPU_COUNT_ALPHA='Triple';;
 		4) CPU_COUNT_ALPHA='Quad';;
-		5) CPU_COUNT_ALPHA='Penta';;
-		6) CPU_COUNT_ALPHA='Hexa';;
-		7) CPU_COUNT_ALPHA='Hepta';;
-		8) CPU_COUNT_ALPHA='Octa';;
-		9) CPU_COUNT_ALPHA='Ennea';;
-		10) CPU_COUNT_ALPHA='Deca';;
-		*) CPU_COUNT_ALPHA='Multi';;
+		*) CPU_COUNT_ALPHA=$1;;
 	esac
 	log_function_data "CPU_COUNT_ALPHA: $CPU_COUNT_ALPHA"
 	
@@ -5393,6 +5387,7 @@ get_cpu_ht_multicore_smp_data()
 			arm_count = 0
 			nr = 0
 			bArm = "false"
+			bRizen = "false"
 			bProcInt = "false" # this will avoid certain double counts with processor/Processor lines
 			bXeon = "false"
 		}
@@ -5400,8 +5395,12 @@ get_cpu_ht_multicore_smp_data()
 		/^model name/ && ( $0 ~ /Xeon/ ) {
 			bXeon = "true"
 		}
+		# amd rizen 16/32 core maybe
+		/^cpu_family/ && ($2 == 23) {
+			bRizen = "true"
+		}
 		# only do this once since sibling count does not change. 
-		/^siblings/ && ( bXeon == "true" ) && ( siblings == 0 ) {
+		/^siblings/ && ( bXeon == "true" || bRizen == "true" ) && ( siblings == 0 ) {
 			gsub(/[^0-9]/,"",$NF)
 			if ( $NF != "" ) {
 				siblings = $NF
@@ -5444,6 +5443,8 @@ get_cpu_ht_multicore_smp_data()
 		}
 		# array of core ids, again, here we may have HT, so we need to create an array of the
 		# actual core ids. As With physical, we cannot assume this will be here in a vm
+		# also, for xeon/rizen, this can be misleading because there may be two cpus 
+		# inside the single cpu body, which leads to: 0-7 then 0-7 for a rizen 16 core ht
 		/^core id/ {
 			core_iter = $NF
 			a_core_id[core_iter] = $NF
@@ -5471,7 +5472,8 @@ get_cpu_ht_multicore_smp_data()
 				num_of_physical_cpus++
 			}
 			i = 0
-			## count unique cores ##
+			## count unique cores. Fails for 16 core rizen, which appears to be
+			## using 2x8 core internally, core id 0-7 repeats 2 times.
 			for ( i in a_core_id ) {
 				num_of_cores++
 			}
@@ -5479,6 +5481,10 @@ get_cpu_ht_multicore_smp_data()
 			# may show a repeated core id : 0 which gives a fake num_of_cores=1
 			if ( bXeon == "true" && num_of_cores == 1 && siblings > 1 ) {
 				num_of_cores = siblings/2
+			}
+			# 
+			if ( bRizen == "true"){
+				num_of_cores = cpu_core_count
 			}
 			# final check, override the num of cores value if it clearly is wrong
 			# and use the raw core count and synthesize the total instead of real count
@@ -5501,6 +5507,7 @@ get_cpu_ht_multicore_smp_data()
 			####################################################################
 			# 				algorithm
 			# if > 1 processor && processor id (physical id) == core id then Hyperthreaded (HT)
+			# if siblings > 1 && siblings ==  2 * num_of_cores (cpu_core_count) then Hyperthreaded (HT)
 			# if > 1 processor && processor id (physical id) != core id then Multi-Core Processors (MCP)
 			# if > 1 processor && processor ids (physical id) > 1 then Multiple Processors (SMP)
 			# if = 1 processor then single core/processor Uni-Processor (UP)
@@ -5510,6 +5517,9 @@ get_cpu_ht_multicore_smp_data()
 					cpu_type = cpu_type "HT-"
 				}
 				else if ( bXeon == "true" && siblings > 1 ) {
+					cpu_type = cpu_type "HT-"
+				}
+				else if ( siblings > 1 && siblings == 2 * num_of_cores ){
 					cpu_type = cpu_type "HT-"
 				}
 				# non-HT multi-core or HT multi-core
@@ -13295,7 +13305,8 @@ print_cpu_data()
 			if [[ -n ${a_cpu_working[2]} ]];then
 				if [[ -z $BSD_TYPE ]];then
 					# AMD SOS chips appear to report full L2 cache per core
-					if [[ "${a_cpu_info[3]}" == 'amd' ]] && [[ "${a_cpu_info[4]}" == '14' || "${a_cpu_info[4]}" == '16' ]];then
+					if [[ "${a_cpu_info[3]}" == 'amd' ]] && 
+					   [[ "${a_cpu_info[4]}" == '14' || "${a_cpu_info[4]}" == '16' ]];then
 						cpu_cache=$( calculate_multicore_data "${a_cpu_working[2]}" "$cpu_physical_count"  )
 					elif [[ $cpu_vendor != 'intel' ]];then
 						cpu_cache=$( calculate_multicore_data "${a_cpu_working[2]}" "$(( $cpu_core_count * $cpu_physical_count ))"  )
