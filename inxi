@@ -2,9 +2,188 @@
 
 use strict;
 use warnings;
+# use diagnostics;
 use 5.008;
 
-our $self_name = 'inxi'
+use File::Basename;
+
+### INXI INFO ###
+our $self_name = 'inxi';
 our $self_version = '2.9.00';
-our $self_date = '2017-10-31';
-our $self_patch = '01-p';
+our $self_date = '2017-12-02';
+our $self_patch = 'p-01';
+
+### INITIALIZE VARIABLES ###
+
+### DISTRO MAINTAINER FLAGS ###
+# flag to allow distro maintainers to turn off update features. If false, 
+# turns off -U and -! testing/advanced update options, as well as removing 
+# the -U help menu item.
+# NOTE: Usually you want to create these in /etc/inxi.conf to avoid having to 
+# update each time
+our $b_allow_update='true';
+our $b_allow_weather='true';
+
+### USER CONFIGS: SET IN inxi.conf file see wiki for directions ###
+# override in user config if desired, seems like less than .3 doesn't work as 
+# reliably
+
+# for features like help/version will fit to terminal / console screen width.
+# Console # widths will be dynamically set in main() based on cols in 
+# term/console
+our $cols_max_console=115;
+our $cols_max_irc=105;
+# note, this is console out of x/display server, will also be set dynamically
+# not used currently, but maybe in future
+our $cols_max_no_display=130;
+our $cpu_sleep=0.3;
+# change to less, or more if you have very slow connection
+our $dl_timeout=4;
+our $filter_string='<filter>';
+our $ps_count=5;
+### END USER CONFIGS ###
+
+our $b_irc='';
+our $b_root='';
+our $b_running_in_display='';
+
+our $self_path='';
+
+### LAYOUT ###
+# These two determine separators in single line output, to force irc clients 
+# not to break off sections
+our $sep1='~';
+our $sep2=' ';
+# these will assign a separator to non irc states. Important! Using ':' can 
+# trigger stupid emoticon
+# behaviors in output on IRC, so do not use those.
+our $sep3_irc='';
+our $sep3_console=':';
+our $sep3=''; # do not set, will be set dynamically
+our $line1='---------------------------------------------------------------------------';
+our $line2='- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -';
+
+# Default indentation level. NOTE: actual indent is 1 greater to allow for 
+# spacing
+our $indent=10;
+
+### COLUMN WIDTHS ###
+our $cols_inner=0; ## for width minus $indent
+our $cols_max=0;
+
+# these will be set dynamically in set_display_width()
+our $term_cols=80;
+our $term_lines=100;
+
+sub main {
+	initialize();
+	set_display_width('live');
+	print_it_out();
+}
+
+sub initialize {
+	initialize_path();
+	### LOCALIZATION - DO NOT CHANGE! ###
+	# set to default LANG to avoid locales errors with , or .
+	# Make sure every program speaks English.
+	$ENV{'LANG'}='C';
+	$ENV{'LC_ALL'}='C';
+	if ( system('tty>/dev/null') ) {
+		$b_irc='true';
+	}
+	# print "birc: $b_irc\n";
+}
+
+sub initialize_path {
+	my $path = '';
+	my $added_paths = '';
+	# Extra path variable to make execute failures less likely, merged below
+	my @a_path = split ':', $ENV{'PATH'};
+	my @a_extra_paths=split ':', '/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:/opt/local/bin';
+	#print "PATH=$ENV{'PATH'}\n";
+	# this needs to be set here because various options call the parent 
+	# initialize function directly.
+	$self_path=dirname "$0";
+	# Fallback paths put into $extra_paths; This might, among others, help 
+	# on gentoo.
+	# Now, create a difference of $PATH and $extra_paths and add that to $PATH:
+	foreach $path (@a_extra_paths) {
+		if ( ! grep(/$path/,@a_path) ){
+			$added_paths="$added_paths:$path";
+			# print "$path\n";
+		}
+	}
+	$ENV{'PATH'} = $ENV{'PATH'} . $added_paths;
+	# print "PATH=$ENV{'PATH'}\n";
+	##/bin/sh -c 'echo "PATH in subshell=\"$PATH\""'
+}
+
+# args: $1 - default OR override default cols max integer count
+sub set_display_width {
+	my ($cols_max_override)=@_;
+	
+	if ( $cols_max_override eq 'live' ){
+		## sometimes tput will trigger an error (mageia) if irc client
+		if ( ! $b_irc ){
+			if ( check_program('tput') ) {
+				chomp($term_cols=qx/tput cols/);
+				chomp($term_lines=qx/tput lines/);
+			}
+			print "tc: $term_cols cmc: $cols_max_console\n";
+			# double check, just in case it's missing functionality or whatever
+			if ( $term_cols == 0 || $term_cols !~ /\d/ ){ 
+				$term_cols=80;
+				$term_lines=100;
+			}
+		}
+		# this lets you set different widths for in or out of display server
+		# if ( ! $b_running_in_display && $cols_max_no_display != 0 ){
+		# 	$cols_max_console=$cols_max_no_display;
+		# }
+		# term_cols is set in top globals, using tput cols
+		print "tc: $term_cols cmc: $cols_max_console\n";
+		if ( $term_cols < $cols_max_console ){
+			$cols_max_console=$term_cols;
+		}
+		# adjust, some terminals will wrap if output cols == term cols
+		$cols_max_console=( $cols_max_console - 2 );
+		# echo cmc: $cols_max_console
+		# comes after source for user set stuff
+		if ( ! $b_irc ){
+			$cols_max=$cols_max_console;
+		}
+		else {
+			$cols_max=$cols_max_irc;
+		}
+	}
+	else {
+		$cols_max=$cols_max_override;
+	}
+	$cols_inner= ( $cols_max - $indent - 1 );
+	print "cm: $cols_max ci: $cols_inner\n";
+}
+
+
+sub print_it_out {
+
+}
+
+########################################################################
+#### UTILITIES
+########################################################################
+
+## returns result of test, 0/1, false/true
+## arg: program to find in PATH
+sub check_program {
+	grep { -x "$_/$_[0]"}split /:/,$ENV{PATH};
+}
+
+
+########################################################################
+#### LAUNCH
+########################################################################
+
+main(@ARGV); ## From the End comes the Beginning
+
+## note: this EOF is needed for smxi handling, this is what triggers the full download ok
+###**EOF**###
