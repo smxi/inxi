@@ -2,8 +2,8 @@
 ########################################################################
 SELF_NAME='inxi' 
 # don't quote the following, parsers grab these too
-SELF_VERSION=2.3.51
-SELF_DATE=2017-11-31
+SELF_VERSION=2.3.52
+SELF_DATE=2017-12-01
 SELF_PATCH=00
 ########################################################################
 ####  SPECIAL THANKS
@@ -4593,7 +4593,7 @@ get_battery_data()
 			fi
 		done
 	elif [[ $B_FORCE_DMIDECODE == 'true'  ]] || [[ ! -d $id_dir && -z $ids ]];then
-		get_dmidecode_data
+		set_dmidecode_data
 		if [[ -n $DMIDECODE_DATA ]];then
 			if [[ $DMIDECODE_DATA == 'dmidecode-error-'* ]];then
 				A_BATTERY_DATA[0]=$DMIDECODE_DATA
@@ -5898,59 +5898,6 @@ get_desktop_environment()
 	eval $LOGFE
 }
 
-# note: gawk doesn't support white spaces in search string, gave errors, so use [[:space:]] instead
-# args: $1 - desktop/app command for --version; $2 - search string; $3 - gawk print number
-get_program_version()
-{
-	local version_data='' version='' get_version='--version' 
-	
-	# mate-about -v = MATE Desktop Environment 1.4.0
-	case $1 in
-		# legacy fluxbox had no --version, and current -v works
-		dwm|fluxbox|jwm|mate-about|wmii|wmii2)
-			get_version='-v'
-			;;
-		epoch)
-			get_version='version'
-			;;
-	esac
-	
-	case $1 in
-		# note, some wm/apps send version info to stderr instead of stdout
-		dwm|ksh|scrotwm|spectrwm)
-			version_data="$( $1 $get_version 2>&1 )"
-			;;
-		csh)
-			version_data="$( tcsh $get_version 2>/dev/null )"
-			;;
-		# quick debian/buntu hack until I find a universal way to get version for these
-		dash)
-			if type -p dpkg &>/dev/null;then
-				version_data="$( dpkg -l $1 2>/dev/null )"
-			fi
-			;;
-		*)
-			version_data="$( $1 $get_version 2>/dev/null )"
-			;;
-	esac
-	log_function_data "version data: $version_data"
-	if [[ -n $version_data ]];then
-		version=$( gawk '
-		BEGIN {
-			IGNORECASE=1
-		}
-		/'$2'/ {
-			# sample: dwm-5.8.2, ©.. etc, why no space? who knows. Also get rid of v in number string
-			# xfce, and other, output has , in it, so dump all commas and parentheses
-			gsub(/(,|dwm-|wmii2-|wmii-|v|V|\(|\))/, "",$'$3') 
-			print $'$3'
-			exit # quit after first match prints
-		}' <<< "$version_data" )
-	fi
-	log_function_data "program version: $version"
-	echo $version
-}
-
 get_desktop_extra_data()
 {
 	eval $LOGFS
@@ -6123,7 +6070,7 @@ get_device_data()
 		elif [[ $B_ROOT == 'false' ]];then
 			device='dmidecode-use-root'
 		else 
-			get_dmidecode_data
+			set_dmidecode_data
 			if [[ -n $DMIDECODE_DATA ]];then
 				if [[ $DMIDECODE_DATA == 'dmidecode-error-'* ]];then
 					device='dmidecode-no-info'
@@ -6598,144 +6545,6 @@ get_distro_lsb_os_release_data()
 	esac
 	echo $distro
 	log_function_data "distro: $distro"
-	eval $LOGFE
-}
-
-get_dmidecode_data()
-{
-	eval $LOGFS
-	
-	local dmiData="" b_debugger='false'
-
-	if [[ $B_DMIDECODE_SET != 'true' ]];then
-		dmidecodePath=$( type -p dmidecode 2>/dev/null )
-		if [[ -z $dmidecodePath ]];then
-			DMIDECODE_DATA='dmidecode-error-not-installed'
-		else
-			# note stripping out these lines: Handle 0x0016, DMI type 17, 27 bytes
-			# but NOT deleting them, in case the dmidecode data is missing empty lines which will be
-			# used to separate results. Then we remove the doubled empty lines to keep it clean and
-			# strip out all the stuff we don't want to see in the results. We want the error data in 
-			# stdout for error handling
-			if [[ $b_debugger == 'true' && $HOSTNAME == 'yawn' ]];then
-				dmiData="$( cat ~/bin/scripts/inxi/svn/misc/data/dmidecode/dmidecode-memory-variants-2.txt )"
-			else 
-				dmiData="$( $dmidecodePath 2>&1 )"
-			fi
-			# these tests first, because bsd error messages like this (note how many : are in the string)
-			# inxi: line 4928: /usr/local/sbin/dmidecode: Permission denied
-			if [[ ${#dmiData} -lt 200  ]];then
-				if [[ -z ${dmiData/*Permission denied*/} ]];then
-				# if [[ -n $( grep -i 'Permission denied' <<< "$dmiData" ) ]];then
-					DMIDECODE_DATA='dmidecode-error-requires-root'
-				# this handles very old systems, like Lenny 2.6.26, with dmidecode, but no data
-				elif [[ -n $( grep -i 'no smbios ' <<< "$dmiData" ) ]];then
-					DMIDECODE_DATA='dmidecode-error-no-smbios-dmi-data'
-				else
-					DMIDECODE_DATA='dmidecode-error-unknown-error'
-				fi
-			else
-				DMIDECODE_DATA="$( echo "$dmiData" | gawk -F ':' '
-				BEGIN {
-					IGNORECASE=1
-					cutExtraTab="false"
-					twoData=""
-					oneData=""
-				}
-				{
-					# no idea why, but freebsd gawk does not do this right
-					oneData=$1
-					twoData=$2
-					if ( twoData != "" ) {
-						twoHolder="true"
-					}
-					else {
-						twoHolder="false"
-					}
-					if ( $0 ~ /^\tDMI type/ ) {
-						sub(/^\tDMI type.*/, "", $0)
-						cutExtraTab="true"
-					}
-					gsub(/'"$BAN_LIST_NORMAL"'/, "", twoData)
-					gsub(/'"$BAN_LIST_ARRAY"'/, " ", twoData)
-					# clean out Handle line
-					# sub(/^Handle.*/,"", $0)
-					sub(/^[[:space:]]*Inactive.*/,"",twoData)
-					# yes, there is a typo in a user data set, unknow
-					# Base Board Version|Base Board Serial Number
-					# Chassis Manufacturer|Chassis Version|Chassis Serial Number
-					# System manufacturer|System Product Name|System Version
-					# To Be Filled By O.E.M.
-					# strip out starting white space so that the following stuff will clear properly
-					sub(/^[[:space:]]+/, "", twoData)
-					sub(/^Base Board .*|^Chassis .*|empty|.*O\.E\.M\..*|.*OEM.*|^Not .*|^System .*|.*unknow.*|.*N\/A.*|none|^To be filled.*|^0x[0]+$|\[Empty\]|<Bad Index>|Default string|^\.\.$/, "", twoData) 
-					sub(/.*(AssetTagNum|Manufacturer| Or Motherboard|PartNum.*|SerNum).*/, "", twoData)
-					gsub(/\ybios\y|\yacpi\y/, "", twoData) # note: biostar
-					sub(/http:\/\/www.abit.com.tw\//, "Abit", twoData)
-					
-					# for double indented values replace with ~ so later can test for it, we are trusting that
-					# indentation will be tabbed in this case
-					# special case, dmidecode 2.2 has an extra tab and a DMI type line
-					if ( cutExtraTab == "true" ) {
-						sub(/^\t\t\t+/, "~", oneData)
-					}
-					else {
-						sub(/^\t\t+/, "~", oneData)
-					}
-					gsub(/ [ \t]+/, " ", twoData)
-					gsub(/^[[:space:]]+|[[:space:]]+$/, "", twoData)
-					gsub(/^[[:space:]]+|[[:space:]]+$/, "", oneData)
-					
-					# reconstructing the line for processing so gawk can use -F : again
-					if ( oneData != "" && twoHolder == "true" ) {
-						print oneData ":" twoData
-					}
-					else {
-						# make sure all null lines have no spaces in them!
-						gsub(/^[[:space:]]+|[[:space:]]+$/,"",$0)
-						print $0
-					}
-				}' \
-				| sed '/^$/{
-N
-/^\n$/D
-}' \
-				)"
-			fi
-			# echo ":${DMIDECODE_DATA}:"
-			log_function_data "DMIDECODE_DATA (PRE): $DMIDECODE_DATA"
-			
-		fi
-		B_DMIDECODE_SET='true'
-		log_function_data "DMIDECODE_DATA (POST): $DMIDECODE_DATA"
-	fi
-
-	eval $LOGFE
-}
-# get_dmidecode_data;echo "$DMIDECODE_DATA";exit
-
-# BSD only
-get_dmesg_boot_data()
-{
-	eval $LOGFS
-	
-	local dmsg_boot_data=''
-	
-	if [[ $B_DMESG_BOOT_FILE == 'true' ]];then
-		# replace all indented items with ~ so we can id them easily while processing
-		# note that if user, may get error of read permissions
-		# for some weird reason, real mem and avail mem are use a '=' separator, who knows why, the others are ':'
-		dmsg_boot_data="$( cat $FILE_DMESG_BOOT 2>/dev/null | gawk '
-		{
-			sub(/[[:space:]]*=[[:space:]]*|:[[:space:]]*/,":", $0)
-			gsub(/'"$BAN_LIST_ARRAY"'/," ", $0)
-			gsub(/\"/, "", $0)
-			gsub(/[[:space:]][[:space:]]/, " ", $0)
-			print $0
-		}' )"
-	fi
-	DMESG_BOOT_DATA="$dmsg_boot_data"
-	log_function_data "$dmsg_boot_data"
 	eval $LOGFE
 }
 
@@ -7278,6 +7087,7 @@ get_graphics_display_server_data()
 	log_function_data "A_DISPLAY_SERVER_DATA: $a_temp"
 	eval $LOGFE
 }
+
 get_graphics_display_compositor()
 {
 	eval $LOGFS
@@ -7321,7 +7131,8 @@ get_graphics_display_compositor()
 	echo $compositor
 	eval $LOGFE
 }
-# $1 - compositor
+
+## args: $1 - compositor
 get_graphics_display_wayland_version()
 {
 	eval $LOGFS
@@ -8028,24 +7839,6 @@ get_init_data()
 	eval $LOGFE
 }
 
-# Note: useless because this is just absurdly inaccurate, too bad...
-get_install_date()
-{
-	eval $LOGFS
-	
-	local installed=''
-	
-	if ls -al --time-style '+FORMAT %Y-%m-%d' /usr 2>/dev/null;then
-		installed=$(ls -al --time-style '+FORMAT %Y-%m-%d' / | awk '/lost\+found/ {print $7;exit}' )
-# 	elif 
-# 		:
-	fi
-	
-	echo $installed
-	
-	eval $LOGFE
-}
-
 get_kernel_compiler_version()
 {
 	# note that we use gawk to get the last part because beta, alpha, git versions can be non-numeric
@@ -8111,47 +7904,6 @@ get_kernel_version()
 	eval $LOGFE
 }
 
-# args: $1 - v/n 
-get_lspci_data()
-{
-	eval $LOGFS
-	local lspci_data=''
-
-	if [[ $B_LSPCI == 'true' ]];then
-		lspci_data="$( lspci -$1 | gawk '{
-			gsub(/\(prog-if[^)]*\)/,"")
-			sub(/^0000:/, "", $0) # seen case where the 0000: is prepended, rare, but happens
-			print
-		}' )"
-	fi
-	log_function_data 'raw' "lspci_data $1:\n$lspci_data"
-	if [[ $1 == 'v' ]];then
-		LSPCI_V_DATA="$lspci_data"
-	elif [[ $1 == 'n' ]];then
-		LSPCI_N_DATA="$lspci_data"
-	fi
-	eval $LOGFE
-}
-
-# args: $1 - busid
-get_lspci_chip_id()
-{
-	eval $LOGFS
-	
-	local chip_id=''
-	
-	chip_id=$( gawk '
-	/^'$1'/ {
-		if ( $3 != "" ) {
-			print $3
-		}
-	}' <<< "$LSPCI_N_DATA" )
-	
-	echo $chip_id
-	
-	eval $LOGFE
-}
-
 get_machine_data()
 {
 	eval $LOGFS
@@ -8210,7 +7962,7 @@ get_machine_data()
 			array_string="$array_string,$firmware_type"
 		fi
 	else
-		get_dmidecode_data
+		set_dmidecode_data
 		if [[ -n $DMIDECODE_DATA ]];then
 			if [[ $DMIDECODE_DATA == 'dmidecode-error-'* ]];then
 				array_string=$DMIDECODE_DATA
@@ -8451,36 +8203,6 @@ get_memory_data()
 	fi
 	log_function_data "memory: $memory"
 	MEMORY="$memory"
-	eval $LOGFE
-}
-
-# process and return module version data
-get_module_version_number()
-{
-	eval $LOGFS
-	local module_version=''
-	
-	if [[ $B_MODINFO_TESTED != 'true' ]];then
-		B_MODINFO_TESTED='true'
-		MODINFO_PATH=$( type -p modinfo )
-	fi
-
-	if [[ -n $MODINFO_PATH ]];then
-		module_version=$( $MODINFO_PATH $1 2>/dev/null | gawk '
-		BEGIN {
-			IGNORECASE=1
-		}
-		/^version/ {
-			gsub(/'"$BAN_LIST_ARRAY"'/, " ", $2)
-			gsub(/^ +| +$/, "", $2)
-			gsub(/ [ \t]+/, " ", $2)
-			print $2
-		}
-		' )
-	fi
-
-	echo "$module_version"
-	log_function_data "module_version: $module_version"
 	eval $LOGFE
 }
 
@@ -9824,30 +9546,6 @@ get_partition_dev_data()
 	eval $LOGFE
 }
 
-# args: $1 - dev item, check for mapper, then get actual dev item if mapped
-# eg: lrwxrwxrwx 1 root root       7 Sep 26 15:10 truecrypt1 -> ../dm-2 
-get_dev_processed_item()
-{
-	eval $LOGFS
-	
-	local dev_item=$1 dev_return=''
-	
-	if [[ -n $DEV_DISK_MAPPER && -n $( grep -is 'mapper/' <<< $dev_item ) ]];then
-		dev_return=$( echo "$DEV_DISK_MAPPER" | gawk '
-		$( NF - 2 ) ~ /^'${dev_item##*/}'$/ {
-			item=gensub( /..\/(.+)/, "\\1", 1, $NF )
-			print item
-		}' )
-	fi
-	if [[ -z $dev_return ]];then
-		dev_return=$dev_item
-	fi
-	
-	echo $dev_return
-
-	eval $LOGFE
-}
-
 get_patch_version_string()
 {
 	SELF_PATCH=${SELF_PATCH##*[0]} # strip leading zero(s)
@@ -9857,103 +9555,6 @@ get_patch_version_string()
 		# for cases where it was for example: 00-bsd cleaned to --bsd trim out one -
 		SELF_PATCH="${SELF_PATCH/--/-}"
 	fi
-}
-
-get_pciconf_data()
-{
-	eval $LOGFS
-	
-	local pciconf_data='' a_temp=''
-	
-	if [[ $B_PCICONF == 'true' ]];then
-		pciconf_data="$( pciconf -lv 2>/dev/null )"
-		if [[ -n $pciconf_data ]];then
-			pciconf_data=$( gawk '
-			BEGIN {
-				IGNORECASE=1
-			}
-			{
-					gsub(/'"$BAN_LIST_NORMAL"'/, "", $0)
-					gsub(/[[:space:]]+=[[:space:]]+/, "=",$0)
-					gsub(/^[[:space:]]+|'"'"'|\"|,/, "", $0)
-					gsub(/=0x/,"=",$0)
-					# line=gensub(/.*[[:space:]]+(class=[^[:space:]]*|card=[^[:space:]]*)|chip=[^[:space:]]*|rev=[^[:space:]]*|hdr=[^[:space:]]*).*/,"\n\\1","g",$0)
-					line=gensub(/(.*@.*)/,"\n\\1",$0)
-					print line
-			}' <<< "$pciconf_data" )
-			# create empty last line with this spacing trick
-			pciconf_data="$pciconf_data
-
-EOF"
-			# echo "$pciconf_data"
-			# now insert into arrays
-			IFS=$'\n'
-			A_PCICONF_DATA=( $( gawk '
-			BEGIN {
-				fullLine=""
-				driver=""
-				vendor=""
-				device=""
-				class=""
-				chipId=""
-				pciId=""
-				itemData=""
-				IGNORECASE=1
-			}
-			/^.*@/ {
-				pciId=""
-				vendor=""
-				class=""
-				driver=""
-				device=""
-				chipId=""
-				itemData=$1
-				
-				driver=gensub(/^([^@]+)@.*/, "\\1", itemData )
-				pciId=gensub(/^.*@pci([0-9\.:]+).*/, "\\1", itemData )
-				sub(/:$/, "", pciId)
-				itemData=$4
-				chipId=gensub(/.*chip=([0-9a-f][0-9a-f][0-9a-f][0-9a-f])([0-9a-f][0-9a-f][0-9a-f][0-9a-f]).*/, "\\2:\\1", itemData )
-				if ( $2 ~ /class=020000/ ) {
-					class="network"
-				}
-				else if ( $2 == "class=030000" ) {
-					class="display"
-				}
-				else if ( $2 ~ /class=040300|class=040100/ ) {
-					class="audio"
-				}
-				
-				while ( getline && $1 !~ /^$/ ) {
-					if ( $1 ~ /^vendor/ ) {
-						sub(/^vendor=/, "", $1 )
-						vendor=$0
-					}
-					else if ( $1 ~ /^device/ ) {
-						sub(/^device=/, "", $1 )
-						device=$0
-					}
-					else if ( $1 ~ /^class=/ && class == "" ) {
-						sub(/^class=/, "", $1)
-						class=$0
-					}
-				}
-				if ( device == "" ) {
-					device=vendor
-				}
-				fullLine=class "," device "," vendor "," driver "," pciId "," chipId
-				print fullLine
-			}' <<< "$pciconf_data" ))
-			IFS="$ORIGINAL_IFS"
-		fi
-	else
-		A_PCICONF_DATA='pciconf-not-installed'
-	fi
-	B_PCICONF_SET='true'
-	a_temp=${A_PCICONF_DATA[@]}
-	log_function_data "$a_temp"
-	log_function_data "$pciconf_data"
-	eval $LOGFE
 }
 
 # packs standard card arrays using the pciconf stuff
@@ -10484,7 +10085,7 @@ get_ram_data()
 	
 	local a_temp='' array_string=''
 	
-	get_dmidecode_data
+	set_dmidecode_data
 	
 	if [[ -n $DMIDECODE_DATA ]];then
 		if [[ $DMIDECODE_DATA == 'dmidecode-error-'* ]];then
@@ -10606,7 +10207,7 @@ get_ram_data()
 						aArrayData[k,"maxCapacity16"]=calculateSize($2,aArrayData[k,"maxCapacity16"])
 						#print "mc:" aArrayData[k,"maxCapacity16"] ":" $2
 					}
-					# note: these 3 have cleaned data in get_dmidecode_data, so replace stuff manually
+					# note: these 3 have cleaned data in set_dmidecode_data, so replace stuff manually
 					if ( $1 == "Location") {
 						sub(/[[:space:]]Or[[:space:]]Motherboard/,"",$2)
 						location=$2
@@ -12028,30 +11629,6 @@ get_shell_parent()
 	eval $LOGFE
 }
 
-# this will be used for some bsd data types
-# args: $1 - option type
-get_sysctl_data()
-{
-	eval $LOGFS
-	
-	local sysctl_data=''
-	
-	if [[ $B_SYSCTL ]];then
-		# darwin sysctl has BOTH = and : separators, and repeats data. Why? No bsd discipline, that's for sure
-		if [[ $BSD_VERSION == 'darwin' ]];then
-			sysctl_data="$( sysctl -$1 | sed 's/[[:space:]]*=[[:space:]]*/: /' )"
-		else
-			sysctl_data="$( sysctl -$1 )"
-		fi
-	fi
-	if [[ $1 == 'a' ]];then
-		SYSCTL_A_DATA="$sysctl_data"
-	fi
-	log_function_data "sysctl_data: $sysctl_data"
-	
-	eval $LOGFE
-}
-
 get_tty_console_irc()
 {
 	eval $LOGFS
@@ -12544,7 +12121,292 @@ get_weather_data()
 # get_weather_data;exit
 
 #### -------------------------------------------------------------------
-#### SPECIAL DATA HANDLERS
+#### SPECIAL DATA HANDLERS - INITIALIZE DATA VALUES
+#### -------------------------------------------------------------------
+
+# BSD only
+set_dmesg_boot_data()
+{
+	eval $LOGFS
+	
+	local dmsg_boot_data=''
+	
+	if [[ $B_DMESG_BOOT_FILE == 'true' ]];then
+		# replace all indented items with ~ so we can id them easily while processing
+		# note that if user, may get error of read permissions
+		# for some weird reason, real mem and avail mem are use a '=' separator, who knows why, the others are ':'
+		dmsg_boot_data="$( cat $FILE_DMESG_BOOT 2>/dev/null | gawk '
+		{
+			sub(/[[:space:]]*=[[:space:]]*|:[[:space:]]*/,":", $0)
+			gsub(/'"$BAN_LIST_ARRAY"'/," ", $0)
+			gsub(/\"/, "", $0)
+			gsub(/[[:space:]][[:space:]]/, " ", $0)
+			print $0
+		}' )"
+	fi
+	DMESG_BOOT_DATA="$dmsg_boot_data"
+	log_function_data "$dmsg_boot_data"
+	eval $LOGFE
+}
+
+set_dmidecode_data()
+{
+	eval $LOGFS
+	
+	local dmiData="" b_debugger='false'
+
+	if [[ $B_DMIDECODE_SET != 'true' ]];then
+		dmidecodePath=$( type -p dmidecode 2>/dev/null )
+		if [[ -z $dmidecodePath ]];then
+			DMIDECODE_DATA='dmidecode-error-not-installed'
+		else
+			# note stripping out these lines: Handle 0x0016, DMI type 17, 27 bytes
+			# but NOT deleting them, in case the dmidecode data is missing empty lines which will be
+			# used to separate results. Then we remove the doubled empty lines to keep it clean and
+			# strip out all the stuff we don't want to see in the results. We want the error data in 
+			# stdout for error handling
+			if [[ $b_debugger == 'true' && $HOSTNAME == 'yawn' ]];then
+				dmiData="$( cat ~/bin/scripts/inxi/svn/misc/data/dmidecode/dmidecode-memory-variants-2.txt )"
+			else 
+				dmiData="$( $dmidecodePath 2>&1 )"
+			fi
+			# these tests first, because bsd error messages like this (note how many : are in the string)
+			# inxi: line 4928: /usr/local/sbin/dmidecode: Permission denied
+			if [[ ${#dmiData} -lt 200  ]];then
+				if [[ -z ${dmiData/*Permission denied*/} ]];then
+				# if [[ -n $( grep -i 'Permission denied' <<< "$dmiData" ) ]];then
+					DMIDECODE_DATA='dmidecode-error-requires-root'
+				# this handles very old systems, like Lenny 2.6.26, with dmidecode, but no data
+				elif [[ -n $( grep -i 'no smbios ' <<< "$dmiData" ) ]];then
+					DMIDECODE_DATA='dmidecode-error-no-smbios-dmi-data'
+				else
+					DMIDECODE_DATA='dmidecode-error-unknown-error'
+				fi
+			else
+				DMIDECODE_DATA="$( echo "$dmiData" | gawk -F ':' '
+				BEGIN {
+					IGNORECASE=1
+					cutExtraTab="false"
+					twoData=""
+					oneData=""
+				}
+				{
+					# no idea why, but freebsd gawk does not do this right
+					oneData=$1
+					twoData=$2
+					if ( twoData != "" ) {
+						twoHolder="true"
+					}
+					else {
+						twoHolder="false"
+					}
+					if ( $0 ~ /^\tDMI type/ ) {
+						sub(/^\tDMI type.*/, "", $0)
+						cutExtraTab="true"
+					}
+					gsub(/'"$BAN_LIST_NORMAL"'/, "", twoData)
+					gsub(/'"$BAN_LIST_ARRAY"'/, " ", twoData)
+					# clean out Handle line
+					# sub(/^Handle.*/,"", $0)
+					sub(/^[[:space:]]*Inactive.*/,"",twoData)
+					# yes, there is a typo in a user data set, unknow
+					# Base Board Version|Base Board Serial Number
+					# Chassis Manufacturer|Chassis Version|Chassis Serial Number
+					# System manufacturer|System Product Name|System Version
+					# To Be Filled By O.E.M.
+					# strip out starting white space so that the following stuff will clear properly
+					sub(/^[[:space:]]+/, "", twoData)
+					sub(/^Base Board .*|^Chassis .*|empty|.*O\.E\.M\..*|.*OEM.*|^Not .*|^System .*|.*unknow.*|.*N\/A.*|none|^To be filled.*|^0x[0]+$|\[Empty\]|<Bad Index>|Default string|^\.\.$/, "", twoData) 
+					sub(/.*(AssetTagNum|Manufacturer| Or Motherboard|PartNum.*|SerNum).*/, "", twoData)
+					gsub(/\ybios\y|\yacpi\y/, "", twoData) # note: biostar
+					sub(/http:\/\/www.abit.com.tw\//, "Abit", twoData)
+					
+					# for double indented values replace with ~ so later can test for it, we are trusting that
+					# indentation will be tabbed in this case
+					# special case, dmidecode 2.2 has an extra tab and a DMI type line
+					if ( cutExtraTab == "true" ) {
+						sub(/^\t\t\t+/, "~", oneData)
+					}
+					else {
+						sub(/^\t\t+/, "~", oneData)
+					}
+					gsub(/ [ \t]+/, " ", twoData)
+					gsub(/^[[:space:]]+|[[:space:]]+$/, "", twoData)
+					gsub(/^[[:space:]]+|[[:space:]]+$/, "", oneData)
+					
+					# reconstructing the line for processing so gawk can use -F : again
+					if ( oneData != "" && twoHolder == "true" ) {
+						print oneData ":" twoData
+					}
+					else {
+						# make sure all null lines have no spaces in them!
+						gsub(/^[[:space:]]+|[[:space:]]+$/,"",$0)
+						print $0
+					}
+				}' \
+				| sed '/^$/{
+N
+/^\n$/D
+}' \
+				)"
+			fi
+			# echo ":${DMIDECODE_DATA}:"
+			log_function_data "DMIDECODE_DATA (PRE): $DMIDECODE_DATA"
+			
+		fi
+		B_DMIDECODE_SET='true'
+		log_function_data "DMIDECODE_DATA (POST): $DMIDECODE_DATA"
+	fi
+
+	eval $LOGFE
+}
+# set_dmidecode_data;echo "$DMIDECODE_DATA";exit
+
+# args: $1 - v/n 
+set_lspci_data()
+{
+	eval $LOGFS
+	local lspci_data=''
+
+	if [[ $B_LSPCI == 'true' ]];then
+		lspci_data="$( lspci -$1 | gawk '{
+			gsub(/\(prog-if[^)]*\)/,"")
+			sub(/^0000:/, "", $0) # seen case where the 0000: is prepended, rare, but happens
+			print
+		}' )"
+	fi
+	log_function_data 'raw' "lspci_data $1:\n$lspci_data"
+	if [[ $1 == 'v' ]];then
+		LSPCI_V_DATA="$lspci_data"
+	elif [[ $1 == 'n' ]];then
+		LSPCI_N_DATA="$lspci_data"
+	fi
+	eval $LOGFE
+}
+
+set_pciconf_data()
+{
+	eval $LOGFS
+	
+	local pciconf_data='' a_temp=''
+	
+	if [[ $B_PCICONF == 'true' ]];then
+		pciconf_data="$( pciconf -lv 2>/dev/null )"
+		if [[ -n $pciconf_data ]];then
+			pciconf_data=$( gawk '
+			BEGIN {
+				IGNORECASE=1
+			}
+			{
+					gsub(/'"$BAN_LIST_NORMAL"'/, "", $0)
+					gsub(/[[:space:]]+=[[:space:]]+/, "=",$0)
+					gsub(/^[[:space:]]+|'"'"'|\"|,/, "", $0)
+					gsub(/=0x/,"=",$0)
+					# line=gensub(/.*[[:space:]]+(class=[^[:space:]]*|card=[^[:space:]]*)|chip=[^[:space:]]*|rev=[^[:space:]]*|hdr=[^[:space:]]*).*/,"\n\\1","g",$0)
+					line=gensub(/(.*@.*)/,"\n\\1",$0)
+					print line
+			}' <<< "$pciconf_data" )
+			# create empty last line with this spacing trick
+			pciconf_data="$pciconf_data
+
+EOF"
+			# echo "$pciconf_data"
+			# now insert into arrays
+			IFS=$'\n'
+			A_PCICONF_DATA=( $( gawk '
+			BEGIN {
+				fullLine=""
+				driver=""
+				vendor=""
+				device=""
+				class=""
+				chipId=""
+				pciId=""
+				itemData=""
+				IGNORECASE=1
+			}
+			/^.*@/ {
+				pciId=""
+				vendor=""
+				class=""
+				driver=""
+				device=""
+				chipId=""
+				itemData=$1
+				
+				driver=gensub(/^([^@]+)@.*/, "\\1", itemData )
+				pciId=gensub(/^.*@pci([0-9\.:]+).*/, "\\1", itemData )
+				sub(/:$/, "", pciId)
+				itemData=$4
+				chipId=gensub(/.*chip=([0-9a-f][0-9a-f][0-9a-f][0-9a-f])([0-9a-f][0-9a-f][0-9a-f][0-9a-f]).*/, "\\2:\\1", itemData )
+				if ( $2 ~ /class=020000/ ) {
+					class="network"
+				}
+				else if ( $2 == "class=030000" ) {
+					class="display"
+				}
+				else if ( $2 ~ /class=040300|class=040100/ ) {
+					class="audio"
+				}
+				
+				while ( getline && $1 !~ /^$/ ) {
+					if ( $1 ~ /^vendor/ ) {
+						sub(/^vendor=/, "", $1 )
+						vendor=$0
+					}
+					else if ( $1 ~ /^device/ ) {
+						sub(/^device=/, "", $1 )
+						device=$0
+					}
+					else if ( $1 ~ /^class=/ && class == "" ) {
+						sub(/^class=/, "", $1)
+						class=$0
+					}
+				}
+				if ( device == "" ) {
+					device=vendor
+				}
+				fullLine=class "," device "," vendor "," driver "," pciId "," chipId
+				print fullLine
+			}' <<< "$pciconf_data" ))
+			IFS="$ORIGINAL_IFS"
+		fi
+	else
+		A_PCICONF_DATA='pciconf-not-installed'
+	fi
+	B_PCICONF_SET='true'
+	a_temp=${A_PCICONF_DATA[@]}
+	log_function_data "$a_temp"
+	log_function_data "$pciconf_data"
+	eval $LOGFE
+}
+
+# this will be used for some bsd data types
+# args: $1 - option type
+set_sysctl_data()
+{
+	eval $LOGFS
+	
+	local sysctl_data=''
+	
+	if [[ $B_SYSCTL ]];then
+		# darwin sysctl has BOTH = and : separators, and repeats data. Why? No bsd discipline, that's for sure
+		if [[ $BSD_VERSION == 'darwin' ]];then
+			sysctl_data="$( sysctl -$1 | sed 's/[[:space:]]*=[[:space:]]*/: /' )"
+		else
+			sysctl_data="$( sysctl -$1 )"
+		fi
+	fi
+	if [[ $1 == 'a' ]];then
+		SYSCTL_A_DATA="$sysctl_data"
+	fi
+	log_function_data "sysctl_data: $sysctl_data"
+	
+	eval $LOGFE
+}
+
+#### -------------------------------------------------------------------
+#### SPECIAL DATA HANDLERS - UTILITIES FOR GET DATA/PRINT LINES
 #### -------------------------------------------------------------------
 
 ## multiply the core count by the data to be calculated, bmips, cache
@@ -12573,6 +12435,151 @@ calculate_multicore_data()
 	echo "$string_number$string_data"
 	log_function_data "string_numberstring_data: $string_number$string_data"
 	eval $LOGFE
+}
+
+# used in partitions get and print functions
+# args: $1 - dev item, check for mapper, then get actual dev item if mapped
+# eg: lrwxrwxrwx 1 root root       7 Sep 26 15:10 truecrypt1 -> ../dm-2 
+get_dev_processed_item()
+{
+	eval $LOGFS
+	
+	local dev_item=$1 dev_return=''
+	
+	if [[ -n $DEV_DISK_MAPPER && -n $( grep -is 'mapper/' <<< $dev_item ) ]];then
+		dev_return=$( echo "$DEV_DISK_MAPPER" | gawk '
+		$( NF - 2 ) ~ /^'${dev_item##*/}'$/ {
+			item=gensub( /..\/(.+)/, "\\1", 1, $NF )
+			print item
+		}' )
+	fi
+	if [[ -z $dev_return ]];then
+		dev_return=$dev_item
+	fi
+	
+	echo $dev_return
+
+	eval $LOGFE
+}
+
+# Note: useless because this is just absurdly inaccurate, too bad...
+get_install_date()
+{
+	eval $LOGFS
+	
+	local installed=''
+	
+	if ls -al --time-style '+FORMAT %Y-%m-%d' /usr 2>/dev/null;then
+		installed=$(ls -al --time-style '+FORMAT %Y-%m-%d' / | awk '/lost\+found/ {print $7;exit}' )
+# 	elif 
+# 		:
+	fi
+	
+	echo $installed
+	
+	eval $LOGFE
+}
+
+# args: $1 - busid
+get_lspci_chip_id()
+{
+	eval $LOGFS
+	
+	local chip_id=''
+	
+	chip_id=$( gawk '
+	/^'$1'/ {
+		if ( $3 != "" ) {
+			print $3
+		}
+	}' <<< "$LSPCI_N_DATA" )
+	
+	echo $chip_id
+	
+	eval $LOGFE
+}
+
+# process and return module version data
+get_module_version_number()
+{
+	eval $LOGFS
+	local module_version=''
+	
+	if [[ $B_MODINFO_TESTED != 'true' ]];then
+		B_MODINFO_TESTED='true'
+		MODINFO_PATH=$( type -p modinfo )
+	fi
+
+	if [[ -n $MODINFO_PATH ]];then
+		module_version=$( $MODINFO_PATH $1 2>/dev/null | gawk '
+		BEGIN {
+			IGNORECASE=1
+		}
+		/^version/ {
+			gsub(/'"$BAN_LIST_ARRAY"'/, " ", $2)
+			gsub(/^ +| +$/, "", $2)
+			gsub(/ [ \t]+/, " ", $2)
+			print $2
+		}
+		' )
+	fi
+
+	echo "$module_version"
+	log_function_data "module_version: $module_version"
+	eval $LOGFE
+}
+
+# note: gawk doesn't support white spaces in search string, gave errors, so use [[:space:]] instead
+# args: $1 - desktop/app command for --version; $2 - search string; $3 - gawk print number
+get_program_version()
+{
+	local version_data='' version='' get_version='--version' 
+	
+	# mate-about -v = MATE Desktop Environment 1.4.0
+	case $1 in
+		# legacy fluxbox had no --version, and current -v works
+		dwm|fluxbox|jwm|mate-about|wmii|wmii2)
+			get_version='-v'
+			;;
+		epoch)
+			get_version='version'
+			;;
+	esac
+	
+	case $1 in
+		# note, some wm/apps send version info to stderr instead of stdout
+		dwm|ksh|scrotwm|spectrwm)
+			version_data="$( $1 $get_version 2>&1 )"
+			;;
+		csh)
+			version_data="$( tcsh $get_version 2>/dev/null )"
+			;;
+		# quick debian/buntu hack until I find a universal way to get version for these
+		dash)
+			if type -p dpkg &>/dev/null;then
+				version_data="$( dpkg -l $1 2>/dev/null )"
+			fi
+			;;
+		*)
+			version_data="$( $1 $get_version 2>/dev/null )"
+			;;
+	esac
+	log_function_data "version data: $version_data"
+	if [[ -n $version_data ]];then
+		version=$( gawk '
+		BEGIN {
+			IGNORECASE=1
+		}
+		/'$2'/ {
+			# sample: dwm-5.8.2, ©.. etc, why no space? who knows. Also get rid of v in number string
+			# xfce, and other, output has , in it, so dump all commas and parentheses
+			gsub(/(,|dwm-|wmii2-|wmii-|v|V|\(|\))/, "",$'$3') 
+			print $'$3'
+			exit # quit after first match prints
+		}' <<< "$version_data" )
+	fi
+	log_function_data "program version: $version"
+	echo $version
 }
 
 # prints out shortened list of flags, the main ones of interest
@@ -12653,15 +12660,15 @@ print_it_out()
 	# and in some cases, their children, if variable syntax: Xxxx_Yyyy
 	
 	if [[ -n $BSD_TYPE ]];then
-		get_sysctl_data 'a' # set: SYSCTL_A_DATA
-		get_dmesg_boot_data # set: DMESG_BOOT_DATA
+		set_sysctl_data 'a' # set: SYSCTL_A_DATA
+		set_dmesg_boot_data # set: DMESG_BOOT_DATA
 	fi
 	if [[ $B_SHOW_SHORT_OUTPUT == 'true' ]];then
 		print_short_data
 	else
-		get_lspci_data 'v' # set: LSPCI_V_DATA
+		set_lspci_data 'v' # set: LSPCI_V_DATA
 		if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
-			get_lspci_data 'n' # set: LSPCI_N_DATA
+			set_lspci_data 'n' # set: LSPCI_N_DATA
 		fi
 		if [[ $B_SHOW_SYSTEM == 'true' ]];then
 			print_system_data
@@ -12868,7 +12875,7 @@ print_audio_data()
 	if [[ $BSD_TYPE == 'bsd' ]];then
 		if [[ $B_PCICONF == 'true' ]];then
 			if [[ $B_PCICONF_SET == 'false' ]];then
-				get_pciconf_data
+				set_pciconf_data
 			fi
 			get_pciconf_card_data 'audio'
 		elif [[ $B_LSPCI == 'true' ]];then
@@ -13520,7 +13527,7 @@ print_cpu_flags_full()
 	eval $LOGFE
 }
 
-# args: $1 - type [sys/bat/default]; $2 - get_dmidecode_data error return
+# args: $1 - type [sys/bat/default]; $2 - set_dmidecode_data error return
 print_dmidecode_error()
 {
 	eval $LOGFS
@@ -13589,7 +13596,7 @@ print_graphics_data()
 	if [[ $BSD_TYPE == 'bsd' ]];then
 		if [[ $B_PCICONF == 'true' ]];then
 			if [[ $B_PCICONF_SET == 'false' ]];then
-				get_pciconf_data
+				set_pciconf_data
 			fi
 			get_pciconf_card_data 'display'
 		elif [[ $B_LSPCI == 'true' ]];then
@@ -14430,7 +14437,7 @@ print_networking_data()
 	if [[ $BSD_TYPE == 'bsd' ]];then
 		if [[ $B_PCICONF == 'true' ]];then
 			if [[ $B_PCICONF_SET == 'false' ]];then
-				get_pciconf_data
+				set_pciconf_data
 			fi
 			get_pciconf_card_data 'network'
 		elif [[ $B_LSPCI == 'true' ]];then
