@@ -6,50 +6,65 @@ use warnings;
 use 5.008;
 
 use File::Basename;
+use File::Find;
+use Net::FTP;
+use Sys::Hostname;
+use Term::ANSIColor;
 
 ### INXI INFO ###
 our $self_name = 'inxi';
-our $self_version = '2.9.00';
-our $self_date = '2017-12-02';
-our $self_patch = 'p-01';
+our $self_version = '2.8.00';
+our $self_date = '2017-12-03';
+our $self_patch = 'p-02';
 
 ### INITIALIZE VARIABLES ###
 
-### DISTRO MAINTAINER FLAGS ###
+### USER CONFIGS: SET IN inxi.conf file see wiki for directions ###
+
+our %configs = (
+# DISTRO MAINTAINER FLAGS
 # flag to allow distro maintainers to turn off update features. If false, 
 # turns off -U and -! testing/advanced update options, as well as removing 
 # the -U help menu item.
 # NOTE: Usually you want to create these in /etc/inxi.conf to avoid having to 
 # update each time
-our $b_allow_update='true';
-our $b_allow_weather='true';
-
-### USER CONFIGS: SET IN inxi.conf file see wiki for directions ###
-# override in user config if desired, seems like less than .3 doesn't work as 
-# reliably
-
+'B_ALLOW_UPDATE'          => q(true),
+'B_ALLOW_WEATHER'         => q(true),
 # for features like help/version will fit to terminal / console screen width.
 # Console # widths will be dynamically set in main() based on cols in 
 # term/console
-our $cols_max_console=115;
-our $cols_max_irc=105;
+'COLS_MAX_CONSOLE'        => 115,
+'COLS_MAX_IRC'            => 130,
 # note, this is console out of x/display server, will also be set dynamically
 # not used currently, but maybe in future
-our $cols_max_no_display=130;
-our $cpu_sleep=0.3;
+'COLS_MAX_NO_DISPLAY'     => 130,
+# Seems like less than .3 doesn't work as reliably
+'CPU_SLEEP'               => 0.3,
 # change to less, or more if you have very slow connection
-our $dl_timeout=4;
-our $filter_string='<filter>';
-our $ps_count=5;
+'DL_TIMEOUT'              => 4,
+'FILTER_STRING'           => q(<filter>),
+'PS_COUNT'                => 5,
+'SENSORS_CPU_NO'          => 0, # see get_sensors_data
+# colors
+'CONSOLE_COLOR_SCHEME'    => undef,
+'IRC_CONS_COLOR_SCHEME'   => undef,
+'IRC_X_TERM_COLOR_SCHEME' => undef,
+'IRC_COLOR_SCHEME'        => undef,
+'VIRT_TERM_COLOR_SCHEME'  => undef
+);
+
 ### END USER CONFIGS ###
 
 our $b_irc='';
 our $b_root='';
 our $b_running_in_display='';
 
+our $self_config_dir='';
+our $self_data_dir='';
 our $self_path='';
 
 ### LAYOUT ###
+
 # These two determine separators in single line output, to force irc clients 
 # not to break off sections
 our $sep1='~';
@@ -75,14 +90,32 @@ our $cols_max=0;
 our $term_cols=80;
 our $term_lines=100;
 
+########################################################################
+#### STARTUP
+########################################################################
+
+#### -------------------------------------------------------------------
+#### MAIN
+#### -------------------------------------------------------------------
+
 sub main {
 	initialize();
 	set_display_width('live');
 	print_it_out();
 }
 
+#### -------------------------------------------------------------------
+#### INITIALIZE
+#### -------------------------------------------------------------------
+
 sub initialize {
-	initialize_path();
+	set_path();
+	set_user_paths();
+	my @config_files = (
+	qq(/etc/$self_name.conf), 
+	qq($self_config_dir/$self_name.conf)
+	);
+	set_configs(@config_files);
 	### LOCALIZATION - DO NOT CHANGE! ###
 	# set to default LANG to avoid locales errors with , or .
 	# Make sure every program speaks English.
@@ -92,21 +125,90 @@ sub initialize {
 		$b_irc='true';
 	}
 	# print "birc: $b_irc\n";
+	
+	if ( $ENV{'HOME'} eq '/root' ){
+		$b_root='true';
+	}
 }
 
-sub initialize_path {
+sub set_configs {
+	my ($file, $var, $val);
+	# Config files should be passed in an array as a param to this function.
+	# Default intended use: global @CONFIGS;
+	foreach $file (@_) {
+		next unless open (CONFIG, "$file");
+		while (<CONFIG>) {
+			chomp;
+			s/#.*//;
+			s/^\s+//;
+			s/\s+$//;
+			s/'//;
+			next unless length;
+			($var, $val) = split(/\s*=\s*/, $_, 2);
+			$configs{$var} = $val;
+			# print "f: $file var: $var val: $val\n";
+		}
+	}
+}
+
+# args: $1 - default OR override default cols max integer count
+sub set_display_width {
+	my ($cols_override)=@_;
+	
+	if ( $cols_override eq 'live' ){
+		## sometimes tput will trigger an error (mageia) if irc client
+		if ( ! $b_irc ){
+			if ( check_program('tput') ) {
+				chomp($term_cols=qx/tput cols/);
+				chomp($term_lines=qx/tput lines/);
+			}
+			# print "tc: $term_cols cmc: $configs{'COLS_MAX_CONSOLE'}\n";
+			# double check, just in case it's missing functionality or whatever
+			if ( $term_cols == 0 || $term_cols !~ /\d/ ){ 
+				$term_cols=80;
+				$term_lines=100;
+			}
+		}
+		# this lets you set different widths for in or out of display server
+		# if ( ! $b_running_in_display && $configs{'COLS_MAX_NO_DISPLAY'} != 0 ){
+		# 	$configs{'COLS_MAX_CONSOLE'}=$configs{'COLS_MAX_NO_DISPLAY'};
+		# }
+		# term_cols is set in top globals, using tput cols
+		# print "tc: $term_cols cmc: $configs{'COLS_MAX_CONSOLE'}\n";
+		if ( $term_cols < $configs{'COLS_MAX_CONSOLE'} ){
+			$configs{'COLS_MAX_CONSOLE'}=$term_cols;
+		}
+		# adjust, some terminals will wrap if output cols == term cols
+		$configs{'COLS_MAX_CONSOLE'}=( $configs{'COLS_MAX_CONSOLE'} - 2 );
+		# echo cmc: $configs{'COLS_MAX_CONSOLE'}
+		# comes after source for user set stuff
+		if ( ! $b_irc ){
+			$cols_max=$configs{'COLS_MAX_CONSOLE'};
+		}
+		else {
+			$cols_max=$configs{'COLS_MAX_IRC'};
+		}
+	}
+	else {
+		$cols_max=$cols_override;
+	}
+	$cols_inner= ( $cols_max - $indent - 1 );
+	print "tc: $term_cols cmc: $configs{'COLS_MAX_CONSOLE'} cm: $cols_max ci: $cols_inner\n";
+}
+
+sub set_path {
 	my $path = '';
 	my $added_paths = '';
 	# Extra path variable to make execute failures less likely, merged below
-	my @a_path = split ':', $ENV{'PATH'};
-	my @a_extra_paths=split ':', '/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:/opt/local/bin';
+	my @path = split ':', $ENV{'PATH'};
+	my @extra_paths=split ':', '/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:/opt/local/bin';
 	#print "PATH=$ENV{'PATH'}\n";
 	# this needs to be set here because various options call the parent 
 	# initialize function directly.
 	$self_path=dirname "$0";
 	# Create a difference of $PATH and $extra_paths and add that to $PATH:
-	foreach $path (@a_extra_paths) {
-		if ( ! grep(/$path/,@a_path) ){
+	foreach $path (@extra_paths) {
+		if ( ! grep(/$path/, @path) ){
 			$added_paths="$added_paths:$path";
 			# print "$path\n";
 		}
@@ -116,65 +218,172 @@ sub initialize_path {
 	##/bin/sh -c 'echo "PATH in subshell=\"$PATH\""'
 }
 
-# args: $1 - default OR override default cols max integer count
-sub set_display_width {
-	my ($cols_max_override)=@_;
+sub set_user_paths {
+	my ( $b_conf, $b_data );
 	
-	if ( $cols_max_override eq 'live' ){
-		## sometimes tput will trigger an error (mageia) if irc client
-		if ( ! $b_irc ){
-			if ( check_program('tput') ) {
-				chomp($term_cols=qx/tput cols/);
-				chomp($term_lines=qx/tput lines/);
-			}
-			print "tc: $term_cols cmc: $cols_max_console\n";
-			# double check, just in case it's missing functionality or whatever
-			if ( $term_cols == 0 || $term_cols !~ /\d/ ){ 
-				$term_cols=80;
-				$term_lines=100;
-			}
-		}
-		# this lets you set different widths for in or out of display server
-		# if ( ! $b_running_in_display && $cols_max_no_display != 0 ){
-		# 	$cols_max_console=$cols_max_no_display;
-		# }
-		# term_cols is set in top globals, using tput cols
-		print "tc: $term_cols cmc: $cols_max_console\n";
-		if ( $term_cols < $cols_max_console ){
-			$cols_max_console=$term_cols;
-		}
-		# adjust, some terminals will wrap if output cols == term cols
-		$cols_max_console=( $cols_max_console - 2 );
-		# echo cmc: $cols_max_console
-		# comes after source for user set stuff
-		if ( ! $b_irc ){
-			$cols_max=$cols_max_console;
-		}
-		else {
-			$cols_max=$cols_max_irc;
-		}
+	if ( defined $ENV{'XDG_CONFIG_HOME'} && $ENV{'XDG_CONFIG_HOME'} ne '' ){
+		$self_config_dir=$ENV{'XDG_CONFIG_HOME'};
+		$b_conf='true';
+	}
+	elsif ( -d "$ENV{'HOME'}/.config" ){
+		$self_config_dir="$ENV{'HOME'}/.config";
+		$b_conf='true';
 	}
 	else {
-		$cols_max=$cols_max_override;
+		$self_config_dir="$ENV{'HOME'}/.$self_name";
 	}
-	$cols_inner= ( $cols_max - $indent - 1 );
-	print "cm: $cols_max ci: $cols_inner\n";
-}
-
-
-sub print_it_out {
-
+	if ( defined $ENV{'XDG_DATA_HOME'} && $ENV{'XDG_DATA_HOME'} ne '' ){
+		$self_data_dir="$ENV{'XDG_DATA_HOME'}/$self_name";
+		$b_data='true';
+	}
+	elsif ( -d "$ENV{'HOME'}/.local/share" ){
+		$self_data_dir="$ENV{'HOME'}/.local/share/$self_name";
+		$b_data='true';
+	}
+	else {
+		$self_data_dir="$ENV{'HOME'}/.$self_name";
+	}
+	# note, this used to be created/checked in specific instance, but we'll just do it
+	# universally so it's done at script start.
+	if ( ! -d $self_data_dir ){
+		#system 'mkdir', $self_data_dir;
+		system "echo", "WOULD: $self_data_dir";
+	}
+	if ( $b_conf eq 'true' && -f "$ENV{'HOME'}/.$self_name/$self_name.conf" ){
+		#system 'mv', "-f $ENV{'HOME'}/.$self_name/$self_name.conf", $self_config_dir;
+		print "WOULD: Moved $self_name.conf from $ENV{'HOME'}/.$self_name to $self_config_dir\n";
+	}
+	if ( $b_data eq 'true' && -d "$ENV{'HOME'}/.$self_name" ){
+		#system 'mv', '-f', "$ENV{'HOME'}/.$self_name/*", $self_data_dir;
+		#system 'rm', '-Rf', "$ENV{'HOME'}/.$self_name";
+		print "WOULD: Moved data dir $ENV{'HOME'}/.$self_name to $self_data_dir\n";
+	}
+	#system 'echo', "$ENV{'HOME'}/.$self_name/* $self_data_dir";
+	
+# 	$log_file="$self_data_dir/$log_file";
+# 	$log_file_1="$self_data_dir/$log_file_1";
+# 	$log_file_2="$self_data_dir/$log_file_2";
+	print "scd: $self_config_dir sdd: $self_data_dir \n";
 }
 
 ########################################################################
 #### UTILITIES
 ########################################################################
 
+#### -------------------------------------------------------------------
+#### COLOR SELECTOR
+#### -------------------------------------------------------------------
+
+
+#### -------------------------------------------------------------------
+#### DEBUGGERS
+#### -------------------------------------------------------------------
+
+
+
+#### -------------------------------------------------------------------
+#### DOWNLOADER
+#### -------------------------------------------------------------------
+
+
+#### -------------------------------------------------------------------
+#### ERROR HANDLER
+#### -------------------------------------------------------------------
+
+
+#### -------------------------------------------------------------------
+#### LOGGING
+#### -------------------------------------------------------------------
+
+
+#### -------------------------------------------------------------------
+#### RECOMMENDS
+#### -------------------------------------------------------------------
+
+
+#### -------------------------------------------------------------------
+#### TOOLS
+#### -------------------------------------------------------------------
+
 ## returns result of test, 0/1, false/true
 ## arg: program to find in PATH
 sub check_program {
 	grep { -x "$_/$_[0]"}split /:/,$ENV{PATH};
 }
+
+#### -------------------------------------------------------------------
+#### UPDATER
+# #### -------------------------------------------------------------------
+
+
+########################################################################
+#### OUTPUT
+########################################################################
+
+#### -------------------------------------------------------------------
+#### FILTERS
+#### -------------------------------------------------------------------
+
+
+#### -------------------------------------------------------------------
+#### PRINT
+#### -------------------------------------------------------------------
+
+
+########################################################################
+#### OPTION AND VERSION HANDLERS
+########################################################################
+
+
+
+########################################################################
+#### STARTUP DATA
+########################################################################
+
+
+########################################################################
+#### DATA PROCESSORS
+########################################################################
+
+#### -------------------------------------------------------------------
+#### GET DATA
+#### -------------------------------------------------------------------
+
+
+#### -------------------------------------------------------------------
+#### SPECIAL DATA HANDLERS - INITIALIZE DATA VALUES
+#### -------------------------------------------------------------------
+
+
+#### -------------------------------------------------------------------
+#### SPECIAL DATA HANDLERS - UTILITIES FOR GET DATA/PRINT LINES
+#### -------------------------------------------------------------------
+
+sub get_hostname {
+	if ( $ENV{'HOSTNAME'} ne '' ){
+		return $ENV{'HOSTNAME'};
+	}
+	else {
+		return hostname;
+	}
+}
+
+########################################################################
+#### PRINT DATA
+########################################################################
+
+#### -------------------------------------------------------------------
+#### PRINT CONTROLLERS
+#### -------------------------------------------------------------------
+
+
+sub print_it_out {
+
+}
+
+#### -------------------------------------------------------------------
+#### PRINT LINES
+#### -------------------------------------------------------------------
 
 
 ########################################################################
