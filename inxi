@@ -5,20 +5,24 @@ use warnings;
 # use diagnostics;
 use 5.008;
 
+use Data::Dumper qw(Dumper);
 use File::Basename;
 use File::Find;
 use Getopt::Long qw(GetOptionsFromArray); # :config no_ignore_case bundling_values
 # Note: default auto_abbrev is enabled, that's fine
 Getopt::Long::Configure ('bundling', 'no_ignore_case');
 use Net::FTP;
+use POSIX qw(uname);
 use Sys::Hostname;
 use Term::ANSIColor;
+
+use feature qw(state);
 
 ### INXI INFO ###
 our $self_name = 'inxi';
 our $self_version = '2.9.00';
-our $self_date = '2017-12-03';
-our $self_patch = '004-p';
+our $self_date = '2017-12-04';
+our $self_patch = '006-p';
 
 ### INITIALIZE VARIABLES ###
 
@@ -64,6 +68,26 @@ our $b_irc='';
 our $b_root='';
 our $b_running_in_display='';
 
+our %file_info;
+our %info_files = (
+'asound-cards' => '/proc/asound/cards',
+'asound-modules' => '/proc/asound/modules',
+'asound-version' => '/proc/asound/version',
+'cpuinfo' => '/proc/cpuinfo',
+'dmesg-boot' => '/var/run/dmesg.boot',
+'lsb-release' => '/etc/lsb-release',
+'mdstat' => '/proc/mdstat',
+'meminfo' => '/proc/meminfo',
+'modules' => '/proc/modules',
+'mounts' => '/proc/mounts',
+'os-release' => '/etc/os-release',
+'partitions' => '/proc/partitions',
+'scsi' => '/proc/scsi/scsi',
+'xorg-log' => '/var/log/Xorg.0.log'
+);
+
+our $os = '';
+our $bsd_type = '';
 our $self_config_dir='';
 our $self_data_dir='';
 our $self_path='';
@@ -115,8 +139,10 @@ sub main {
 #### -------------------------------------------------------------------
 
 sub initialize {
+	set_os();
 	set_path();
 	set_user_paths();
+	files_info('set');
 	my @config_files = (
 	qq(/etc/$self_name.conf), 
 	qq($self_config_dir/$self_name.conf)
@@ -148,7 +174,8 @@ sub set_configs {
 			s/#.*//;
 			s/^\s+//;
 			s/\s+$//;
-			s/'//;
+			s/'//g;
+			s/false//; # we want this empty so it trips boolean false
 			next unless length;
 			($var, $val) = split(/\s*=\s*/, $_, 2);
 			$configs{$var} = $val;
@@ -201,6 +228,26 @@ sub set_display_width {
 	$cols_inner= ( $cols_max - $indent - 1 );
 	print "tc: $term_cols cmc: $configs{'COLS_MAX_CONSOLE'} cm: $cols_max ci: $cols_inner\n";
 }
+
+sub set_os {
+	my @uname = uname();
+	$os = lc($uname[0]);
+	if ( $os =~ /(bsd|dragonfly|darwin)/ ){
+		if ( $os =~ /openbsd/ ){
+			$bsd_type = 'openbsd';
+		}
+		elsif ($os =~ /darwin/){
+			$bsd_type = 'darwin';
+		}
+		elsif ($os =~ /kfreebsd/){
+			$bsd_type = 'debian-bsd';
+		}
+		else {
+			$bsd_type = 'bsd';
+		}
+	}
+}
+
 
 sub set_path {
 	my $path = '';
@@ -272,6 +319,30 @@ sub set_user_paths {
 	# print "scd: $self_config_dir sdd: $self_data_dir \n";
 }
 
+sub files_info {
+	my ($type) = @_;
+	
+	if ( $type eq 'set'){
+		foreach my $key ( keys %info_files ){
+			$file_info{$key} = -e $info_files{$key} ? $info_files{$key} : '';
+		}
+		if ( ! $file_info{'xorg-log'} && check_program('xset') ){
+			my $data = qx(xset q 2>/dev/null);
+			my $line;
+			foreach $line ( split /\n/, $data){
+				if ($line =~ /Log file/i){
+					$file_info{'xorg-log'} = get_piece($line,3);
+					last;
+				}
+			}
+		}
+	}
+	else {
+		return $file_info{$type};
+	}
+}
+
+
 ########################################################################
 #### UTILITIES
 ########################################################################
@@ -321,6 +392,16 @@ sub check_program {
 	grep { -x "$_/$_[0]"}split /:/,$ENV{PATH};
 }
 
+sub get_piece {
+	my ($string, $num, $sep) = @_;
+	$num--;
+	$sep ||= ' ';
+	my @temp = split $sep, $string, -1;
+	if ( exists $temp[$num] ){
+		return $temp[$num];
+	}
+}
+
 #### -------------------------------------------------------------------
 #### UPDATER
 # #### -------------------------------------------------------------------
@@ -335,7 +416,7 @@ sub check_program {
 #### -------------------------------------------------------------------
 
 
-sub print_patch_version{
+sub print_patch_version {
 	my $patch = $self_patch;
 	$patch =~ s/^0+//; # strip leading zero(s)
 	if ( $patch ne '' ){
@@ -357,7 +438,7 @@ sub print_version {
 }
 
 ########################################################################
-#### OPTION AND VERSION HANDLERS
+#### OPTIONS HANDLER
 ########################################################################
 
 sub get_options{
@@ -370,7 +451,10 @@ sub get_options{
 	'v|verbosity=i' => sub { my ($opt,$arg) = @_; print "$arg\n"; },
 	'V|version' => sub { print_version() },
 	'debug=i' => sub { my ($opt,$arg) = @_;print "debuger $arg\n"; },
-	'alt=i' => sub { my ($opt,$arg) = @_;print "alt $arg\n"; }
+	'alt=i' => sub { 
+	my ($opt,$arg) = @_;
+	print "alt $arg\n"; 
+	}
 	);   
 	@ARGV = @argv; 
 } 
@@ -415,7 +499,6 @@ sub get_hostname {
 #### -------------------------------------------------------------------
 #### PRINT CONTROLLERS
 #### -------------------------------------------------------------------
-
 
 sub print_it_out {
 
