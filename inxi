@@ -8,7 +8,8 @@ use 5.008;
 use Data::Dumper qw(Dumper);
 use File::Basename;
 use File::Find;
-use Getopt::Long qw(GetOptionsFromArray); # :config no_ignore_case bundling_values
+# use Getopt::Long qw(GetOptionsFromArray); # :config no_ignore_case bundling_values
+use Getopt::Long qw(GetOptions);
 # Note: default auto_abbrev is enabled, that's fine
 Getopt::Long::Configure ('bundling', 'no_ignore_case');
 use Net::FTP;
@@ -19,18 +20,18 @@ use Term::ANSIColor;
 use feature qw(state);
 
 ### INXI INFO ###
-our $self_name = 'inxi';
-our $self_version = '2.9.00';
-our $self_date = '2017-12-04';
-our $self_patch = '006-p';
+my $self_name = 'inxi';
+my $self_version = '2.9.00';
+my $self_date = '2017-12-05';
+my $self_patch = '007-p';
 
 ### INITIALIZE VARIABLES ###
 
-#our $opt_parser = Getopt::Long::Parser->new;
+#my $opt_parser = Getopt::Long::Parser->new;
 
 ### USER CONFIGS: SET IN inxi.conf file see wiki for directions ###
 
-our %configs = (
+my %configs = (
 # DISTRO MAINTAINER FLAGS
 # flag to allow distro maintainers to turn off update features. If false, 
 # turns off -U and -! testing/advanced update options, as well as removing 
@@ -64,60 +65,51 @@ our %configs = (
 
 ### END USER CONFIGS ###
 
-our $b_irc='';
-our $b_root='';
-our $b_running_in_display='';
+my $b_irc='';
+my $b_root='';
+my $b_running_in_display='';
 
-our %file_info;
-our %info_files = (
-'asound-cards' => '/proc/asound/cards',
-'asound-modules' => '/proc/asound/modules',
-'asound-version' => '/proc/asound/version',
-'cpuinfo' => '/proc/cpuinfo',
-'dmesg-boot' => '/var/run/dmesg.boot',
-'lsb-release' => '/etc/lsb-release',
-'mdstat' => '/proc/mdstat',
-'meminfo' => '/proc/meminfo',
-'modules' => '/proc/modules',
-'mounts' => '/proc/mounts',
-'os-release' => '/etc/os-release',
-'partitions' => '/proc/partitions',
-'scsi' => '/proc/scsi/scsi',
-'xorg-log' => '/var/log/Xorg.0.log'
-);
+my %file_info;
+my %switches;
+my $os = '';
+my $bsd_type = '';
+my $self_config_dir='';
+my $self_data_dir='';
+my $self_download = '';
+my $self_path='';
 
-our $os = '';
-our $bsd_type = '';
-our $self_config_dir='';
-our $self_data_dir='';
-our $self_path='';
+### DEBGUGGERS ###
+my $debugger=0;
+my $end='print "END: " . (caller(1))[3] . "\n"';
+my $start='print "START: " . (caller(1))[3] . "\n"';
+
 
 ### LAYOUT ###
 
 # These two determine separators in single line output, to force irc clients 
 # not to break off sections
-our $sep1='~';
-our $sep2=' ';
+my $sep1='~';
+my $sep2=' ';
 # these will assign a separator to non irc states. Important! Using ':' can 
 # trigger stupid emoticon
 # behaviors in output on IRC, so do not use those.
-our $sep3_irc='';
-our $sep3_console=':';
-our $sep3=''; # do not set, will be set dynamically
-our $line1='---------------------------------------------------------------------------';
-our $line2='- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -';
+my $sep3_irc='';
+my $sep3_console=':';
+my $sep3=''; # do not set, will be set dynamically
+my $line1='---------------------------------------------------------------------------';
+my $line2='- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -';
 
 # Default indentation level. NOTE: actual indent is 1 greater to allow for 
 # spacing
-our $indent=10;
+my $indent=10;
 
 ### COLUMN WIDTHS ###
-our $cols_inner=0; ## for width minus $indent
-our $cols_max=0;
+my $cols_inner=0; ## for width minus $indent
+my $cols_max=0;
 
 # these will be set dynamically in set_display_width()
-our $term_cols=80;
-our $term_lines=100;
+my $term_cols=80;
+my $term_lines=100;
 
 ########################################################################
 #### STARTUP
@@ -128,9 +120,11 @@ our $term_lines=100;
 #### -------------------------------------------------------------------
 
 sub main {
+	# print Dumper \@ARGV;
 	initialize();
 	set_display_width('live');
 	get_options();
+	set_debugger(); # right after so it's set
 	print_it_out();
 }
 
@@ -250,7 +244,6 @@ sub set_os {
 
 
 sub set_path {
-	my $path = '';
 	my $added_paths = '';
 	# Extra path variable to make execute failures less likely, merged below
 	my @path = split ':', $ENV{'PATH'};
@@ -260,9 +253,9 @@ sub set_path {
 	# initialize function directly.
 	$self_path=dirname "$0";
 	# Create a difference of $PATH and $extra_paths and add that to $PATH:
-	foreach $path (@extra_paths) {
-		if ( ! grep(/$path/, @path) ){
-			$added_paths="$added_paths:$path";
+	foreach (@extra_paths) {
+		if ( ! grep(/$_/, @path) ){
+			$added_paths="$added_paths:$_";
 			# print "$path\n";
 		}
 	}
@@ -323,15 +316,30 @@ sub files_info {
 	my ($type) = @_;
 	
 	if ( $type eq 'set'){
+		my %info_files = (
+		'asound-cards' => '/proc/asound/cards',
+		'asound-modules' => '/proc/asound/modules',
+		'asound-version' => '/proc/asound/version',
+		'cpuinfo' => '/proc/cpuinfo',
+		'dmesg-boot' => '/var/run/dmesg.boot',
+		'lsb-release' => '/etc/lsb-release',
+		'mdstat' => '/proc/mdstat',
+		'meminfo' => '/proc/meminfo',
+		'modules' => '/proc/modules',
+		'mounts' => '/proc/mounts',
+		'os-release' => '/etc/os-release',
+		'partitions' => '/proc/partitions',
+		'scsi' => '/proc/scsi/scsi',
+		'xorg-log' => '/var/log/Xorg.0.log'
+		);
 		foreach my $key ( keys %info_files ){
 			$file_info{$key} = -e $info_files{$key} ? $info_files{$key} : '';
 		}
 		if ( ! $file_info{'xorg-log'} && check_program('xset') ){
 			my $data = qx(xset q 2>/dev/null);
-			my $line;
-			foreach $line ( split /\n/, $data){
-				if ($line =~ /Log file/i){
-					$file_info{'xorg-log'} = get_piece($line,3);
+			foreach ( split /\n/, $data){
+				if ($_ =~ /Log file/i){
+					$file_info{'xorg-log'} = get_piece($_,3);
 					last;
 				}
 			}
@@ -357,6 +365,13 @@ sub files_info {
 #### -------------------------------------------------------------------
 
 
+sub set_debugger {
+	if ( $debugger < 5){
+		$end = '';
+		$start = '';
+	}
+}
+
 
 #### -------------------------------------------------------------------
 #### DOWNLOADER
@@ -368,7 +383,13 @@ sub files_info {
 #### -------------------------------------------------------------------
 
 sub error_handler {
-
+	my ( $num, $one, $two) = @_;
+	print "Error $num: option: $one";
+	if ($two){
+		print " value: $two is incorrect.";
+	}
+	print "\nCheck -h for correct parameters.\n";
+	exit $num;
 }
 
 
@@ -404,7 +425,277 @@ sub get_piece {
 
 #### -------------------------------------------------------------------
 #### UPDATER
-# #### -------------------------------------------------------------------
+##### -------------------------------------------------------------------
+
+sub self_updater {
+
+}
+
+########################################################################
+#### OPTIONS HANDLER
+########################################################################
+
+sub get_options{
+	my (@args) = @_;
+	# my @argv = @ARGV;
+	$switches{'short'} = 'true';
+	# $switches{''} = 'true';
+	#$opt_parser->configure('no_ignore_case');
+	# GetOptionsFromArray(\@argv, 
+	GetOptions (
+	'A|audio' => sub {
+		$switches{'short'} = '';
+		$switches{'audio'} = 'true';},
+	'b|basic' => sub {
+		$switches{'short'} = '';
+		$switches{'battery'} = 'true';
+		$switches{'cpu-basic'} = 'true';
+		$switches{'raid-basic'} = 'true';
+		$switches{'disk-total'} = 'true';
+		$switches{'graphics'} = 'true';
+		$switches{'info'} = 'true';
+		$switches{'machine'} = 'true';
+		$switches{'network'} = 'true';},
+	'B|battery' => sub {
+		$switches{'short'} = '';
+		$switches{'battery'} = 'true';
+		$switches{'battery-forced'} = 'true'; },
+	'c|color:i' => sub {
+		$switches{'short'} = '';
+		$switches{''} = 'true'; },
+	'C|cpu' => sub {
+		$switches{'short'} = '';
+		$switches{'cpu'} = 'true'; },
+	'd|disk-all' => sub {
+		$switches{'short'} = '';
+		$switches{'disk'} = 'true';
+		$switches{'optical-full'} = 'true'; },
+	'D' => sub {
+		$switches{'short'} = '';
+		$switches{'disk'} = 'true'; },
+	'f|cpu-flags' => sub {
+		$switches{'short'} = '';
+		$switches{'cpu'} = 'true';
+		$switches{'cpu-flags-full'} = 'true'; },
+	'F|full' => sub {
+		$switches{'short'} = '';
+		$switches{'audio'} = 'true';
+		$switches{'battery'} = 'true';
+		$switches{'cpu'} = 'true';
+		$switches{'disk'} = 'true';
+		$switches{'graphics'} = 'true';
+		$switches{'info'} = 'true';
+		$switches{'machine'} = 'true';
+		$switches{'network'} = 'true';
+		$switches{'network-advanced'} = 'true';
+		$switches{'partitions'} = 'true';
+		$switches{'raid'} = 'true';
+		$switches{'sensors'} = 'true';
+		$switches{'system'} = 'true'; },
+	'G|graphics' => sub {
+		$switches{'short'} = '';
+		$switches{'graphics'} = 'true'; },
+	'i|internet' => sub {
+		$switches{'short'} = '';
+		$switches{'ip'} = 'true';
+		$switches{'network'} = 'true';
+		$switches{'network-advanced'} = 'true'; },
+	'I|info' => sub {
+		$switches{'short'} = '';
+		$switches{'info'} = 'true'; },
+	'l|labels' => sub {
+		$switches{'short'} = '';
+		$switches{'labels'} = 'true';
+		$switches{'partitions'} = 'true'; },
+	'm|memory' => sub {
+		$switches{'short'} = '';
+		$switches{'memory'} = 'true'; },
+	'M|machine' => sub {
+		$switches{'short'} = '';
+		$switches{'machine'} = 'true'; },
+	'n|network-advanced' => sub {
+		$switches{'short'} = '';
+		$switches{'network'} = 'true';
+		$switches{'network-advanced'} = 'true'; },
+	'N|network' => sub {
+		$switches{'short'} = '';
+		$switches{'network'} = 'true'; },
+	'o|unmounted' => sub {
+		$switches{'short'} = '';
+		$switches{'unmounted'} = 'true'; },
+	'p|partitions-full' => sub {
+		$switches{'short'} = '';
+		$switches{'partitions'} = 'true';
+		$switches{'partitions-full'} = 'true'; },
+	'P|partitions' => sub {
+		$switches{'short'} = '';
+		$switches{'partitions'} = 'true'; },
+	'r|repos' => sub {
+		$switches{'short'} = '';
+		$switches{'repos'} = 'true'; },
+	'R|raid' => sub {
+		$switches{'short'} = '';
+		$switches{'raid'} = 'true';
+		$switches{'raid-forced'} = 'true'; },
+	's|sensors' => sub {
+		$switches{'short'} = '';
+		$switches{'sensors'} = 'true'; },
+	'S|system' => sub {
+		$switches{'short'} = '';
+		$switches{'system'} = 'true'; },
+	't|processes:s' => sub {
+		my ($opt,$arg) = @_;
+		$switches{'short'} = '';
+		if ( $arg =~ /^([cm]+)([1-9]|1[0-9]|20)?$/ ){
+			if ($arg =~ /c/){
+				$switches{'ps-cpu'} = 'true';
+			}
+			if ($arg =~ /m/){
+				$switches{'ps-mem'} = 'true';
+			}
+			if ($arg =~ /([0-9]+)/ ){
+				$configs{'PS_COUNT'} = $1;
+			}
+		}
+		else {
+			error_handler(100,$opt,$arg);
+		} },
+	'u|uuid' => sub {
+		$switches{'short'} = '';
+		$switches{'partitions'} = 'true';
+		$switches{'uuids'} = 'true'; },
+	'U|update' => sub {
+		my ($opt,$arg) = @_;
+		$switches{'short'} = '';
+		if ( $configs{'B_ALLOW_UPDATE'} ){
+			self_updater( $self_download, 'source server', "$opt" );
+		}
+		else {
+			error_handler(17, $opt);
+		} },
+	'v|verbosity:i' => sub {
+		my ($opt,$arg) = @_;
+		$switches{'short'} = '';
+		if ( $arg =~ /^[0-7]$/ ){
+			if ($arg == 0 ){
+				$switches{'short'} = 'true';
+			}
+			if ($arg >= 1 ){
+				$switches{'cpu-basic'} = 'true';
+				$switches{'disk-total'} = 'true';
+				$switches{'graphics'} = 'true';
+				$switches{'info'} = 'true';
+				$switches{'system'} = 'true';
+			}
+			if ($arg >= 2 ){
+				$switches{'battery'} = 'true';
+				$switches{'disk-basic'} = 'true';
+				$switches{'raid-basic'} = 'true';
+				$switches{'machine'} = 'true';
+				$switches{'network'} = 'true';
+			}
+			if ($arg >= 3 ){
+				$switches{'network-advanced'} = 'true';
+				$switches{'cpu'} = 'true';
+				$switches{'extra-1'} = 'true';
+			}
+			if ($arg >= 4 ){
+				$switches{'disk'} = 'true';
+				$switches{'partitions'} = 'true';
+			}
+			if ($arg >= 5 ){
+				$switches{'audio'} = 'true';
+				$switches{'memory'} = 'true';
+				$switches{'labels'} = 'true';
+				$switches{'memory'} = 'true';
+				$switches{'raid'} = 'true';
+				$switches{'sensors'} = 'true';
+				$switches{'uuid'} = 'true';
+			}
+			if ($arg >= 6 ){
+				$switches{'optical-full'} = 'true';
+				$switches{'partitions-full'} = 'true';
+				$switches{'unmounted'} = 'true';
+				$switches{'extra-2'} = 'true';
+			}
+			if ($arg >= 7 ){
+				$switches{'ip'} = 'true';
+				$switches{'raid-forced'} = 'true';
+				$switches{'extra-3'} = 'true';
+			}
+		}
+		else {
+			error_handler(100,$opt,$arg);
+		} },
+	'V|version' => sub { 
+		print_version(); },
+	'w|weather' => sub {
+		$switches{'short'} = '';
+		$switches{''} = 'true'; },
+	'W|weather-location' => sub {
+		$switches{'short'} = '';
+		$switches{''} = 'true'; },
+	'x' => sub {
+		if ( ! $switches{'extra-1'} ){
+			$switches{'extra-1'} = 'true';
+		}
+		elsif ( ! $switches{'extra-2'} ){
+			$switches{'extra-2'} = 'true';
+		}
+		elsif ( ! $switches{'extra-3'} ){
+			$switches{'extra-4'} = 'true';
+		} },
+	'y|width:i' => sub {
+		my ($opt, $arg) = @_;
+		if ( $arg =~ /\d/ && $arg >= 80 ){
+			set_display_width($arg);
+		}
+		else {
+			error_handler(21, $opt, $arg);
+		} },
+	'z|filter-output' => sub {
+		$switches{'filter-output'} = 'true'; },
+	'Z|filter-override' => sub {
+		$switches{'filter-override'} = 'true'; },
+	'h|help|?' => sub {
+		show_options('standard'); },
+	'H|help-full' => sub {
+		show_options('full'); },
+	'debug:i' => sub { 
+		my ($opt,$arg) = @_;
+		if ($arg =~ /^[0-9]+$/ && $arg > 0){
+			$debugger=$arg;
+		}
+		else {
+			error_handler(21, $opt, $arg);
+		} },
+	'alt:i' => sub { 
+		my ($opt,$arg) = @_;
+		print "alt $arg\n"; },
+	'<>' => sub {
+		my ($opt) = @_;
+		error_handler(2, "Unknown argument: $opt", "" );
+	}
+	) or error_handler(3, 'Unknown Option', '');
+	# print "dump\n" . Dumper \@ARGV;
+# 	if ( @ARGV ) {
+# 		error_handler(1, "Uknown option $ARGV[0] given!", "" );
+# 		@ARGV=undef;
+# 	}
+	#@ARGV = @argv; 
+} 
+
+sub show_options {
+	
+	print "stub: " . (caller(0))[3] . "\n";
+	
+	exit 1;
+}
+
+
+########################################################################
+#### STARTUP DATA
+########################################################################
 
 
 ########################################################################
@@ -437,32 +728,7 @@ sub print_version {
 	print "$self_name version: $self_version" . print_patch_version() . " date: $self_date\n";
 }
 
-########################################################################
-#### OPTIONS HANDLER
-########################################################################
 
-sub get_options{
-	my (@args) = @_;
-	my @argv = @ARGV;
-	
-	#$opt_parser->configure('no_ignore_case');
-	GetOptionsFromArray(\@argv, 
-	'A|audio' => sub { print "audio option\n"; },
-	'v|verbosity=i' => sub { my ($opt,$arg) = @_; print "$arg\n"; },
-	'V|version' => sub { print_version() },
-	'debug=i' => sub { my ($opt,$arg) = @_;print "debuger $arg\n"; },
-	'alt=i' => sub { 
-	my ($opt,$arg) = @_;
-	print "alt $arg\n"; 
-	}
-	);   
-	@ARGV = @argv; 
-} 
-
-
-########################################################################
-#### STARTUP DATA
-########################################################################
 
 
 ########################################################################
@@ -484,12 +750,14 @@ sub get_options{
 #### -------------------------------------------------------------------
 
 sub get_hostname {
+	eval $start;
 	if ( $ENV{'HOSTNAME'} ne '' ){
 		return $ENV{'HOSTNAME'};
 	}
 	else {
 		return hostname;
 	}
+	eval $end;
 }
 
 ########################################################################
@@ -501,7 +769,9 @@ sub get_hostname {
 #### -------------------------------------------------------------------
 
 sub print_it_out {
-
+	eval $start;
+	print "stub: " . (caller(0))[3] . "\n";
+	eval $end;
 }
 
 #### -------------------------------------------------------------------
@@ -513,7 +783,7 @@ sub print_it_out {
 #### LAUNCH
 ########################################################################
 
-main(@ARGV); ## From the End comes the Beginning
+main(); ## From the End comes the Beginning
 
 ## note: this EOF is needed for smxi handling, this is what triggers the full download ok
 ###**EOF**###
