@@ -4,7 +4,7 @@ SELF_NAME='inxi'
 # don't quote the following, parsers grab these too
 SELF_VERSION=2.3.41
 SELF_DATE=2017-10-29
-SELF_PATCH=00-b2
+SELF_PATCH=00-b1
 ########################################################################
 ####  SPECIAL THANKS
 ########################################################################
@@ -14860,4 +14860,1325 @@ print_partition_data()
 				if [[ -z $( grep -E '(^//|:/|non-dev)' <<< ${a_part_working[6]} ) ]];then
 					part_dev="/dev/${a_part_working[6]}"
 					dev_remote='dev'
-				elif [[ -n 
+				elif [[ -n $( grep '^non-dev' <<< ${a_part_working[6]} ) ]];then
+					holder=$( sed 's/non-dev-//' <<< ${a_part_working[6]} )
+					part_dev="$holder"
+					dev_remote='raid'
+				else
+					part_dev="${a_part_working[6]}"
+					dev_remote='remote'
+				fi
+			else
+				dev_remote='dev'
+				part_dev='N/A'
+			fi
+			full_dev="${C1}$dev_remote$SEP3${C2} $part_dev "
+			if [[ $B_SHOW_LABELS == 'true' || $B_SHOW_UUIDS == 'true' ]];then
+				if [[ $B_SHOW_LABELS == 'true' && $dev_remote != 'remote' ]];then
+					if [[ -n ${a_part_working[7]} ]];then
+						part_label="${a_part_working[7]}"
+					else
+						part_label='N/A'
+					fi
+					full_label="${C1}label$SEP3${C2} $part_label "
+				fi
+				if [[ $B_SHOW_UUIDS == 'true' && $dev_remote != 'remote' ]];then
+					if [[ -n ${a_part_working[8]} ]];then
+						part_uuid="${a_part_working[8]}"
+					else
+						part_uuid='N/A'
+					fi
+					full_uuid="${C1}uuid$SEP3${C2} $part_uuid"
+				fi
+			fi
+			# don't show user names in output
+			if [[ $B_OUTPUT_FILTER == 'true' ]];then
+				part_id_clean=$( sed $SED_RX "s|/home/([^/]+)/(.*)|/home/$FILTER_STRING/\2|" <<< ${a_part_working[0]} )
+			else
+				part_id_clean=${a_part_working[0]}
+			fi
+			id_size_used="${C1}ID-$((part_id+1))$SEP3${C2} $part_id_clean ${C1}size$SEP3${C2} ${a_part_working[1]} $part_used"
+			fs_dev="$full_fs$full_dev"
+			label_uuid="$full_label$full_uuid"
+			calculate_line_length "${a_part_data[$counter]}$id_size_used$fs_dev"
+			if [[ $LINE_LENGTH -gt $COLS_INNER ]];then
+				a_part_data[$counter]="$id_size_used"
+				((counter++))
+				calculate_line_length "$fs_dev$label_uuid"
+				if [[ $LINE_LENGTH -le $COLS_INNER ]];then
+					a_part_data[$counter]="$fs_dev$label_uuid"
+					label_uuid=''
+				else
+					a_part_data[$counter]="$fs_dev"
+				fi
+				((counter++))
+				id_size_used=''
+				fs_dev=''
+			fi
+			# label/uuid always print one per line, so only wrap if it's very long
+			calculate_line_length "${a_part_data[$counter]}$id_size_used$fs_dev$label_uuid"
+			if [[ $B_SHOW_UUIDS == 'true' || $B_SHOW_LABELS == 'true' ]] && \
+			   [[ $LINE_LENGTH -gt $COLS_INNER ]];then
+				a_part_data[$counter]="$id_size_used$fs_dev"
+				((counter++))
+				a_part_data[$counter]="$label_uuid"
+			else
+				if [[ $LINE_LENGTH -gt $COLS_INNER ]];then
+					a_part_data[$counter]="${a_part_data[$counter]}"
+					((counter++))
+					a_part_data[$counter]="$id_size_used$fs_dev$label_uuid"
+				else
+					a_part_data[$counter]="${a_part_data[$counter]}$id_size_used$fs_dev$label_uuid"
+				fi
+			fi
+			((counter++))
+			((part_id++))
+		fi
+	done
+	# print out all lines, line starter on first line
+	for (( i=0; i < ${#a_part_data[@]};i++ ))
+	do
+		if [[ $i -eq 0 ]];then
+			line_starter='Partition:'
+		else
+			line_starter=' '
+		fi
+		if [[ -n ${a_part_data[$i]} ]];then
+			partition_data=$( create_print_line "$line_starter" "${a_part_data[$i]}" )
+			print_screen_output "$partition_data"
+		fi
+	done
+	
+	eval $LOGFE
+}
+# legacy not used
+print_program_version()
+{
+	local program_version="${C1}$SELF_NAME$SEP3${C2} $SELF_VERSION$SELF_PATCH${CN}"
+	# great trick from: http://ideatrash.net/2011/01/bash-string-padding-with-sed.html
+	# left pad: sed -e :a -e 's/^.\{1,80\}$/& /;ta'
+	# right pad: sed -e :a -e 's/^.\{1,80\}$/ &/;ta'
+	# center pad: sed -e :a -e 's/^.\{1,80\}$/ & /;ta'
+	#local line_max=$COLS_INNER
+	#program_version="$( sed -e :a -e "s/^.\{1,$line_max\}$/ &/;ta" <<< $program_version )" # use to create padding if needed
+	# program_version=$( create_print_line "Version:" "$program_version${CN}" )
+	print_screen_output "$program_version"
+}
+
+print_ps_data()
+{
+	eval $LOGFS
+	
+	local b_print_first='true' 
+
+	if [[ $B_SHOW_PS_CPU_DATA == 'true' ]];then
+		get_ps_tcm_data 'cpu'
+		print_ps_item 'cpu' "$b_print_first"
+		b_print_first='false' 
+	fi
+	if [[ $B_SHOW_PS_MEM_DATA == 'true' ]];then
+		get_ps_tcm_data 'mem'
+		print_ps_item 'mem' "$b_print_first"
+	fi
+	
+	eval $LOGFE
+}
+
+# args: $1 - cpu/mem; $2 true/false
+print_ps_item()
+{
+	eval $LOGFS
+	local a_ps_data='' ps_data='' line_starter='' line_start_data='' full_line=''
+	local app_name='' app_pid='' app_cpu='' app_mem='' throttled='' app_daemon=''
+	local b_print_first=$2 line_counter=0 i=0 count_nu='' extra_data='' memory_info='' extra_text=''
+	
+	if [[ -n $PS_THROTTLED ]];then
+		throttled=" ${C1} - throttled from${C2} $PS_THROTTLED"
+	fi
+	# important: ${C2} $PS_COUNT must have space after ${C2} for irc output or the number vanishes
+	case $1 in
+		cpu)
+			if [[  $B_EXTRA_DATA == 'true' ]];then
+				extra_text=" ${C1}- Memory$SEP3 MB / % used"
+				if [[ $B_SHOW_INFO == 'false' && $B_SHOW_PS_MEM_DATA == 'false' ]];then
+					get_memory_data
+					memory_info=" - ${C1}Used/Total$SEP3${C2} $MEMORY"
+				fi
+			fi
+			line_start_data="${C1}CPU$SEP3 % used$extra_text$memory_info${C1} - top${C2} $PS_COUNT ${C1}active$throttled"
+			;;
+		mem)
+			if [[  $B_EXTRA_DATA == 'true' ]];then
+				extra_text=" ${C1}- CPU$SEP3 % used"
+			fi
+			if [[ $B_SHOW_INFO == 'false' ]];then
+				get_memory_data
+				memory_info=" - ${C1}Used/Total$SEP3${C2} $MEMORY"
+			fi
+			line_start_data="${C1}Memory$SEP3 MB / % used$memory_info$extra_text${C1} - top${C2} $PS_COUNT ${C1}active$throttled"
+			;;
+	esac
+	
+	if [[ $b_print_first == 'true' ]];then
+		line_starter='Processes:'
+	else
+		line_starter=' '
+	fi
+	
+	# appName, appPath, appStarterName, appStarterPath, cpu, mem, pid, vsz, user
+	ps_data=$( create_print_line "$line_starter" "$line_start_data" )
+	print_screen_output "$ps_data"
+
+	for (( i=0; i < ${#A_PS_DATA[@]}; i++ ))
+	do
+		IFS=","
+		a_ps_data=(${A_PS_DATA[i]})
+		IFS="$ORIGINAL_IFS"
+		
+		# handle the converted app names, with ~..~ means it didn't have a path
+		if [[ -n $( grep -E '^~.*~$' <<<  ${a_ps_data[0]} ) ]];then
+			app_daemon='daemon'
+		else
+			app_daemon='command'
+		fi
+
+		app_name=" ${C1}$app_daemon$SEP3${C2} ${a_ps_data[0]}"
+		if [[ ${a_ps_data[0]} != ${a_ps_data[2]} ]];then
+			app_name="$app_name ${C1}(started by$SEP3${C2} ${a_ps_data[2]}${C1})${C2}"
+		fi
+		app_pid=" ${C1}pid$SEP3${C2} ${a_ps_data[6]}"
+		#  ${C1}user$SEP3${C2} ${a_ps_data[8]}
+		case $1 in
+			cpu)
+				app_cpu=" ${C1}cpu$SEP3${C2} ${a_ps_data[4]}%"
+				if [[ $B_EXTRA_DATA == 'true' ]];then
+					extra_data=" ${C1}mem$SEP3${C2} ${a_ps_data[7]}MB (${a_ps_data[5]}%)${C2}"
+				fi
+				;;
+			mem)
+				app_mem=" ${C1}mem$SEP3${C2} ${a_ps_data[7]}MB (${a_ps_data[5]}%)${C2}"
+				if [[ $B_EXTRA_DATA == 'true' ]];then
+					extra_data=" ${C1}cpu$SEP3${C2} ${a_ps_data[4]}%"
+				fi
+				;;
+		esac
+		(( line_counter++ ))
+		count_nu="${C1}$line_counter$SEP3${C2}"
+		full_line="$count_nu$app_cpu$app_mem$app_name$app_pid$extra_data"
+		ps_data=$( create_print_line " " "$full_line" )
+		print_screen_output "$ps_data"
+	done
+	
+	eval $LOGFE
+}
+
+print_raid_data()
+{
+	eval $LOGFS
+	local device='' device_string='' device_state='' raid_level='' device_components=''
+	local device_report='' u_data='' blocks='' super_blocks='' algorithm='' chunk_size=''
+	local bitmap_values='' recovery_progress_bar='' recovery_percent='' recovered_sectors=''
+	local finish_time='' recovery_speed='' raid_counter=0 device_counter=1 basic_counter=1
+	local a_raid_working='' raid_data='' kernel_support='' read_ahead='' unused_devices=''
+	local basic_raid='' basic_raid_separator='' basic_raid_plural='' inactive=''
+	local component_separator='' device_id='' print_string='' loop_limit=0 array_count_unused=''
+	local array_count='' raid_event='' b_print_lines='true'
+	local no_raid_detected='' dev_string='/dev/'
+	local empty_raid_data='' report_size='report' blocks_avail='blocks' chunk_raid_usage='chunk size'
+	
+	if [[ -n $BSD_TYPE ]];then
+		no_raid_detected='No zfs software RAID detected-other types not yet supported.'
+		empty_raid_data='No zfs RAID data available-other types not yet supported.'
+		report_size='size'
+		blocks_avail='available'
+		chunk_raid_usage='allocated'
+	else
+		no_raid_detected="No RAID data: $FILE_MDSTAT missing-is md_mod kernel module loaded?"
+		empty_raid_data="No RAID devices: $FILE_MDSTAT, md_mod kernel module present"
+	fi
+	
+	if [[ $BSD_TYPE == 'bsd' ]];then
+		dev_string=''
+	fi
+	if [[ $B_RAID_SET != 'true' ]];then
+		get_raid_data
+	fi
+
+	for (( i=0; i < ${#A_RAID_DATA[@]}; i++ ))
+	do
+		IFS=","
+		a_raid_working=(${A_RAID_DATA[i]})
+		IFS="$ORIGINAL_IFS"
+		
+		# reset on each iteration
+		algorithm=''
+		bitmap_values=''
+		blocks=''
+		component_separator=''
+		device=''
+		device_components=''
+		device_id=''
+		device_report=''
+		device_state=''
+		failed=''
+		finish_time=''
+		inactive=''
+		raid_event=''
+		raid_level=''
+		recovery_percent=''
+		recovery_progress_bar=''
+		recovered_sectors=''
+		recovery_speed=''
+		spare=''
+		super_blocks=''
+		u_data=''
+		
+		if [[ -n $( grep '^md' <<< ${a_raid_working[0]} ) && -z $BSD_TYPE ]] || \
+		[[ -n $BSD_TYPE && ${a_raid_working[0]} != '' ]];then
+			if [[ $B_SHOW_BASIC_RAID == 'true' ]];then
+				if [[ $basic_raid != '' ]];then
+					basic_raid_plural='s'
+				fi
+				if [[ ${a_raid_working[1]} == 'inactive' ]];then
+					inactive=" - ${a_raid_working[1]}"
+				fi
+				basic_raid="$basic_raid$basic_raid_separator${C1}$basic_counter$SEP3${C2} $dev_string${a_raid_working[0]}$inactive"
+				basic_raid_separator=' '
+				(( basic_counter++ ))
+			else
+				device_id="-$device_counter"
+				device="$dev_string${a_raid_working[0]}"
+				
+				(( device_counter++ ))
+				if [[ ${a_raid_working[1]} != '' ]];then
+					device_state=" - ${a_raid_working[1]}"
+				fi
+				
+				if [[ ${a_raid_working[2]} == '' ]];then
+					raid_level='N/A'
+				else
+					raid_level=${a_raid_working[2]}
+				fi
+				# there's one case: md0 : inactive  that has to be protected against
+				if [[ ${a_raid_working[2]} == '' && ${a_raid_working[1]} == 'inactive' ]];then
+					raid_level=''
+				else
+					raid_level=" ${C1}raid$SEP3${C2} $raid_level"
+				fi
+				if [[ ${a_raid_working[4]} != '' ]];then
+					device_report="${a_raid_working[4]}"
+				else
+					device_report="N/A"
+				fi
+				if [[ $B_EXTRA_DATA == 'true' ]];then
+					if [[ ${a_raid_working[6]} != '' ]];then
+						blocks=${a_raid_working[6]}
+					else
+						blocks='N/A'
+					fi
+					blocks=" ${C1}$blocks_avail$SEP3${C2} $blocks"
+					
+					if [[ ${a_raid_working[9]} != '' ]];then
+						chunk_size=${a_raid_working[9]}
+					else
+						chunk_size='N/A'
+					fi
+					chunk_size=" ${C1}$chunk_raid_usage$SEP3${C2} $chunk_size"
+					if [[ ${a_raid_working[10]} != '' ]];then
+						bitmap_value='true'
+						bitmap_value=" ${C1}bitmap$SEP3${C2} $bitmap_value"
+					fi
+				fi
+				if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+					if [[ ${a_raid_working[5]} != '' ]];then
+						u_data=" ${a_raid_working[5]}"
+					fi
+					if [[ ${a_raid_working[7]} != '' ]];then
+						super_blocks=" ${C1}super blocks$SEP3${C2} ${a_raid_working[7]}"
+					fi
+					if [[ ${a_raid_working[8]} != '' ]];then
+						algorithm=" ${C1}algorithm$SEP3${C2} ${a_raid_working[8]}"
+					fi
+				fi
+				if [[ ${a_raid_working[3]} == '' ]];then
+					if [[ ${a_raid_working[1]} != 'inactive' ]];then
+						device_components=" ${C1}components$SEP3${C2} N/A"
+					fi
+				else
+					for component in ${a_raid_working[3]}
+					do
+						if [[ $B_EXTRA_DATA != 'true' ]];then
+							component=$( sed 's/\[[0-9]\+\]//' <<< $component )
+						fi
+						# NOTE: for bsd zfs, states are: ONLINE,DEGRADED,OFFLINE (at least)
+						if [[ -n $( grep -E '(F|DEGRADED)' <<< $component ) ]];then
+							component=$( sed -e 's/(F)//' -e 's/F//' -e 's/DEGRADED//' <<<  $component )
+							failed="$failed $component"
+							component=''
+						elif [[ -n $( grep -E '(S|OFFLINE)' <<< $component ) ]];then
+							component=$( sed -e 's/(S)//' -e 's/S//' -e 's/OFFLINE//' <<<  $component )
+							spare="$spare $component"
+							component=''
+						else
+							device_components="$device_components$component_separator$component"
+							component_separator=' '
+						fi
+					done
+					if [[ $failed != '' ]];then
+						failed=" ${C1}FAILED$SEP3${C2}$failed${C2}"
+					fi
+					if [[ $spare != '' ]];then
+						spare=" ${C1}spare$SEP3${C2}$spare${C2}"
+					fi
+					if [[ -n $device_components || -n $spare || -n $failed ]];then
+						if [[ $B_EXTRA_DATA != 'true' && -z $BSD_TYPE ]];then
+							if [[ $device_report != 'N/A' && -n $device_components ]];then
+								device_components="$device_report - $device_components"
+							fi
+						fi
+						if [[ $device_components == '' ]];then
+							device_components='none'
+						fi
+						device_components="${C1}online$SEP3${C2} $device_components"
+						device_components=" ${C1}components$SEP3${C2} $device_components$failed$spare"
+					fi
+				fi
+				a_raid_data[$raid_counter]="${C1}Device$device_id$SEP3${C2} $device$device_state$raid_level$device_components"
+				
+				if [[ $B_EXTRA_DATA == 'true' && ${a_raid_working[1]} != 'inactive' ]];then
+					a_raid_data[$raid_counter]="${C1}Device$device_id$SEP3${C2} $device$device_state$device_components"
+					(( raid_counter++ ))
+					print_string="${C1}Info$SEP3${C2}$raid_level ${C1}$report_size$SEP3${C2} $device_report$u_data"
+					print_string="$print_string$blocks$chunk_size$bitmap_value$super_blocks$algorithm"
+					a_raid_data[$raid_counter]="$print_string"
+				else
+					a_raid_data[$raid_counter]="${C1}Device$device_id$SEP3${C2} $device$device_state$raid_level$device_components"
+				fi
+				(( raid_counter++ ))
+				
+				# now let's do the recover line if required
+				if [[ ${a_raid_working[12]} != '' ]];then
+					recovery_percent=$( cut -d '~' -f 2 <<< ${a_raid_working[12]} )
+					if [[ ${a_raid_working[14]} != '' ]];then
+						finish_time=${a_raid_working[14]}
+					else
+						finish_time='N/A'
+					fi
+					finish_time=" ${C1}time remaining$SEP3${C2} $finish_time"
+					if [[ $B_EXTRA_DATA == 'true' ]];then
+						if [[ ${a_raid_working[13]} != '' ]];then
+							recovered_sectors=" ${C1}sectors$SEP3${C2} ${a_raid_working[13]}"
+						fi
+					fi
+					if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+						if [[ ${a_raid_working[11]} != '' ]];then
+							recovery_progress_bar=" ${a_raid_working[11]}"
+						fi
+						if [[ ${a_raid_working[15]} != '' ]];then
+							recovery_speed=" ${C1}speed$SEP3${C2} ${a_raid_working[15]}"
+						fi
+					fi
+					a_raid_data[$raid_counter]="${C1}Recovering$SEP3${C2} $recovery_percent$recovery_progress_bar$recovered_sectors$finish_time$recovery_speed"
+					(( raid_counter++ ))
+				fi
+			fi
+		elif [[ ${a_raid_working[0]} == 'KernelRaidSupport' ]];then
+			if [[ ${a_raid_working[1]} == '' ]];then
+				kernel_support='N/A'
+			else
+				kernel_support=${a_raid_working[1]}
+			fi
+			kernel_support=" ${C1}supported$SEP3${C2} $kernel_support"
+		elif [[ ${a_raid_working[0]} == 'ReadAhead' ]];then
+			if [[ ${a_raid_working[1]} != '' ]];then
+				read_ahead=${a_raid_working[1]}
+				read_ahead=" ${C1}read ahead$SEP3${C2} $read_ahead"
+			fi
+		elif [[ ${a_raid_working[0]} == 'UnusedDevices' ]];then
+			if [[ ${a_raid_working[1]} == '' ]];then
+				unused_devices='N/A'
+			else
+				unused_devices=${a_raid_working[1]}
+			fi
+			unused_devices="${C1}Unused Devices$SEP3${C2} $unused_devices"
+		elif [[ ${a_raid_working[0]} == 'raidEvent' ]];then
+			if [[ ${a_raid_working[1]} != '' ]];then
+				raid_event=${a_raid_working[1]}
+				raid_event=" ${C1}Raid Event$SEP3${C2} ${a_raid_working[1]}"
+			fi
+		fi
+	done
+	
+	if [[ $B_SHOW_BASIC_RAID == 'true' && $basic_raid != '' ]];then
+		a_raid_data[0]="${C1}Device$basic_raid_plural$SEP3${C2} $basic_raid"
+	fi
+	# note bsd temp test hack to make it run
+	if [[ $B_MDSTAT_FILE != 'true' && -z $BSD_TYPE ]] || \
+	[[ -n $BSD_TYPE && $B_BSD_RAID == 'false' ]];then
+		if [[ $B_SHOW_RAID_R == 'true' ]];then
+			a_raid_data[0]="$no_raid_detected"
+		else
+			b_print_lines='false'
+		fi
+	else
+		if [[ ${a_raid_data[0]} == '' ]];then
+			if [[ $B_SHOW_BASIC_RAID != 'true' ]];then
+				a_raid_data[0]="$empty_raid_data"
+			else
+				b_print_lines='false'
+			fi
+		fi
+		# now let's add on the system line and the unused device line. Only print on -xx
+		if [[ $kernel_support$read_ahead$raid_event != '' ]];then
+			array_count=${#a_raid_data[@]}
+			a_raid_data[array_count]="${C1}System$SEP3${C2}$kernel_support$read_ahead$raid_event"
+			loop_limit=1
+		fi
+		if [[ $unused_devices != '' ]];then
+			array_count_unused=${#a_raid_data[@]}
+			a_raid_data[array_count_unused]="$unused_devices"
+			loop_limit=2
+		fi
+	fi
+
+	# we don't want to print anything if it's -b and no data is present, just a waste of a line
+	if [[ $b_print_lines == 'true' ]];then
+		# print out all lines, line starter on first line
+		for (( i=0; i < ${#a_raid_data[@]} - $loop_limit;i++ ))
+		do
+			if [[ $i -eq 0 ]];then
+				line_starter='RAID:'
+			else
+				line_starter=' '
+			fi
+			if [[ $B_EXTRA_EXTRA_DATA == 'true' && $array_count != '' ]];then
+				if [[ $i == 0 ]];then
+					raid_data=$( create_print_line "$line_starter" "${a_raid_data[array_count]}" )
+					print_screen_output "$raid_data"
+					line_starter=' '
+				fi
+			fi
+			raid_data=$( create_print_line "$line_starter" "${a_raid_data[i]}" )
+			print_screen_output "$raid_data"
+			if [[ $B_EXTRA_EXTRA_DATA == 'true' && $array_count_unused != '' ]];then
+				if [[ $i == $(( array_count_unused - 2 )) ]];then
+					raid_data=$( create_print_line "$line_starter" "${a_raid_data[array_count_unused]}" )
+					print_screen_output "$raid_data"
+				fi
+			fi
+		done
+	fi
+	
+	eval $LOGFE
+}
+
+print_ram_data()
+{
+	eval $LOGFS
+	local memory_line='' line_2='' line_3='' b_module_present='true'
+	local error_string='' a_memory_item='' line_starter='Memory:' array_counter=1 device_counter=1
+	local dmidecodeNull='No dmidecode memory data: try newer kernel.'
+	
+	local manufacturer='' part_nu='' serial_nu='' device_speed='' configured_speed='' bus_width=
+	local data_width='' total_width='' device_type='' device_type_detail='' bank='' slot='' form_factor=''
+	local device_size='' array_use='' location='' error_correction='' max_capacity='' nu_of_devices=''
+	local max_module_size='' module_voltage='' bank_connection='' memory_info=''
+	
+	get_ram_data
+	#echo ${#A_MEMORY_DATA[@]}
+	#echo ${A_MEMORY_DATA[0]}
+	if [[ ${#A_MEMORY_DATA[@]} -gt 0 ]];then
+		if [[ ${A_MEMORY_DATA[0]} == 'dmidecode-error-'* ]];then
+			error_string=$( print_dmidecode_error 'default' "${A_MEMORY_DATA[0]}" )
+			memory_line="${C2}$error_string"
+		else
+			if [[ $B_SHOW_INFO == 'false' && $B_SHOW_PS_MEM_DATA == 'false' ]];then
+				get_memory_data
+				memory_info="${C1}Used/Total$SEP3${C2} $MEMORY"
+			fi
+			for (( i=0;i<${#A_MEMORY_DATA[@]};i++ ))
+			do
+				IFS=','
+				a_memory_item=(${A_MEMORY_DATA[i]})
+				IFS="$ORIGINAL_IFS"
+				memory_line=''
+				line_2=''
+				line_3=''
+				bus_width=''
+				data_width=
+				total_width=
+				part_nu=''
+				serial_nu=''
+				manufacturer=''
+				max_module_size='' 
+				module_voltage=''
+				bank_connection=''
+				if [[ -n $memory_info ]];then
+					memory_line=$( create_print_line "$line_starter" "$memory_info" )
+					print_screen_output "$memory_line"
+					line_starter=''
+					memory_info=''
+				fi
+				# memory-array,0x0012,System Board,8 GB,4,System Memory,None,max size,moudule voltage
+				if [[ ${a_memory_item[0]} == 'memory-array' ]];then
+					if [[ -n ${a_memory_item[4]} ]];then
+						nu_of_devices=${a_memory_item[4]}
+					else
+						nu_of_devices='N/A'
+					fi
+					if [[ -n ${a_memory_item[3]} ]];then
+						max_capacity=${a_memory_item[3]}
+					else
+						max_capacity='N/A'
+					fi
+					if [[ -n ${a_memory_item[6]} ]];then
+						error_correction=${a_memory_item[6]}
+					else
+						error_correction='N/A'
+					fi
+					if [[ $B_EXTRA_DATA == 'true' ]];then
+						if [[ -n ${a_memory_item[7]} ]];then
+							max_module_size="${C1}max module size${SEP3}${C2} ${a_memory_item[7]} "
+						fi
+					fi
+					if [[ $B_EXTRA_EXTRA_EXTRA_DATA == 'true' ]];then
+						if [[ -n ${a_memory_item[8]} ]];then
+							module_voltage="${C1}module voltage$SEP3${C2} ${a_memory_item[8]}"
+						fi
+					fi
+					memory_line="${C1}Array-$array_counter capacity$SEP3${C2} $max_capacity ${C1}devices$SEP3${C2} $nu_of_devices ${C1}EC$SEP3${C2} $error_correction "
+					line_2="$max_module_size$module_voltage"
+					calculate_line_length "$memory_line$line_2"
+					if [[ -n $line_2 && $LINE_LENGTH -gt $COLS_INNER ]];then
+						memory_line=$( create_print_line "$line_starter" "$memory_line" )
+						print_screen_output "$memory_line"
+						memory_line="$line_2"
+						line_starter=' '
+						line_2=''
+					else
+						memory_line="$memory_line$line_2"
+						line_2=''
+					fi
+					(( array_counter++ ))
+					device_counter=1 # reset so device matches device count per array
+				else
+					# not used for now
+# 					if [[ -n ${a_memory_item[3333]} ]];then
+# 						if [[ -z ${a_memory_item[3]/BANK*/} ]];then
+# 							#bank=${a_memory_item[3]#BANK}
+# 							bank=${a_memory_item[3]}
+# 							bank=${bank## }
+# 						else
+# 							bank=${a_memory_item[3]}
+# 						fi
+# 					else
+# 						bank='N/A'
+# 					fi
+# 					# not used for now
+# 					if [[ -n ${a_memory_item[44444]} ]];then
+# 						if [[ -z ${a_memory_item[4]/SLOT*/} ]];then
+# 							#slot=${a_memory_item[4]#SLOT}
+# 							slot=${a_memory_item[4]}
+# 							slot=${slot## }
+# 						else
+# 							slot=${a_memory_item[4]}
+# 						fi
+# 					else
+# 						slot='N/A'
+# 					fi
+					if [[ -n ${a_memory_item[15]} ]];then
+						locator=${a_memory_item[15]}
+						locator=${locator## }
+					else
+						locator='N/A'
+					fi
+					if [[ -n ${a_memory_item[2]} ]];then
+						device_size=${a_memory_item[2]}
+						if [[ $device_size == 'No Module Installed' ]];then
+							b_module_present='false'
+						else
+							b_module_present='true'
+						fi
+					else
+						device_size='N/A'
+					fi
+					if [[ -n ${a_memory_item[6]} ]];then
+						device_type=${a_memory_item[6]}
+						if [[ $B_EXTRA_EXTRA_EXTRA_DATA == 'true' && -n ${a_memory_item[7]} \
+						      && ${a_memory_item[7]} != 'Other' ]];then
+							device_type="$device_type (${a_memory_item[7]})"
+						fi
+					else
+						device_type='N/A'
+					fi
+					device_type="${C1}type$SEP3${C2} $device_type "
+					if [[ -n ${a_memory_item[8]} ]];then
+						if [[ -n ${a_memory_item[9]} ]];then
+							device_speed=${a_memory_item[9]}
+						else
+							device_speed=${a_memory_item[8]}
+						fi
+					else
+						device_speed='N/A'
+					fi
+					if [[ $b_module_present == 'true' ]];then
+						device_speed="${C1}speed$SEP3${C2} $device_speed "
+					else
+						device_speed=''
+					fi
+					# memory-device,0x002C,8192 MB,ChannelD,ChannelD_Dimm2,DIMM,DDR3,Synchronous,2400 MHz,2400 MHz,64 bits,64 bits,Undefined,F3-19200C10-8GBZH,00000000
+					if [[ $b_module_present == 'true' ]];then
+						if [[ $B_EXTRA_DATA == 'true' ]];then
+							if [[ -n ${a_memory_item[13]} ]];then
+								part_nu=${a_memory_item[13]}
+							else
+								part_nu='N/A'
+							fi
+							part_nu="${C1}part$SEP3${C2} $part_nu "
+						fi
+						if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+							if [[ -n ${a_memory_item[12]} ]];then
+								manufacturer=${a_memory_item[12]}
+							else
+								manufacturer='N/A' 
+							fi
+							manufacturer="${C1}manufacturer$SEP3${C2} $manufacturer "
+							if [[ -n ${a_memory_item[14]} ]];then
+								if [[ $B_OUTPUT_FILTER == 'true' ]];then
+									serial_nu=$FILTER_STRING
+								else
+									serial_nu=${a_memory_item[14]}
+								fi
+							else
+								serial_nu='N/A'
+							fi
+							serial_nu="${C1}serial$SEP3${C2} $serial_nu "
+							if [[ $device_size != 'N/A' && -n ${a_memory_item[16]} ]];then
+								bank_connection=" ${a_memory_item[16]}"
+							fi
+						fi
+					fi
+					if [[ $B_EXTRA_EXTRA_EXTRA_DATA == 'true' ]];then
+						if [[ $b_module_present == 'true' ]] || \
+						     [[ -n ${a_memory_item[11]} || -n ${a_memory_item[10]} ]];then
+							# only create this if the total exists and is > data width
+							if [[ -n ${a_memory_item[10]/ bits/} && -n ${a_memory_item[11]/ bits} && \
+							      ${a_memory_item[11]/ bits/} -gt ${a_memory_item[10]/ bits/} ]];then
+								total_width=" (total$SEP3 ${a_memory_item[11]})"
+							fi
+							if [[ -n ${a_memory_item[10]} ]];then
+								data_width=${a_memory_item[10]}
+							else
+								data_width='N/A'
+							fi
+							bus_width="${C1}bus width$SEP3${C2} $data_width$total_width "
+						fi
+					fi
+					memory_line="${C1}Device-$device_counter$SEP3${C2} $locator ${C1}size$SEP3${C2} $device_size$bank_connection $device_speed"
+					calculate_line_length "$memory_line$device_type"
+					if [[ $LINE_LENGTH -le $COLS_INNER ]];then
+						memory_line="$memory_line$device_type"
+						device_type=''
+					fi
+					line_3="$manufacturer$part_nu$serial_nu"
+					line_2="$device_type$bus_width"
+					# echo $( calculate_line_length "$memory_line" )
+					# echo $( calculate_line_length "$memory_line$line_2" )
+					calculate_line_length "$memory_line$line_2$line_3"
+					if [[ $LINE_LENGTH -gt $COLS_INNER ]];then
+						memory_line=$( create_print_line "$line_starter" "$memory_line" )
+						print_screen_output "$memory_line"
+						memory_line="$line_2"
+						line_starter=' '
+						calculate_line_length "$memory_line$line_3"
+						if [[ -n $memory_line && -n $line_3 && $LINE_LENGTH -gt $COLS_INNER ]];then
+							memory_line=$( create_print_line "$line_starter" "$memory_line" )
+							print_screen_output "$memory_line"
+							memory_line="$line_3"
+						else
+							memory_line="$memory_line$line_3"
+						fi
+					else
+						memory_line="$memory_line$line_2$line_3"
+					fi
+					(( device_counter++ ))
+				fi
+				memory_line=$( create_print_line "$line_starter" "$memory_line" )
+				print_screen_output "$memory_line"
+				line_starter=' '
+			done
+			memory_line=' '
+		fi
+	else
+		memory_line="${C2}$dmidecodeNull"
+	fi
+	IFS="$ORIGINAL_IFS"
+	memory_line=${memory_line## }
+	if [[ -n $memory_line ]];then
+		memory_line=$( create_print_line "$line_starter" "$memory_line" )
+		print_screen_output "$memory_line"
+	fi
+
+	eval $LOGFE
+}
+
+
+# currently only apt using distros support this feature, but over time we can add others
+print_repo_data()
+{
+	eval $LOGFS
+	local repo_count=0 repo_line='' file_name='' file_content='' file_name_holder=''
+	local repo_full='' b_print_next_line='false' repo_type=''
+	
+	get_repo_data
+	
+	if [[ -n $REPO_DATA ]];then
+		# loop through the variable's lines one by one, update counter each iteration
+		while read repo_line
+		do
+			(( repo_count++ ))
+			repo_type=$( cut -d '^' -f 1 <<< $repo_line )
+			file_name=$( cut -d '^' -f 2 <<< $repo_line )
+			file_content=$( cut -d '^' -f 3-7 <<< $repo_line )
+			# this will dump unwanted white space line starters. Some irc channels
+			# use bots that show page title for urls, so need to break the url by adding 
+			# a white space.
+			if [[ $B_IRC == 'true' ]];then
+				file_content=$( echo ${file_content/:\/\//: \/\/} )
+			else
+				file_content=$( echo $file_content )
+			fi
+			# echo $file_name : $file_name_holder : $repo_type : $file_content
+			# check file name, if different, update the holder for print out
+			if [[ $file_name != $file_name_holder ]];then
+				if [[ $repo_type == 'pisi repo' || $repo_type == 'urpmq repo' ]];then
+					repo_full="${C1}$repo_type$SEP3${C2} $file_name"
+				else
+					repo_full="${C1}Active $repo_type in file$SEP3${C2} $file_name"
+				fi
+				file_name_holder=$file_name
+				b_print_next_line='true'
+			else
+				repo_full="${C2}$file_content"
+			fi
+			# first line print Repos: 
+			if [[ $repo_count -eq 1 ]];then
+				repo_full=$( create_print_line "Repos:" "$repo_full" )
+			else
+				repo_full=$( create_print_line " " "$repo_full" )
+			fi
+			print_screen_output "$repo_full"
+			# this prints the content of the file as well as the file name
+			if [[ $b_print_next_line == 'true' ]];then
+				repo_full=$( create_print_line " " "$file_content" )
+				print_screen_output "$repo_full"
+				b_print_next_line='false'
+			fi
+		done <<< "$REPO_DATA"
+	else
+		if [[ $BSD_TYPE == 'bsd' ]];then
+			repo_type='OS type'
+		else
+			repo_type="package manager"
+		fi
+		repo_full=$( create_print_line "Repos:" "${C1}Error$SEP3${C2} No repo data detected. Does $SELF_NAME support your $repo_type?" )
+		print_screen_output "$repo_full"
+	fi
+	eval $LOGFE
+}
+
+print_sensors_data()
+{
+	eval $LOGFS
+	local mobo_temp='' cpu_temp='' psu_temp='' cpu_fan='' mobo_fan='' ps_fan='' sys_fans='' sys_fans2='' 
+	local temp_data='' fan_data='' fan_data2='' b_is_error='false' fan_count=0 gpu_temp=''
+	local a_sensors_working=''
+	local no_sensors_message='None detected - is lm-sensors installed and configured?'
+	local Sensors_Data="$( get_sensors_output )"
+	get_sensors_data
+	
+	if [[ $BSD_TYPE == 'bsd' ]];then
+		no_sensors_message='This feature is not yet supported for BSD systems.'
+	fi
+	
+	IFS=","
+	a_sensors_working=( ${A_SENSORS_DATA[0]} )
+	IFS="$ORIGINAL_IFS"
+	# initial error cases, for missing app or unconfigured sensors. Note that array 0
+	# always has at least 3 items, cpu/mobo/psu temp in it. If the count is 0, then
+	# no sensors are installed/configured
+	if [[ ${#a_sensors_working[@]} -eq 0 ]];then
+		cpu_temp=$no_sensors_message
+		b_is_error='true'
+	else
+		for (( i=0; i < ${#A_SENSORS_DATA[@]}; i++ ))
+		do
+			IFS=","
+			a_sensors_working=( ${A_SENSORS_DATA[i]} )
+			IFS="$ORIGINAL_IFS"
+			case $i in
+				# first the temp data
+				0)
+					if [[ -n ${a_sensors_working[0]} ]];then
+						cpu_temp=${a_sensors_working[0]}
+					else
+						cpu_temp='N/A'
+					fi
+					cpu_temp="${C1}System Temperatures: cpu$SEP3${C2} $cpu_temp "
+
+					if [[ -n ${a_sensors_working[1]} ]];then
+						mobo_temp=${a_sensors_working[1]}
+					else
+						mobo_temp='N/A'
+					fi
+					mobo_temp="${C1}mobo$SEP3${C2} $mobo_temp "
+
+					if [[ -n ${a_sensors_working[2]} ]];then
+						psu_temp="${C1}psu$SEP3${C2} ${a_sensors_working[2]} "
+					fi
+					gpu_temp=$( get_gpu_temp_data )
+					# dump the unneeded screen data for single gpu systems 
+					if [[ $( wc -w <<< $gpu_temp ) -eq 1 && $B_EXTRA_DATA != 'true' ]];then
+						gpu_temp=${gpu_temp#*:}
+					fi
+					if [[ -n $gpu_temp ]];then
+						gpu_temp="${C1}gpu$SEP3${C2} $gpu_temp "
+					fi
+					;;
+				# then the fan data from main fan array
+				1)
+					for (( j=0; j < ${#a_sensors_working[@]}; j++ ))
+					do
+						case $j in
+							0)
+								# we need to make sure it's either cpu fan OR cpu fan and sys fan 1
+								if [[ -n ${a_sensors_working[0]} ]];then
+									cpu_fan="${a_sensors_working[0]}"
+								elif [[ -z ${a_sensors_working[0]} && -n ${a_sensors_working[1]} ]];then
+									cpu_fan="${a_sensors_working[1]}"
+								else
+									cpu_fan='N/A'
+								fi
+								cpu_fan="${C1}Fan Speeds (in rpm): cpu$SEP3${C2} $cpu_fan "
+								(( fan_count++ ))
+								;;
+							1)
+								if [[ -n ${a_sensors_working[1]} ]];then
+									mobo_fan="${C1}mobo$SEP3${C2} ${a_sensors_working[1]} "
+									(( fan_count++ ))
+								fi
+								;;
+							2)
+								if [[ -n ${a_sensors_working[2]} ]];then
+									ps_fan="${C1}psu$SEP3${C2} ${a_sensors_working[2]} "
+									(( fan_count++ ))
+								fi
+								;;
+							[3-9]|[1-9][0-9])
+								if [[ -n ${a_sensors_working[$j]} ]];then
+									fan_number=$(( $j - 2 )) # sys fans start on array key 5
+									# wrap after fan 6 total
+									if [[ $fan_count -lt 7 ]];then
+										sys_fans="$sys_fans${C1}sys-$fan_number$SEP3${C2} ${a_sensors_working[$j]} "
+									else
+										sys_fans2="$sys_fans2${C1}sys-$fan_number$SEP3${C2} ${a_sensors_working[$j]} "
+									fi
+									(( fan_count++ ))
+								fi
+								;;
+						esac
+					done
+					;;
+				2)
+					for (( j=0; j < ${#a_sensors_working[@]}; j++ ))
+					do
+						case $j in
+							[0-9]|[1-9][0-9])
+								if [[ -n ${a_sensors_working[$j]} ]];then
+									fan_number=$(( $j + 1 )) # sys fans start on array key 5
+									# wrap after fan 6 total
+									if [[ $fan_count -lt 7 ]];then
+										sys_fans="$sys_fans${C1}fan-$fan_number$SEP3${C2} ${a_sensors_working[$j]} "
+									else
+										sys_fans2="$sys_fans2${C1}fan-$fan_number$SEP3${C2} ${a_sensors_working[$j]} "
+									fi
+									(( fan_count++ ))
+								fi
+								;;
+						esac
+					done
+					;;
+			esac
+		done
+	fi
+	# turning off all output for case where no sensors detected or no sensors output 
+	# unless -s used explicitly. So for -F type output won't show unless valid or -! 1 used
+	if [[ $b_is_error != 'true' || $B_SHOW_SENSORS == 'true' || $B_TESTING_1 == 'true' ]];then
+		temp_data="$cpu_temp$mobo_temp$psu_temp$gpu_temp"
+		temp_data=$( create_print_line "Sensors:" "$temp_data" )
+		print_screen_output "$temp_data"
+		# don't print second or subsequent lines if error data
+		fan_data="$cpu_fan$mobo_fan$ps_fan$sys_fans"
+		if [[ $b_is_error != 'true' && -n $fan_data ]];then
+			fan_data=$( create_print_line " " "$fan_data" )
+			print_screen_output "$fan_data"
+			# and then second wrapped fan line if needed
+			if [[ -n $sys_fans2 ]];then
+				fan_data2=$( create_print_line " " "$sys_fans2" )
+				print_screen_output "$fan_data2"
+			fi
+		fi
+	fi
+	eval $LOGFE
+}
+
+print_system_data()
+{
+	eval $LOGFS
+	local system_data='' bits='' desktop_environment='' dm_data='' de_extra_data=''
+	local de_string='' distro_string='' line_starter='System:'
+	local host_kernel_string='' host_string='' desktop_type='Desktop'
+	local host_name=$HOSTNAME bit_comp=''
+	local distro="$( get_distro_data )"
+	local tty_session='' compiler_string='' distro_os='Distro'
+	
+	if [[ -n $BSD_TYPE ]];then
+		distro_os='OS'
+	fi
+	get_kernel_version
+	# I think these will work, maybe, if logged in as root and in X
+	if [[ $B_RUNNING_IN_DISPLAY == 'true' ]];then
+		desktop_environment=$( get_desktop_environment )
+		if [[ -z $desktop_environment ]];then
+			desktop_environment='N/A'
+		fi
+		
+		if [[  $B_EXTRA_EXTRA_EXTRA_DATA == 'true' ]];then
+			de_extra_data=$( get_desktop_extra_data )
+			if [[ -n $de_extra_data ]];then
+				de_extra_data=" ${C1}info$SEP3${C2} $de_extra_data"
+			fi
+		fi
+	fi
+	# handle separately since some systems will have no root desktop data
+	if [[ $B_RUNNING_IN_DISPLAY == 'false' ]] || [[ $desktop_environment == 'N/A' && $B_ROOT == 'true' ]];then
+		tty_session=$( get_tty_number )
+		if [[ $desktop_environment == 'N/A' ]];then
+			de_extra_data=''
+		fi
+		if [[ -z $tty_session && $B_CONSOLE_IRC == 'true' ]];then
+			tty_session=$( get_tty_console_irc )
+		fi
+		if [[ -n $tty_session ]];then
+			tty_session=" $tty_session"
+		fi
+		desktop_environment="tty$tty_session"
+		desktop_type='Console'
+	fi
+	# having dm type can be useful if you are accessing remote system
+	# or are out of X and don't remember which dm is running the system
+	if [[  $B_EXTRA_EXTRA_DATA == 'true' ]];then
+		dm_data=$( get_display_manager )
+		# here we only want the dm info to show N/A if in X
+		if [[ -z $dm_data && $B_RUNNING_IN_DISPLAY == 'true' ]];then
+			dm_data='N/A'
+		fi
+		# only print out of X if dm_data has info, then it's actually useful, but
+		# for headless servers, no need to print dm stuff.
+		if [[ -n $dm_data ]];then
+			dm_data=" ${C1}dm$SEP3${C2} $dm_data"
+		fi
+	fi
+	if [[ $B_EXTRA_DATA == 'true' ]];then
+		compiler_string=$( get_kernel_compiler_version )
+		if [[ -n $compiler_string ]];then
+			compiler_string="${C1}${compiler_string%^*}$SEP3${C2} ${compiler_string#*^} "
+		fi
+	fi
+	# check for 64 bit first
+	if [[ -n $( uname -m | grep -E '(x86_64|amd64)' ) ]];then
+		bits="64"
+	else
+		bits="32"
+	fi
+	bits="${C1}bits$SEP3${C2} $bits "
+	
+	if [[ $B_SHOW_HOST == 'true' ]];then
+		if [[ -z $HOSTNAME ]];then
+			if [[ -n $( type p hostname ) ]];then
+				host_name=$( hostname )
+			fi
+			if [[ -z $host_name ]];then
+				host_name='N/A'
+			fi
+		fi
+		host_string="${C1}Host$SEP3${C2} $host_name "
+	fi
+	host_kernel_string="$host_string${C1}Kernel$SEP3${C2} $CURRENT_KERNEL "
+	bits_comp="$bits$compiler_string"
+	de_string="${C1}$desktop_type$SEP3${C2} $desktop_environment$de_extra_data$dm_data "
+	distro_string="${C1}$distro_os$SEP3${C2} $distro "
+	calculate_line_length "$host_kernel_string$bits_comp$de_string"
+	if [[ $LINE_LENGTH -gt $COLS_INNER ]];then
+		calculate_line_length "$host_kernel_string$bits_comp"
+		if [[ $LINE_LENGTH -gt $COLS_INNER ]];then
+			#echo one
+			system_data=$( create_print_line "$line_starter" "$host_kernel_string" )
+			print_screen_output "$system_data"
+			system_data=$( create_print_line "  " "$bits_comp" )
+			print_screen_output "$system_data"
+		else
+			#echo two
+			system_data=$( create_print_line "$line_starter" "$host_kernel_string$bits_comp" )
+			print_screen_output "$system_data"
+			
+		fi
+		host_kernel_string=''
+		bits_comp=''
+		line_starter=' '
+	fi
+	calculate_line_length "$host_kernel_string$bits_comp$de_string$distro_string"
+	if [[ $LINE_LENGTH -gt $COLS_INNER ]];then
+		#echo three
+		system_data=$( create_print_line "$line_starter" "$host_kernel_string$bits_comp$de_string" )
+		print_screen_output "$system_data"
+		host_kernel_string=''
+		de_string=''
+		bits_comp=''
+		line_starter=' '
+	fi
+	system_data="$host_kernel_string$bits_comp$de_string$distro_string"
+	if [[ -n $system_data ]];then
+		#echo four
+		system_data="$host_kernel_string$bits_comp$de_string$distro_string"
+		system_data=$( create_print_line "$line_starter" "$system_data" )
+		print_screen_output "$system_data"
+	fi
+	
+	eval $LOGFE
+}
+
+print_unmounted_partition_data()
+{
+	eval $LOGFS
+	local a_unmounted_data='' line_starter='' unmounted_data='' full_fs=''
+	local full_dev='' full_size='' full_label='' full_uuid='' full_string=''
+	local bsd_unsupported='This feature is not yet supported for BSD systems.'
+	local line_starter='Unmounted:' part_2_data=''
+	
+	if [[ -z ${A_PARTITION_DATA} ]];then
+		get_partition_data
+	fi
+	get_unmounted_partition_data
+	if [[ ${#A_UNMOUNTED_PARTITION_DATA[@]} -ge 1 ]];then
+		for (( i=0; i < ${#A_UNMOUNTED_PARTITION_DATA[@]}; i++ ))
+		do
+			full_string=''
+			part_2_data=''
+			IFS=","
+			a_unmounted_data=(${A_UNMOUNTED_PARTITION_DATA[i]})
+			IFS="$ORIGINAL_IFS"
+			if [[ -z ${a_unmounted_data[0]} ]];then
+				full_dev='N/A'
+			else
+				full_dev="/dev/${a_unmounted_data[0]}"
+			fi
+			full_dev="${C1}ID-$((i+1))$SEP3${C2} $full_dev "
+			if [[ -z ${a_unmounted_data[1]} ]];then
+				full_size='N/A'
+			else
+				full_size=${a_unmounted_data[1]}
+			fi
+			full_size="${C1}size$SEP3${C2} $full_size "
+			if [[ -z ${a_unmounted_data[2]} ]];then
+				full_label='N/A'
+			else
+				full_label=${a_unmounted_data[2]}
+			fi
+			full_label="${C1}label$SEP3${C2} $full_label "
+			if [[ -z ${a_unmounted_data[3]} ]];then
+				full_uuid='N/A'
+			else
+				full_uuid=${a_unmounted_data[3]}
+			fi
+			full_uuid="${C1}uuid$SEP3${C2} $full_uuid "
+			if [[ -z ${a_unmounted_data[4]} ]];then
+				full_fs=''
+			else
+				full_fs="${C1}fs$SEP3${C2} ${a_unmounted_data[4]} "
+			fi
+			# temporary message to indicate not yet supported
+			if [[ $BSD_TYPE == 'bsd' ]];then
+				full_string=$bsd_unsupported
+			else
+				full_string="$full_dev$full_size$full_fs"
+				part_2_data="$full_label$full_uuid"
+			fi
+			calculate_line_length "$full_string$part_2_data"
+			if [[ $LINE_LENGTH -gt $COLS_INNER ]];then
+				unmounted_data=$( create_print_line "$line_starter" "$full_string" )
+				print_screen_output "$unmounted_data"
+				line_starter=' '
+				unmounted_data=$( create_print_line "$line_starter" "$part_2_data" )
+				print_screen_output "$unmounted_data"
+			else
+				unmounted_data=$( create_print_line "$line_starter" "$full_string$part_2_data" )
+				print_screen_output "$unmounted_data"
+				line_starter=' '
+			fi
+		done
+	else
+		unmounted_data=$( create_print_line "$line_starter" "No unmounted partitions detected" )
+		print_screen_output "$unmounted_data"
+	fi
+	
+	eval $LOGFE
+}
+
+print_weather_data()
+{
+	eval $LOGFS
+	
+	local weather_data='' location_string='' local_time='' time_string='' pressure=''
+	local a_location='' a_weather='' weather_string='' weather='' temp='' winds='' humidity=''
+	local time_zone='' observation_time='' city='' state='' country='' altitude=''
+	local heat_index='' wind_chill='' dewpoint='' xxx_humidity=''
+	local openP='(' closeP=')'
+	
+	if [[ $B_IRC == 'true' ]];then
+		openP=''
+		closeP=''
+	fi
+	
+	get_weather_data
+	
+	# city ";" regionCode ";" regionName ";" countryName ";" countryCode ";" countryCode3 
+	#  ";" latitude "," longitude ";" postalCode ";" timeZone
+	
+	# observationTime ";" localTime ";" weather ";" tempString ";" humidity 
+	# ";" windString ";" pressureString ";" dewpointString ";" heatIndexString
+	# ";" windChillString ";" siteElevation
+
+	if [[ ${#A_WEATHER_DATA[@]} -eq 2 ]];then
+		IFS=";"
+		a_location=(${A_WEATHER_DATA[0]})
+		a_weather=(${A_WEATHER_DATA[1]})
+		IFS="$ORIGINAL_IFS"
+		
+		if [[ -n ${a_weather[3]} ]];then
+			temp=${a_weather[3]}
+		else
+			temp='N/A'
+		fi
+		if [[ -n ${a_weather[2]} ]];then
+			weather=" - ${a_weather[2]}"
+		else
+			weather=''
+		fi
+		if [[ $B_EXTRA_DATA == 'true' ]];then
+			if [[ -n ${a_weather[5]} ]];then
+				winds=" ${C1}Wind$SEP3${C2} ${a_weather[5]}"
+			fi
+		fi
+		if [[ $B_EXTRA_EXTRA_DATA == 'true' ]];then
+			if [[ -n ${a_weather[4]} ]];then
+				humidity=" ${C1}Humidity$SEP3${C2} ${a_weather[4]}"
+			fi
+			if [[ -n ${a_weather[6]} ]];then
+				pressure="${C1}Pressure$SEP3${C2} ${a_weather[6]} "
+			fi
+		fi
+		weather_string="${C1}Conditions$SEP3${C2} $temp$weather$winds$humidity"
+		
+		if [[ -n ${a_weather[1]} ]];then
+			local_time=" ${a_weather[1]}"
+		else
+			local_time=" $(date)"
+		fi
+		if [[ $B_EXTRA_DATA == 'true' && -n ${a_location[8]} ]];then
+			time_zone=" (${a_location[8]})"
+		fi
+		time_string="${C1}Time$SEP3${C2}$local_time$time_zone"
+
+		if [[ $B_EXTRA_DATA != 'true' ]];then
+			weather_data="$weather_string $time_string"
+			weather_data=$( create_print_line "Weather:" "$weather_data" )
+			print_screen_output "$weather_data"
+		else
+			weather_data="$weather_string"
+			weather_data=$( create_print_line "Weather:" "$weather_data" )
+			print_screen_output "$weather_data"
+			if [[ $B_EXTRA_EXTRA_EXTRA_DATA == 'true' ]];then
+				if [[ -n ${a_weather[8]} ]];then
+					heat_index="${C1}Heat Index$SEP3${C2} ${a_weather[8]} "
+				fi
+				if [[ -n ${a_weather[9]} ]];then
+					wind_chill="${C1}Wind Chill$SEP3${C2} ${a_weather[9]} "
+				fi
+				if [[ -n ${a_weather[7]} ]];then
+					dew_point="${C1}Dew Point$SEP3${C2} ${a_weather[7]} "
+				fi
+				if [[ -n ${a_weather[0]} ]];then
+					observation_time=" ${C1}Observation Time$SEP3${C2} ${a_weather[0]} "
+				fi
+				if [[ $B_OUTPUT_FILTER != 'true' ]];then
+					if [[ -n ${a_location[0]} ]];then
+						city=" ${a_location[0]}"
+					fi
+					if [[ -n ${a_location[1]} ]];then
+						state=" ${a_location[1]}"
+					fi
+					if [[ -n ${a_location[5]} ]];then
+						country=" $openP${a_location[5]}$closeP"
+					fi
+					if [[ -n ${a_weather[10]} ]];then
+						# note: bug in source data uses ft for meters, not 100% of time, but usually
+						altitude=" ${C1}Altitude$SEP3${C2} ${a_weather[10]/ft/m}"
+					fi
+					location_string="${C1}Location$SEP3${C2}$city$state$country$altitude "
+				else
+					location_string=$time_string$observation_time
+					time_string=''
+					observation_time=''
+				fi
+				# the last three are often blank
+				if [[ -z "$heat_index$wind_chill$dew_point" ]];then
+					weather_data=$( create_print_line " " "$pressure$location_string" )
+					print_screen_output "$weather_data"
+				else
+					weather_data=$( create_print_line " " "$pressure$heat_index$wind_chill$dew_point" )
+					print_screen_output "$weather_data"
+					if [[ $B_OUTPUT_FILTER != 'true' ]];then
+						weather_data=$( create_print_line " " "$location_string" )
+						print_screen_output "$weather_data"
+					fi
+				fi
+				if [[ -n $time_string$observation_time ]];then
+					weather_data=$( create_print_line " " "$time_string$observation_time" )
+					print_screen_output "$weather_data"
+				fi
+			else
+				if [[ -n $pressure$time_string ]];then
+					weather_data="$pressure$time_string"
+					weather_data=$( create_print_line " " "$weather_data" )
+					print_screen_output "$weather_data"
+				fi
+			fi
+		fi
+	else
+		weather_data=$( create_print_line "Weather:" "${C2}Weather data failure: $(date)" )
+		print_screen_output "$weather_data"
+		weather_data=$( create_print_line " " "${C2}${A_WEATHER_DATA}" )
+		print_screen_output "$weather_data"
+	fi
+	eval $LOGFE
+}
+
+########################################################################
+#### SCRIPT EXECUTION
+########################################################################
+
+main $@ ## From the End comes the Beginning
+
+## note: this EOF is needed for smxi handling, this is what triggers the full download ok
+###**EOF**###
