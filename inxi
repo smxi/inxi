@@ -2,8 +2,8 @@
 ########################################################################
 SELF_NAME='inxi' 
 # don't quote the following, parsers grab these too
-SELF_VERSION=2.3.52
-SELF_DATE=2017-12-02
+SELF_VERSION=2.3.53
+SELF_DATE=2017-12-07
 SELF_PATCH=00
 ########################################################################
 ####  SPECIAL THANKS
@@ -676,7 +676,7 @@ DISTROS_OS_RELEASE_GOOD="arch-release SuSE-release "
 # we're saving about 10+% of the total script exec time by hand building the ban lists here, using hard quotes.
 
 BAN_LIST_NORMAL='chipset|components|computing|computer|corporation|communications|electronics|electrical|electric|gmbh|group|incorporation|industrial|international|nee|revision|semiconductor|software|technologies|technology|ltd\.|\<ltd\>|inc\.|\<inc\>|intl\.|co\.|\<co\>|corp\.|\<corp\>|\(tm\)|\(r\)|®|\(rev ..\)'
-BAN_LIST_CPU='@||cpu |cpu deca|dual core|dual-core|tri core|tri-core|quad core|quad-core|ennea|genuine|hepta|hexa|multi|octa|penta|processor|single|triple|[0-9\.]+ *[MmGg][Hh][Zz]'
+BAN_LIST_CPU='@|cpu |cpu deca|([0-9]+|single|dual|triple|tri|quad|penta|hepta|hexa|octa|multi)[ -]core|ennea|genuine|multi|processor|single|triple|[0-9\.]+ *[MmGg][Hh][Zz]'
 # See github issue 75 for more details on value: *, triggers weird behaviors if present in value
 # /sys/devices/virtual/dmi/id/product_name:['*']
 # this is for bash arrays AND avoiding * in arrays: ( fred * greg ) expands to the contents of the directory
@@ -1429,7 +1429,6 @@ select_default_color_scheme()
 # args: $1 - debug data type: sys|xorg|disk
 debug_data_collector()
 {
-	local b_inxi='true' b_recommends='true' b_repo='true'
 	local sys_data_file='' error='' bsd_string='' sys_traverse_data=''
 	local xorg_d_files='' xorg_file='' a_distro_ids=''
 	local completed_gz_file='' Ftp_Upload='ftp.techpatterns.com/incoming'
@@ -1602,7 +1601,7 @@ debug_data_collector()
 		fi
 		echo "Collecting system file data..."
 		cat /proc/1/comm &> $Debug_Data_Dir/proc-1-comm.txt
-		if [[ $b_repo == 'true' ]];then
+		if type -t get_repo_data &>/dev/null;then
 			get_repo_data "$SELF_DATA_DIR/$Debug_Data_Dir"
 		fi
 		head -n 1 /proc/asound/card*/codec* &> $Debug_Data_Dir/proc-asound-card-codec.txt
@@ -1651,7 +1650,7 @@ debug_data_collector()
 		echo $XDG_CONFIG_DIRS &> $Debug_Data_Dir/xdg_config_dirs.txt
 		echo $XDG_DATA_HOME &> $Debug_Data_Dir/xdg_data_home.txt
 		echo $XDG_DATA_DIRS &> $Debug_Data_Dir/xdg_data_dirs.txt
-		if [[ $b_recommends == 'true' ]];then
+		if type -t check_recommends_user_output &>/dev/null;then
 			check_recommends_user_output &> $Debug_Data_Dir/check-recommends-user-output.txt
 		fi
 		if [[ $1 == 'xorg' || $1 == 'all' ]];then
@@ -1870,7 +1869,8 @@ debug_data_collector()
 				fi
 			fi
 		fi
-		if [[ $b_inxi == 'true' ]];then
+		# running in inxi
+		if type -t check_recommends_user_output &>/dev/null;then
 			echo $Line
 			echo "Creating $SELF_NAME output file now. This can take a few seconds..."
 			echo "Starting $SELF_NAME from: $start_directory"
@@ -5395,7 +5395,7 @@ get_cpu_ht_multicore_smp_data()
 			arm_count = 0
 			nr = 0
 			bArm = "false"
-			bRizen = "false"
+			bRyzen = "false"
 			bProcInt = "false" # this will avoid certain double counts with processor/Processor lines
 			bXeon = "false"
 		}
@@ -5405,10 +5405,10 @@ get_cpu_ht_multicore_smp_data()
 		}
 		# amd rizen 16/32 core maybe
 		/^cpu_family/ && ($2 == 23) {
-			bRizen = "true"
+			bRyzen = "true"
 		}
 		# only do this once since sibling count does not change. 
-		/^siblings/ && ( bXeon == "true" || bRizen == "true" ) && ( siblings == 0 ) {
+		/^siblings/ && ( bXeon == "true" || bRyzen == "true" ) && ( siblings == 0 ) {
 			gsub(/[^0-9]/,"",$NF)
 			if ( $NF != "" ) {
 				siblings = $NF
@@ -5491,7 +5491,7 @@ get_cpu_ht_multicore_smp_data()
 				num_of_cores = siblings/2
 			}
 			# 
-			if ( bRizen == "true"){
+			if ( bRyzen == "true"){
 				num_of_cores = cpu_core_count
 			}
 			# final check, override the num of cores value if it clearly is wrong
@@ -5514,27 +5514,27 @@ get_cpu_ht_multicore_smp_data()
 # 			print "CpuCoreCount:" cpu_core_count
 			####################################################################
 			# 				algorithm
-			# if > 1 processor && processor id (physical id) == core id then Hyperthreaded (HT)
-			# if siblings > 1 && siblings ==  2 * num_of_cores (cpu_core_count) then Hyperthreaded (HT)
+			# if > 1 processor && processor id (physical id) == core id then Multi threaded (MT)
+			# if siblings > 1 && siblings ==  2 * num_of_cores (cpu_core_count) then Multi threaded (MT)
 			# if > 1 processor && processor id (physical id) != core id then Multi-Core Processors (MCP)
-			# if > 1 processor && processor ids (physical id) > 1 then Multiple Processors (SMP)
+			# if > 1 processor && processor ids (physical id) > 1 then Symmetric Multi Processing (SMP)
 			# if = 1 processor then single core/processor Uni-Processor (UP)
 			if ( num_of_processors > 1 || ( bXeon == "true" && siblings > 0 ) ) {
-				# non-multicore HT
+				# non-multicore MT
 				if ( num_of_processors == (num_of_cores * 2) ) {
-					cpu_type = cpu_type "HT-"
+					cpu_type = cpu_type "MT-"
 				}
 				else if ( bXeon == "true" && siblings > 1 ) {
-					cpu_type = cpu_type "HT-"
+					cpu_type = cpu_type "MT-"
 				}
 				else if ( siblings > 1 && siblings == 2 * num_of_cores ){
-					cpu_type = cpu_type "HT-"
+					cpu_type = cpu_type "MT-"
 				}
-				# non-HT multi-core or HT multi-core
+				# non-MT multi-core or MT multi-core
 				if (( num_of_processors == num_of_cores) || ( num_of_physical_cpus < num_of_cores)) {
 					cpu_type = cpu_type "MCP-"
 				}
-				# >1 cpu sockets active
+				# >1 cpu sockets active: Symetric Multi Processing
 				if ( num_of_physical_cpus > 1 ) {
 					cpu_type = cpu_type "SMP-"
 				}
