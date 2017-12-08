@@ -1,8 +1,9 @@
 #!/usr/bin/env perl
-
-# File: sys_tree_traverse.pl
-# Version: 1.1
-# Date 2017-10-31
+## File: sys_tree_traverse.pl
+## Version: 1.1
+## Date 2017-10-31
+## License: GNU GPL v3 or greater
+## Copyright (C) 2017 Harald Hope
 
 use strict;
 use warnings;

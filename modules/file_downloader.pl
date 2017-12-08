@@ -1,8 +1,9 @@
 #!/usr/bin/env perl
-
-# File: file_downloader.pl
-# Version: 1.0
-# Date 2017-11-25
+## File: file_downloader.pl
+## Version: 1.0
+## Date 2017-11-25
+## License: GNU GPL v3 or greater
+## Copyright (C) 2017 Harald Hope
 
 use strict;
 use warnings;
@@ -46,4 +47,5 @@ sub get_file {
 	}
 	return $return;
 }
-get_file('stdout','https://techpatterns.com/resources/ip.php', '/home/harald/bin/scripts/inxi/svn/branches/inxi-perl/modules/inxi.1.gz');
+get_file('stdout','https://techpatterns.com/resources/ip.php', 
+'/home/harald/bin/scripts/inxi/svn/branches/inxi-perl/modules/inxi.1.gz');

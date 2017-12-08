@@ -1,7 +1,12 @@
 #!/usr/bin/perl
-
-# Path::Class NOT in standard core modules!!
-# https://stackoverflow.com/questions/10606685/display-directory-tree-output-like-tree-command
+## File: sys_tree_ls.pl
+## Version: 1.0
+## Date 2017-12-08
+## License: GNU GPL v3 or greater
+## Copyright (C) 2017 Harald Hope
+##
+## Path::Class NOT in standard core modules!!
+## https://stackoverflow.com/questions/10606685/display-directory-tree-output-like-tree-command
 
 use strict;
 use warnings;
