@@ -99,7 +99,7 @@ Note that my current development goals are, roughly in this order:
 
 3. Complete debugger data collector. 
 
-4. Complete recommends outout. This will wait for longer down the
+4. Complete recommends output. This will wait for longer down the
    road when I actually know what the recommends are.
    
 5. Complete option handler. This is almost done, I'm just waiting

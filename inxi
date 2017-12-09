@@ -2,8 +2,8 @@
 ## INXI INFO ##
 my $self_name = 'inxi';
 my $self_version = '2.9.00';
-my $self_date = '2017-12-07';
-my $self_patch = '014-p';
+my $self_date = '2017-12-08';
+my $self_patch = '015-p';
 
 ## infobash: Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif
 ## inxi: Copyright (C) 2008-2017 Harald Hope
@@ -25,6 +25,7 @@ use warnings;
 # use diagnostics;
 use 5.008;
 
+use Cwd; # qw(abs_path);
 # use Data::Dump qw(dump); # damn, not in core modules
 use Data::Dumper qw(Dumper); # print_r
 use File::Basename;
@@ -98,6 +99,7 @@ my $filter_string = '<filter>';
 my $line1 = "----------------------------------------------------------------------\n";
 my $line2 = "======================================================================\n";
 my $line3 = "----------------------------------------\n";
+my $output_type = 'print-line';
 # These two determine separators in single line output, to force irc clients 
 # not to break off sections
 $sep{'s-1'}='~';
@@ -758,7 +760,8 @@ sub get_options{
 			error_handler(100,$opt,$arg);
 		} },
 	'V|version' => sub { 
-		print_version(); },
+		$output_type = 'print-basic';
+		show_version(); },
 	'w|weather' => sub {
 		$show{'short'} = '';
 		if ( $b_weather ){
@@ -791,8 +794,10 @@ sub get_options{
 	'Z|filter-override' => sub {
 		$show{'filter-override'} = 'true'; },
 	'h|help|?' => sub {
+		$output_type = 'print-basic';
 		show_options('standard'); },
 	'H|help-full' => sub {
+		$output_type = 'print-basic';
 		show_options('full'); },
 	'debug:i' => sub { 
 		my ($opt,$arg) = @_;
@@ -852,12 +857,145 @@ sub print_patch_version {
 
 
 #### -------------------------------------------------------------------
-#### PRINT
+#### GENERATE OUTPUT
 #### -------------------------------------------------------------------
 
+sub output_handler {
+	my @data = @_;
+	# print Dumper \@data;
+	if ($output_type eq 'print-basic'){
+		print_basic(@data);
+	}
+	elsif ($output_type eq 'print-line'){
+		print_line(@data);
+	}
+	elsif ($output_type eq 'csv'){
+		generate_csv(@data);
+	}
+	elsif ($output_type eq 'json'){
+		generate_json(@data);
+	}
+	elsif ($output_type eq 'xml'){
+		generate_xml(@data);
+	}
+}
 
-sub print_version {
-	print "$self_name version: $self_version" . print_patch_version() . " date: $self_date\n";
+
+sub show_version {
+	# if not in PATH could be either . or directory name, no slash starting
+	my $working_path=$self_path;
+	my (@data, @row, $link, $self_string);
+	if ( $working_path eq '.' ){
+		$working_path=getcwd;
+	}
+	elsif ( $working_path !~ /^\// ){
+		$working_path= getcwd() . "/$working_path";
+	}
+	# handle if it's a symbolic link, rare, but can happen with directories 
+	# in irc clients which would only matter if user starts inxi with -! 30 override 
+	# in irc client
+	if ( -l "$working_path/$self_name" ){
+		$link="$working_path/$self_name";
+		$working_path=readlink "$working_path/$self_name";
+		$working_path=dirname( $working_path );
+	}
+	@row = [ 0, '', '', "$self_name $self_version-$self_patch ($self_date)"];
+	push @data, @row;
+	
+	if ( ! $b_irc ){
+		@row = [ 0, '', '', "Program Location: $working_path" ];
+		push @data, @row;
+		if ( $link ){
+			@row = [ 0, '', '', "Started via symbolic link: $link" ];
+			push @data, @row;
+		}
+		@row = [ 0, '', '', "Website:^https://github.com/smxi/inxi^or^http://smxi.org/" ];
+		push @data, @row;
+		@row = [ 0, '', '', "IRC:^irc.oftc.net channel:^#smxi" ];
+		push @data, @row;
+		@row = [ 0, '', '', "Forums:^http://techpatterns.com/forums/forum-33.html" ];
+		push @data, @row;
+		@row = [ 0, '', '', " " ];
+		push @data, @row;
+		@row = [ 0, '', '', "$self_name - the universal, portable, system information tool 
+		for console and irc." ];
+		push @data, @row;
+		@row = [ 0, '', '', " " ];
+		push @data, @row;
+		@row = [ 0, '', '', "This program started life as a fork of Infobash 3.02: 
+		Copyright^(C)^2005-2007^Michiel^de^Boer^a.k.a.^locsmif." ];
+		push @data, @row;
+		my $year = (split/-/, $self_date)[0];
+		@row = [ 0, '', '', "Subsequent changes and modifications (after Infobash 3.02): 
+		Copyright^(C)^2008-$year^Harald^Hope^aka^h2. 
+		CPU/Konversation^fixes:^Scott^Rogers^aka^trash80.
+		USB^audio^fixes:^Steven^Barrett^aka^damentz." ];
+		push @data, @row;
+		@row = [ 0, '', '', '' ];
+		push @data, @row;
+		@row = [ 0, '', '', "This program is free software; you can redistribute it and/or modify 
+		it under the terms of the GNU General Public License as published by the Free Software 
+		Foundation; either version 3 of the License, or (at your option) any later version. 
+		(http://www.gnu.org/licenses/gpl.html)" ];
+		push @data, @row;
+	}
+	output_handler(@data); 
+}
+
+sub print_basic {
+	my @data = @_;
+	my $indent = 20;
+	my $indent1 = 4;
+	my $indent2 = 7;
+	my $length =  @data;
+	my ($start,$aref,$i,$j);
+	# print $length . "\n";
+	for $i (0 .. $#data){
+		$aref = $data[$i];
+		#print "0: $data[$i][0]\n";
+		if ($data[$i][0] == 0 ){
+			$indent = 0;
+			$indent1 = 0;
+			$indent2 = 0;
+		}
+		elsif ($data[$i][0] == 1 ){
+		
+		}
+		elsif ($data[$i][0] == 2 ){
+		
+		}
+		$data[$i][3] =~ s/\s+/ /g;
+		$data[$i][3] =~ s/\n//g;
+		$start = sprintf("%${indent1}s%${indent2}s",$data[$i][1],$data[$i][2]);
+		if ( length($start) > $indent ){
+			printf("%-${indent}s\n", "$start");
+			$start = '';
+		}
+		if ( $indent + length($data[$i][3]) < $size{'max'} ){
+			$data[$i][3] =~ s/\^/ /g;
+			printf("%-${indent}s%s\n", "$start", $data[$i][3]);
+		}
+		else {
+			my $holder = '';
+			my $sep = ' ';
+			foreach my $word (split ' ', $data[$i][3]){
+				#print "$word\n";
+				if ($indent + length($holder) + length($word) < $size{'max'} ) {
+					$word =~ s/\^/ /g;
+					$holder = $holder . $word . $sep;
+				}
+				elsif ($indent + length($holder) + length($word) > $size{'max'}){
+					printf("%-${indent}s%s\n", "$start", $holder);
+					$start = '';
+					$word =~ s/\^/ /g;
+					$holder = $word;
+				}
+			}
+			if ($holder){
+				printf("%-${indent}s%s\n", "$start", $holder);
+			}
+		}
+	}
 }
 
 
@@ -900,6 +1038,8 @@ sub get_hostname {
 #### PRINT CONTROLLERS
 #### -------------------------------------------------------------------
 
+
+
 sub print_it_out {
 	eval $start;
 	# log_data('cat', '/proc/mounts');
@@ -910,6 +1050,7 @@ sub print_it_out {
 #### -------------------------------------------------------------------
 #### PRINT LINES
 #### -------------------------------------------------------------------
+
 
 
 #######################################################################
