@@ -1,13 +1,17 @@
 ====================================================================
-README for development branch of inxi Perl version.
+README for development branch of inxi Perl version: pinxi
 ====================================================================
 FILE:    README.txt
-VERSION: 1.1
-DATE:    2017-12-07
+VERSION: 1.2
+DATE:    2017-12-09
 
 NOTE: While the real program name will never change, for the sake
 of clarity, I will refer to the inxi-perl dev branch inxi as pinxi, 
 and bash/gawk master branch inxi as binxi in the following.
+
+During development, so I can more easily test changes, the name is 
+changed on the file and internally to pinxi until it is ready  for 
+release in master branch.
 
 ====================================================================
 
