@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: show_options.pl
-## Version: 1.1
-## Date 2017-12-10
+## Version: 1.2
+## Date 2017-12-11
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -32,7 +32,8 @@ sub show_options {
 		exit 1;
 	}
 	my ($type) = @_;
-	my (@row,@rows,@data,$line);
+	my (@row,@rows,@data);
+	my $line = '';
 	my $color_scheme_count=12; # $(( ${#A_COLOR_SCHEMES[@]} - 1 ));
 	my $partition_string='partition';
 	my $partition_string_u='Partition';
@@ -59,7 +60,7 @@ sub show_options {
 	['0', '', '', "Output Control Options:" ],
 	['1', '-A', '--audio', "Audio/sound card information." ],
 	['1', '-b', '--basic', "Basic output, short form. Like $self_name^-v^2, only minus hard 
-	disk names ." ],
+	disk names." ],
 	['1', '-B', '--battery', "Battery info, shows charge, condition, plus extra information 
 	(if battery present)." ],
 	['1', '-c', '--color', "Color schemes. Scheme number is required. Color selectors run a 
@@ -312,23 +313,26 @@ sub show_options {
 	relevant (-M)." ],
 	['2', '34', '', "Skips SSL certificate checks for all downloader activies 
 	(wget/fetch/curl only). Must go before other options." ],
-	['2', '41', '', "Bypass curl as a downloader option." ],
-	['2', '42', '', "Bypass fetch as a downloader option." ],
-	['2', '43', '', "Bypass wget as a downloader option." ],
-	['2', '44', '', "Bypass curl, fetch, and wget as a downloader options. Forces 
-	Perl if HTTP::Tiny present." ]
+	['2', '40', '', "Bypass Perl as a downloader option." ],
+	['2', '41', '', "Bypass Curl as a downloader option." ],
+	['2', '42', '', "Bypass Fetch as a downloader option." ],
+	['2', '43', '', "Bypass Wget as a downloader option." ],
+	['2', '44', '', "Bypass Curl, Fetch, and Wget as a downloader options. Forces 
+	Perl if HTTP::Tiny present." ],
+	['1', '', '--downloader', "Force $self_name to use [curl|fetch|perl|wget] for downloads." ],
+	['0', '', '', $line ]
 	);
 	push @data, @rows;
 	if ( $type eq 'full' ){
 		@rows = (
-		[0, '', '', "$line" ],
 		[0, '', '', "Developer and Testing Options (Advanced):" ],
 		['1', '', '--alt', "Trigger for dev/test options:" ],
 		['2', '1', '', "Sets testing flag test1=1 to trigger 
 		testing condition 1." ],
 		['2', '2', '', "Sets testing flag test2=1 to trigger 
 		testing condition 2." ],
-		['2', '3', '', "Sets flags test3=1." ]
+		['2', '3', '', "Sets flags test3=1." ],
+		['0', '', '', $line ]
 		);
 		push @data, @rows;
 	}
