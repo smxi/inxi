@@ -2,8 +2,8 @@
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2017-12-10';
-my $self_patch='018-p';
+my $self_date='2017-12-11';
+my $self_patch='019-p';
 
 ## infobash: Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif
 ## inxi: Copyright (C) 2008-2017 Harald Hope
@@ -88,8 +88,6 @@ my $ps_count = 5;
 my $sensors_cpu_nu = 0;
 
 ## Tools
-my $no_ssl = '';
-my $no_ssl_opt = '';
 
 ## Output
 my $filter_string = '<filter>';
@@ -138,6 +136,7 @@ sub main {
 	get_options();
 	set_debugger(); # right after so it's set
 	# generate_data('fred', 'gus', 'sam');
+	# print download_file('stdout','https://') . "\n";
 	generate_data();
 	cleanup();
 }
@@ -199,7 +198,8 @@ sub set_configs {
 			s/^\s+//;
 			s/\s+$//;
 			s/'//g;
-			s/false//; # we want this empty so it trips boolean false
+			s/true/1/; # switch to 1/0 perl boolean
+			s/false/0/; # switch to 1/0 perl boolean
 			next unless length;
 			($key, $val) = split(/\s*=\s*/, $_, 2);
 			set_config($key,$val);
@@ -216,7 +216,13 @@ sub set_config {
 		elsif (/^B_ALLOW_WEATHER$/) {$b_weather = $val}
 		elsif (/^CPU_SLEEP$/) {$cpu_sleep = $val}
 		elsif (/^DL_TIMEOUT$/) {$dl_timeout = $val}
-		elsif (/^DOWNLOADER$/) {$dl{'dl'} = $val}
+		elsif (/^DOWNLOADER$/) {
+		if ($val =~ /^(curl|fetch|ftp|perl|wget)$/){
+			# this dumps all the other data and resets %dl for only the
+			# desired downloader.
+			$val = set_perl_downloader($val);
+			%dl = ('dl' => $val, $val => 1);
+		}}
 		elsif (/^FILTER_STRING$/) {$filter_string = $val}
 		elsif (/^PS_COUNT$/) {$ps_count = $val}
 		elsif (/^SENSORS_CPU_NO$/) {$sensors_cpu_nu = $val}
@@ -445,25 +451,27 @@ sub set_debugger {
 sub download_file {
 	my ($type, $url, $file) = @_;
 	my ($cmd,$result,$args,$timeout);
+	$dl{'no-ssl-opt'} ||= '';
 	if ( ! $dl{'dl'} ){
 		return 0;
 	}
 	if ($dl{'timeout'}){
 		$timeout = "$dl{'timeout'}$dl_timeout";
 	}
-	# print "$dl{'dl'}\n";
+	# print "$dl{'no-ssl-opt'}\n";
+	 print "$dl{'dl'}\n";
 	if ($dl{'dl'} eq 'tiny' ){
 		$result = get_file($type, $url, $file);
 	}
 	elsif ($dl{'dl'}){
 		if ($type eq 'stdout'){
 			$args = $dl{'stdout'};
-			$cmd = "$dl{'dl'} $no_ssl_opt $timeout $args $url $dl{'null'}";
+			$cmd = "$dl{'dl'} $dl{'no-ssl-opt'} $timeout $args $url $dl{'null'}";
 			$result = qx($cmd);
 		}
 		else {
 			$args = $dl{'file'};
-			$cmd = "$dl{'dl'} $no_ssl_opt $timeout $args $file $url $dl{'null'}";
+			$cmd = "$dl{'dl'} $dl{'no-ssl-opt'} $timeout $args $file $url $dl{'null'}";
 			system($cmd);
 			$result = $?;
 		}
@@ -508,34 +516,32 @@ sub get_file {
 }
 
 sub set_downloader {
+	$dl{'no-ssl'} = '';
+	$dl{'null'} = '';
 	if ($dl{'tiny'}){
 		$dl{'dl'} = 'tiny';
 		$dl{'file'} = '';
-		$dl{'null'} = '';
 		$dl{'stdout'} = '';
 		$dl{'timeout'} = '';
 	}
 	elsif ( $dl{'curl'} && check_program('curl')  ){
 		$dl{'dl'} = 'curl';
-		$no_ssl = ' --insecure';
 		$dl{'file'} = '  -L -s -o ';
-		$dl{'null'} = '';
+		$dl{'no-ssl'} = ' --insecure';
 		$dl{'stdout'} = ' -L -s ';
 		$dl{'timeout'} = ' -y ';
 	}
 	elsif ($dl{'wget'} && check_program('wget') ){
 		$dl{'dl'} = 'wget';
-		$no_ssl = ' --no-check-certificate';
 		$dl{'file'} = ' -q -O ';
-		$dl{'null'} = '';
+		$dl{'no-ssl'} = ' --no-check-certificate';
 		$dl{'stdout'} = '  -q -O -';
 		$dl{'timeout'} = ' -T ';
 	}
 	elsif ($dl{'fetch'} && check_program('fetch')){
 		$dl{'dl'} = 'fetch';
-		$no_ssl = ' --no-verify-peer';
 		$dl{'file'} = ' -q -o ';
-		$dl{'null'} = '';
+		$dl{'no-ssl'} = ' --no-verify-peer';
 		$dl{'stdout'} = ' -q -o -';
 		$dl{'timeout'} = ' -T ';
 	}
@@ -551,6 +557,11 @@ sub set_downloader {
 	}
 }
 
+sub set_perl_downloader {
+	my ($downloader) = @_;
+	$downloader =~ s/perl/tiny/;
+	return $downloader;
+}
 
 #### -------------------------------------------------------------------
 #### ERROR HANDLER
@@ -1023,7 +1034,6 @@ sub get_options{
 	'H|help-full' => sub {
 		$output_type = 'print-basic';
 		show_options('full'); },
-	
 	'alt:i' => sub { 
 		my ($opt,$arg) = @_;
 		my %alts = (
@@ -1034,7 +1044,7 @@ sub get_options{
 		'30' => sub {$b_irc = 0;},
 		'31' => sub {$show{'host'} = 0;},
 		'32' => sub {$show{'host'} = 1;},
-		'34' => sub {$no_ssl_opt=$no_ssl;},
+		'34' => sub {$dl{'no-ssl-opt'}=$dl{'no-ssl'};},
 		'40' => sub {
 			$dl{'tiny'} = 0;
 			set_downloader();},
@@ -1073,17 +1083,12 @@ sub get_options{
 		} },
 	'downloader:s' => sub { 
 		my ($opt,$arg) = @_;
-		my @dls = q(curl fetch ftp tiny wget);
 		$arg = lc($arg);
-		$arg =~ s/perl/tiny/;
 		if ($arg =~ /^(curl|fetch|ftp|perl|wget)$/){
-			$dl{'dl'} = $arg;
-			$dl{$arg} = 1;
-			for my $dler (@dls){
-				if ($dler ne $arg){
-					$dl{$dler} = 0;
-				}
-			}
+			# this dumps all the other data and resets %dl for only the
+			# desired downloader.
+			$arg = set_perl_downloader($arg);
+			%dl = ('dl' => $arg, $arg => 1);
 			set_downloader();
 		}
 		else {
