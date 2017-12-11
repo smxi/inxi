@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: show_options.pl
-## Version: 1.0
-## Date 2017-12-09
+## Version: 1.1
+## Date 2017-12-10
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -17,11 +17,14 @@ my $self_name = 'pinxi';
 my $ps_count = 5;
 my $b_weather = 'true';
 my $b_update = 'true';
+my %size( 'max' => 100 );
 
-sub print_creen_line {
+sub print_screen_line {
 	my $line = shift;
 	print $line;
 }
+
+## start actual code
 
 sub show_options {
 	if ( $b_irc ){
@@ -29,13 +32,17 @@ sub show_options {
 		exit 1;
 	}
 	my ($type) = @_;
-	my (@row,@rows,@data);
+	my (@row,@rows,@data,$line);
 	my $color_scheme_count=12; # $(( ${#A_COLOR_SCHEMES[@]} - 1 ));
 	my $partition_string='partition';
 	my $partition_string_u='Partition';
 	if ( $bsd_type ){
 		$partition_string='slice';
 		$partition_string_u='Slice';
+	}
+	# fit the line to the screen!
+	for my $i ( 0 .. ( ( $size{'max'} / 2 ) - 2 ) ){
+		$line = $line . '- ';
 	}
 	@rows = (
 	['0', '', '', "$self_name supports the following options. You can combine 
@@ -48,7 +55,7 @@ sub show_options {
 	u, r, s, t - you can use these alone or together to show just the line(s) 
 	you want to see. If you use them with -v^[level], -b or -F, it will show the 
 	full output for that line along with the output for the chosen verbosity level." ],
-	['0', '', '', "- - - - - - - - - - - - - - - - - - - - - - - - - - - - -" ],
+	['0', '', '', $line ],
 	['0', '', '', "Output Control Options:" ],
 	['1', '-A', '--audio', "Audio/sound card information." ],
 	['1', '-b', '--basic', "Basic output, short form. Like $self_name^-v^2, only minus hard 
@@ -193,7 +200,7 @@ sub show_options {
 	['2', '-t', '', "Memory use output to cpu (-xt c), and cpu use to memory (-xt m)." ]
 	);
 	push @data, @rows;
-	if ( $b_weather eq 'true' ){
+	if ( $b_weather eq 1 ){
 		@rows = (['2', '-w -W', '', "Wind speed and time zone (-w only)." ]);
 		push @data, @rows;
 	}
@@ -249,7 +256,7 @@ sub show_options {
 	directory name. Default on for irc clients." ],
 	['1', '-Z', '--filter-override', "Absolute override for output filters. Useful for debugging 
 	networking issues in irc for example." ],
-	[0, '', '', '' ],
+	[0, '', '', "$line" ],
 	[0, '', '', "Additional Options:" ],
 	['1', '-h', '--help', "This help menu." ],
 	['1', '-H', '--help-full', "This help menu, plus developer options. Do not use dev options in 
@@ -278,10 +285,10 @@ sub show_options {
 	@rows = (
 	['1', '-V', '--version', "$self_name version information. Prints information 
 	then exits." ],
-	[0, '', '', '' ],
+	[0, '', '', "$line" ],
 	[0, '', '', "Debugging Options:" ],
-	['1', '', '--alt 0', "Overrides defective or corrupted data." ],
-	['1', '', '--debugger', "Triggers debugging modes." ],
+	
+	['1', '', '--debug', "Triggers debugging modes." ],
 	['2', '1-3', '', "On screen $self_name debugger output" ],
 	['2', '10', '', "Basic $self_name logging." ],
 	['2', '11', '', "Full file/system info logging" ],
@@ -294,30 +301,34 @@ sub show_options {
 	${partition_string}s, etc." ],
 	['2', '21', '', "Upload debugger dataset to $self_name debugger server 
 	automatically." ],
-	[0, '', '', '' ],
+	[0, '', '', "$line" ],
 	[0, '', '', "Advanced Options:" ],
-	['1', '', '--alt 31', "Turns off hostname in output. Useful if showing output from 
+	[1, '', '--alt', "Trigger for various advanced options:" ],
+	['2', '0', '', "Overrides defective or corrupted data." ],
+	['2', '31', '', "Turns off hostname in output. Useful if showing output from 
 	servers etc." ],
-	['1', '', '--alt 32', "Turns on hostname in output. Overrides global \$b_host'" ],
-	['1', '', '--alt 33', "Forces use of dmidecode data instead of /sys where 
+	['2', '32', '', "Turns on hostname in output. Overrides global \$b_host'" ],
+	['2', '33', '', "Forces use of dmidecode data instead of /sys where 
 	relevant (-M)." ],
-	['1', '', '--alt 34', "Skips SSL certificate checks for all downloader activies 
+	['2', '34', '', "Skips SSL certificate checks for all downloader activies 
 	(wget/fetch/curl only). Must go before other options." ],
-	['1', '', '--alt 41', "Bypass curl as a downloader option." ],
-	['1', '', '--alt 42', "Bypass fetch as a downloader option." ],
-	['1', '', '--alt 43', "Bypass wget as a downloader option." ],
-	['1', '', '--alt 44', "Bypass curl, fetch, and wget as a downloader options. Forces 
-	Perl if HTTP::Tiny present." ]);
+	['2', '41', '', "Bypass curl as a downloader option." ],
+	['2', '42', '', "Bypass fetch as a downloader option." ],
+	['2', '43', '', "Bypass wget as a downloader option." ],
+	['2', '44', '', "Bypass curl, fetch, and wget as a downloader options. Forces 
+	Perl if HTTP::Tiny present." ]
+	);
 	push @data, @rows;
 	if ( $type eq 'full' ){
 		@rows = (
-		[0, '', '', '' ],
+		[0, '', '', "$line" ],
 		[0, '', '', "Developer and Testing Options (Advanced):" ],
-		['1', '', '--alt 1', "Sets testing flag test1='true' to trigger 
+		['1', '', '--alt', "Trigger for dev/test options:" ],
+		['2', '1', '', "Sets testing flag test1=1 to trigger 
 		testing condition 1." ],
-		['1', '', '--alt 2', "Sets testing flag test2='true' to trigger 
+		['2', '2', '', "Sets testing flag test2=1 to trigger 
 		testing condition 2." ],
-		['1', '', '--alt 3', "Sets flags test3='true'." ]
+		['2', '3', '', "Sets flags test3=1." ]
 		);
 		push @data, @rows;
 	}

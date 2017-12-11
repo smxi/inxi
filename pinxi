@@ -1,9 +1,9 @@
 #!/usr/bin/env perl
 ## INXI INFO ##
-my $self_name = 'pinxi';
-my $self_version = '2.9.00';
-my $self_date = '2017-12-09';
-my $self_patch = '017-p';
+my $self_name='pinxi';
+my $self_version='2.9.00';
+my $self_date='2017-12-10';
+my $self_patch='018-p';
 
 ## infobash: Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif
 ## inxi: Copyright (C) 2008-2017 Harald Hope
@@ -39,59 +39,45 @@ use Net::FTP;
 use POSIX qw(uname strftime);
 use Sys::Hostname;
 use Term::ANSIColor;
-
-# we only want to use HTTP::Tiny if it's present in user system.
-# It is NOT part of core modules.
-my $b_tiny = 'true';
-eval "use HTTP::Tiny"; # if not found, return has error messages etc
-if ( $@ ) {
-	$b_tiny = '';
-}
-# print $@ . "\n";
-
 # use feature qw(state);
 
 ### INITIALIZE VARIABLES ###
 
 ## Self data
-my $self_config_dir='';
-my $self_data_dir='';
-my $self_path='';
+my ($self_config_dir, $self_data_dir, $self_path);
 
 ## Debuggers
 my $debug=0;
 my ($fh_l,$fh_c,$fh_j,$fh_x); # log, csv, json, xml file handles.
-my $log_file = '';
+my $log_file;
 my $end='log_data("fe", (caller(1))[3], "");';
 my $start='log_data("fs", (caller(1))[3], @_);';
 
 ## Hashes
-my %colors;
-my %dl = (
-'dl' => 'curl',
-'curl' => 'true',
-'wget' => 'true',
-'fetch' => 'true',
-'tiny' => $b_tiny
-);
-my %system_files;
-my %sep;
-my %size;
-my %show;
-my %test;
+my ( %colors, %dl, %konvi, %sep, %size, %show, %system_files, %test );
 
+# we only want to use HTTP::Tiny if it's present in user system.
+# It is NOT part of core modules.
+$dl{'tiny'} = 1;
+eval "use HTTP::Tiny"; # if not found, return has error messages etc
+#print $@ . "\n";
+if ( $@ ) {
+	$dl{'tiny'} = 0;
+}
+#print $dl{'tiny'} . "\n";
 #my $opt_parser = Getopt::Long::Parser->new;
 
 ## Booleans
-my $b_display = '';
-my $b_irc='';
-my $b_log = '';
-my $b_log_colors = '';
-my $b_log_full = '';
-my $b_root='';
-my $b_running_in_display='';
-my $b_update = 'true';
-my $b_weather = 'true';
+my $b_display = 0;
+my $b_force_dmidecode = 0;
+my $b_irc = 0;
+my $b_log = 0;
+my $b_log_colors = 0;
+my $b_log_full = 0;
+my $b_root = 0;
+my $b_running_in_display = 0;
+my $b_update = 1;
+my $b_weather = 1;
 
 ## System
 my $bsd_type = '';
@@ -102,12 +88,8 @@ my $ps_count = 5;
 my $sensors_cpu_nu = 0;
 
 ## Tools
-my ($b_force_dmidecode, $no_ssl,$no_ssl_opt);
-
-## irc
-my $b_dcop = '';
-my $b_qdbus = '';
-my $konvi = 0;
+my $no_ssl = '';
+my $no_ssl_opt = '';
 
 ## Output
 my $filter_string = '<filter>';
@@ -117,6 +99,7 @@ my $line3 = "----------------------------------------\n";
 my $output_type = 'print-line';
 # These two determine separators in single line output, to force irc clients 
 # not to break off sections
+
 $sep{'s-1'}='~';
 $sep{'s-2'}=' ';
 # these will assign a separator to non irc states. Important! Using ':' can 
@@ -124,7 +107,10 @@ $sep{'s-2'}=' ';
 # behaviors in output on IRC, so do not use those.
 $sep{'irc'}='';
 $sep{'console'}=':';
+
 $show{'extra'}=0; # supported values: 0-3
+$show{'host'} = 1;
+
 $size{'console'} = 115;
 # Default indentation level. NOTE: actual indent is 1 greater to allow for 
 # spacing
@@ -138,8 +124,6 @@ $size{'no-display'} = 130;
 $size{'term'}=80;
 $size{'term-lines'}=100;
 
-$show{'host'} = 'true';
-
 ########################################################################
 #### STARTUP
 ########################################################################
@@ -151,11 +135,10 @@ $show{'host'} = 'true';
 sub main {
 	# print Dumper \@ARGV;
 	initialize();
-	set_display_width('live');
 	get_options();
 	set_debugger(); # right after so it's set
-	# print_it_out('fred', 'gus', 'sam');
-	print_it_out();
+	# generate_data('fred', 'gus', 'sam');
+	generate_data();
 	cleanup();
 }
 
@@ -167,35 +150,48 @@ sub initialize {
 	set_os();
 	set_path();
 	set_user_paths();
+	set_basics();
 	system_files('set');
-	my @config_files = (
-	qq(/etc/$self_name.conf), 
-	qq($self_config_dir/$self_name.conf)
-	);
-	set_configs(@config_files);
+	set_configs();
 	set_downloader();
+	set_display_width('live');
+}
+sub set_basics {
 	### LOCALIZATION - DO NOT CHANGE! ###
 	# set to default LANG to avoid locales errors with , or .
 	# Make sure every program speaks English.
 	$ENV{'LANG'}='C';
 	$ENV{'LC_ALL'}='C';
+	# remember, perl uses the opposite t/f return as shell!!!
 	if ( system('tty>/dev/null') ) {
-		$b_irc='true';
+		$b_irc=1;
 	}
 	# print "birc: $b_irc\n";
 	if ( $ENV{'DISPLAY'} ){
-		$b_display = 'true';
+		$b_display=1;
 	}
 	if ( $ENV{'HOME'} eq '/root' ){
-		$b_root='true';
+		$b_root=1;
 	}
+	# tiny has been set above via test for module
+	$dl{'dl'} = 'curl';
+	$dl{'curl'} = 1;
+	$dl{'wget'} = 1;
+	$dl{'fetch'} = 1;
+	$konvi{'dcop'} = '';
+	$konvi{'qdbus'} = '';
+	$konvi{'type'} = 0;
 }
 
 sub set_configs {
 	my ($file, $key, $val);
+	my @config_files = (
+	qq(/etc/$self_name.conf), 
+	qq($self_config_dir/$self_name.conf)
+	);
 	# Config files should be passed in an array as a param to this function.
 	# Default intended use: global @CONFIGS;
-	foreach $file (@_) {
+	foreach $file (@config_files) {
 		next unless open (CONFIG, "$file");
 		while (<CONFIG>) {
 			chomp;
@@ -216,27 +212,28 @@ sub set_configs {
 sub set_config {
 	my ($key,$val) = @_;
 	for ($key){
-		if (/B_ALLOW_UPDATE/) {$b_update = $val}
-		elsif (/B_ALLOW_WEATHER/) {$b_weather = $val}
-		elsif (/CPU_SLEEP/) {$cpu_sleep = $val}
-		elsif (/DL_TIMEOUT/) {$dl_timeout = $val}
-		elsif (/FILTER_STRING/) {$filter_string = $val}
-		elsif (/PS_COUNT/) {$ps_count = $val}
-		elsif (/SENSORS_CPU_NO/) {$sensors_cpu_nu = $val}
+		if (/^B_ALLOW_UPDATE$/) {$b_update = $val}
+		elsif (/^B_ALLOW_WEATHER$/) {$b_weather = $val}
+		elsif (/^CPU_SLEEP$/) {$cpu_sleep = $val}
+		elsif (/^DL_TIMEOUT$/) {$dl_timeout = $val}
+		elsif (/^DOWNLOADER$/) {$dl{'dl'} = $val}
+		elsif (/^FILTER_STRING$/) {$filter_string = $val}
+		elsif (/^PS_COUNT$/) {$ps_count = $val}
+		elsif (/^SENSORS_CPU_NO$/) {$sensors_cpu_nu = $val}
 		# layout
-		elsif (/CONSOLE_COLOR_SCHEME/) {$colors{'console'} = $val}
-		elsif (/IRC_CONS_COLOR_SCHEME/) {$colors{'console-irc'} = $val}
-		elsif (/IRC_X_TERM_COLOR_SCHEME/) {$colors{'irc-x-term'} = $val}
-		elsif (/IRC_COLOR_SCHEME/) {$colors{'irc'} = $val}
-		elsif (/VIRT_TERM_COLOR_SCHEME/) {$colors{'virt-term'} = $val}
-		elsif (/SEP1/) {$sep{'s-1'} = $val}
-		elsif (/SEP2/) {$sep{'s-2'} = $val}
-		elsif (/SEP3_IRC/) {$sep{'irc'} = $val}
-		elsif (/SEP3_CONSOLE/) {$sep{'console'} = $val}
+		elsif (/^CONSOLE_COLOR_SCHEME$/) {$colors{'console'} = $val}
+		elsif (/^IRC_CONS_COLOR_SCHEME$/) {$colors{'console-irc'} = $val}
+		elsif (/^IRC_X_TERM_COLOR_SCHEME$/) {$colors{'irc-x-term'} = $val}
+		elsif (/^IRC_COLOR_SCHEME$/) {$colors{'irc'} = $val}
+		elsif (/^VIRT_TERM_COLOR_SCHEME$/) {$colors{'virt-term'} = $val}
+		elsif (/^SEP1$/) {$sep{'s-1'} = $val}
+		elsif (/^SEP2$/) {$sep{'s-2'} = $val}
+		elsif (/^SEP3_IRC$/) {$sep{'irc'} = $val}
+		elsif (/^SEP3_CONSOLE$/) {$sep{'console'} = $val}
 		# size
-		elsif (/COLS_MAX_CONSOLE/) {$size{'console'} = $val}
-		elsif (/COLS_MAX_IRC/) {$size{'irc'} = $val}
-		elsif (/COLS_MAX_NO_DISPLAY/) {$size{'no-display'} = $val}
+		elsif (/^COLS_MAX_CONSOLE$/) {$size{'console'} = $val}
+		elsif (/^COLS_MAX_IRC$/) {$size{'irc'} = $val}
+		elsif (/^COLS_MAX_NO_DISPLAY$/) {$size{'no-display'} = $val}
 	}
 	#  print "mc: key: $key val: $val\n";
 	# print Dumper (keys %size) . "\n";
@@ -330,24 +327,24 @@ sub set_path {
 sub set_user_paths {
 	my ( $b_conf, $b_data );
 	
-	if ( defined $ENV{'XDG_CONFIG_HOME'} && $ENV{'XDG_CONFIG_HOME'} ne '' ){
+	if ( defined $ENV{'XDG_CONFIG_HOME'} && $ENV{'XDG_CONFIG_HOME'} ){
 		$self_config_dir=$ENV{'XDG_CONFIG_HOME'};
-		$b_conf='true';
+		$b_conf=1;
 	}
 	elsif ( -d "$ENV{'HOME'}/.config" ){
 		$self_config_dir="$ENV{'HOME'}/.config";
-		$b_conf='true';
+		$b_conf=1;
 	}
 	else {
 		$self_config_dir="$ENV{'HOME'}/.$self_name";
 	}
-	if ( defined $ENV{'XDG_DATA_HOME'} && $ENV{'XDG_DATA_HOME'} ne '' ){
+	if ( defined $ENV{'XDG_DATA_HOME'} && $ENV{'XDG_DATA_HOME'} ){
 		$self_data_dir="$ENV{'XDG_DATA_HOME'}/$self_name";
-		$b_data='true';
+		$b_data=1;
 	}
 	elsif ( -d "$ENV{'HOME'}/.local/share" ){
 		$self_data_dir="$ENV{'HOME'}/.local/share/$self_name";
-		$b_data='true';
+		$b_data=1;
 	}
 	else {
 		$self_data_dir="$ENV{'HOME'}/.$self_name";
@@ -409,7 +406,6 @@ sub system_files {
 	}
 }
 
-
 ########################################################################
 #### UTILITIES
 ########################################################################
@@ -430,12 +426,12 @@ sub set_debugger {
 		$start = '';
 	}
 	elsif ($debug =~ /^1[0-2]$/){
-		$b_log = 'true';
+		$b_log = 1;
 		if ($debug == 11){
-			$b_log_full = 'true';
+			$b_log_full = 1;
 		}
 		elsif ($debug == 12){
-			$b_log_colors = 'true';
+			$b_log_colors = 1;
 		}
 		begin_logging();
 	}
@@ -446,24 +442,109 @@ sub set_debugger {
 #### DOWNLOADER
 #### -------------------------------------------------------------------
 
+sub download_file {
+	my ($type, $url, $file) = @_;
+	my ($cmd,$result,$args,$timeout);
+	if ( ! $dl{'dl'} ){
+		return 0;
+	}
+	if ($dl{'timeout'}){
+		$timeout = "$dl{'timeout'}$dl_timeout";
+	}
+	# print "$dl{'dl'}\n";
+	if ($dl{'dl'} eq 'tiny' ){
+		$result = get_file($type, $url, $file);
+	}
+	elsif ($dl{'dl'}){
+		if ($type eq 'stdout'){
+			$args = $dl{'stdout'};
+			$cmd = "$dl{'dl'} $no_ssl_opt $timeout $args $url $dl{'null'}";
+			$result = qx($cmd);
+		}
+		else {
+			$args = $dl{'file'};
+			$cmd = "$dl{'dl'} $no_ssl_opt $timeout $args $file $url $dl{'null'}";
+			system($cmd);
+			$result = $?;
+		}
+	}
+	return $result;
+}
+
+sub get_file {
+	my ($type, $url, $file) = @_;
+	my $response = HTTP::Tiny->new->get($url);
+	my $return = 1;
+	my $debug = 0;
+	my $fh;
+	
+	if ( ! $response->{success} ){
+		print "Failed to connect to server/file!\n";
+		$return = 0;
+	}
+	else {
+		if ( $debug ){
+			print "$response->{success}\n";
+			print "$response->{status} $response->{reason}\n";
+			while (my ($key, $value) = each %{$response->{headers}}) {
+				for (ref $value eq "ARRAY" ? @$value : $value) {
+					print "$key: $_\n";
+				}
+			}
+		}
+		if ( $type eq "stdout" || $type eq "ua-stdout" ){
+			$return = $response->{content};
+		}
+		elsif ($type eq "spider"){
+			# do nothing, just use the return value
+		}
+		elsif ($type eq "file"){
+			open($fh, ">", $file);
+			print $fh $response->{content}; # or die "can't write to file!\n";
+			close $fh;
+		}
+	}
+	return $return;
+}
+
 sub set_downloader {
-	if ( check_program('curl') && $dl{'curl'} ){
+	if ($dl{'tiny'}){
+		$dl{'dl'} = 'tiny';
+		$dl{'file'} = '';
+		$dl{'null'} = '';
+		$dl{'stdout'} = '';
+		$dl{'timeout'} = '';
+	}
+	elsif ( $dl{'curl'} && check_program('curl')  ){
 		$dl{'dl'} = 'curl';
 		$no_ssl = ' --insecure';
+		$dl{'file'} = '  -L -s -o ';
+		$dl{'null'} = '';
+		$dl{'stdout'} = ' -L -s ';
+		$dl{'timeout'} = ' -y ';
 	}
-	elsif (check_program('wget') && $dl{'curl'} ){
+	elsif ($dl{'wget'} && check_program('wget') ){
 		$dl{'dl'} = 'wget';
 		$no_ssl = ' --no-check-certificate';
+		$dl{'file'} = ' -q -O ';
+		$dl{'null'} = '';
+		$dl{'stdout'} = '  -q -O -';
+		$dl{'timeout'} = ' -T ';
 	}
-	elsif (check_program('fetch') && $dl{'curl'} ){
+	elsif ($dl{'fetch'} && check_program('fetch')){
 		$dl{'dl'} = 'fetch';
 		$no_ssl = ' --no-verify-peer';
-	}
-	elsif ($dl{'curl'}){
-		$dl{'dl'} = 'tiny';
+		$dl{'file'} = ' -q -o ';
+		$dl{'null'} = '';
+		$dl{'stdout'} = ' -q -o -';
+		$dl{'timeout'} = ' -T ';
 	}
 	elsif ( $bsd_type eq 'openbsd' && check_program('ftp') ){
 		$dl{'dl'} = 'ftp';
+		$dl{'file'} = ' -o ';
+		$dl{'null'} = ' 2>/dev/null';
+		$dl{'stdout'} = ' -q -O - ';
+		$dl{'timeout'} = '';
 	}
 	else {
 		$dl{'dl'} = '';
@@ -605,8 +686,6 @@ sub get_piece {
 	}
 }
 
-
-
 #### -------------------------------------------------------------------
 #### UPDATER
 ##### -------------------------------------------------------------------
@@ -630,6 +709,65 @@ sub get_update_url {
 	}
 }
 
+sub set_man_location {
+	my $location='';
+	my $default_location='/usr/share/man/man1';
+	my $man_paths=qx(man --path 2>/dev/null);
+	my $man_local='/usr/local/share/man';
+	my $b_use_local=0;
+	if ( $man_paths && $man_paths =~ /$man_local/ ){
+		$b_use_local=1;
+	}
+	# for distro installs, existing inxi man manual installs, do nothing
+	if ( -f "$default_location/inxi.1.gz" ){
+		$location=$default_location;
+	}
+	else {
+		if ( $b_use_local ){
+			if ( ! -d "$man_local/man1" ){
+				mkdir "$man_local/man1";
+			}
+			$location="$man_local/man1";
+		}
+		#print_screen_output "Updating man page location to man1."
+		#mv -f /usr/share/man/man1/inxi.1.gz /usr/local/share/man/man1/inxi.1.gz 
+		# if ( check_program('mandb') ){
+		# 	exec $( type -p mandb ) -q 
+		# }
+	}
+	if ( ! $location ){
+		$location=$default_location;
+	}
+	return $location;
+}
+
+# update for updater output version info
+# note, this is only now used for self updater function so it can get
+# the values from the UPDATED file, NOT the running program!
+sub set_version_data {
+	open (my $fh, '<', "$self_path/$self_name");
+	while( my $row = <$fh>){
+		chomp $row;
+		$row =~ s/'//g;
+		if ($row =~ /^my \$self_name/ ){
+			$self_name = (split /=/, $row)[1];
+		}
+		elsif ($row =~ /^my \$self_version/ ){
+			$self_version = (split /=/, $row)[1];
+		}
+		elsif ($row =~ /^my \$self_date/ ){
+			$self_date = (split /=/, $row)[1];
+		}
+		elsif ($row =~ /^my \$self_patch/ ){
+			$self_patch = (split /=/, $row)[1];
+		}
+		elsif ($row =~ /infobash/){
+			last;
+		}
+	}
+	close $fh;
+}
+
 ########################################################################
 #### OPTIONS HANDLER
 ########################################################################
@@ -637,121 +775,121 @@ sub get_update_url {
 sub get_options{
 	my (@args) = @_;
 	# my @argv = @ARGV;
-	$show{'short'} = 'true';
-	# $show{''} = 'true';
+	$show{'short'} = 1;
+	# $show{''} = 1;
 	#$opt_parser->configure('no_ignore_case');
 	# GetOptionsFromArray(\@argv, 
 	GetOptions (
 	'A|audio' => sub {
-		$show{'short'} = '';
-		$show{'audio'} = 'true';},
+		$show{'short'} = 0;
+		$show{'audio'} = 1;},
 	'b|basic' => sub {
-		$show{'short'} = '';
-		$show{'battery'} = 'true';
-		$show{'cpu-basic'} = 'true';
-		$show{'raid-basic'} = 'true';
-		$show{'disk-total'} = 'true';
-		$show{'graphics'} = 'true';
-		$show{'info'} = 'true';
-		$show{'machine'} = 'true';
-		$show{'network'} = 'true';},
+		$show{'short'} = 0;
+		$show{'battery'} = 1;
+		$show{'cpu-basic'} = 1;
+		$show{'raid-basic'} = 1;
+		$show{'disk-total'} = 1;
+		$show{'graphics'} = 1;
+		$show{'info'} = 1;
+		$show{'machine'} = 1;
+		$show{'network'} = 1;},
 	'B|battery' => sub {
-		$show{'short'} = '';
-		$show{'battery'} = 'true';
-		$show{'battery-forced'} = 'true'; },
+		$show{'short'} = 0;
+		$show{'battery'} = 1;
+		$show{'battery-forced'} = 1; },
 	'c|color:i' => sub {
-		$show{'short'} = '';
-		# $show{''} = 'true'; 
+		$show{'short'} = 0;
+		# $show{''} = 1; 
 		},
 	'C|cpu' => sub {
-		$show{'short'} = '';
-		$show{'cpu'} = 'true'; },
+		$show{'short'} = 0;
+		$show{'cpu'} = 1; },
 	'd|disk-all' => sub {
-		$show{'short'} = '';
-		$show{'disk'} = 'true';
-		$show{'optical-full'} = 'true'; },
+		$show{'short'} = 0;
+		$show{'disk'} = 1;
+		$show{'optical-full'} = 1; },
 	'D' => sub {
-		$show{'short'} = '';
-		$show{'disk'} = 'true'; },
+		$show{'short'} = 0;
+		$show{'disk'} = 1; },
 	'f|cpu-flags' => sub {
-		$show{'short'} = '';
-		$show{'cpu'} = 'true';
-		$show{'cpu-flags'} = 'true'; },
+		$show{'short'} = 0;
+		$show{'cpu'} = 1;
+		$show{'cpu-flags'} = 1; },
 	'F|full' => sub {
-		$show{'short'} = '';
-		$show{'audio'} = 'true';
-		$show{'battery'} = 'true';
-		$show{'cpu'} = 'true';
-		$show{'disk'} = 'true';
-		$show{'graphics'} = 'true';
-		$show{'info'} = 'true';
-		$show{'machine'} = 'true';
-		$show{'network'} = 'true';
-		$show{'network-advanced'} = 'true';
-		$show{'partitions'} = 'true';
-		$show{'raid'} = 'true';
-		$show{'sensors'} = 'true';
-		$show{'system'} = 'true'; },
+		$show{'short'} = 0;
+		$show{'audio'} = 1;
+		$show{'battery'} = 1;
+		$show{'cpu'} = 1;
+		$show{'disk'} = 1;
+		$show{'graphics'} = 1;
+		$show{'info'} = 1;
+		$show{'machine'} = 1;
+		$show{'network'} = 1;
+		$show{'network-advanced'} = 1;
+		$show{'partitions'} = 1;
+		$show{'raid'} = 1;
+		$show{'sensors'} = 1;
+		$show{'system'} = 1; },
 	'G|graphics' => sub {
-		$show{'short'} = '';
-		$show{'graphics'} = 'true'; },
+		$show{'short'} = 0;
+		$show{'graphics'} = 1; },
 	'i|ip' => sub {
-		$show{'short'} = '';
-		$show{'ip'} = 'true';
-		$show{'network'} = 'true';
-		$show{'network-advanced'} = 'true'; },
+		$show{'short'} = 0;
+		$show{'ip'} = 1;
+		$show{'network'} = 1;
+		$show{'network-advanced'} = 1; },
 	'I|info' => sub {
-		$show{'short'} = '';
-		$show{'info'} = 'true'; },
+		$show{'short'} = 0;
+		$show{'info'} = 1; },
 	'l|label' => sub {
-		$show{'short'} = '';
-		$show{'labels'} = 'true';
-		$show{'partitions'} = 'true'; },
+		$show{'short'} = 0;
+		$show{'labels'} = 1;
+		$show{'partitions'} = 1; },
 	'm|memory' => sub {
-		$show{'short'} = '';
-		$show{'memory'} = 'true'; },
+		$show{'short'} = 0;
+		$show{'memory'} = 1; },
 	'M|machine' => sub {
-		$show{'short'} = '';
-		$show{'machine'} = 'true'; },
+		$show{'short'} = 0;
+		$show{'machine'} = 1; },
 	'n|network-advanced' => sub {
-		$show{'short'} = '';
-		$show{'network'} = 'true';
-		$show{'network-advanced'} = 'true'; },
+		$show{'short'} = 0;
+		$show{'network'} = 1;
+		$show{'network-advanced'} = 1; },
 	'N|network' => sub {
-		$show{'short'} = '';
-		$show{'network'} = 'true'; },
+		$show{'short'} = 0;
+		$show{'network'} = 1; },
 	'o|unmounted' => sub {
-		$show{'short'} = '';
-		$show{'unmounted'} = 'true'; },
+		$show{'short'} = 0;
+		$show{'unmounted'} = 1; },
 	'p|partitions-full' => sub {
-		$show{'short'} = '';
-		$show{'partitions'} = 'true';
-		$show{'partitions-full'} = 'true'; },
+		$show{'short'} = 0;
+		$show{'partitions'} = 1;
+		$show{'partitions-full'} = 1; },
 	'P|partitions' => sub {
-		$show{'short'} = '';
-		$show{'partitions'} = 'true'; },
+		$show{'short'} = 0;
+		$show{'partitions'} = 1; },
 	'r|repos' => sub {
-		$show{'short'} = '';
-		$show{'repos'} = 'true'; },
+		$show{'short'} = 0;
+		$show{'repos'} = 1; },
 	'R|raid' => sub {
-		$show{'short'} = '';
-		$show{'raid'} = 'true';
-		$show{'raid-forced'} = 'true'; },
+		$show{'short'} = 0;
+		$show{'raid'} = 1;
+		$show{'raid-forced'} = 1; },
 	's|sensors' => sub {
-		$show{'short'} = '';
-		$show{'sensors'} = 'true'; },
+		$show{'short'} = 0;
+		$show{'sensors'} = 1; },
 	'S|system' => sub {
-		$show{'short'} = '';
-		$show{'system'} = 'true'; },
+		$show{'short'} = 0;
+		$show{'system'} = 1; },
 	't|processes:s' => sub {
 		my ($opt,$arg) = @_;
-		$show{'short'} = '';
+		$show{'short'} = 0;
 		if ( $arg =~ /^([cm]+)([1-9]|1[0-9]|20)?$/ ){
 			if ($arg =~ /c/){
-				$show{'ps-cpu'} = 'true';
+				$show{'ps-cpu'} = 1;
 			}
 			if ($arg =~ /m/){
-				$show{'ps-mem'} = 'true';
+				$show{'ps-mem'} = 1;
 			}
 			if ($arg =~ /([0-9]+)/ ){
 				$ps_count = $1;
@@ -761,12 +899,12 @@ sub get_options{
 			error_handler(100,$opt,$arg);
 		} },
 	'u|uuid' => sub {
-		$show{'short'} = '';
-		$show{'partitions'} = 'true';
-		$show{'uuids'} = 'true'; },
+		$show{'short'} = 0;
+		$show{'partitions'} = 1;
+		$show{'uuids'} = 1; },
 	'U|update:s' => sub { # 1,2,3 OR ftp.server.com/incoming
 		my ($opt,$arg) = @_;
-		$show{'short'} = '';
+		$show{'short'} = 0;
 		my ($self_download,$download_id);
 		if ( $b_update ){
 			if ( $arg =~ /^\d$/){
@@ -793,52 +931,52 @@ sub get_options{
 		} },
 	'v|verbosity:i' => sub {
 		my ($opt,$arg) = @_;
-		$show{'short'} = '';
+		$show{'short'} = 0;
 		if ( $arg =~ /^[0-7]$/ ){
 			if ($arg == 0 ){
-				$show{'short'} = 'true';
+				$show{'short'} = 1;
 			}
 			if ($arg >= 1 ){
-				$show{'cpu-basic'} = 'true';
-				$show{'disk-total'} = 'true';
-				$show{'graphics'} = 'true';
-				$show{'info'} = 'true';
-				$show{'system'} = 'true';
+				$show{'cpu-basic'} = 1;
+				$show{'disk-total'} = 1;
+				$show{'graphics'} = 1;
+				$show{'info'} = 1;
+				$show{'system'} = 1;
 			}
 			if ($arg >= 2 ){
-				$show{'battery'} = 'true';
-				$show{'disk-basic'} = 'true';
-				$show{'raid-basic'} = 'true';
-				$show{'machine'} = 'true';
-				$show{'network'} = 'true';
+				$show{'battery'} = 1;
+				$show{'disk-basic'} = 1;
+				$show{'raid-basic'} = 1;
+				$show{'machine'} = 1;
+				$show{'network'} = 1;
 			}
 			if ($arg >= 3 ){
-				$show{'network-advanced'} = 'true';
-				$show{'cpu'} = 'true';
+				$show{'network-advanced'} = 1;
+				$show{'cpu'} = 1;
 				$show{'extra'} = 1;
 			}
 			if ($arg >= 4 ){
-				$show{'disk'} = 'true';
-				$show{'partitions'} = 'true';
+				$show{'disk'} = 1;
+				$show{'partitions'} = 1;
 			}
 			if ($arg >= 5 ){
-				$show{'audio'} = 'true';
-				$show{'memory'} = 'true';
-				$show{'labels'} = 'true';
-				$show{'memory'} = 'true';
-				$show{'raid'} = 'true';
-				$show{'sensors'} = 'true';
-				$show{'uuid'} = 'true';
+				$show{'audio'} = 1;
+				$show{'memory'} = 1;
+				$show{'labels'} = 1;
+				$show{'memory'} = 1;
+				$show{'raid'} = 1;
+				$show{'sensors'} = 1;
+				$show{'uuid'} = 1;
 			}
 			if ($arg >= 6 ){
-				$show{'optical-full'} = 'true';
-				$show{'partitions-full'} = 'true';
-				$show{'unmounted'} = 'true';
+				$show{'optical-full'} = 1;
+				$show{'partitions-full'} = 1;
+				$show{'unmounted'} = 1;
 				$show{'extra'} = 2;
 			}
 			if ($arg >= 7 ){
-				$show{'ip'} = 'true';
-				$show{'raid-forced'} = 'true';
+				$show{'ip'} = 1;
+				$show{'raid-forced'} = 1;
 				$show{'extra'} = 3;
 			}
 		}
@@ -849,15 +987,15 @@ sub get_options{
 		$output_type = 'print-basic';
 		show_version(); },
 	'w|weather' => sub {
-		$show{'short'} = '';
+		$show{'short'} = 0;
 		if ( $b_weather ){
-			$show{'weather'} = 'true';
+			$show{'weather'} = 1;
 		} },
 	'W|weather-location' => sub {
-		$show{'short'} = '';
+		$show{'short'} = 0;
 		if ( $b_weather ){
-			$show{'weather'} = 'true';
-			$show{'weather-location'} = 'true';
+			$show{'weather'} = 1;
+			$show{'weather-location'} = 1;
 		} },
 	'x|extra:i' => sub {
 		my ($opt,$arg) = @_;
@@ -876,9 +1014,9 @@ sub get_options{
 			error_handler(21, $opt, $arg);
 		} },
 	'z|filter' => sub {
-		$show{'filter'} = 'true'; },
+		$show{'filter'} = 1; },
 	'Z|filter-override' => sub {
-		$show{'filter-override'} = 'true'; },
+		$show{'filter-override'} = 1; },
 	'h|help|?' => sub {
 		$output_type = 'print-basic';
 		show_options('standard'); },
@@ -896,27 +1034,31 @@ sub get_options{
 	'alt:i' => sub { 
 		my ($opt,$arg) = @_;
 		my %alts = (
-		'1' => sub {$test{'1'} = 'true';},
-		'2' => sub {$test{'2'} = 'true';},
-		'3' => sub {$test{'3'} = 'true';},
-		'30' => sub {$b_irc = '';},
-		'31' => sub {$show{'host'} = '';},
-		'32' => sub {$show{'host'} = 'true';},
+		'0' => sub {},
+		'1' => sub {$test{'1'} = 1;},
+		'2' => sub {$test{'2'} = 1;},
+		'3' => sub {$test{'3'} = 1;},
+		'30' => sub {$b_irc = 0;},
+		'31' => sub {$show{'host'} = 0;},
+		'32' => sub {$show{'host'} = 1;},
 		'34' => sub {$no_ssl_opt=$no_ssl;},
+		'40' => sub {
+			$dl{'tiny'} = 0;
+			set_downloader();},
 		'41' => sub {
-			$dl{'curl'} = '';
+			$dl{'curl'} = 0;
 			set_downloader();},
 		'42' => sub {
-			$dl{'fetch'} = '';
+			$dl{'fetch'} = 0;
 			set_downloader();},
 		'43' => sub {
-			$dl{'wget'} = '';
+			$dl{'wget'} = 0;
 			set_downloader();
 		},
 		'44' => sub {
-			$dl{'curl'} = '';
-			$dl{'fetch'} = '';
-			$dl{'wget'} = '';
+			$dl{'curl'} = 0;
+			$dl{'fetch'} = 0;
+			$dl{'wget'} = 0;
 			set_downloader();
 		}
 		);
@@ -926,7 +1068,8 @@ sub get_options{
 		else {
 			error_handler(21, $opt, $arg);
 		}
-		print "alt $arg\n"; },
+		# print "alt $arg\n"; 
+		},
 	'<>' => sub {
 		my ($opt) = @_;
 		error_handler(2, "Unknown argument: $opt", "" ); }
@@ -943,6 +1086,7 @@ sub show_optionsXX {
 	print "stub: " . (caller(0))[3] . "\n";
 	exit 1;
 }
+
 sub show_options {
 	if ( $b_irc ){
 		print_screen_line("Sorry, you can't run the help option in an IRC client.\n");
@@ -950,12 +1094,17 @@ sub show_options {
 	}
 	my ($type) = @_;
 	my (@row,@rows,@data);
+	my $line = '';
 	my $color_scheme_count=12; # $(( ${#A_COLOR_SCHEMES[@]} - 1 ));
 	my $partition_string='partition';
 	my $partition_string_u='Partition';
 	if ( $bsd_type ){
 		$partition_string='slice';
 		$partition_string_u='Slice';
+	}
+	# fit the line to the screen!
+	for my $i ( 0 .. ( ( $size{'max'} / 2 ) - 2 ) ){
+		$line = $line . '- ';
 	}
 	@rows = (
 	['0', '', '', "$self_name supports the following options. You can combine 
@@ -968,7 +1117,7 @@ sub show_options {
 	u, r, s, t - you can use these alone or together to show just the line(s) 
 	you want to see. If you use them with -v^[level], -b or -F, it will show the 
 	full output for that line along with the output for the chosen verbosity level." ],
-	['0', '', '', "- - - - - - - - - - - - - - - - - - - - - - - - - - - - -" ],
+	['0', '', '', $line ],
 	['0', '', '', "Output Control Options:" ],
 	['1', '-A', '--audio', "Audio/sound card information." ],
 	['1', '-b', '--basic', "Basic output, short form. Like $self_name^-v^2, only minus hard 
@@ -1113,7 +1262,7 @@ sub show_options {
 	['2', '-t', '', "Memory use output to cpu (-xt c), and cpu use to memory (-xt m)." ]
 	);
 	push @data, @rows;
-	if ( $b_weather eq 'true' ){
+	if ( $b_weather eq 1 ){
 		@rows = (['2', '-w -W', '', "Wind speed and time zone (-w only)." ]);
 		push @data, @rows;
 	}
@@ -1169,7 +1318,7 @@ sub show_options {
 	directory name. Default on for irc clients." ],
 	['1', '-Z', '--filter-override', "Absolute override for output filters. Useful for debugging 
 	networking issues in irc for example." ],
-	[0, '', '', '' ],
+	[0, '', '', "$line" ],
 	[0, '', '', "Additional Options:" ],
 	['1', '-h', '--help', "This help menu." ],
 	['1', '-H', '--help-full', "This help menu, plus developer options. Do not use dev options in 
@@ -1198,10 +1347,10 @@ sub show_options {
 	@rows = (
 	['1', '-V', '--version', "$self_name version information. Prints information 
 	then exits." ],
-	[0, '', '', '' ],
+	[0, '', '', "$line" ],
 	[0, '', '', "Debugging Options:" ],
-	['1', '', '--alt 0', "Overrides defective or corrupted data." ],
-	['1', '', '--debugger', "Triggers debugging modes." ],
+	
+	['1', '', '--debug', "Triggers debugging modes." ],
 	['2', '1-3', '', "On screen $self_name debugger output" ],
 	['2', '10', '', "Basic $self_name logging." ],
 	['2', '11', '', "Full file/system info logging" ],
@@ -1214,30 +1363,35 @@ sub show_options {
 	${partition_string}s, etc." ],
 	['2', '21', '', "Upload debugger dataset to $self_name debugger server 
 	automatically." ],
-	[0, '', '', '' ],
+	[0, '', '', "$line" ],
 	[0, '', '', "Advanced Options:" ],
-	['1', '', '--alt 31', "Turns off hostname in output. Useful if showing output from 
+	[1, '', '--alt', "Trigger for various advanced options:" ],
+	['2', '0', '', "Overrides defective or corrupted data." ],
+	['2', '31', '', "Turns off hostname in output. Useful if showing output from 
 	servers etc." ],
-	['1', '', '--alt 32', "Turns on hostname in output. Overrides global \$b_host'" ],
-	['1', '', '--alt 33', "Forces use of dmidecode data instead of /sys where 
+	['2', '32', '', "Turns on hostname in output. Overrides global \$b_host'" ],
+	['2', '33', '', "Forces use of dmidecode data instead of /sys where 
 	relevant (-M)." ],
-	['1', '', '--alt 34', "Skips SSL certificate checks for all downloader activies 
+	['2', '34', '', "Skips SSL certificate checks for all downloader activies 
 	(wget/fetch/curl only). Must go before other options." ],
-	['1', '', '--alt 41', "Bypass curl as a downloader option." ],
-	['1', '', '--alt 42', "Bypass fetch as a downloader option." ],
-	['1', '', '--alt 43', "Bypass wget as a downloader option." ],
-	['1', '', '--alt 44', "Bypass curl, fetch, and wget as a downloader options. Forces 
-	Perl if HTTP::Tiny present." ]);
+	['2', '40', '', "Bypass Perl as a downloader option." ],
+	['2', '41', '', "Bypass Curl as a downloader option." ],
+	['2', '42', '', "Bypass Ffetch as a downloader option." ],
+	['2', '43', '', "Bypass Wget as a downloader option." ],
+	['2', '44', '', "Bypass Curl, Fetch, and Wget as a downloader options. Forces 
+	Perl if HTTP::Tiny present." ]
+	);
 	push @data, @rows;
 	if ( $type eq 'full' ){
 		@rows = (
-		[0, '', '', '' ],
+		[0, '', '', "$line" ],
 		[0, '', '', "Developer and Testing Options (Advanced):" ],
-		['1', '', '--alt 1', "Sets testing flag test1='true' to trigger 
+		['1', '', '--alt', "Trigger for dev/test options:" ],
+		['2', '1', '', "Sets testing flag test1=1 to trigger 
 		testing condition 1." ],
-		['1', '', '--alt 2', "Sets testing flag test2='true' to trigger 
+		['2', '2', '', "Sets testing flag test2=1 to trigger 
 		testing condition 2." ],
-		['1', '', '--alt 3', "Sets flags test3='true'." ]
+		['2', '3', '', "Sets flags test3=1." ]
 		);
 		push @data, @rows;
 	}
@@ -1350,10 +1504,10 @@ sub show_version {
 
 sub print_screen_line {
 	my $line = shift;
-	if ( $konvi == 1 && $b_dcop ){
+	if ( $konvi{'type'} == 1 && $konvi{'dcop'} ){
 	
 	}
-	elsif ($konvi == 3 && $b_qdbus){
+	elsif ($konvi{'type'} == 3 && $konvi{'qdbus'} ){
 	
 	}
 	else {
@@ -1416,7 +1570,7 @@ sub print_basic {
 		else {
 			my $holder = '';
 			my $sep = ' ';
-			foreach $word (split ' ', $data[$i][3]){
+			foreach $word (split / /, $data[$i][3]){
 				#print "$word\n";
 				if ( ( $indent + length($holder) + length($word) ) < $size{'max'} ) {
 					$word =~ s/\^/ /g;
@@ -1469,16 +1623,14 @@ sub get_hostname {
 }
 
 ########################################################################
-#### PRINT DATA
+#### GENERATE LINES
 ########################################################################
 
 #### -------------------------------------------------------------------
-#### PRINT CONTROLLERS
+#### DATA CONTROLLERS
 #### -------------------------------------------------------------------
 
-
-
-sub print_it_out {
+sub generate_data {
 	eval $start;
 	# log_data('cat', '/proc/mounts');
 	print "stub: " . (caller(0))[3] . "\n";
@@ -1486,9 +1638,8 @@ sub print_it_out {
 }
 
 #### -------------------------------------------------------------------
-#### PRINT LINES
+#### LINE TRIGGERS
 #### -------------------------------------------------------------------
-
 
 
 #######################################################################

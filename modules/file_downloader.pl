@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: file_downloader.pl
-## Version: 1.0
-## Date 2017-11-25
+## Version: 1.1
+## Date 2017-12-10
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -15,13 +15,13 @@ use HTTP::Tiny;
 sub get_file {
 	my ($type, $url, $file) = @_;
 	my $response = HTTP::Tiny->new->get($url);
-	my $return = 0;
+	my $result = 1;
 	my $debug = 0;
 	my $fh;
 	
-	if ($response->{success} == 0 ){
+	if ( ! $response->{success} ){
 		print "Failed to connect to server/file!\n";
-		$return = 1;
+		$result = 0;
 	}
 	else {
 		if ( $debug ){
@@ -34,7 +34,7 @@ sub get_file {
 			}
 		}
 		if ( $type eq "stdout" || $type eq "ua-stdout" ){
-			print "$response->{content}" if length $response->{content};
+			$result = $response->{content};
 		}
 		elsif ($type eq "spider"){
 			# do nothing, just use the return value
@@ -45,7 +45,7 @@ sub get_file {
 			close $fh;
 		}
 	}
-	return $return;
+	return $result;
 }
 get_file('stdout','https://techpatterns.com/resources/ip.php', 
 '/home/harald/bin/scripts/inxi/svn/branches/inxi-perl/modules/inxi.1.gz');
