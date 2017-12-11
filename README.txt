@@ -101,28 +101,37 @@ ROADMAP:
 
 Note that my current development goals are, roughly in this order:
 
-1. Complete startup/initialization code. This is going well.
+1. Complete startup/initialization code. 
+   Status: going well
 
-2. Complete debug logging code. This is done.
+2. Complete debug logging code. 
+   Status: DONE
 
 3. Complete debugger data collector. 
+   Status: not started
 
 4. Complete recommends output. This will wait for longer down the
    road when I actually know what the recommends are.
+   Status: not started
    
 5. Complete option handler. This is almost done, I'm just waiting
-   to decide on the last option names etc. Slow but sure.
+   to decide on the last option names etc. 
+   Status: Basically DONE.
    
 6. Complete help/version output handlers. This depends on at least
-   a basic output printer logic working.
+   a basic output printer logic working. 
+   Status: DONE
    
 7. Complete startup logic, that's what gets irc client info, etc.
    That will be difficult because it's difficult logic.
+   Status: not started
    
 8. Complete line printers and colorizers. This will probably be done
    in 2 parts: 
    1. for no colorized, sized, indentation controlled: -h or -V
+      Status: DONE
    2. full, hash print out, colorizer, sizer. real inxi output.
+      Status: not started
    
 9. Start on get data and print lines, which is about 1/2 the program.
    This will probably start by line data collection, then move to a
@@ -133,16 +142,19 @@ Note that my current development goals are, roughly in this order:
    will go in the:
    SPECIAL DATA HANDLERS - UTILITIES FOR GET DATA/PRINT LINES
    section.
+   Status: not started, except a few test features
    
 10. Look into adding support for language hashes, that would replace 
-the hack key values in the print arrays with the alternate language 
-equivalent. Or, if missing that key, print the english. That would
-solve the issue of people flaking out on language support over time.
+    the hack key values in the print arrays with the alternate language 
+    equivalent. Or, if missing that key, print the english. That would
+    solve the issue of people flaking out on language support over time.
+    Status: not started
 
 11. Related to 10, add support for alternate output formats, using 
-json or csv or xml. I assume Perl has modules that make that easy, but 
-it's not very hard to do that manually either once you have the line
-data in hashes.
+    json or csv or xml. I assume Perl has modules that make that easy, but 
+    it's not very hard to do that manually either once you have the line
+    data in hashes.
+    Status: not started
 
 ====================================================================
 
