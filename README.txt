@@ -2,8 +2,8 @@
 README for development branch of inxi Perl version: pinxi
 ====================================================================
 FILE:    README.txt
-VERSION: 1.2
-DATE:    2017-12-09
+VERSION: 1.3
+DATE:    2017-12-11
 
 NOTE: While the real program name will never change, for the sake
 of clarity, I will refer to the inxi-perl dev branch inxi as pinxi, 
@@ -26,36 +26,40 @@ DOCS:
 /docs contain the data I use to develop pinxi. it's what I need to
 know to rewrite binxi to pinxi, that is.
 
-See: docs/perl_programming.txt for tips and hints on how to translate
-other language logic to Perl, and Bash stuff in particular. Note,
-I will never be a Perl expert, nor do I want to be. I want the code
-to be 'newbie' friendly, and to be accessible to reasonably smart
-people who do not happen to be Perl experts, but do understand basic
-programming logic. Perl was selected because it will be easier to
-work with than the bash/gawk/sed/grep/etc mix that currently runs 
-binxi, and because the 5.x branch has proved itself to be very solid
-over years, without breaking stuff needlessly on updates. It was not
-selected because I like it. In a way, it was a blessing that Larry 
-made Perl6, and now calls it a different language, because that removed 
-the pressure from Perl 5 to break itself. While I will use internally 
+See: docs/perl-programming.txt
+Tips and hints on how to translate other language logic to Perl, and 
+Bash stuff in particular. Note, I will never be a Perl expert, nor do 
+I want to be. I want the code to be 'newbie' friendly, and to be accessible
+to reasonably smart people who do not happen to be Perl experts, but do 
+understand basic programming logic. 
+
+Perl was selected because it will be easier to work with than the 
+bash/gawk/sed/grep/etc mix that currently runs binxi, and because 
+the 5.x branch has proved itself to be very solid over years, 
+without breaking stuff needlessly on updates. It was not selected 
+because I like it. In a way, it was a blessing that Larry made Perl6, 
+and now calls it a different language, because that removed  the 
+pressure from Perl 5 to break itself. While I will use internally 
 Perl 'write only' methods where it really is a good way to do it, 
 I will try to minimize that style as much as possible in order to leave
 pinxi code reasonably accessible to most competent people who can 
 read code ok, but who are not Perl experts.
 
-See: docs/perl_setup.txt for how to set up your Perl dev stuff
+See: docs/perl-setup.txt
+How to set up your Perl dev stuff
 
-See: docs/perl_version_support.txt for notes on what features can be
-used for the perl version. 5.08 is the current cutoff. No newer 
-features will be used, this lets me maintain the core inxi mission
-of supporting almost everything, no matter how old.
+See: docs/perl-version-support.txt
+Notes on what features can be used for the perl version. 5.08 is the current 
+cutoff. No newer features will be used, this lets me maintain the core inxi 
+mission of supporting almost everything, no matter how old.
 
-See: docs/inxi_values.txt for the user config options, the values 
-of the primary hashes that contain the switches used for layout,
-option control, etc. Those have been removed from the top variable
-assignments of binxi to make the code clear and easy to read, and
-to avoid the clutter binxi suffers from. inxi_values.txt is the 
-primary reference document for working on pinxi.
+See: docs/inxi-values.txt
+User config options; the values of the primary hashes that contain the 
+switches used for layout, option control, downloader, konvi etc. 
+Those have been removed from the top variable assignments of binxi 
+to make the code clear and easy to read, and to avoid the clutter binxi 
+suffers from. inxi-values.txt is the primary reference document for 
+working on pinxi.
 
 ====================================================================
 
