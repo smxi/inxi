@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: file_downloader.pl
-## Version: 1.1
-## Date 2017-12-10
+## Version: 1.2
+## Date 2017-12-11
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -31,28 +31,36 @@ sub check_program {
 
 sub download_file {
 	my ($type, $url, $file) = @_;
-	my ($cmd,$result,$args,$timeout);
+	my ($cmd,$args,$timeout);
+	my $result = 1;
+	$dl{'no-ssl-opt'} ||= '';
+	$dl{'spider'} ||= '';
 	if ( ! $dl{'dl'} ){
 		return 0;
 	}
 	if ($dl{'timeout'}){
 		$timeout = "$dl{'timeout'}$dl_timeout";
 	}
-	# print "$dl{'dl'}\n";
+	# print "$dl{'no-ssl-opt'}\n";
+	 print "$dl{'dl'}\n";
+	# tiny supports spider sort of
 	if ($dl{'dl'} eq 'tiny' ){
 		$result = get_file($type, $url, $file);
 	}
-	elsif ($dl{'dl'}){
+	else {
 		if ($type eq 'stdout'){
 			$args = $dl{'stdout'};
-			$cmd = "$dl{'dl'} $no_ssl_opt $timeout $args $url $dl{'null'}";
+			$cmd = "$dl{'dl'} $dl{'no-ssl-opt'} $timeout $args $url $dl{'null'}";
 			$result = qx($cmd);
 		}
-		else {
+		elsif ($type eq 'file') {
 			$args = $dl{'file'};
-			$cmd = "$dl{'dl'} $no_ssl_opt $timeout $args $file $url $dl{'null'}";
+			$cmd = "$dl{'dl'} $dl{'no-ssl-opt'} $timeout $args $file $url $dl{'null'}";
 			system($cmd);
 			$result = $?;
+		}
+		elsif ( $dl{'dl'} eq 'wget' && $type eq 'spider'){
+			$cmd = "$dl{'dl'} $dl{'no-ssl-opt'} $timeout $dl{'spider'} $url";
 		}
 	}
 	return $result;
@@ -95,34 +103,34 @@ sub get_file {
 }
 
 sub set_downloader {
+	$dl{'no-ssl'} = '';
+	$dl{'null'} = '';
+	$dl{'spider'} = '';
 	if ($dl{'tiny'}){
 		$dl{'dl'} = 'tiny';
 		$dl{'file'} = '';
-		$dl{'null'} = '';
 		$dl{'stdout'} = '';
 		$dl{'timeout'} = '';
 	}
 	elsif ( $dl{'curl'} && check_program('curl')  ){
 		$dl{'dl'} = 'curl';
-		$no_ssl = ' --insecure';
 		$dl{'file'} = '  -L -s -o ';
-		$dl{'null'} = '';
+		$dl{'no-ssl'} = ' --insecure';
 		$dl{'stdout'} = ' -L -s ';
 		$dl{'timeout'} = ' -y ';
 	}
 	elsif ($dl{'wget'} && check_program('wget') ){
 		$dl{'dl'} = 'wget';
-		$no_ssl = ' --no-check-certificate';
 		$dl{'file'} = ' -q -O ';
-		$dl{'null'} = '';
+		$dl{'no-ssl'} = ' --no-check-certificate';
+		$dl{'spider'} = ' -q --spider';
 		$dl{'stdout'} = '  -q -O -';
 		$dl{'timeout'} = ' -T ';
 	}
 	elsif ($dl{'fetch'} && check_program('fetch')){
 		$dl{'dl'} = 'fetch';
-		$no_ssl = ' --no-verify-peer';
 		$dl{'file'} = ' -q -o ';
-		$dl{'null'} = '';
+		$dl{'no-ssl'} = ' --no-verify-peer';
 		$dl{'stdout'} = ' -q -o -';
 		$dl{'timeout'} = ' -T ';
 	}
@@ -136,4 +144,10 @@ sub set_downloader {
 	else {
 		$dl{'dl'} = '';
 	}
+}
+
+sub set_perl_downloader {
+	my ($downloader) = @_;
+	$downloader =~ s/perl/tiny/;
+	return $downloader;
 }
