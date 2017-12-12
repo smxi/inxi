@@ -1,13 +1,13 @@
 #!/usr/bin/env perl
 ## File: show_options.pl
-## Version: 1.2
-## Date 2017-12-11
+## Version: 1.3
+## Date 2017-12-12
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
 use strict;
 use warnings;
-use diagnostics;
+# use diagnostics;
 use 5.008;
 
 ## NOTE: Includes dummy sub and variables to allow for running for debugging.
@@ -22,6 +22,24 @@ my %size( 'max' => 100 );
 sub print_screen_line {
 	my $line = shift;
 	print $line;
+}
+
+# arg 1: type to return
+sub get_defaults {
+	my ($arg) = @_;
+	my %defaults = (
+	'ftp-upload' => 'ftp.techpatterns.com/incoming',
+	# 'inxi-branch-1' => 'https://github.com/smxi/inxi/raw/one/',
+	# 'inxi-branch-2' => 'https://github.com/smxi/inxi/raw/two/',
+	'inxi-main' => 'https://github.com/smxi/inxi/raw/inxi-perl/',
+	'inxi-man' => "https://github.com/smxi/inxi/raw/master/$self_name.1.gz",
+	);
+	if ( exists $defaults{$type}){
+		return $defaults{$type};
+	}
+	else {
+		error_handler('bad-arg', $arg);
+	}
 }
 
 ## start actual code

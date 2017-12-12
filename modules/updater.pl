@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: updater.pl
-## Version: 1.0
-## Date 2017-12-11
+## Version: 1.1
+## Date 2017-12-12
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -18,6 +18,23 @@ sub error_handler {
 }
 sub download_file {
 
+}
+# arg 1: type to return
+sub get_defaults {
+	my ($arg) = @_;
+	my %defaults = (
+	'ftp-upload' => 'ftp.techpatterns.com/incoming',
+	# 'inxi-branch-1' => 'https://github.com/smxi/inxi/raw/one/',
+	# 'inxi-branch-2' => 'https://github.com/smxi/inxi/raw/two/',
+	'inxi-main' => 'https://github.com/smxi/inxi/raw/inxi-perl/',
+	'inxi-man' => "https://github.com/smxi/inxi/raw/master/$self_name.1.gz",
+	);
+	if ( exists $defaults{$type}){
+		return $defaults{$type};
+	}
+	else {
+		error_handler('bad-arg', $arg);
+	}
 }
 
 
@@ -92,7 +109,7 @@ sub update_me {
 }
 
 sub update_man {
-	my $man_file_url="https://github.com/smxi/inxi/raw/master/$self_name.1.gz";
+	my $man_file_url=get_defaults('inxi-man');
 	my $man_file_location=set_man_location();
 	my $man_file_path="$man_file_location/$self_name.1.gz" ;
 	my $output = '';
