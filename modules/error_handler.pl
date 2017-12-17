@@ -33,18 +33,17 @@ sub error_handler {
 	my $message = do {
 		if ( $err eq 'empty' ) { 'empty value' }
 		## Basic rules
-		elsif ( $err eq 'not-tty' ) { $errno=1; "You can't run option $one in IRC client!" }
-		
+		elsif ( 
+			$err eq 'not-in-irc' ) { $errno=1; "You can't run option $one in an IRC client!" }
 		## Internal/external options
 		elsif ( $err eq 'bad-arg' ) { 
 			$errno=10; $b_help=1; "Unsupported value: $two for option: $one" }
 		elsif ( $err eq 'bad-arg-int' ) { 
 			$errno=11; "Bad internal argument: $one" }
 		elsif ( $err eq 'distro-block' ) { 
-			$errno=20; "Option: $one has been blocked by the $self_name distribution maintainer." }
+			$errno=20; "Option: $one has been disabled by the $self_name distribution maintainer." }
 		elsif ( $err eq 'unknown-option' ) { 
 			$errno=21; $b_help=1; "Unsupported option: $one" }
-		
 		## Files:
 		elsif ( $err eq 'downloader-error' ) { 
 			$errno=30; "Error downloading file: $one \nfor download source: $two" }

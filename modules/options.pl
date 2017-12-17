@@ -30,7 +30,7 @@ my (%show,%dl,$debug,%test,$b_weather,$ps_count,$b_update,$output_type,$b_irc);
 
 ## start actual code
 
-sub get_options {
+sub get_options{
 	my (@args) = @_;
 	# my @argv = @ARGV;
 	$show{'short'} = 1;
@@ -258,7 +258,7 @@ sub get_options {
 		$arg ||= '';
 		$show{'short'} = 0;
 		if ( $b_weather ){
-			if ( ! $arg){
+			if ( $arg){
 				$show{'weather'} = 1;
 				$show{'weather-location'} = 1;
 			}
