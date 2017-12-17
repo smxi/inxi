@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: error_handler.pl
-## Version: 1.1
-## Date 2017-12-16
+## Version: 1.2
+## Date 2017-12-17
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -49,14 +49,27 @@ sub error_handler {
 			$errno=30; "Error downloading file: $one \nfor download source: $two" }
 		elsif ( $err eq 'file-corrupt' ) { 
 			$errno=31; "Downloaded file is corrupted: $one" }
+		elsif ( $err eq 'mkdir' ) { 
+			$errno=32; "Error creating directory: $one \nError: $two" }
+		elsif ( $err eq 'not-writable' ) { 
 		elsif ( $err eq 'open' ) { 
 			$errno=32; "Error opening file: $one \nError: $two" }
 		elsif ( $err eq 'not-writable' ) { 
 			$errno=33; "The file: $one is not writable!" }
+		elsif ( $err eq 'remove' ) { 
+			$errno=33; "Failed to remove file: $one Error: $two" }
 		elsif ( $err eq 'rename' ) { 
 			$errno=34; "There was an error moving files: $one\nError: $two" }
 		elsif ( $err eq 'write-error' ) { 
 			$errno=35; "Failed writing file: $one - Error: $two!" }
+		## FTP
+		elsif ( $err eq 'ftp-bad-path' ) { 
+			$errno=50; "Unable to locate for FTP upload file:\n$one" }
+		elsif ( $err eq 'ftp-login' ) { 
+			$errno=50; "There was an error with login to ftp server: $one" }
+		elsif ( $err eq 'ftp-login' ) { 
+			$errno=51; "There was an error with upload to ftp server: $one" }
+		## DEFAULT
 		else {
 			$errno=255; "Error handler ERROR!! Unsupported options: $err!"}
 	};
