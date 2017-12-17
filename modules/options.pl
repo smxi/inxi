@@ -10,16 +10,27 @@ use warnings;
 # use diagnostics;
 use 5.008;
 
+use Getopt::Long qw(GetOptions);
+# Note: default auto_abbrev is enabled, that's fine
+Getopt::Long::Configure ('bundling', 'no_ignore_case', 
+'no_getopt_compat', 'no_auto_abbrev','pass_through');
+
 ## NOTE: Includes dummy sub and variables to allow for running for debugging.
 
 sub error_handler {
 	my ($err, $one, $two) = @_;
-	print "Err: $err Value: $one Value2: $two\n";s
+	print "Err: $err Value: $one Value2: $two\n";
 }
+sub get_defaults {}
+sub set_display_width {}
+sub set_downloader {}
+sub set_perl_downloader {}
+sub update_me {}
+my (%show,%dl,$debug,%test,$b_weather,$ps_count,$b_update,$output_type,$b_irc);
 
 ## start actual code
 
-sub get_options{
+sub get_options {
 	my (@args) = @_;
 	# my @argv = @ARGV;
 	$show{'short'} = 1;
@@ -347,11 +358,5 @@ sub get_options{
 	'<>' => sub {
 		my ($opt) = @_;
 		error_handler('unknown-option', "$opt", "" ); }
-	) or error_handler('unknown-option', "@ARGV", '');
-# 	print "dump\n" . Dumper \@ARGV;
-# 	if ( @ARGV ) {
-# 		error_handler(1, "Uknown option $ARGV[0] given!", "" );
-# 		@ARGV=undef;
-# 	}
-	#@ARGV = @argv; 
+	) ; #or error_handler('unknown-option', "@ARGV", '');
 } 

@@ -16,6 +16,16 @@ use warnings;
 # use diagnostics;
 use 5.008;
 
+## NOTE: Includes dummy sub and variables to allow for running for debugging.
+
+sub print_screen_line {
+	my $line = shift;
+	
+	print "$line\n";
+}
+
+## start actual code
+
 sub error_handler {
 	my ( $err, $one, $two) = @_;
 	my $errno = 0;
@@ -51,9 +61,9 @@ sub error_handler {
 		else {
 			$errno=255; "Error handler ERROR!! Unsupported options: $err!"}
 	};
-	print "Error $errno: $message\n";
+	print_screen_line("Error $errno: $message\n");
 	if ($b_help){
-		print "Check -h for correct parameters.\n";
+		print_screen_line("Check -h for correct parameters.\n");
 	}
 	exit 0;
 }
