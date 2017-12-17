@@ -44,15 +44,16 @@ my $f = 'joe';
 
 ## Start actual logic
 
-# NOTE: perl 5.008 needs package inside quotes.
-# I believe 5.010 introduced option to have it outside quotes as you'd expect
+# NOTE: perl 5.008 needs package inside brackets.
+# I believe 5.010 introduced option to have it outside brackets as you'd expect
 {
 package SystemDebugger;
 
-use Net::FTP;
 use warnings;
 use strict;
 use 5.008;
+use Net::FTP;
+use File::Find;
 
 my $type = 'full';
 
@@ -88,7 +89,7 @@ sub upload_file {
 	print "$host $domain $dir $user $pass\n";
 	print "$file_path\n";
 	
-	if ($host && $file_path){
+	if ($host && ( $file_path && -e $file_path ){
 		# NOTE: important: must explicitly set to passive true/1
 		$ftp = Net::FTP->new($host, Debug => 0, Passive => 1);
 		$ftp->login($user, $pass) || die $ftp->message;
@@ -101,7 +102,7 @@ sub upload_file {
 		print $ftp->message;
 	}
 	else {
-		print "host is empty!!\n";
+		print "host/file path incorrect!!\n";
 	}
 }
 # upload_file('/home/harald/bin/scripts/inxi/svn/branches/inxi-perl/myfile.txt');

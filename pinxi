@@ -576,13 +576,45 @@ sub set_perl_downloader {
 #### -------------------------------------------------------------------
 
 sub error_handler {
-	my ( $num, $one, $two) = @_;
-	print "Error $num: option: $one";
-	if ($two){
-		print " value: $two is incorrect.";
+	my ( $err, $one, $two) = @_;
+	my $errno = 0;
+	my $b_help = 0;
+	my $message = do {
+		if ( $err eq 'empty' ) { 'empty value' }
+		## Basic rules
+		elsif ( $err eq 'not-tty' ) { $errno=1; "You can't run option $one in IRC client!" }
+		
+		## Internal/external options
+		elsif ( $err eq 'bad-arg' ) { 
+			$errno=10; $b_help=1; "Unsupported value: $two for option: $one" }
+		elsif ( $err eq 'bad-arg-int' ) { 
+			$errno=11; "Bad internal argument: $one" }
+		elsif ( $err eq 'distro-block' ) { 
+			$errno=20; "Option: $one has been blocked by the $self_name distribution maintainer." }
+		elsif ( $err eq 'unknown-option' ) { 
+			$errno=21; $b_help=1; "Unsupported option: $one" }
+		
+		## Files:
+		elsif ( $err eq 'downloader-error' ) { 
+			$errno=30; "Error downloading file: $one \nfor download source: $two" }
+		elsif ( $err eq 'file-corrupt' ) { 
+			$errno=31; "Downloaded file is corrupted: $one" }
+		elsif ( $err eq 'open' ) { 
+			$errno=32; "Error opening file: $one \nError: $two" }
+		elsif ( $err eq 'not-writable' ) { 
+			$errno=33; "The file: $one is not writable!" }
+		elsif ( $err eq 'rename' ) { 
+			$errno=34; "There was an error moving files: $one\nError: $two" }
+		elsif ( $err eq 'write-error' ) { 
+			$errno=35; "Failed writing file: $one - Error: $two!" }
+		else {
+			$errno=255; "Error handler ERROR!! Unsupported options: $err!"}
+	};
+	print "Error $errno: $message\n";
+	if ($b_help){
+		print "Check -h for correct parameters.\n";
 	}
-	print "\nCheck -h for correct parameters.\n";
-	exit $num;
+	exit 0;
 }
 
 #### -------------------------------------------------------------------
@@ -603,14 +635,14 @@ sub begin_logging {
 	if ( -f $log_file ){
 		# copy if present second to third
 		if ( -f $log_file_2 ){
-			rename $log_file_2, $log_file_3 or error_handler(3, "$log_file_2 -> $log_file_3", '');
+			rename $log_file_2, $log_file_3 or error_handler('rename', "$log_file_2 -> $log_file_3", "$?");
 		}
 		# then copy initial to second
-		rename $log_file, $log_file_2 or error_handler(3, "$log_file -> $log_file_2", '');
+		rename $log_file, $log_file_2 or error_handler('rename', "$log_file -> $log_file_2", "$?");
 	}
 	# now create the logfile
 	# print "Opening log file for reading: $log_file\n";
-	open $fh_l, '>', $log_file or error_handler(4, $log_file, '');
+	open $fh_l, '>', $log_file or error_handler(4, $log_file, "$?");
 	# and echo the start data
 	$data = $line2;
 	$data = $data . "START $self_name LOGGING:\n";
@@ -709,7 +741,7 @@ sub get_defaults {
 		return $defaults{$type};
 	}
 	else {
-		error_handler('bad-arg', $type);
+		error_handler('bad-arg-int', $type);
 	}
 }
 
@@ -739,10 +771,10 @@ sub update_me {
 	my $full_self_path = "$self_path/$self_name";
 	
 	if ( $b_irc ){
-		error_handler('not-tty', "Sorry, you can't run the $self_name self updater option (-$3) in an IRC client." );;
+		error_handler('not-tty', "-U/--update" )
 	}
 	if ( ! -w $full_self_path ){
-		error_handler('permissions', "Updater $self_name", '');
+		error_handler('not-writable', "$self_name", '');
 	}
 	$output = "${output}Starting $self_name self updater.\n";
 	$output = "${output}Starting $self_name self updater.\n";
@@ -760,7 +792,7 @@ sub update_me {
 		# make sure the whole file got downloaded and is in the variable
 		if ( $file_contents =~ /###\*\*EOF\*\*###/ ){
 			open(my $fh, '>', $full_self_path);
-			print $fh $file_contents or error_handler();
+			print $fh $file_contents or error_handler('write-error', "$full_self_path", "$?" );
 			close $fh;
 			qx( chmod +x '$self_path/$self_name' );
 			set_version_data();
@@ -776,20 +808,12 @@ sub update_me {
 			exit 1;
 		}
 		else {
-			error_handler(16, '');
+			error_handler('file-corrupt', "$self_name");
 		}
 	}
 	# now run the error handlers on any downloader failure
 	else {
-		if ( $download_id eq 'source server' ){
-			error_handler(8, "$downloader_error");
-		}
-		elsif ( $download_id eq 'alt server' ){
-			error_handler( 10, "$self_download");
-		}
-		else {
-			error_handler(12, "$self_download");
-		}
+		error_handler('download-error', $self_download, $download_id);
 	}
 	eval $end;
 }
@@ -1031,7 +1055,7 @@ sub get_options{
 			}
 		}
 		else {
-			error_handler(100,$opt,$arg);
+			error_handler('bad-arg',$opt,$arg);
 		} },
 	'u|uuid' => sub {
 		$show{'short'} = 0;
@@ -1058,11 +1082,11 @@ sub get_options{
 				update_me( $self_download, $download_id );
 			}
 			else {
-				error_handler(18, $opt);
+				error_handler('bad-arg', $opt, $arg);
 			}
 		}
 		else {
-			error_handler(17, $opt);
+			error_handler('distro-block', $opt);
 		} },
 	'v|verbosity:i' => sub {
 		my ($opt,$arg) = @_;
@@ -1116,21 +1140,35 @@ sub get_options{
 			}
 		}
 		else {
-			error_handler(100,$opt,$arg);
+			error_handler('bad-arg',$opt,$arg);
 		} },
 	'V|version' => sub { 
 		$output_type = 'print-basic';
 		show_version(); },
 	'w|weather' => sub {
+		my ($opt) = @_;
 		$show{'short'} = 0;
 		if ( $b_weather ){
 			$show{'weather'} = 1;
+		}
+		else {
+			error_handler('distro-block', $opt);
 		} },
-	'W|weather-location' => sub {
+	'W|weather-location:s' => sub {
+		my ($opt,$arg) = @_;
+		$arg ||= '';
 		$show{'short'} = 0;
 		if ( $b_weather ){
-			$show{'weather'} = 1;
-			$show{'weather-location'} = 1;
+			if ( ! $arg){
+				$show{'weather'} = 1;
+				$show{'weather-location'} = 1;
+			}
+			else {
+				error_handler('bad-arg',$opt,$arg);
+			}
+		}
+		else {
+			error_handler('distro-block', $opt);
 		} },
 	'x|extra:i' => sub {
 		my ($opt,$arg) = @_;
@@ -1146,7 +1184,7 @@ sub get_options{
 			set_display_width($arg);
 		}
 		else {
-			error_handler(21, $opt, $arg);
+			error_handler('bad-arg', $opt, $arg);
 		} },
 	'z|filter' => sub {
 		$show{'filter'} = 1; },
@@ -1193,7 +1231,7 @@ sub get_options{
 			$alts{$arg}->();
 		}
 		else {
-			error_handler(21, $opt, $arg);
+			error_handler('bad-arg', $opt, $arg);
 		}
 		# print "alt $arg\n"; 
 		},
@@ -1203,7 +1241,7 @@ sub get_options{
 			$debug=$arg;
 		}
 		else {
-			error_handler(21, $opt, $arg);
+			error_handler('bad-arg', $opt, $arg);
 		} },
 	'downloader:s' => sub { 
 		my ($opt,$arg) = @_;
@@ -1216,12 +1254,12 @@ sub get_options{
 			set_downloader();
 		}
 		else {
-			error_handler(21, $opt, $arg);
+			error_handler('bad-arg', $opt, $arg);
 		} },
 	'<>' => sub {
 		my ($opt) = @_;
-		error_handler(2, "Unknown argument: $opt", "" ); }
-	) or error_handler(3, 'Unknown Option', '');
+		error_handler('unknown-option', "$opt", "" ); }
+	) or error_handler('unknown-option', "@ARGV", '');
 # 	print "dump\n" . Dumper \@ARGV;
 # 	if ( @ARGV ) {
 # 		error_handler(1, "Uknown option $ARGV[0] given!", "" );
