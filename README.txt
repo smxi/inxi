@@ -2,8 +2,8 @@
 README for development branch of inxi Perl version: pinxi
 ====================================================================
 FILE:    README.txt
-VERSION: 1.3
-DATE:    2017-12-11
+VERSION: 1.4
+DATE:    2017-12-18
 
 NOTE: While the real program name will never change, for the sake
 of clarity, I will refer to the inxi-perl dev branch inxi as pinxi, 
@@ -18,6 +18,11 @@ release in master branch.
 Clone just this branch:
 
 git clone https://github.com/smxi/inxi --branch inxi-perl --single-branch
+
+Install pinxi for testing. Note that the -U option works now so 
+only the initial install is required:
+
+wget -O pinxi https://github.com/smxi/inxi/raw/inxi-perl/pinxi
 
 ====================================================================
 
@@ -108,7 +113,7 @@ Note that my current development goals are, roughly in this order:
    Status: DONE
 
 3. Complete debugger data collector. 
-   Status: not started
+   Status: Basically DONE
 
 4. Complete recommends output. This will wait for longer down the
    road when I actually know what the recommends are.

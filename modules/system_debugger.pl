@@ -397,7 +397,7 @@ ip addr > $data_dir/ip-addr.txt 2>&1
 ");
 }
 sub perl_modules {
-	print "Collecting Perl module data...\n";
+	print "Collecting Perl module data (this can take a while)...\n";
 	my @modules = ();
 	my $mods = '';
 	my $filename = 'perl-modules.txt';
