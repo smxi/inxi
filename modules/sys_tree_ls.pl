@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 ## File: sys_tree_ls.pl
-## Version: 1.0
-## Date 2017-12-08
+## Version: 1.1
+## Date 2017-12-17
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 ##
@@ -20,7 +20,12 @@ my $max_depth = $dir->traverse(sub {
   return max($cont->($depth + 1), $depth);
 }, 0);
 
-sub max { my $max = 0; for (@_) { $max = $_ if $_ > $max } $max };
+sub max { 
+	my $max = 0; 
+	for (@_) { 
+		$max = $_ if $_ > $max 
+	} $max 
+};
 
 my @output = ( sprintf("%-43s|%s", " Name", " mtime"),
                sprintf("%-43s|%s", '-' x 43, '-' x 11) );

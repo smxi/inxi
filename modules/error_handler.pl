@@ -51,7 +51,6 @@ sub error_handler {
 			$errno=31; "Downloaded file is corrupted: $one" }
 		elsif ( $err eq 'mkdir' ) { 
 			$errno=32; "Error creating directory: $one \nError: $two" }
-		elsif ( $err eq 'not-writable' ) { 
 		elsif ( $err eq 'open' ) { 
 			$errno=32; "Error opening file: $one \nError: $two" }
 		elsif ( $err eq 'not-writable' ) { 

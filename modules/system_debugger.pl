@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: system_debugger.pl
-## Version: 1.1
-## Date 2017-12-16
+## Version: 1.4
+## Date 2017-12-17
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -10,6 +10,7 @@ my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2017-12-11';
 my $self_patch='022-p';
+my $self_path = "$ENV{'HOME'}/bin/scripts/inxi/svn/branches/inxi-perl";
 
 use strict;
 use warnings;
@@ -44,15 +45,34 @@ sub get_defaults {
 }
 sub check_recommends {}
 sub get_repo_data {}
+sub check_program { return 1; }
 
 my $f = 'joe';
 my $bsd_type = '';
-my $bsd_version = '';
+my $os = '';
+my $b_display = 1;
 my $b_root = 0;
 my $b_irc = 0;
-my $self_data_dir = "$ENV{'HOME'}/.local/share/$self_name/";
+my $self_data_dir = "$ENV{'HOME'}/.local/share/$self_name";
 my %size;
 $size{'inner'} = 90;
+
+my %files = (
+'asound-cards'   => '/proc/asound/cards',
+'asound-modules' => '/proc/asound/modules',
+'asound-version' => '/proc/asound/version',
+'cpuinfo'        => '/proc/cpuinfo',
+'dmesg-boot'     => '/var/run/dmesg.boot',
+'lsb-release'    => '/etc/lsb-release',
+'mdstat'         => '/proc/mdstat',
+'meminfo'        => '/proc/meminfo',
+'modules'        => '/proc/modules',
+'mounts'         => '/proc/mounts',
+'os-release'     => '/etc/os-release',
+'partitions'     => '/proc/partitions',
+'scsi'           => '/proc/scsi/scsi',
+'xorg-log'       => '/var/log/Xorg.0.log' # or xset path
+);
 
 my $line1 = "----------------------------------------------------------------------\n";
 my $line2 = "======================================================================\n";
@@ -88,8 +108,8 @@ sub new {
 	my $class = shift;
 	($type) = @_;
 	my $self = {};
-	print "$f\n";
-	print "$type\n";
+	# print "$f\n";
+	# print "$type\n";
 	return bless $self, $class;
 }
 
@@ -99,11 +119,17 @@ sub run_debugger {
 	print "Note: for dmidecode data you must be root.\n" if $b_root;
 	print $line3;
 	disk_data();
+	display_data();
 	network_data();
 	perl_modules();
 	system_data();
 	system_files();
+	print $line3;
+	sys_tree();
 	sys_traverse_data();
+	print $line3;
+	run_self();
+	print $line3;
 	compress_dir();
 }
 
@@ -128,19 +154,18 @@ sub create_debug_directory {
 	if ($b_root){
 		$root_string = '-root';
 	}
-	
 	if ( $bsd_type ){
-		$bsd_string = "-$bsd_type-$bsd_version";
+		$bsd_string = "-$bsd_type-$os";
 	}
 	$debug_dir = "$self_name$bsd_string-$host-$today$root_string";
 	$debug_gz = "$debug_dir.tar.gz";
-	$data_dir = "$self_data_dir$debug_dir";
+	$data_dir = "$self_data_dir/$debug_dir";
 	if ( -d $data_dir ){
-		unlink $data_dir or main::error_handler('remove', "$data_dir", "$?");
+		unlink $data_dir or main::error_handler('remove', "$data_dir", "$!");
 	}
-	mkdir $data_dir or main::error_handler('mkdir', "$data_dir", "$?");
+	mkdir $data_dir or main::error_handler('mkdir', "$data_dir", "$!");
 	if ( -e "$self_data_dir$debug_gz" ){
-		unlink "$self_data_dir$debug_gz" or main::error_handler('remove', "$self_data_dir$debug_gz", "$?");
+		unlink "$self_data_dir$debug_gz" or main::error_handler('remove', "$self_data_dir/$debug_gz", "$!");
 	}
 	print "Data going into: $data_dir\n";
 }
@@ -149,62 +174,198 @@ sub compress_dir {
 	system("cd $self_data_dir
 tar -czf $debug_gz $debug_dir
 ");
+	print "Removing $data_dir...\n";
+	# unlink $data_dir;
 }
 ## NOTE: >/dev/null 2>&1 is sh, and &>/dev/null is bash, fix this
+# ls -w 1 /sysrs > tester 2>&1
 sub disk_data {
 	print "Collecting dev, label, disk, uuid data, df...\n";
 	no warnings 'uninitialized';
 	system("PATH=$ENV{'PATH'}
-ls -l /dev &> $data_dir/dev-data.txt
-ls -l /dev/disk &> $data_dir/dev-disk-data.txt
-ls -l /dev/disk/by-id &> $data_dir/dev-disk-id-data.txt
-ls -l /dev/disk/by-label &> $data_dir/dev-disk-label-data.txt
-ls -l /dev/disk/by-uuid &> $data_dir/dev-disk-uuid-data.txt
+ls -l /dev > $data_dir/dev-data.txt 2>&1
+ls -l /dev/disk > $data_dir/dev-disk-data.txt 2>&1
+ls -l /dev/disk/by-id > $data_dir/dev-disk-id-data.txt 2>&1
+ls -l /dev/disk/by-label > $data_dir/dev-disk-label-data.txt 2>&1
+ls -l /dev/disk/by-uuid > $data_dir/dev-disk-uuid-data.txt 2>&1
 # http://comments.gmane.org/gmane.linux.file-systems.zfs.user/2032
-ls -l /dev/disk/by-wwn &> $data_dir/dev-disk-wwn-data.txt
-ls -l /dev/disk/by-path &> $data_dir/dev-disk-path-data.txt
-ls -l /dev/mapper &> $data_dir/dev-disk-mapper-data.txt
-readlink /dev/root &> $data_dir/dev-root.txt
-df -h -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs &> $data_dir/df-h-T-P-excludes.txt
-df -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs &> $data_dir/df-T-P-excludes.txt
-df -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs --total &> $data_dir/df-T-P-excludes-total.txt
-df -h -T &> $data_dir/bsd-df-h-T-no-excludes.txt
+ls -l /dev/disk/by-wwn > $data_dir/dev-disk-wwn-data.txt 2>&1
+ls -l /dev/disk/by-path > $data_dir/dev-disk-path-data.txt 2>&1
+ls -l /dev/mapper > $data_dir/dev-disk-mapper-data.txt 2>&1
+readlink /dev/root > $data_dir/dev-root.txt 2>&1
+df -h -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs > $data_dir/df-h-T-P-excludes.txt 2>&1
+df -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs > $data_dir/df-T-P-excludes.txt 2>&1
+df -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs --total > $data_dir/df-T-P-excludes-total.txt 2>&1
+df -h -T > $data_dir/bsd-df-h-T-no-excludes.txt 2>&1
 df -h &> $data_dir/bsd-df-h-no-excludes.txt
-df -k -T &> $data_dir/bsd-df-k-T-no-excludes.txt
-df -k &> $data_dir/bsd-df-k-no-excludes.txt
-atacontrol list &> $data_dir/bsd-atacontrol-list.txt
-camcontrol devlist &> $data_dir/bsd-camcontrol-devlist.txt
+df -k -T > $data_dir/bsd-df-k-T-no-excludes.txt 2>&1
+df -k > $data_dir/bsd-df-k-no-excludes.txt 2>&1
+atacontrol list > $data_dir/bsd-atacontrol-list.txt 2>&1
+camcontrol devlist > $data_dir/bsd-camcontrol-devlist.txt 2>&1
 # bsd tool
-mount &> $data_dir/mount.txt
-btrfs filesystem show  &> $data_dir/btrfs-filesystem-show.txt
-btrfs filesystem show --mounted  &> $data_dir/btrfs-filesystem-show-mounted.txt
-# btrfs filesystem show --all-devices  &> $data_dir/btrfs-filesystem-show-all-devices.txt
-gpart list &> $data_dir/bsd-gpart-list.txt
-gpart show &> $data_dir/bsd-gpart-show.txt
-gpart status &> $data_dir/bsd-gpart-status.txt
-swapctl -l -k &> $data_dir/bsd-swapctl-l-k.txt
-swapon -s &> $data_dir/swapon-s.txt
-sysctl -b kern.geom.conftxt &> $data_dir/bsd-sysctl-b-kern.geom.conftxt.txt
-sysctl -b kern.geom.confxml &> $data_dir/bsd-sysctl-b-kern.geom.confxml.txt
-zfs list &> $data_dir/zfs-list.txt
-zpool list &> $data_dir/zpool-list.txt
-zpool list -v &> $data_dir/zpool-list-v.txt
-df -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 &> $data_dir/df-P-excludes.txt
-df -P &> $data_dir/bsd-df-P-no-excludes.txt
-cat /proc/mdstat &> $data_dir/proc-mdstat.txt
-cat /proc/partitions &> $data_dir/proc-partitions.txt
-cat /proc/scsi/scsi &> $data_dir/proc-scsi.txt
-cat /proc/mounts &> $data_dir/proc-mounts.txt
-cat /proc/mdstat &> $data_dir/proc-mdstat.txt
-cat /proc/sys/dev/cdrom/info &> $data_dir/proc-cdrom-info.txt
-ls /proc/ide/ &> $data_dir/proc-ide.txt
-cat /proc/ide/*/* &> $data_dir/proc-ide-hdx-cat.txt
-cat /etc/fstab &> $data_dir/etc-fstab.txt
-cat /etc/mtab &> $data_dir/etc-mtab.txt
-if which nvme &>/dev/null; then
+mount > $data_dir/mount.txt 2>&1
+btrfs filesystem show  > $data_dir/btrfs-filesystem-show.txt 2>&1
+btrfs filesystem show --mounted  > $data_dir/btrfs-filesystem-show-mounted.txt 2>&1
+# btrfs filesystem show --all-devices > $data_dir/btrfs-filesystem-show-all-devices.txt 2>&1
+gpart list > $data_dir/bsd-gpart-list.txt 2>&1
+gpart show > $data_dir/bsd-gpart-show.txt 2>&1
+gpart status > $data_dir/bsd-gpart-status.txt 2>&1
+swapctl -l -k > $data_dir/bsd-swapctl-l-k.txt 2>&1
+swapon -s > $data_dir/swapon-s.txt 2>&1
+sysctl -b kern.geom.conftxt > $data_dir/bsd-sysctl-b-kern.geom.conftxt.txt 2>&1
+sysctl -b kern.geom.confxml > $data_dir/bsd-sysctl-b-kern.geom.confxml.txt 2>&1
+zfs list > $data_dir/zfs-list.txt 2>&1
+zpool list > $data_dir/zpool-list.txt 2>&1
+zpool list -v > $data_dir/zpool-list-v.txt 2>&1
+df -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 > $data_dir/df-P-excludes.txt 2>&1
+df -P &> $data_dir/bsd-df-P-no-excludes.txt 2>&1
+cat /proc/mdstat > $data_dir/proc-mdstat.txt 2>&1
+cat /proc/partitions > $data_dir/proc-partitions.txt 2>&1
+cat /proc/scsi/scsi > $data_dir/proc-scsi.txt 2>&1
+cat /proc/mounts > $data_dir/proc-mounts.txt 2>&1
+cat /proc/mdstat > $data_dir/proc-mdstat.txt 2>&1
+cat /proc/sys/dev/cdrom/info > $data_dir/proc-cdrom-info.txt 2>&1
+ls /proc/ide/ > $data_dir/proc-ide.txt 2>&1
+cat /proc/ide/*/* > $data_dir/proc-ide-hdx-cat.txt 2>&1
+cat /etc/fstab > $data_dir/etc-fstab.txt 2>&1
+cat /etc/mtab > $data_dir/etc-mtab.txt 2>&1
+if which nvme >/dev/null 2>&1; then
 	touch $data_dir/nvme-present
 else
 	touch $data_dir/nvme-absent
+fi
+");
+}
+sub display_data {
+	if ( ! $b_display ){
+		print "Warning: only some of the data collection can occur if you are not in X\n";
+		system("touch $data_dir/warning-user-not-in-x");
+	}
+	if ( $b_root ){
+		print "Warning: only some of the data collection can occur if you are running as Root user\n";
+		system("touch $data_dir/warning-root-user");
+	}
+	print "Collecting Xorg log and xorg.conf files...\n";
+# 	if [ -n $( ls /etc/X11/xorg.conf.d/ 2>/dev/null ) ]];then
+# 		ls /etc/X11/xorg.conf.d &> $data_dir/ls-etc-x11-xorg-conf-d.txt
+# 		xorg_d_files=$(ls /etc/X11/xorg.conf.d)
+# 		for xorg_file in $xorg_d_files
+# 		do
+# 			cat /etc/X11/xorg.conf.d/$xorg_file &> $data_dir/xorg-conf-d-$xorg_file.txt
+# 		done
+# 	else
+# 		touch $data_dir/xorg-conf-d-files-absent
+# 	fi
+	no warnings 'uninitialized';
+	system("PATH=$ENV{'PATH'}
+if [[ -e $files{'xorg-log'} ]];then
+	cat $files{'xorg-log'} > $data_dir/xorg-log-file.txt 2>&1
+else
+	touch $data_dir/xorg-log-file-absent
+fi
+if [ -e /etc/X11/xorg.conf ];then
+	cat /etc/X11/xorg.conf > $data_dir/xorg-conf.txt 2>&1
+else
+	touch $data_dir/xorg-conf-file-absent
+fi
+");
+	print "Collecting X, xprop, glxinfo, xrandr, xdpyinfo data, wayland, weston...\n";
+	no warnings 'uninitialized';
+	system("PATH=$ENV{'PATH'}
+if which weston-info >/dev/null 2>&1; then
+	weston-info > $data_dir/weston-info.txt 2>&1
+else
+	touch $data_dir/weston-info-absent
+fi
+if which weston >/dev/null 2>&1; then
+	weston --version > $data_dir/weston-version.txt 2>&1
+else
+	touch $data_dir/weston-absent
+fi
+if which xprop >/dev/null 2>&1; then
+	xprop -root > $data_dir/xprop_root.txt 2>&1
+else
+	touch $data_dir/xprop-absent
+fi
+if which glxinfo >/dev/null 2>&1; then
+	glxinfo > $data_dir/glxinfo-full.txt 2>&1
+	glxinfo -B > $data_dir/glxinfo-B.txt 2>&1
+else
+	touch $data_dir/glxinfo-absent
+fi
+if which xdpyinfo >/dev/null 2>&1; then
+	xdpyinfo > $data_dir/xdpyinfo.txt 2>&1
+else
+	touch $data_dir/xdpyinfo-absent
+fi
+if which xrandr >/dev/null 2>&1; then
+	xrandr > $data_dir/xrandr.txt 2>&1
+else
+	touch $data_dir/xrandr-absent
+fi
+if which X >/dev/null 2>&1; then
+	X -version > $data_dir/x-version.txt 2>&1
+else
+	touch $data_dir/x-absent
+fi
+if which Xorg >/dev/null 2>&1; then
+	Xorg -version > $data_dir/xorg-version.txt 2>&1
+else
+	touch $data_dir/xorg-absent
+fi
+echo $ENV{'GNOME_DESKTOP_SESSION_ID'} > $data_dir/gnome-desktop-session-id.txt 2>&1
+# kde 3 id
+echo $ENV{'KDE_FULL_SESSION'} > $data_dir/kde3-full-session.txt 2>&1
+echo $ENV{'KDE_SESSION_VERSION'} > $data_dir/kde-gte-4-session-version.txt 2>&1
+if which kf5-config >/dev/null 2>&1; then
+	kf5-config --version > $data_dir/kde-kf5-config-version-data.txt 2>&1
+elif which kf6-config >/dev/null 2>&1; then
+	kf6-config --version > $data_dir/kde-kf6-config-version-data.txt 2>&1
+elif which kf$ENV{'KDE_SESSION_VERSION'}-config >/dev/null 2>&1; then
+	kf$ENV{'KDE_SESSION_VERSION'}-config --version > $data_dir/kde-kf$ENV{'KDE_SESSION_VERSION'}-KSV-config-version-data.txt 2>&1
+else
+	touch $data_dir/kde-kf-config-absent
+fi
+if which plasmashell >/dev/null 2>&1; then
+	plasmashell --version > $data_dir/kde-plasmashell-version-data.txt 2>&1
+else
+	touch $data_dir/kde-plasmashell-absent
+fi
+if which kwin_x11 >/dev/null 2>&1; then
+	kwin_x11 --version > $data_dir/kde-kwin_x11-version-data.txt 2>&1
+else
+	touch $data_dir/kde-kwin_x11-absent
+fi
+if which kded4 >/dev/null 2>&1; then
+	kded4 --version > $data_dir/kded4-version-data.txt 2>&1
+elif which kded5 >/dev/null 2>&1; then
+	kded5 --version > $data_dir/kded5-version-data.txt 2>&1
+elif which kded >/dev/null 2>&1; then
+	kded --version > $data_dir/kded-version-data.txt 2>&1
+else
+	touch $data_dir/kded-$ENV{'KDE_SESSION_VERSION'}-absent
+fi
+# kde 5/plasma desktop 5, this is maybe an extra package and won't be used
+if which about-distro >/dev/null 2>&1; then
+	about-distro > $data_dir/kde-about-distro.txt 2>&1
+else
+	touch $data_dir/kde-about-distro-absent
+fi
+echo $ENV{'XDG_CURRENT_DESKTOP'} > $data_dir/xdg-current-desktop.txt 2>&1
+echo $ENV{'XDG_SESSION_DESKTOP'} > $data_dir/xdg-session-desktop.txt 2>&1
+echo $ENV{'DESKTOP_SESSION'} > $data_dir/desktop-session.txt 2>&1
+echo $ENV{'GDMSESSION'} > $data_dir/gdmsession.txt 2>&1
+# wayland data collectors:
+echo $ENV{'XDG_SESSION_TYPE'} > $data_dir/xdg-session-type.txt 2>&1
+echo $ENV{'WAYLAND_DISPLAY'} > $data_dir/wayland-display.txt 2>&1
+echo $ENV{'GDK_BACKEND'} > $data_dir/gdk-backend.txt 2>&1
+echo $ENV{'QT_QPA_PLATFORM'} > $data_dir/qt-qpa-platform.txt 2>&1
+echo $ENV{'CLUTTER_BACKEND'} > $data_dir/clutter-backend.txt 2>&1
+echo $ENV{'SDL_VIDEODRIVER'} > $data_dir/sdl-videodriver.txt 2>&1
+if which loginctl >/dev/null 2>&1;then
+	loginctl --no-pager list-sessions > $data_dir/loginctl-list-sessions.txt 2>&1
+else
+	touch $data_dir/loginctl-absent
 fi
 ");
 }
@@ -212,8 +373,8 @@ sub network_data {
 	print "Collecting networking data...\n";
 	no warnings 'uninitialized';
 	system("PATH=$ENV{'PATH'}
-ifconfig &> $data_dir/ifconfig.txt
-ip addr &> $data_dir/ip-addr.txt
+ifconfig > $data_dir/ifconfig.txt 2>&1
+ip addr > $data_dir/ip-addr.txt 2>&1
 ");
 }
 sub perl_modules {
@@ -240,86 +401,86 @@ sub system_data {
 	system("PATH=$ENV{'PATH'}
 # bsd tools http://cb.vu/unixtoolbox.xhtml
 # freebsd
-if which pciconf &>/dev/null;then
-	pciconf -l -cv &> $data_dir/bsd-pciconf-cvl.txt
-	pciconf -vl &> $data_dir/bsd-pciconf-vl.txt
-	pciconf -l &> $data_dir/bsd-pciconf-l.txt
+if which pciconf >/dev/null 2>&1;then
+	pciconf -l -cv > $data_dir/bsd-pciconf-cvl.txt 2>&1
+	pciconf -vl > $data_dir/bsd-pciconf-vl.txt 2>&1
+	pciconf -l > $data_dir/bsd-pciconf-l.txt 2>&1
 else
 	touch $data_dir/bsd-pciconf-absent
 fi
 # openbsd
-if which pcidump &>/dev/null;then
-	pcidump &> $data_dir/bsd-pcidump-openbsd.txt
-	pcidump -v &> $data_dir/bsd-pcidump-v-openbsd.txt
+if which pcidump >/dev/null 2>&1;then
+	pcidump > $data_dir/bsd-pcidump-openbsd.txt 2>&1
+	pcidump -v > $data_dir/bsd-pcidump-v-openbsd.txt 2>&1
 else
 	touch $data_dir/bsd-pcidump-openbsd-absent
 fi
 # netbsd
-if which pcictl &>/dev/null;then
-	pcictl list &> $data_dir/bsd-pcictl-list-netbsd.txt
-	pcictl list -n &> $data_dir/bsd-pcictl-list-n-netbsd.txt
+if which pcictl >/dev/null 2>&1;then
+	pcictl list > $data_dir/bsd-pcictl-list-netbsd.txt 2>&1
+	pcictl list -n > $data_dir/bsd-pcictl-list-n-netbsd.txt 2>&1
 else
 	touch $data_dir/bsd-pcictl-netbsd-absent
 fi
-if which sysctl &>/dev/null;then
-	sysctl -a &> $data_dir/bsd-sysctl-a.txt
+if which sysctl >/dev/null 2>&1;then
+	sysctl -a > $data_dir/bsd-sysctl-a.txt 2>&1
 else
 	touch $data_dir/bsd-sysctl-absent
 fi
-if which usbdevs &>/dev/null;then
-	usbdevs -v  &> $data_dir/bsd-usbdevs-v.txt
+if which usbdevs >/dev/null 2>&1;then
+	usbdevs -v > $data_dir/bsd-usbdevs-v.txt 2>&1
 else
 	touch $data_dir/bsd-usbdevs-absent
 fi
-if which kldstat &>/dev/null;then
-	kldstat  &> $data_dir/bsd-kldstat.txt
+if which kldstat >/dev/null 2>&1;then
+	kldstat > $data_dir/bsd-kldstat.txt 2>&1
 else
 	touch $data_dir/bsd-kldstat-absent
 fi
 # diskinfo -v <disk>
 # fdisk <disk>
-dmidecode &> $data_dir/dmidecode.txt
-dmesg &> $data_dir/dmesg.txt
-lscpu &> $data_dir/lscpu.txt
-lspci &> $data_dir/lspci.txt
-lspci -k &> $data_dir/lspci-k.txt
-lspci -knn &> $data_dir/lspci-knn.txt
-lspci -n &> $data_dir/lspci-n.txt
-lspci -nn &> $data_dir/lspci-nn.txt
-lspci -mm &> $data_dir/lspci-mm.txt
-lspci -mmnn &> $data_dir/lspci-mmnn.txt
-lspci -mmnnv &> $data_dir/lspci-mmnnv.txt
-lspci -v &> $data_dir/lspci-v.txt
-lsusb &> $data_dir/lsusb.txt
-if which hciconfig &>/dev/null;then
-	hciconfig -a &> $data_dir/hciconfig-a.txt
+dmidecode &> $data_dir/dmidecode.txt 2>&1
+dmesg > $data_dir/dmesg.txt 2>&1
+lscpu > $data_dir/lscpu.txt 2>&1
+lspci > $data_dir/lspci.txt 2>&1
+lspci -k > $data_dir/lspci-k.txt 2>&1
+lspci -knn > $data_dir/lspci-knn.txt 2>&1
+lspci -n > $data_dir/lspci-n.txt 2>&1
+lspci -nn > $data_dir/lspci-nn.txt 2>&1
+lspci -mm > $data_dir/lspci-mm.txt 2>&1
+lspci -mmnn > $data_dir/lspci-mmnn.txt 2>&1
+lspci -mmnnv > $data_dir/lspci-mmnnv.txt 2>&1
+lspci -v > $data_dir/lspci-v.txt 2>&1
+lsusb > $data_dir/lsusb.txt 2>&1
+if which hciconfig >/dev/null 2>&1;then
+	hciconfig -a > $data_dir/hciconfig-a.txt 2>&1
 else
 	touch $data_dir/hciconfig-absent
 fi
-ps aux &> $data_dir/ps-aux.txt
-ps -e &> $data_dir/ps-e.txt
-ps -p 1 &> $data_dir/ps-p-1.txt
-runlevel &> $data_dir/runlevel.txt
-if which rc-status &>/dev/null;then
-	rc-status -a &> $data_dir/rc-status-a.txt
-	rc-status -l &> $data_dir/rc-status-l.txt
-	rc-status -r &> $data_dir/rc-status-r.txt
+ps aux > $data_dir/ps-aux.txt 2>&1
+ps -e > $data_dir/ps-e.txt 2>&1
+ps -p 1 > $data_dir/ps-p-1.txt 2>&1
+runlevel > $data_dir/runlevel.txt 2>&1
+if which rc-status >/dev/null 2>&1;then
+	rc-status -a > $data_dir/rc-status-a.txt 2>&1
+	rc-status -l > $data_dir/rc-status-l.txt 2>&1
+	rc-status -r > $data_dir/rc-status-r.txt 2>&1
 else
 	touch $data_dir/rc-status-absent
 fi
-if which systemctl &>/dev/null;then
-	systemctl list-units &> $data_dir/systemctl-list-units.txt
-	systemctl list-units --type=target &> $data_dir/systemctl-list-units-target.txt
+if which systemctl >/dev/null 2>&1;then
+	systemctl list-units > $data_dir/systemctl-list-units.txt 2>&1
+	systemctl list-units --type=target > $data_dir/systemctl-list-units-target.txt 2>&1
 else
 	touch $data_dir/systemctl-absent
 fi
-if which initctl &>/dev/null;then
-	initctl list &> $data_dir/initctl-list.txt
+if which initctl >/dev/null 2>&1;then
+	initctl list > $data_dir/initctl-list.txt 2>&1
 else
 	touch $data_dir/initctl-absent
 fi
-sensors &> $data_dir/sensors.txt
-if which strings &>/dev/null;then
+sensors > $data_dir/sensors.txt 2>&1
+if which strings >/dev/null 2>&1;then
 	touch $data_dir/strings-present
 else
 	touch $data_dir/strings-absent
@@ -328,26 +489,26 @@ fi
 # support strings --version, but will just simply hang at that command
 # which you can duplicate by simply typing: strings then hitting enter, you will get hang.
 # strings --version  &> $data_dir/strings.txt
-if which nvidia-smi &>/dev/null;then
-	nvidia-smi -q &> $data_dir/nvidia-smi-q.txt
-	nvidia-smi -q -x &> $data_dir/nvidia-smi-xq.txt
+if which nvidia-smi >/dev/null 2>&1;then
+	nvidia-smi -q > $data_dir/nvidia-smi-q.txt 2>&1
+	nvidia-smi -q -x > $data_dir/nvidia-smi-xq.txt 2>&1
 else
 	touch $data_dir/nvidia-smi-absent
 fi
-echo $ENV{'CC'} &> $data_dir/cc-content.txt
-ls /usr/bin/gcc* &> $data_dir/gcc-sys-versions.txt
-if which gcc &>/dev/null;then
-	gcc --version &> $data_dir/gcc-version.txt
+echo $ENV{'CC'} > $data_dir/cc-content.txt 2>&1
+ls /usr/bin/gcc* > $data_dir/gcc-sys-versions.txt 2>&1
+if which gcc >/dev/null 2>&1;then
+	gcc --version > $data_dir/gcc-version.txt 2>&1
 else
 	touch $data_dir/gcc-absent
 fi
-if which clang &>/dev/null;then
-	clang --version &> $data_dir/clang-version.txt
+if which clang >/dev/null 2>&1;then
+	clang --version > $data_dir/clang-version.txt 2>&1
 else
 	touch $data_dir/clang-absent
 fi
-if which systemd-detect-virt &>/dev/null;then
-	systemd-detect-virt &> $data_dir/systemd-detect-virt-info.txt
+if which systemd-detect-virt >/dev/null 2>&1;then
+	systemd-detect-virt > $data_dir/systemd-detect-virt-info.txt 2>&1
 else
 	touch $data_dir/systemd-detect-virt-absent
 fi
@@ -358,16 +519,17 @@ sub system_files {
 	# main::get_repo_data($data_dir);
 	# main::check_recommends() &> $data_dir/check-recommends.txt
 	no warnings 'uninitialized';
-# id_dir='/sys/class/power_supply/' 
-# ids=$( ls \$id_dir 2>/dev/null )
-# if [[ -n $ids ]];then
-# 	for batid in \$ids 
-# 	do
-# 		cat $id_dir$batid'/uevent' &> $data_dir/sys-power-supply-$batid.txt
-# 	done
-# else
-# 	touch $data_dir/sys-power-supply-none
-# fi
+	my $id_dir='/sys/class/power_supply/';
+	my $ids=qx( ls $id_dir 2>/dev/null );
+	if ($ids){
+		foreach ($ids){
+			system("cat $id_dir$_/uevent > $data_dir/sys-power-supply-$_.txt 2>&1");
+		}
+	}
+	else {
+		system("touch $data_dir/sys-power-supply-none");
+	}
+
 # if which shopt &>/dev/null;then
 # 	shopt -s nullglob
 # 	a_distro_ids=(/etc/*[-_]{release,version})
@@ -382,38 +544,112 @@ sub system_files {
 # fi
 	
 	system("PATH=$ENV{'PATH'}
-cat /proc/1/comm &> $data_dir/proc-1-comm.txt
-head -n 1 /proc/asound/card*/codec* &> $data_dir/proc-asound-card-codec.txt
-if [[ -f /proc/version ]];then
-	cat /proc/version &> $data_dir/proc-version.txt
+cat /proc/1/comm > $data_dir/proc-1-comm.txt 2>&1
+head -n 1 /proc/asound/card*/codec* > $data_dir/proc-asound-card-codec.txt 2>&1
+if [ -f /proc/version ];then
+	cat /proc/version > $data_dir/proc-version.txt 2>&1
 else
 	touch $data_dir/proc-version-absent
 fi
-cat /etc/src.conf &> $data_dir/bsd-etc-src-conf.txt
-cat /etc/make.conf &> $data_dir/bsd-etc-make-conf.txt
-cat /etc/issue &> $data_dir/etc-issue.txt
-cat /etc/lsb-release &> $data_dir/lsb-release.txt
-cat /etc/os-release &> $data_dir/os-release.txt
-cat /proc/asound/cards &> $data_dir/proc-asound-device.txt
-cat /proc/asound/version &> $data_dir/proc-asound-version.txt
-cat /proc/cpuinfo &> $data_dir/proc-cpu-info.txt
-cat /proc/meminfo &> $data_dir/proc-meminfo.txt
-cat /proc/modules &> $data_dir/proc-modules.txt
-cat /proc/net/arp &> $data_dir/proc-net-arp.txt 
+cat /etc/src.conf > $data_dir/bsd-etc-src-conf.txt 2>&1
+cat /etc/make.conf > $data_dir/bsd-etc-make-conf.txt 2>&1
+cat /etc/issue > $data_dir/etc-issue.txt 2>&1
+cat /etc/lsb-release > $data_dir/lsb-release.txt 2>&1
+cat /etc/os-release > $data_dir/os-release.txt 2>&1
+cat /proc/asound/cards > $data_dir/proc-asound-device.txt 2>&1
+cat /proc/asound/version > $data_dir/proc-asound-version.txt 2>&1
+cat /proc/cpuinfo > $data_dir/proc-cpu-info.txt 2>&1
+cat /proc/meminfo > $data_dir/proc-meminfo.txt 2>&1
+cat /proc/modules > $data_dir/proc-modules.txt 2>&1
+cat /proc/net/arp > $data_dir/proc-net-arp.txt  2>&1
 # bsd data
-cat /var/run/dmesg.boot &> $data_dir/bsd-var-run-dmesg.boot.txt 
-echo $size{'inner'} &> $data_dir/cols-inner.txt
-echo $ENV{'XDG_CONFIG_HOME'} &> $data_dir/xdg_config_home.txt
-echo $ENV{'XDG_CONFIG_DIRS'} &> $data_dir/xdg_config_dirs.txt
-echo $ENV{'XDG_DATA_HOME'} &> $data_dir/xdg_data_home.txt
-echo $ENV{'XDG_DATA_DIRS'} &> $data_dir/xdg_data_dirs.txt
+cat /var/run/dmesg.boot > $data_dir/bsd-var-run-dmesg.boot.txt  2>&1
+echo $size{'inner'} > $data_dir/cols-inner.txt 2>&1
+echo $ENV{'XDG_CONFIG_HOME'} > $data_dir/xdg_config_home.txt 2>&1
+echo $ENV{'XDG_CONFIG_DIRS'} > $data_dir/xdg_config_dirs.txt 2>&1
+echo $ENV{'XDG_DATA_HOME'} > $data_dir/xdg_data_home.txt 2>&1
+echo $ENV{'XDG_DATA_DIRS'} > $data_dir/xdg_data_dirs.txt 2>&1
 # just on the off chance bsds start having a fake /sys
-ls -w 1 /sys &> $data_dir/sys-ls-1.txt
+ls -w 1 /sys > $data_dir/sys-tree-ls-1-basic.txt 2>&1
 ");
 }
 
+sub run_self {
+	print "Creating $self_name output file now. This can take a few seconds...\n";
+	print "Starting $self_name from: $self_path\n";
+	my $cmd = "$self_path/$self_name -FRfrploudmxxx -c 0 --debug=10 -y 120 > $data_dir/inxi-FRfrploudmxxxy120.txt";
+	system($cmd);
+}
+
+sub sys_tree {
+	print "Constructing /sys tree data...\n";
+	if ( main::check_program('tree') ){
+		my $dirname = '/sys';
+		my $cmd;
+		system("tree -a -L 10 /sys > $data_dir/sys-tree-full-10.txt");
+		opendir my($dh), $dirname or die "Couldn't open dir '$dirname': $!";
+		my @files = readdir $dh;
+		closedir $dh;
+		foreach (@files){
+			next if /^\./;
+			$cmd = "tree -a -L 10 $dirname/$_ > $data_dir/sys-tree-$_-10.txt";
+			#print "$cmd\n";
+			system($cmd);
+		}
+	}
+	else {
+		sys_ls(1);
+		sys_ls(2);
+		sys_ls(3);
+		sys_ls(4);
+	}
+}
+sub sys_ls {
+	my ( $depth) = @_;
+	my $cmd = do {
+		if ( $depth == 1 ){ '/sys/' }
+		elsif ( $depth == 2 ){ 'ls -l /sys/*/ 2>/dev/null' }
+		elsif ( $depth == 3 ){ 'ls -l /sys/*/*/ 2>/dev/null' }
+		elsif ( $depth == 4 ){ 'ls -l /sys/*/*/*/ 2>/dev/null' }
+		elsif ( $depth == 5 ){ 'ls -l /sys/*/*/*/*/ 2>/dev/null' }
+		elsif ( $depth == 5 ){ 'ls -l /sys/*/*/*/*/ 2>/dev/null' }
+	};
+	my @working = ();
+	my $output = '';
+	my ($line, $type, $fh);
+	my $result = qx($cmd);
+	open $fh, '<', \$result or die $!;
+	while ( $line = <$fh> ){
+		chomp($line);
+		$line =~ s/^\s+|\s+$//g;
+		@working = split /\s+/, $line;
+		$working[0] ||= '';
+		if ( scalar @working > 7 ){
+			if ($working[0] =~ /^d/ ){
+				$type = "d - ";
+			}
+			elsif ($working[0] =~ /^l/){
+				$type = "l - ";
+			}
+			else {
+				$type = "f - ";
+			}
+			$working[9] ||= '';
+			$working[10] ||= '';
+			$output = $output . "  $type$working[8] $working[9] $working[10]\n";
+		}
+		elsif ( $working[0] !~ /^total/ ){
+			$output = $output . $line . "\n";
+		}
+	}
+	close $fh;
+	open $fh, '>', "$data_dir/sys-tree-ls-$depth.txt" or die $!;
+	print $fh $output;
+	close $fh;
+	# print "$output\n";
+}
+
 sub sys_traverse_data {
-	print $line3;
 	print "Parsing /sys files...\n";
 	find( \&wanted, "/sys");
 	process_data( @content );
@@ -438,7 +674,7 @@ sub wanted {
 }
 sub process_data {
 	my ($data,$fh,$result,$row,$sep);
-	my $filename = "sys-traverse.txt";
+	my $filename = "sys-tree-parse.txt";
 	# no sorts, we want the order it comes in
 	# @content = sort @content; 
 	foreach (@content){
@@ -463,20 +699,21 @@ sub process_data {
 # args: 2 - optional: alternate ftp upload url
 # NOTE: must be in format: ftp.site.com/incoming
 sub upload_file {
-	print $line3;
 	my ($self, $ftp_url) = @_;
 	my ($ftp, $domain, $host, $user, $pass, $dir, $error);
 	$ftp_url ||= main::get_defaults('ftp-upload');
-	print "Uploading to: $ftp_url\n";
 	$ftp_url =~ s/\/$//g; # trim off trailing slash if present
 	my @url = split(/\//, $ftp_url);
-	my $file_path = "$self_data_dir$debug_gz";
+	my $file_path = "$self_data_dir/$debug_gz";
 	$host = $url[0];
 	$dir = $url[1];
 	$domain = $host;
 	$domain =~ s/^ftp\.//;
 	$user = "anonymous";
 	$pass = "anonymous\@$domain";
+	
+	print $line3;
+	print "Uploading to: $ftp_url\n";
 	# print "$host $domain $dir $user $pass\n";
 	print "File to be uploaded: $file_path\n";
 	
@@ -500,9 +737,9 @@ sub upload_file {
 
 };
 1;
-my $ob_sys = SystemDebugger->new('full','upload');
+my $ob_sys = SystemDebugger->new('full');
 $ob_sys->run_debugger();
-$ob_sys->upload_file();
+# $ob_sys->upload_file();
 # $ob_sys->set_type('fred');
 # SystemDebugger::upload_file('/home/harald/bin/scripts/inxi/svn/branches/inxi-perl/myfile.txt');
 # $ob_sys->upload_file('/home/harald/bin/scripts/inxi/svn/branches/inxi-perl/myfile.txt');
