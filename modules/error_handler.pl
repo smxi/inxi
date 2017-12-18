@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: error_handler.pl
-## Version: 1.3
-## Date 2017-12-17
+## Version: 1.4
+## Date 2017-12-18
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -57,6 +57,8 @@ sub error_handler {
 			$errno=32; "Error opening file: $one \nError: $two" }
 		elsif ( $err eq 'not-writable' ) { 
 			$errno=33; "The file: $one is not writable!" }
+		elsif ( $err eq 'open-dir-failed' ) { 
+			$errno=33; "The directory: $one failed to open with error: $two" }
 		elsif ( $err eq 'remove' ) { 
 			$errno=33; "Failed to remove file: $one Error: $two" }
 		elsif ( $err eq 'rename' ) { 
