@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 ## File: system_debugger.pl
-## Version: 1.5
+## Version: 1.6
 ## Date 2017-12-17
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
@@ -56,6 +56,7 @@ my $b_irc = 0;
 my $self_data_dir = "$ENV{'HOME'}/.local/share/$self_name";
 my %size;
 $size{'inner'} = 90;
+my $log_file = "$ENV{'HOME'}/.local/share/$self_name/$self_name.log";
 
 my %files = (
 'asound-cards'   => '/proc/asound/cards',
@@ -238,6 +239,7 @@ fi
 ");
 }
 sub display_data {
+	my $working = '';
 	if ( ! $b_display ){
 		print "Warning: only some of the data collection can occur if you are not in X\n";
 		system("touch $data_dir/warning-user-not-in-x");
@@ -247,17 +249,19 @@ sub display_data {
 		system("touch $data_dir/warning-root-user");
 	}
 	print "Collecting Xorg log and xorg.conf files...\n";
-# 	if [ -n $( ls /etc/X11/xorg.conf.d/ 2>/dev/null ) ]];then
-# 		ls /etc/X11/xorg.conf.d &> $data_dir/ls-etc-x11-xorg-conf-d.txt
-# 		xorg_d_files=$(ls /etc/X11/xorg.conf.d)
-# 		for xorg_file in $xorg_d_files
-# 		do
-# 			cat /etc/X11/xorg.conf.d/$xorg_file &> $data_dir/xorg-conf-d-$xorg_file.txt
-# 		done
-# 	else
-# 		touch $data_dir/xorg-conf-d-files-absent
-# 	fi
-
+	if ( -d "/etc/X11/xorg.conf.d/" ){
+		my @files = glob q("/etc/X11/xorg.conf.d/*");
+		if (scalar @files > 0 ){
+			foreach (@files){
+				$working =~ s/\/etc\/X11\/xorg.conf.d\///;
+				system("cat $_ > $data_dir/xorg-conf-d-$working.txt 2>&1");
+			}
+		}
+	}
+	else {
+		system("touch $data_dir/xorg-conf-d-files-absent");
+	}
+	
 	no warnings 'uninitialized';
 	system("PATH=$ENV{'PATH'}
 if [[ -e $files{'xorg-log'} ]];then
@@ -531,19 +535,18 @@ sub system_files {
 	else {
 		system("touch $data_dir/sys-power-supply-none");
 	}
-
-# if which shopt &>/dev/null;then
-# 	shopt -s nullglob
-# 	a_distro_ids=(/etc/*[-_]{release,version})
-# 	shopt -u nullglob
-# 	echo ${a_distro_ids[@]} &> $data_dir/etc-distro-files.txt
-# 	for distro_file in ${a_distro_ids[@]} /etc/issue
-# 	do
-# 		if [[ -f $distro_file ]];then
-# 			cat $distro_file &> $data_dir/distro-file${distro_file//\//-}
-# 		fi
-# 	done
-# fi
+	# chdir "/etc";
+	my @files = glob q("/etc/*[-_]{[rR]elease,[vV]ersion}");
+	my $working = '';
+	push @files, '/etc/issue';
+	foreach (@files){
+		if ( -f "$_" ){
+			$working = $_;
+			$working =~ s/\//-/g;
+			system("cat $_ > $data_dir/distro-file$working.txt 2>&1");
+			# print "File: $_ W: $working\n";
+		}
+	}
 	
 	system("PATH=$ENV{'PATH'}
 cat /proc/1/comm > $data_dir/proc-1-comm.txt 2>&1
