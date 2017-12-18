@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 ## File: system_debugger.pl
-## Version: 1.9
+## Version: 2.0
 ## Date 2017-12-18
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
@@ -219,9 +219,13 @@ atacontrol list > $data_dir/bsd-atacontrol-list.txt 2>&1
 camcontrol devlist > $data_dir/bsd-camcontrol-devlist.txt 2>&1
 # bsd tool
 mount > $data_dir/mount.txt 2>&1
-btrfs filesystem show  > $data_dir/btrfs-filesystem-show.txt 2>&1
-btrfs filesystem show --mounted  > $data_dir/btrfs-filesystem-show-mounted.txt 2>&1
-# btrfs filesystem show --all-devices > $data_dir/btrfs-filesystem-show-all-devices.txt 2>&1
+if which btrfs >/dev/null 2>&1; then
+	btrfs filesystem show  > $data_dir/btrfs-filesystem-show.txt 2>&1
+	btrfs filesystem show --mounted  > $data_dir/btrfs-filesystem-show-mounted.txt 2>&1
+	# btrfs filesystem show --all-devices > $data_dir/btrfs-filesystem-show-all-devices.txt 2>&1
+else
+	touch $data_dir/btrfs-absent
+fi
 gpart list > $data_dir/bsd-gpart-list.txt 2>&1
 gpart show > $data_dir/bsd-gpart-show.txt 2>&1
 gpart status > $data_dir/bsd-gpart-status.txt 2>&1
