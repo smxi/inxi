@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 ## File: system_debugger.pl
-## Version: 1.8
+## Version: 1.9
 ## Date 2017-12-18
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
@@ -392,8 +392,16 @@ sub network_data {
 	print "Collecting networking data...\n";
 	no warnings 'uninitialized';
 	system("PATH=$ENV{'PATH'}
-ifconfig > $data_dir/ifconfig.txt 2>&1
-ip addr > $data_dir/ip-addr.txt 2>&1
+if which ifconfig >/dev/null 2>&1;then
+	ifconfig > $data_dir/ifconfig.txt 2>&1
+else
+	touch $data_dir/ifconfig-absent
+fi
+if which ip >/dev/null 2>&1;then
+	ip addr > $data_dir/ip-addr.txt 2>&1
+else
+	touch $data_dir/ip-absent
+fi
 ");
 }
 sub perl_modules {
@@ -460,17 +468,29 @@ fi
 # fdisk <disk>
 dmidecode > $data_dir/dmidecode.txt 2>&1
 dmesg > $data_dir/dmesg.txt 2>&1
-lscpu > $data_dir/lscpu.txt 2>&1
-lspci > $data_dir/lspci.txt 2>&1
-lspci -k > $data_dir/lspci-k.txt 2>&1
-lspci -knn > $data_dir/lspci-knn.txt 2>&1
-lspci -n > $data_dir/lspci-n.txt 2>&1
-lspci -nn > $data_dir/lspci-nn.txt 2>&1
-lspci -mm > $data_dir/lspci-mm.txt 2>&1
-lspci -mmnn > $data_dir/lspci-mmnn.txt 2>&1
-lspci -mmnnv > $data_dir/lspci-mmnnv.txt 2>&1
-lspci -v > $data_dir/lspci-v.txt 2>&1
-lsusb > $data_dir/lsusb.txt 2>&1
+if which lscpu > /dev/null 2>&1;then
+	lscpu > $data_dir/lscpu.txt 2>&1
+else
+	touch $data_dir/lscpu-absent
+fi
+if which lspci > /dev/null 2>&1;then
+	lspci > $data_dir/lspci.txt 2>&1
+	lspci -k > $data_dir/lspci-k.txt 2>&1
+	lspci -knn > $data_dir/lspci-knn.txt 2>&1
+	lspci -n > $data_dir/lspci-n.txt 2>&1
+	lspci -nn > $data_dir/lspci-nn.txt 2>&1
+	lspci -mm > $data_dir/lspci-mm.txt 2>&1
+	lspci -mmnn > $data_dir/lspci-mmnn.txt 2>&1
+	lspci -mmnnv > $data_dir/lspci-mmnnv.txt 2>&1
+	lspci -v > $data_dir/lspci-v.txt 2>&1
+else 
+	touch $data_dir/lspci-absent
+fi
+if which lspci > /dev/null 2>&1;then
+	lsusb > $data_dir/lsusb.txt 2>&1
+else
+	touch $data_dir/lsusb-absent
+fi
 if which hciconfig >/dev/null 2>&1;then
 	hciconfig -a > $data_dir/hciconfig-a.txt 2>&1
 else
@@ -479,7 +499,11 @@ fi
 ps aux > $data_dir/ps-aux.txt 2>&1
 ps -e > $data_dir/ps-e.txt 2>&1
 ps -p 1 > $data_dir/ps-p-1.txt 2>&1
-runlevel > $data_dir/runlevel.txt 2>&1
+if which runlevel > /dev/null 2>&1;then
+	runlevel > $data_dir/runlevel.txt 2>&1
+else
+	touch $data_dir/runlevel-absent
+fi
 if which rc-status >/dev/null 2>&1;then
 	rc-status -a > $data_dir/rc-status-a.txt 2>&1
 	rc-status -l > $data_dir/rc-status-l.txt 2>&1
@@ -498,7 +522,11 @@ if which initctl >/dev/null 2>&1;then
 else
 	touch $data_dir/initctl-absent
 fi
-sensors > $data_dir/sensors.txt 2>&1
+if which sensors >/dev/null 2>&1;then
+	sensors > $data_dir/sensors.txt 2>&1
+else
+	touch $data_dir/sensors-absent
+fi
 if which strings >/dev/null 2>&1;then
 	touch $data_dir/strings-present
 else
