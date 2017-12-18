@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 ## File: error_handler.pl
-## Version: 1.2
+## Version: 1.3
 ## Date 2017-12-17
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
@@ -45,6 +45,8 @@ sub error_handler {
 		elsif ( $err eq 'unknown-option' ) { 
 			$errno=21; $b_help=1; "Unsupported option: $one" }
 		## Files:
+		elsif ( $err eq 'copy-failed' ) { 
+			$errno=30; "Error copying file: $one \nError: $two" }
 		elsif ( $err eq 'downloader-error' ) { 
 			$errno=30; "Error downloading file: $one \nfor download source: $two" }
 		elsif ( $err eq 'file-corrupt' ) { 

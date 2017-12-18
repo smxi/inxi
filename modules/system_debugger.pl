@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 ## File: system_debugger.pl
-## Version: 1.4
+## Version: 1.5
 ## Date 2017-12-17
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
@@ -93,6 +93,7 @@ use Net::FTP;
 use File::Find q(find);
 no warnings 'File::Find';
 use File::Spec::Functions;
+use File::Copy;
 use POSIX qw(strftime);
 
 my $type = 'full';
@@ -164,7 +165,7 @@ sub create_debug_directory {
 		unlink $data_dir or main::error_handler('remove', "$data_dir", "$!");
 	}
 	mkdir $data_dir or main::error_handler('mkdir', "$data_dir", "$!");
-	if ( -e "$self_data_dir$debug_gz" ){
+	if ( -e "$self_data_dir/$debug_gz" ){
 		unlink "$self_data_dir$debug_gz" or main::error_handler('remove', "$self_data_dir/$debug_gz", "$!");
 	}
 	print "Data going into: $data_dir\n";
@@ -256,6 +257,7 @@ sub display_data {
 # 	else
 # 		touch $data_dir/xorg-conf-d-files-absent
 # 	fi
+
 	no warnings 'uninitialized';
 	system("PATH=$ENV{'PATH'}
 if [[ -e $files{'xorg-log'} ]];then
@@ -579,6 +581,7 @@ sub run_self {
 	print "Starting $self_name from: $self_path\n";
 	my $cmd = "$self_path/$self_name -FRfrploudmxxx -c 0 --debug=10 -y 120 > $data_dir/inxi-FRfrploudmxxxy120.txt";
 	system($cmd);
+	copy($log_file, "$data_dir/") or main::error_handler('copy-failed', "$log_file", "$!");
 }
 
 sub sys_tree {
@@ -733,8 +736,6 @@ sub upload_file {
 		main::error_handler('ftp-bad-path', "$file_path");
 	}
 }
-# upload_file('/home/harald/bin/scripts/inxi/svn/branches/inxi-perl/myfile.txt');
-
 };
 1;
 my $ob_sys = SystemDebugger->new('full');
