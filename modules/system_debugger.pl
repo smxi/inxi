@@ -703,7 +703,7 @@ sub sys_ls {
 sub sys_traverse_data {
 	print "Parsing /sys files...\n";
 	find( \&wanted, "/sys");
-	process_data( @content );
+	process_data();
 }
 sub wanted {
 	return if -d; # not directory

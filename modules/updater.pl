@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: updater.pl
-## Version: 1.1
-## Date 2017-12-12
+## Version: 1.2
+## Date 2017-12-19
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -19,27 +19,28 @@ sub error_handler {
 sub download_file {
 
 }
+
 # arg 1: type to return
 sub get_defaults {
-	my ($arg) = @_;
+	my ($type) = @_;
 	my %defaults = (
 	'ftp-upload' => 'ftp.techpatterns.com/incoming',
 	# 'inxi-branch-1' => 'https://github.com/smxi/inxi/raw/one/',
 	# 'inxi-branch-2' => 'https://github.com/smxi/inxi/raw/two/',
-	'inxi-main' => 'https://github.com/smxi/inxi/raw/inxi-perl/',
+	'inxi-main' => 'https://github.com/smxi/inxi/raw/master/',
+	'inxi-pinxi' => 'https://github.com/smxi/inxi/raw/inxi-perl/',
 	'inxi-man' => "https://github.com/smxi/inxi/raw/master/$self_name.1.gz",
 	);
 	if ( exists $defaults{$type}){
 		return $defaults{$type};
 	}
 	else {
-		error_handler('bad-arg', $arg);
+		error_handler('bad-arg-int', $type);
 	}
 }
 
 
 ## actual updater logic
-
 
 # args: 1 - download url, not including file name; 2 - string to print out
 # 3 - update type option
@@ -50,13 +51,14 @@ sub update_me {
 	my $downloader_error=1;
 	my $file_contents='';
 	my $output = '';
+	my $b_man = 0;
 	my $full_self_path = "$self_path/$self_name";
 	
 	if ( $b_irc ){
-		error_handler('not-tty', "Sorry, you can't run the $self_name self updater option (-$3) in an IRC client." );;
+		error_handler('not-in-irc', "-U/--update" )
 	}
 	if ( ! -w $full_self_path ){
-		error_handler('permissions', "Updater $self_name", '');
+		error_handler('not-writable', "$self_name", '');
 	}
 	$output = "${output}Starting $self_name self updater.\n";
 	$output = "${output}Starting $self_name self updater.\n";
@@ -74,7 +76,7 @@ sub update_me {
 		# make sure the whole file got downloaded and is in the variable
 		if ( $file_contents =~ /###\*\*EOF\*\*###/ ){
 			open(my $fh, '>', $full_self_path);
-			print $fh $file_contents or error_handler();
+			print $fh $file_contents or error_handler('write-error', "$full_self_path", "$!" );
 			close $fh;
 			qx( chmod +x '$self_path/$self_name' );
 			set_version_data();
@@ -86,38 +88,32 @@ sub update_me {
 			$output = "${output}Starting download of man page file now.\n";
 			print $output;
 			$output = '';
-			update_man();
+			if ($b_man && $download_id eq 'main branch' ){
+				update_man();
+			}
+			else {
+				print "Skipping man download because branch version is being used.\n";
+			}
 			exit 1;
 		}
 		else {
-			error_handler(16, '');
+			error_handler('file-corrupt', "$self_name");
 		}
 	}
 	# now run the error handlers on any downloader failure
 	else {
-		if ( $download_id eq 'source server' ){
-			error_handler(8, "$downloader_error");
-		}
-		elsif ( $download_id eq 'alt server' ){
-			error_handler( 10, "$self_download");
-		}
-		else {
-			error_handler(12, "$self_download");
-		}
+		error_handler('download-error', $self_download, $download_id);
 	}
 	eval $end;
 }
 
 sub update_man {
-	my $man_file_url=get_defaults('inxi-man');
+	my $man_file_url=get_defaults('inxi-man'); 
 	my $man_file_location=set_man_location();
 	my $man_file_path="$man_file_location/$self_name.1.gz" ;
 	my $output = '';
+	
 	my $downloader_man_error=1;
-	if ( ! $b_man ){
-		print "Skipping man download because branch version is being used.\n";
-		return 0;
-	}
 	if ( ! -d $man_file_location ){
 		print "The required man directory was not detected on your system.\n";
 		print "Unable to continue: $man_file_location\n";
@@ -128,7 +124,6 @@ sub update_man {
 		print "Unable to continue: $man_file_location\n";
 		return 0;
 	}
-	
 	if ( -f "/usr/share/man/man8/inxi.8.gz" ){
 		print "Updating man page location to man1.\n";
 		rename "/usr/share/man/man8/inxi.8.gz", "$man_file_location/inxi.1.gz";
@@ -136,17 +131,17 @@ sub update_man {
 			system( 'mandb' );
 		}
 	}
-		if ( $dl{'dl'} =~ /tiny|wget/){
-			print "Checking Man page download URL...\n";
-			download_file('spider', '', $man_file_url);
-			$downloader_man_error = $?;
-		}
+	if ( $dl{'dl'} =~ /tiny|wget/){
+		print "Checking Man page download URL...\n";
+		download_file('spider', $man_file_url);
+		$downloader_man_error = $?;
+	}
 	if ( $downloader_man_error == 1 ){
 		if ( $dl{'dl'} =~ /tiny|wget/){
 			print "Man file download URL verified: $man_file_url\n";
 		}
 		print "Downloading Man page file now.\n";
-		download_file('file', $self_download, $man_file_url);
+		download_file('file', $man_file_url,  $man_file_path );
 		$downloader_man_error = $?;
 		if ( $downloader_man_error == 0 ){
 			print "Oh no! Something went wrong downloading the Man gz file at: $man_file_url\n";
@@ -158,18 +153,6 @@ sub update_man {
 	}
 	else {
 		print "Man file download URL failed, unable to continue: $man_file_url\n";
-	}
-}
-
-sub get_update_url {
-	my ($type) = @_;
-	my @urls = (
-	'https://github.com/smxi/inxi/raw/inxi-perl/',
-	# 'https://github.com/smxi/inxi/raw/one/',
-	# 'https://github.com/smxi/inxi/raw/two/',
-	);
-	if ( $urls[$type] ){
-		return $urls[$type];
 	}
 }
 

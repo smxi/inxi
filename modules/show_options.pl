@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: show_options.pl
-## Version: 1.3
-## Date 2017-12-12
+## Version: 1.4
+## Date 2017-12-19
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -320,6 +320,7 @@ sub show_options {
 	${partition_string}s, etc." ],
 	['2', '21', '', "Upload debugger dataset to $self_name debugger server 
 	automatically." ],
+	['1', '', '--ftp', "Use with --debugger 21 to trigger an alternate FTP server for upload. Format:^[ftp.xx.xx/yy]. Must include a remote directory to upload to: Example:^ftp.myserver.com/incoming" ],
 	[0, '', '', "$line" ],
 	[0, '', '', "Advanced Options:" ],
 	[1, '', '--alt', "Trigger for various advanced options:" ],

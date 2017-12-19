@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: options.pl
-## Version: 1.0
-## Date 2017-12-16
+## Version: 1.1
+## Date 2017-12-19
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -26,7 +26,7 @@ sub set_display_width {}
 sub set_downloader {}
 sub set_perl_downloader {}
 sub update_me {}
-my (%show,%dl,$debug,%test,$b_weather,$ps_count,$b_update,$output_type,$b_irc);
+my (%show,%dl,$debug,%test,$b_weather,$ps_count,$b_update,$output_type,$b_irc,$ftp_alt);
 
 ## start actual code
 
@@ -160,7 +160,7 @@ sub get_options{
 		$show{'short'} = 0;
 		$show{'partitions'} = 1;
 		$show{'uuids'} = 1; },
-	'U|update:s' => sub { # 1,2,3 OR ftp.server.com/incoming
+	'U|update:s' => sub { # 1,2,3 OR http://myserver/path/inxi
 		my ($opt,$arg) = @_;
 		$show{'short'} = 0;
 		my ($self_download,$download_id);
@@ -174,9 +174,13 @@ sub get_options{
 				$self_download = $arg;
 			}
 			else {
-				$download_id = 'source server';
-				$self_download = get_defaults('inxi-main');
+				$download_id = 'pinxi server';
+				$self_download = get_defaults('inxi-pinxi');
 			}
+# 			else {
+# 				$download_id = 'source server';
+# 				$self_download = get_defaults('inxi-main');
+# 			}
 			if ($self_download){
 				update_me( $self_download, $download_id );
 			}
@@ -355,6 +359,15 @@ sub get_options{
 		else {
 			error_handler('bad-arg', $opt, $arg);
 		} },
+	'ftp:s'  => sub { 
+		my ($opt,$arg) = @_;
+		# pattern: ftp.x.x/x
+		if ($arg =~ /^ftp\..+\..+\/[^\/]+$/ ){
+			$ftp_alt = $arg;
+		}
+		else {
+			error_handler('bad-arg', $opt, $arg);
+		}},
 	'<>' => sub {
 		my ($opt) = @_;
 		error_handler('unknown-option', "$opt", "" ); }

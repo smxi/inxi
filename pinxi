@@ -2,8 +2,8 @@
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2017-12-18';
-my $self_patch='032-p';
+my $self_date='2017-12-19';
+my $self_patch='033-p';
 
 ## infobash: Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif
 ## inxi: Copyright (C) 2008-2017 Harald Hope
@@ -89,6 +89,7 @@ my $ps_count = 5;
 my $sensors_cpu_nu = 0;
 
 ## Tools
+my $ftp_alt;
 
 ## Output
 my $filter_string = '<filter>';
@@ -435,7 +436,7 @@ sub set_debugger {
 			my $ob_sys = SystemDebugger->new('full');
 			$ob_sys->run_debugger();
 			if ( $debug > 20 ){
-				$ob_sys->upload_file();
+				$ob_sys->upload_file($ftp_alt);
 			}
 		}
 	}
@@ -1063,7 +1064,7 @@ sub sys_ls {
 sub sys_traverse_data {
 	print "Parsing /sys files...\n";
 	find( \&wanted, "/sys");
-	process_data( @content );
+	process_data();
 }
 sub wanted {
 	return if -d; # not directory
@@ -1479,7 +1480,6 @@ sub count_dir_files {
 	my $count = grep { ! /^\.{1,2}/ } readdir $dh; # strips out . and ..
 	return $count;
 }
-print count_dir_files('/proc') . "\n";
 
 # arg 1: type to return
 sub get_defaults {
@@ -1488,7 +1488,8 @@ sub get_defaults {
 	'ftp-upload' => 'ftp.techpatterns.com/incoming',
 	# 'inxi-branch-1' => 'https://github.com/smxi/inxi/raw/one/',
 	# 'inxi-branch-2' => 'https://github.com/smxi/inxi/raw/two/',
-	'inxi-main' => 'https://github.com/smxi/inxi/raw/inxi-perl/',
+	'inxi-main' => 'https://github.com/smxi/inxi/raw/master/',
+	'inxi-pinxi' => 'https://github.com/smxi/inxi/raw/inxi-perl/',
 	'inxi-man' => "https://github.com/smxi/inxi/raw/master/$self_name.1.gz",
 	);
 	if ( exists $defaults{$type}){
@@ -1522,6 +1523,7 @@ sub update_me {
 	my $downloader_error=1;
 	my $file_contents='';
 	my $output = '';
+	my $b_man = 0;
 	my $full_self_path = "$self_path/$self_name";
 	
 	if ( $b_irc ){
@@ -1558,7 +1560,12 @@ sub update_me {
 			$output = "${output}Starting download of man page file now.\n";
 			print $output;
 			$output = '';
-			update_man();
+			if ($b_man && $download_id eq 'main branch' ){
+				update_man();
+			}
+			else {
+				print "Skipping man download because branch version is being used.\n";
+			}
 			exit 1;
 		}
 		else {
@@ -1577,12 +1584,8 @@ sub update_man {
 	my $man_file_location=set_man_location();
 	my $man_file_path="$man_file_location/$self_name.1.gz" ;
 	my $output = '';
-	my $b_man = 0;
+	
 	my $downloader_man_error=1;
-	if ( ! $b_man ){
-		print "Skipping man download because branch version is being used.\n";
-		return 0;
-	}
 	if ( ! -d $man_file_location ){
 		print "The required man directory was not detected on your system.\n";
 		print "Unable to continue: $man_file_location\n";
@@ -1593,7 +1596,6 @@ sub update_man {
 		print "Unable to continue: $man_file_location\n";
 		return 0;
 	}
-	
 	if ( -f "/usr/share/man/man8/inxi.8.gz" ){
 		print "Updating man page location to man1.\n";
 		rename "/usr/share/man/man8/inxi.8.gz", "$man_file_location/inxi.1.gz";
@@ -1601,11 +1603,11 @@ sub update_man {
 			system( 'mandb' );
 		}
 	}
-		if ( $dl{'dl'} =~ /tiny|wget/){
-			print "Checking Man page download URL...\n";
-			download_file('spider', $man_file_url);
-			$downloader_man_error = $?;
-		}
+	if ( $dl{'dl'} =~ /tiny|wget/){
+		print "Checking Man page download URL...\n";
+		download_file('spider', $man_file_url);
+		$downloader_man_error = $?;
+	}
 	if ( $downloader_man_error == 1 ){
 		if ( $dl{'dl'} =~ /tiny|wget/){
 			print "Man file download URL verified: $man_file_url\n";
@@ -1815,7 +1817,7 @@ sub get_options{
 		$show{'short'} = 0;
 		$show{'partitions'} = 1;
 		$show{'uuids'} = 1; },
-	'U|update:s' => sub { # 1,2,3 OR ftp.server.com/incoming
+	'U|update:s' => sub { # 1,2,3 OR http://myserver/path/inxi
 		my ($opt,$arg) = @_;
 		$show{'short'} = 0;
 		my ($self_download,$download_id);
@@ -1829,9 +1831,13 @@ sub get_options{
 				$self_download = $arg;
 			}
 			else {
-				$download_id = 'source server';
-				$self_download = get_defaults('inxi-main');
+				$download_id = 'pinxi branch';
+				$self_download = get_defaults('inxi-pinxi');
 			}
+# 			else {
+# 				$download_id = 'main branch';
+# 				$self_download = get_defaults('inxi-main');
+# 			}
 			if ($self_download){
 				update_me( $self_download, $download_id );
 			}
@@ -2010,6 +2016,15 @@ sub get_options{
 		else {
 			error_handler('bad-arg', $opt, $arg);
 		} },
+	'ftp:s'  => sub { 
+		my ($opt,$arg) = @_;
+		# pattern: ftp.x.x/x
+		if ($arg =~ /^ftp\..+\..+\/[^\/]+$/ ){
+			$ftp_alt = $arg;
+		}
+		else {
+			error_handler('bad-arg', $opt, $arg);
+		}},
 	'<>' => sub {
 		my ($opt) = @_;
 		error_handler('unknown-option', "$opt", "" ); }
@@ -2297,6 +2312,7 @@ sub show_options {
 	${partition_string}s, etc." ],
 	['2', '21', '', "Upload debugger dataset to $self_name debugger server 
 	automatically." ],
+	['1', '', '--ftp', "Use with --debugger 21 to trigger an alternate FTP server for upload. Format:^[ftp.xx.xx/yy]. Must include a remote directory to upload to: Example:^ftp.myserver.com/incoming" ],
 	[0, '', '', "$line" ],
 	[0, '', '', "Advanced Options:" ],
 	[1, '', '--alt', "Trigger for various advanced options:" ],
