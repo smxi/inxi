@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 ## File: updater.pl
-## Version: 1.2
+## Version: 1.3
 ## Date 2017-12-19
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
@@ -39,6 +39,8 @@ sub get_defaults {
 	}
 }
 
+my %dl = ( 'dl' => 'test' );
+
 
 ## actual updater logic
 
@@ -61,6 +63,7 @@ sub update_me {
 		error_handler('not-writable', "$self_name", '');
 	}
 	$output = "${output}Starting $self_name self updater.\n";
+	$output = "${output}Using $dl{'dl'} as downloader.\n";
 	$output = "${output}Currently running $self_name version number: $self_version\n";
 	$output = "${output}Current version patch number: $self_patch\n";
 	$output = "${output}Current version release date: $self_date\n";
