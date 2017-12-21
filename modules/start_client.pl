@@ -7,7 +7,7 @@
 
 ## stub code
 
-my %irc_client = (
+my %client = (
 'client' => '',
 'console' => 0,
 'dcop' => 0,
