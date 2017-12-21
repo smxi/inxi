@@ -33,8 +33,8 @@ sub error_handler {
 	my $message = do {
 		if ( $err eq 'empty' ) { 'empty value' }
 		## Basic rules
-		elsif ( 
-			$err eq 'not-in-irc' ) { $errno=1; "You can't run option $one in an IRC client!" }
+		elsif ( $err eq 'not-in-irc' ) { 
+			$errno=1; "You can't run option $one in an IRC client!" }
 		## Internal/external options
 		elsif ( $err eq 'bad-arg' ) { 
 			$errno=10; $b_help=1; "Unsupported value: $two for option: $one" }

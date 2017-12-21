@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: show_options.pl
-## Version: 1.4
-## Date 2017-12-19
+## Version: 1.5
+## Date 2017-12-20
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -46,8 +46,7 @@ sub get_defaults {
 
 sub show_options {
 	if ( $b_irc ){
-		print_screen_line("Sorry, you can't run the help option in an IRC client.\n");
-		exit 1;
+		error_handler('not-in-irc', 'help');
 	}
 	my ($type) = @_;
 	my (@row,@rows,@data);
