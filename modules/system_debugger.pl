@@ -65,6 +65,8 @@ my $self_data_dir = "$ENV{'HOME'}/.local/share/$self_name";
 my %size;
 $size{'inner'} = 90;
 my $log_file = "$ENV{'HOME'}/.local/share/$self_name/$self_name.log";
+my $start = '';
+my $end = '';
 
 my %files = (
 'asound-cards'   => '/proc/asound/cards',

@@ -27,6 +27,9 @@ sub check_program {
 	return 1;
 }
 
+my $start = '';
+my $end = '';
+
 ## Start actuala logic
 
 sub download_file {

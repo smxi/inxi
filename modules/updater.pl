@@ -40,7 +40,8 @@ sub get_defaults {
 }
 
 my %dl = ( 'dl' => 'test' );
-
+my $start = '';
+my $end = '';
 
 ## actual updater logic
 

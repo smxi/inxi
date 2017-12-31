@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: options.pl
-## Version: 1.1
-## Date 2017-12-19
+## Version: 1.2
+## Date 2017-12-30
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -21,12 +21,19 @@ sub error_handler {
 	my ($err, $one, $two) = @_;
 	print "Err: $err Value: $one Value2: $two\n";
 }
+sub get_color_scheme {
+	return 32;
+}
 sub get_defaults {}
+sub set_color_scheme {}
 sub set_display_width {}
 sub set_downloader {}
 sub set_perl_downloader {}
 sub update_me {}
-my (%show,%dl,$debug,%test,$b_weather,$ps_count,$b_update,$output_type,$b_irc,$ftp_alt);
+my (%colors,%show,%dl,$debug,%test,$b_weather,$ps_count,$b_update,
+$display,$output_type,$b_irc,$ftp_alt);
+my $start = '';
+my $end = '';
 
 ## start actual code
 
@@ -56,9 +63,31 @@ sub get_options{
 		$show{'battery'} = 1;
 		$show{'battery-forced'} = 1; },
 	'c|color:i' => sub {
-		$show{'short'} = 0;
-		# $show{''} = 1; 
-		},
+		my ($opt,$arg) = @_;
+		if ( $arg >= 0 && $arg <= get_color_scheme('count') ){
+			set_color_scheme($arg);
+		}
+		elsif ( $arg == 94){
+			$colors{'selector'} = 'console';
+		}
+		elsif ( $arg == 95){
+			$colors{'selector'} = 'virtual-terminal';
+		}
+		elsif ( $arg == 96){
+			$colors{'selector'} = 'irc';
+		}
+		elsif ( $arg == 97){
+			$colors{'selector'} = 'irc-virtual-terminal';
+		}
+		elsif ( $arg == 98){
+			$colors{'selector'} = 'irc-console';
+		}
+		elsif ( $arg == 99){
+			$colors{'selector'} = 'global';
+		}
+		else {
+			error_handler('bad-arg', $opt, $arg);
+		} },
 	'C|cpu' => sub {
 		$show{'short'} = 0;
 		$show{'cpu'} = 1; },
@@ -342,6 +371,14 @@ sub get_options{
 		my ($opt,$arg) = @_;
 		if ($arg =~ /^[1-3]|[1-2][0-2]$/){
 			$debug=$arg;
+		}
+		else {
+			error_handler('bad-arg', $opt, $arg);
+		} },
+	'display:s' => sub { 
+		my ($opt,$arg) = @_;
+		if ($arg =~ /^:?[0-9]+$/){
+			$display=$arg;
 		}
 		else {
 			error_handler('bad-arg', $opt, $arg);

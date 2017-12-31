@@ -15,6 +15,8 @@ my %client = (
 'qdbus' => 0,
 'version' => '',
 );
+my $start = '';
+my $end = '';
 
 sub log_data {}
 

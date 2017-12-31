@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: show_options.pl
-## Version: 1.5
-## Date 2017-12-20
+## Version: 1.6
+## Date 2017-12-30
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -18,6 +18,8 @@ my $ps_count = 5;
 my $b_weather = 'true';
 my $b_update = 'true';
 my %size( 'max' => 100 );
+my $start = '';
+my $end = '';
 
 sub print_screen_line {
 	my $line = shift;
@@ -41,6 +43,7 @@ sub get_defaults {
 		error_handler('bad-arg', $arg);
 	}
 }
+
 
 ## start actual code
 
@@ -319,7 +322,9 @@ sub show_options {
 	${partition_string}s, etc." ],
 	['2', '21', '', "Upload debugger dataset to $self_name debugger server 
 	automatically." ],
-	['1', '', '--ftp', "Use with --debugger 21 to trigger an alternate FTP server for upload. Format:^[ftp.xx.xx/yy]. Must include a remote directory to upload to: Example:^ftp.myserver.com/incoming" ],
+	['1', '', '--ftp', "Use with --debugger 21 to trigger an alternate FTP server for upload. 
+	Format:^[ftp.xx.xx/yy]. Must include a remote directory to upload to: 
+	Example:^ftp.myserver.com/incoming" ],
 	[0, '', '', "$line" ],
 	[0, '', '', "Advanced Options:" ],
 	[1, '', '--alt', "Trigger for various advanced options:" ],
@@ -337,6 +342,9 @@ sub show_options {
 	['2', '43', '', "Bypass Wget as a downloader option." ],
 	['2', '44', '', "Bypass Curl, Fetch, and Wget as a downloader options. Forces 
 	Perl if HTTP::Tiny present." ],
+	['1', '', '--display', "Will try to get display data out of X. Default gets it from display 0. 
+	If you use this format: ---display 1 it would get it from display 1 instead, or any 
+	display you specify" ],
 	['1', '', '--downloader', "Force $self_name to use [curl|fetch|perl|wget] for downloads." ],
 	['0', '', '', $line ]
 	);
