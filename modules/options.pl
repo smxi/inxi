@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: options.pl
-## Version: 1.2
-## Date 2017-12-30
+## Version: 1.3
+## Date 2017-12-31
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -64,26 +64,12 @@ sub get_options{
 		$show{'battery-forced'} = 1; },
 	'c|color:i' => sub {
 		my ($opt,$arg) = @_;
+		$output_type = 'print-basic';
 		if ( $arg >= 0 && $arg <= get_color_scheme('count') ){
 			set_color_scheme($arg);
 		}
-		elsif ( $arg == 94){
-			$colors{'selector'} = 'console';
-		}
-		elsif ( $arg == 95){
-			$colors{'selector'} = 'virtual-terminal';
-		}
-		elsif ( $arg == 96){
-			$colors{'selector'} = 'irc';
-		}
-		elsif ( $arg == 97){
-			$colors{'selector'} = 'irc-virtual-terminal';
-		}
-		elsif ( $arg == 98){
-			$colors{'selector'} = 'irc-console';
-		}
-		elsif ( $arg == 99){
-			$colors{'selector'} = 'global';
+		elsif ( $arg >= 94 && $arg <= 99 ){
+			$colors{'selector'} = $arg;
 		}
 		else {
 			error_handler('bad-arg', $opt, $arg);

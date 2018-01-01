@@ -2,8 +2,8 @@
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2017-12-30';
-my $self_patch='037-p';
+my $self_date='2017-12-31';
+my $self_patch='038-p';
 
 ## infobash: Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif
 ## inxi: Copyright (C) 2008-2017 Harald Hope
@@ -251,9 +251,9 @@ sub set_config {
 		# layout
 		elsif (/^CONSOLE_COLOR_SCHEME$/) {$colors{'console'} = $val}
 		elsif (/^GLOBAL_COLOR_SCHEME$/) {$colors{'global'} = $val}
-		elsif (/^IRC_COLOR_SCHEME$/) {$colors{'irc'} = $val}
-		elsif (/^IRC_CONS_COLOR_SCHEME$/) {$colors{'console-irc'} = $val}
-		elsif (/^IRC_X_TERM_COLOR_SCHEME$/) {$colors{'irc-x-term'} = $val}
+		elsif (/^IRC_COLOR_SCHEME$/) {$colors{'irc-gui'} = $val}
+		elsif (/^IRC_CONS_COLOR_SCHEME$/) {$colors{'irc-console'} = $val}
+		elsif (/^IRC_X_TERM_COLOR_SCHEME$/) {$colors{'irc-vert-term'} = $val}
 		elsif (/^VIRT_TERM_COLOR_SCHEME$/) {$colors{'virt-term'} = $val}
 		elsif (/^SEP1$/) {$sep{'s1'} = $val}
 		elsif (/^SEP2$/) {$sep{'s2'} = $val}
@@ -523,16 +523,11 @@ sub get_color_scheme {
 	}
 	eval $end;
 }
-sub select_color_schemes {
-	eval $start;
-	
-	eval $end;
 
-}
 sub set_color_scheme {
 	eval $start;
 	$colors{'scheme'} = shift;
-	my $index = 0; # defaults to non irc
+	my $index = ( $b_irc ) ? 1 : 0; # defaults to non irc
 	
 	# NOTE: qw(...) kills the escape, it is NOT the same as using 
 	# Literal "..", ".." despite docs saying it is.
@@ -556,17 +551,15 @@ sub set_color_scheme {
 	'GREY' => [ "\e[0;37m", "\x0315" ],
 	'NORMAL' => [ "\e[0m", "\x03" ],
 	);
-	if ( $b_irc){
-		$index = 1;
-	}
 	my @scheme = get_color_scheme($colors{'scheme'});
 	$colors{'c1'} = $color_palette{$scheme[0]}[$index];
 	$colors{'c2'} = $color_palette{$scheme[1]}[$index];
 	$colors{'cn'} = $color_palette{$scheme[2]}[$index];
-	print Dumper \@scheme;
-	print "$colors{'c1'}here$colors{'c2'} we are!$colors{'cn'}\n";
+	# print Dumper \@scheme;
+	# print "$colors{'c1'}here$colors{'c2'} we are!$colors{'cn'}\n";
 	eval $end;
 }
+
 sub set_colors {
 	eval $start;
 	# it's already been set with -c 0-43
@@ -577,8 +570,8 @@ sub set_colors {
 	# no interactive. The override value only will be placed in user config files. 
 	# /etc/inxi.conf can also override
 	if (exists $colors{'selector'}){
-		select_color_schemes();
-		return 2;
+		my $ob_selector = SelectColors->new($colors{'selector'});
+		$ob_selector->select_schema();
 	}
 	# set the default, then override as required
 	my $color_scheme = $colors{'default'};
@@ -588,14 +581,14 @@ sub set_colors {
 	}
 	else {
 		if ( $b_irc ){
-			if (defined $colors{'irc-x-term'} && $b_display && $client{'console-irc'}){
-				$color_scheme = $colors{'irc-x-term'};
+			if (defined $colors{'irc-virt-term'} && $b_display && $client{'console-irc'}){
+				$color_scheme = $colors{'irc-virt-term'};
 			}
-			elsif (defined $colors{'console-irc'} && !$b_display){
-				$color_scheme = $colors{'console-irc'};
+			elsif (defined $colors{'irc-console'} && !$b_display){
+				$color_scheme = $colors{'irc-console'};
 			}
-			elsif ( defined $colors{'irc'}) {
-				$color_scheme = $colors{'irc'};
+			elsif ( defined $colors{'irc-gui'}) {
+				$color_scheme = $colors{'irc-gui'};
 			}
 		}
 		else {
@@ -610,6 +603,274 @@ sub set_colors {
 	set_color_scheme($color_scheme);
 	eval $end;
 }
+
+{
+package SelectColors;
+
+use warnings;
+use strict;
+use diagnostics;
+use 5.008;
+
+my (@data,@rows,%configs,$selector,%status);
+my ($type,$r_fh,$w_fh);
+my $safe_color_count = 12;
+my $count = 0;
+my $config_file;
+
+# args: 1 - type
+sub new {
+	my $class = shift;
+	($type) = @_;
+	my $self = {};
+	# print "$f\n";
+	# print "$type\n";
+	return bless $self, $class;
+}
+sub select_schema {
+	eval $start;
+	assign_selectors();
+	main::set_color_scheme(0);
+	set_status();
+	start_selector();
+	create_color_selections();
+	if (! $b_irc ){
+		check_config_file();
+		get_selection();
+	}
+	else {
+		print_irc_message();
+	}
+	eval $end;
+}
+
+sub set_status {
+	$status{'console'} = (defined $colors{'console'}) ? "Set: $colors{'console'}" : 'Unset';
+	$status{'virt-term'} = (defined $colors{'virt-term'}) ? "Set: $colors{'virt-term'}" : 'Unset';
+	$status{'irc-console'} = (defined $colors{'irc-console'}) ? "Set: $colors{'irc-console'}" : 'Unset';
+	$status{'irc-gui'} = (defined $colors{'irc-gui'}) ? "Set: $colors{'irc-gui'}" : 'Unset';
+	$status{'irc-virt-term'} = (defined $colors{'irc-virt-term'}) ? "Set: $colors{'irc-virt-term'}" : 'Unset';
+	$status{'global'} = (defined $colors{'global'}) ? "Set: $colors{'global'}" : 'Unset';
+}
+
+sub assign_selectors {
+	$configs{'console'} = 'CONSOLE_COLOR_SCHEME'; # 94
+	$configs{'virt-term'} = 'VIRT_TERM_COLOR_SCHEME'; # 95
+	$configs{'irc-gui'} = 'IRC_COLOR_SCHEME'; # 96
+	$configs{'irc-virt-term'} = 'IRC_X_TERM_COLOR_SCHEME'; # 97
+	$configs{'irc-console'} = 'IRC_CONS_COLOR_SCHEME'; # 98
+	$configs{'global'} = 'GLOBAL_COLOR_SCHEME'; # 99
+	if ($type == 94){
+		$configs{'variable'} = $configs{'console'};
+		$configs{'selection'} = 'console';
+	}
+	elsif ($type == 95){
+		$configs{'variable'} = $configs{'virt-term'};
+		$configs{'selection'} = 'virt-term';
+	}
+	elsif ($type == 96){
+		$configs{'variable'} = $configs{'irc-gui'};
+		$configs{'selection'} = 'irc-gui';
+	}
+	elsif ($type == 97){
+		$configs{'variable'} = $configs{'irc-virt-term'};
+		$configs{'selection'} = 'irc-virt-term';
+	}
+	elsif ($type == 98){
+		$configs{'variable'} = $configs{'irc-console'};
+		$configs{'selection'} = 'irc-console';
+	}
+	elsif ($type == 99){
+		$configs{'variable'} = $configs{'global'};
+		$configs{'selection'} = 'global';
+	}
+}
+sub start_selector {
+	my $whoami = getpwuid($<) || "unknown???";
+	if ( ! $b_irc ){
+		@data = (
+		[ 0, '', '', "Welcome to $self_name! Please select the default 
+		$configs{'selection'} color scheme."],
+		);
+	}
+	@rows = (
+	[ 0, '', '', "Because there is no way to know your $configs{'selection'}
+	foreground/background colors, you can set your color preferences from 
+	color scheme option list below:"],
+	[ 0, '', '', "0 is no colors; 1 is neutral."],
+	[ 0, '', '', "After these, there are 4 sets:"],
+	[ 0, '', '', "1-dark^or^light^backgrounds; 2-light^backgrounds; 
+	3-dark^backgrounds; 4-miscellaneous"],
+	[ 0, '', '', ""],
+	);
+	push @data, @rows;
+	if ( ! $b_irc ){
+		@rows = (
+		[ 0, '', '', "Please note that this will set the $configs{'selection'} 
+		preferences only for user: $whoami"],
+		);
+		push @data, @rows;
+	}
+	@rows = (
+	[ 0, '', '', "$line1"],
+	);
+	push @data, @rows;
+	main::print_basic(@data); 
+	@data = ();
+}
+sub check_config_file {
+	$config_file = "$self_config_dir/$self_name.conf";
+	if ( ! -f $config_file ){
+		open( $w_fh, '>', $config_file ) or error_handler('open', $config_file, $!);
+		close $w_fh;
+	}
+}
+sub create_color_selections {
+	my $spacer = '^^'; # printer removes double spaces, but replaces ^ with ' '
+	my $i=0;
+	$count = ( main::get_color_scheme('count') - 1 );
+	for $i (0 .. $count){
+		if ($i > 9){
+			$spacer = '^';
+		}
+		if ($configs{'selection'} =~ /^global|irc-gui|irc-console|irc-virt-term$/ && $i > $safe_color_count ){
+			last;
+		}
+		main::set_color_scheme($i);
+		@rows = (
+		[0, '', '', " $i)$spacer$colors{'c1'}Card:$colors{'c2'} nVidia G86 [GeForce 8400 GS] 
+		$colors{'c1'}Display Server$colors{'c2'} x11 (X.Org 1.7.7)$colors{'cn'}"],
+		);
+		push @data, @rows;
+	}
+	main::print_basic(@data); 
+	@data = ();
+	main::set_color_scheme(0);
+}
+sub get_selection {
+	my $number = $count + 1;
+	@data = (
+	[0, '', '', " " . ($number++) . ")^Remove all color settings. Restore $self_name default."],
+	[0, '', '', " " . ($number++) . ")^Continue, no changes or config file setting."],
+	[0, '', '', " " . ($number++) . ")^Exit, use another terminal, or set manually."],
+	[0, '', '', "$line1"],
+	[0, '', '', "Simply type the number for the color scheme that looks best to your 
+	eyes for your $configs{'selection'} settings and hit ENTER. NOTE: You can bring this 
+	option list up by starting $self_name with option: -c plus one of these numbers:"],
+	[0, '', '', "94^(console,^no X^-^$status{'console'}); 
+	95^(terminal,^X^-^$status{'virt-term'}); 
+	96^(irc,^gui,^X^-^$status{'irc-gui'}); 
+	97^(irc,^X,^in^terminal^-^$status{'irc-virt-term'}); 
+	98^(irc,^no^X^-^$status{'irc-console'}); 
+	99^(global^-^$status{'global'})"],
+	[0, '', '',  ""],
+	[0, '', '', "Your selection(s) will be stored here: $config_file"],
+	[0, '', '', "Global overrides all individual color schemes. Individual 
+	schemes remove the global setting."],
+	[0, '', '', "$line1"],
+	);
+	main::print_basic(@data); 
+	@data = ();
+	my $response = <STDIN>;
+	chomp $response;
+	if ($response =~ /[^0-9]/ || $response > ($count + 3)){
+		@data = ([0, '', '', "Error - Invalid Selection. You entered this: $response"],);
+		main::print_basic(@data); 
+		exit 0;
+	}
+	else {
+		process_selection($response);
+	}
+}
+sub process_selection {
+	my $response = shift;
+	if ($response == ($count + 3) ){
+		@data = ([0, '', '', "Ok, exiting $self_name now. You can set the colors later."],);
+		main::print_basic(@data); 
+		exit 1;
+	}
+	elsif ($response == ($count + 2)){
+		@data = ([0, '', '', "Ok, continuing $self_name unchanged. You can set the colors 
+		anytime by starting with: -c 95 to 99"],);
+		main::print_basic(@data); 
+		if ( defined $colors{'console'} && !$b_display ){
+			main::set_color_scheme($colors{'console'});
+		}
+		if ( defined $colors{'virt-term'} ){
+			main::set_color_scheme($colors{'virt-term'});
+		}
+		else {
+			main::set_color_scheme($colors{'default'});
+		}
+	}
+	elsif ($response == ($count + 1)){
+		@data = ([0, '', '', "Removing all color settings from config file now..."],);
+		main::print_basic(@data); 
+		delete_all_config_colors();
+		main::set_color_scheme($colors{'default'});
+	}
+	else {
+		main::set_color_scheme($response);
+		@data = ([0, '', '', "Updating config file for $configs{'selection'} color scheme now..."],);
+		main::print_basic(@data); 
+		if ($configs{'selection'} eq 'global'){
+			delete_all_config_colors();
+		}
+		else {
+			set_config_color_scheme($response);
+		}
+	}
+}
+sub delete_all_config_colors {
+	open( $r_fh, "<", $config_file ) or error_handler('open', $config_file, $!);
+	my @file_lines = <$r_fh>; 
+	close( $r_fh ); 
+	open( $w_fh, '>', $config_file ) or error_handler('open', $config_file, $!);
+	foreach ( @file_lines ) { 
+		if ( $_ !~ /^(CONSOLE_COLOR_SCHEME|GLOBAL_COLOR_SCHEME|IRC_COLOR_SCHEME|IRC_CONS_COLOR_SCHEME|IRC_X_TERM_COLOR_SCHEME|VIRT_TERM_COLOR_SCHEME)/){
+			print {$w_fh} "$_"; 
+		}
+	} 
+	close $w_fh;
+}
+sub set_config_color_scheme {
+	my $value = shift;
+	open( $r_fh, "<", $config_file ) or error_handler('open', $config_file, $!);
+	my @file_lines = <$r_fh>; 
+	my $b_found = 0;
+	close( $r_fh ); 
+	open( $w_fh, '>', $config_file ) or error_handler('open', $config_file, $!);
+	foreach ( @file_lines ) { 
+		if ( $_ =~ /^$configs{'variable'}/ ){
+			$_ = "$configs{'variable'}=$value\n";
+			$b_found = 1;
+		}
+		print $w_fh "$_";
+	}
+	if (! $b_found ){
+		print $w_fh "$configs{'variable'}=$value\n";
+	}
+	close $w_fh;
+}
+
+sub print_irc_message {
+	@data = (
+	[ 0, '', '', "$line1"],
+	[ 0, '', '', "After finding the scheme number you like, simply run this again
+	in a terminal to set the configuration data file for your irc client. You can 
+	set color schemes for the following: start inxi with -c plus:"],
+	[ 0, '', '', "94 (console,^no^X^-^$status{'console'})"],
+	[ 0, '', '', "95 (terminal, X^-^$status{'virt-term'})"],
+	[ 0, '', '', "96 (irc,^gui,^X^-^$status{'irc-gui'})"],
+	[ 0, '', '', "97 (irc,^X,^in terminal^-^$status{'irc-virt-term'})"],
+	[ 0, '', '', "98 (irc,^no^X^-^$status{'irc-console'})"],
+	[ 0, '', '', "99 (global^-^$status{'global'})"]
+	);
+	main::print_basic(@data); 
+	exit 1;
+}
+
+};1;
 
 #### -------------------------------------------------------------------
 #### DEBUGGERS
@@ -1363,7 +1624,6 @@ sub run_debugger {
 sub upload_file {}
 }
 
-
 #### -------------------------------------------------------------------
 #### DOWNLOADER
 #### -------------------------------------------------------------------
@@ -1516,6 +1776,8 @@ sub error_handler {
 		## Files:
 		elsif ( $err eq 'copy-failed' ) { 
 			$errno=30; "Error copying file: $one \nError: $two" }
+		elsif ( $err eq 'create' ) { 
+			$errno=32; "Error creating file: $one \nError: $two" }
 		elsif ( $err eq 'downloader-error' ) { 
 			$errno=30; "Error downloading file: $one \nfor download source: $two" }
 		elsif ( $err eq 'file-corrupt' ) { 
@@ -1966,26 +2228,12 @@ sub get_options{
 		$show{'battery-forced'} = 1; },
 	'c|color:i' => sub {
 		my ($opt,$arg) = @_;
+		$output_type = 'print-basic';
 		if ( $arg >= 0 && $arg <= get_color_scheme('count') ){
 			set_color_scheme($arg);
 		}
-		elsif ( $arg == 94){
-			$colors{'selector'} = 'console';
-		}
-		elsif ( $arg == 95){
-			$colors{'selector'} = 'virtual-terminal';
-		}
-		elsif ( $arg == 96){
-			$colors{'selector'} = 'irc';
-		}
-		elsif ( $arg == 97){
-			$colors{'selector'} = 'irc-virtual-terminal';
-		}
-		elsif ( $arg == 98){
-			$colors{'selector'} = 'irc-console';
-		}
-		elsif ( $arg == 99){
-			$colors{'selector'} = 'global';
+		elsif ( $arg >= 94 && $arg <= 99 ){
+			$colors{'selector'} = $arg;
 		}
 		else {
 			error_handler('bad-arg', $opt, $arg);
