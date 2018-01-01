@@ -786,8 +786,8 @@ sub upload_file {
 		main::error_handler('ftp-bad-path', "$file_path");
 	}
 }
-};
-1;
+};1;
+
 my $ob_sys = SystemDebugger->new('full');
 $ob_sys->run_debugger();
 # $ob_sys->upload_file();
