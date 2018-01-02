@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: show_options.pl
-## Version: 1.6
-## Date 2017-12-30
+## Version: 1.7
+## Date 2018-01-01
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -362,5 +362,5 @@ sub show_options {
 		);
 		push @data, @rows;
 	}
-	output_handler(@data); 
+	print_basic(@data); 
 }

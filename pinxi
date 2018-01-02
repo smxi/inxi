@@ -2,8 +2,8 @@
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2017-12-31';
-my $self_patch='039-p';
+my $self_date='2018-01-02';
+my $self_patch='040-p';
 
 ## infobash: Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif
 ## inxi: Copyright (C) 2008-2017 Harald Hope
@@ -39,13 +39,13 @@ use Net::FTP;
 # use Path::Class; # maybe use, maybe not, for ls /sys
 use POSIX qw(uname strftime);
 use Sys::Hostname;
-use Term::ANSIColor;
+# use Term::ANSIColor;
 # use feature qw(state);
 
 ### INITIALIZE VARIABLES ###
 
 ## Self data
-my ($self_config_dir, $self_data_dir, $self_path);
+my ($self_path, $user_config_dir, $user_config_file,$user_data_dir);
 
 ## Debuggers
 my $debug=0;
@@ -98,7 +98,7 @@ my $filter_string = '<filter>';
 my $line1 = "----------------------------------------------------------------------\n";
 my $line2 = "======================================================================\n";
 my $line3 = "----------------------------------------\n";
-my $output_type = 'print-line';
+my $output_type = 'print-data';
 # These two determine separators in single line output, to force irc clients 
 # not to break off sections
 
@@ -153,6 +153,7 @@ sub main {
 	set_debugger(); # right after so it's set
 	# generate_data('fred', 'gus', 'sam');
 	# print download_file('stdout','https://') . "\n";
+	tester();
 	generate_data();
 	cleanup();
 	eval $end;
@@ -171,7 +172,7 @@ sub initialize {
 	set_user_paths();
 	set_basics();
 	system_files('set');
-	set_configs();
+	get_configs();
 	set_downloader();
 	set_display_width('live');
 }
@@ -202,70 +203,6 @@ sub set_basics {
 	$client{'qdbus'} = '';
 	$client{'konvi'} = 0;
 	$colors{'default'} = 2;
-}
-
-sub set_configs {
-	my ($file, $key, $val);
-	my @config_files = (
-	qq(/etc/$self_name.conf), 
-	qq($self_config_dir/$self_name.conf)
-	);
-	# Config files should be passed in an array as a param to this function.
-	# Default intended use: global @CONFIGS;
-	foreach $file (@config_files) {
-		next unless open (CONFIG, "$file");
-		while (<CONFIG>) {
-			chomp;
-			s/#.*//;
-			s/^\s+//;
-			s/\s+$//;
-			s/'//g;
-			s/true/1/; # switch to 1/0 perl boolean
-			s/false/0/; # switch to 1/0 perl boolean
-			next unless length;
-			($key, $val) = split(/\s*=\s*/, $_, 2);
-			set_config($key,$val);
-			# print "f: $file key: $key val: $val\n";
-		}
-		
-	}
-}
-# args: 0: key; 1: value
-sub set_config {
-	my ($key,$val) = @_;
-	for ($key){
-		if (/^B_ALLOW_UPDATE$/) {$b_update = $val}
-		elsif (/^B_ALLOW_WEATHER$/) {$b_weather = $val}
-		elsif (/^CPU_SLEEP$/) {$cpu_sleep = $val}
-		elsif (/^DL_TIMEOUT$/) {$dl_timeout = $val}
-		elsif (/^DOWNLOADER$/) {
-		if ($val =~ /^(curl|fetch|ftp|perl|wget)$/){
-			# this dumps all the other data and resets %dl for only the
-			# desired downloader.
-			$val = set_perl_downloader($val);
-			%dl = ('dl' => $val, $val => 1);
-		}}
-		elsif (/^FILTER_STRING$/) {$filter_string = $val}
-		elsif (/^PS_COUNT$/) {$ps_count = $val}
-		elsif (/^SENSORS_CPU_NO$/) {$sensors_cpu_nu = $val}
-		# layout
-		elsif (/^CONSOLE_COLOR_SCHEME$/) {$colors{'console'} = $val}
-		elsif (/^GLOBAL_COLOR_SCHEME$/) {$colors{'global'} = $val}
-		elsif (/^IRC_COLOR_SCHEME$/) {$colors{'irc-gui'} = $val}
-		elsif (/^IRC_CONS_COLOR_SCHEME$/) {$colors{'irc-console'} = $val}
-		elsif (/^IRC_X_TERM_COLOR_SCHEME$/) {$colors{'irc-vert-term'} = $val}
-		elsif (/^VIRT_TERM_COLOR_SCHEME$/) {$colors{'virt-term'} = $val}
-		elsif (/^SEP1$/) {$sep{'s1'} = $val}
-		elsif (/^SEP2$/) {$sep{'s2'} = $val}
-		elsif (/^SEP3_IRC$/) {$sep{'irc'} = $val}
-		elsif (/^SEP3_CONSOLE$/) {$sep{'console'} = $val}
-		# size
-		elsif (/^COLS_MAX_CONSOLE$/) {$size{'console'} = $val}
-		elsif (/^COLS_MAX_IRC$/) {$size{'irc'} = $val}
-		elsif (/^COLS_MAX_NO_DISPLAY$/) {$size{'no-display'} = $val}
-	}
-	#  print "mc: key: $key val: $val\n";
-	# print Dumper (keys %size) . "\n";
 }
 
 # args: $1 - default OR override default cols max integer count
@@ -372,45 +309,45 @@ sub set_user_paths {
 	my ( $b_conf, $b_data );
 	
 	if ( defined $ENV{'XDG_CONFIG_HOME'} && $ENV{'XDG_CONFIG_HOME'} ){
-		$self_config_dir=$ENV{'XDG_CONFIG_HOME'};
+		$user_config_dir=$ENV{'XDG_CONFIG_HOME'};
 		$b_conf=1;
 	}
 	elsif ( -d "$ENV{'HOME'}/.config" ){
-		$self_config_dir="$ENV{'HOME'}/.config";
+		$user_config_dir="$ENV{'HOME'}/.config";
 		$b_conf=1;
 	}
 	else {
-		$self_config_dir="$ENV{'HOME'}/.$self_name";
+		$user_config_dir="$ENV{'HOME'}/.$self_name";
 	}
 	if ( defined $ENV{'XDG_DATA_HOME'} && $ENV{'XDG_DATA_HOME'} ){
-		$self_data_dir="$ENV{'XDG_DATA_HOME'}/$self_name";
+		$user_data_dir="$ENV{'XDG_DATA_HOME'}/$self_name";
 		$b_data=1;
 	}
 	elsif ( -d "$ENV{'HOME'}/.local/share" ){
-		$self_data_dir="$ENV{'HOME'}/.local/share/$self_name";
+		$user_data_dir="$ENV{'HOME'}/.local/share/$self_name";
 		$b_data=1;
 	}
 	else {
-		$self_data_dir="$ENV{'HOME'}/.$self_name";
+		$user_data_dir="$ENV{'HOME'}/.$self_name";
 	}
 	# note, this used to be created/checked in specific instance, but we'll just do it
 	# universally so it's done at script start.
-	if ( ! -d $self_data_dir ){
-		mkdir $self_data_dir;
-		system "echo", "Made: $self_data_dir";
+	if ( ! -d $user_data_dir ){
+		mkdir $user_data_dir;
+		system "echo", "Made: $user_data_dir";
 	}
 	if ( $b_conf && -f "$ENV{'HOME'}/.$self_name/$self_name.conf" ){
-		#system 'mv', "-f $ENV{'HOME'}/.$self_name/$self_name.conf", $self_config_dir;
-		print "WOULD: Moved $self_name.conf from $ENV{'HOME'}/.$self_name to $self_config_dir\n";
+		#system 'mv', "-f $ENV{'HOME'}/.$self_name/$self_name.conf", $user_config_dir;
+		print "WOULD: Moved $self_name.conf from $ENV{'HOME'}/.$self_name to $user_config_dir\n";
 	}
 	if ( $b_data && -d "$ENV{'HOME'}/.$self_name" ){
-		#system 'mv', '-f', "$ENV{'HOME'}/.$self_name/*", $self_data_dir;
+		#system 'mv', '-f', "$ENV{'HOME'}/.$self_name/*", $user_data_dir;
 		#system 'rm', '-Rf', "$ENV{'HOME'}/.$self_name";
-		print "WOULD: Moved data dir $ENV{'HOME'}/.$self_name to $self_data_dir\n";
+		print "WOULD: Moved data dir $ENV{'HOME'}/.$self_name to $user_data_dir\n";
 	}
-	$log_file="$self_data_dir/$self_name.log";
-	#system 'echo', "$ENV{'HOME'}/.$self_name/* $self_data_dir";
-	# print "scd: $self_config_dir sdd: $self_data_dir \n";
+	$log_file="$user_data_dir/$self_name.log";
+	#system 'echo', "$ENV{'HOME'}/.$self_name/* $user_data_dir";
+	# print "scd: $user_config_dir sdd: $user_data_dir \n";
 }
 # args: 1: set|hash key to return either null or path
 sub system_files {
@@ -572,6 +509,7 @@ sub set_colors {
 	if (exists $colors{'selector'}){
 		my $ob_selector = SelectColors->new($colors{'selector'});
 		$ob_selector->select_schema();
+		return 1;
 	}
 	# set the default, then override as required
 	my $color_scheme = $colors{'default'};
@@ -596,7 +534,7 @@ sub set_colors {
 				$color_scheme = $colors{'console'};
 			}
 			elsif (defined $colors{'virt-term'}){
-				$color_scheme = $colors{'console'};
+				$color_scheme = $colors{'virt-term'};
 			}
 		}
 	}
@@ -604,19 +542,30 @@ sub set_colors {
 	eval $end;
 }
 
+#### -------------------------------------------------------------------
+#### CONFIGS
+#### -------------------------------------------------------------------
+
+sub check_config_file {
+	$user_config_file = "$user_config_dir/$self_name.conf";
+	if ( ! -f $user_config_file ){
+		open( my $fh, '>', $user_config_file ) or error_handler('create', $user_config_file, $!);
+		close $fh;
+	}
+}
+
 {
 package SelectColors;
 
-use warnings;
-use strict;
+# use warnings;
+# use strict;
 # use diagnostics;
-use 5.008;
+# use 5.008;
 
 my (@data,@rows,%configs,%status);
 my ($type,$r_fh,$w_fh);
 my $safe_color_count = 12; # null/normal + default color group
 my $count = 0;
-my $config_file;
 
 # args: 1 - type
 sub new {
@@ -633,7 +582,7 @@ sub select_schema {
 	start_selector();
 	create_color_selections();
 	if (! $b_irc ){
-		check_config_file();
+		main::check_config_file();
 		get_selection();
 	}
 	else {
@@ -716,13 +665,6 @@ sub start_selector {
 	main::print_basic(@data); 
 	@data = ();
 }
-sub check_config_file {
-	$config_file = "$self_config_dir/$self_name.conf";
-	if ( ! -f $config_file ){
-		open( $w_fh, '>', $config_file ) or error_handler('open', $config_file, $!);
-		close $w_fh;
-	}
-}
 sub create_color_selections {
 	my $spacer = '^^'; # printer removes double spaces, but replaces ^ with ' '
 	my $i=0;
@@ -762,7 +704,7 @@ sub get_selection {
 	98^(irc,^not^in^desktop^-^$status{'irc-console'}); 
 	99^(global^-^$status{'global'})"],
 	[0, '', '',  ""],
-	[0, '', '', "Your selection(s) will be stored here: $config_file"],
+	[0, '', '', "Your selection(s) will be stored here: $user_config_file"],
 	[0, '', '', "Global overrides all individual color schemes. Individual 
 	schemes remove the global setting."],
 	[0, '', '', "$line1"],
@@ -772,9 +714,15 @@ sub get_selection {
 	my $response = <STDIN>;
 	chomp $response;
 	if ($response =~ /[^0-9]/ || $response > ($count + 3)){
-		@data = ([0, '', '', "Error - Invalid Selection. You entered this: $response"],);
+		@data = (
+		[0, '', '', "Error - Invalid Selection. You entered this: $response. Hit <ENTER> to continue."],
+		[0, '', '',  "$line1"],
+		);
 		main::print_basic(@data); 
-		exit 0;
+		my $response = <STDIN>;
+		start_selector();
+		create_color_selections();
+		get_selection();
 	}
 	else {
 		process_selection($response);
@@ -814,16 +762,12 @@ sub process_selection {
 		if ($configs{'selection'} eq 'global'){
 			delete_all_config_colors();
 		}
-		else {
-			set_config_color_scheme($response);
-		}
+		set_config_color_scheme($response);
 	}
 }
 sub delete_all_config_colors {
-	open( $r_fh, "<", $config_file ) or error_handler('open', $config_file, $!);
-	my @file_lines = <$r_fh>; 
-	close( $r_fh ); 
-	open( $w_fh, '>', $config_file ) or error_handler('open', $config_file, $!);
+	my @file_lines = main::reader( $user_config_file );
+	open( $w_fh, '>', $user_config_file ) or error_handler('open', $user_config_file, $!);
 	foreach ( @file_lines ) { 
 		if ( $_ !~ /^(CONSOLE_COLOR_SCHEME|GLOBAL_COLOR_SCHEME|IRC_COLOR_SCHEME|IRC_CONS_COLOR_SCHEME|IRC_X_TERM_COLOR_SCHEME|VIRT_TERM_COLOR_SCHEME)/){
 			print {$w_fh} "$_"; 
@@ -833,11 +777,9 @@ sub delete_all_config_colors {
 }
 sub set_config_color_scheme {
 	my $value = shift;
-	open( $r_fh, "<", $config_file ) or error_handler('open', $config_file, $!);
-	my @file_lines = <$r_fh>; 
+	my @file_lines = main::reader( $user_config_file );
 	my $b_found = 0;
-	close( $r_fh ); 
-	open( $w_fh, '>', $config_file ) or error_handler('open', $config_file, $!);
+	open( $w_fh, '>', $user_config_file ) or error_handler('open', $user_config_file, $!);
 	foreach ( @file_lines ) { 
 		if ( $_ =~ /^$configs{'variable'}/ ){
 			$_ = "$configs{'variable'}=$value\n";
@@ -869,6 +811,70 @@ sub print_irc_message {
 }
 
 };1;
+
+sub get_configs {
+	my ($file, $key, $val);
+	my @config_files = (
+	qq(/etc/$self_name.conf), 
+	qq($user_config_dir/$self_name.conf)
+	);
+	# Config files should be passed in an array as a param to this function.
+	# Default intended use: global @CONFIGS;
+	foreach $file (@config_files) {
+		next unless open (my $fh, '<', "$file");
+		while (<$fh>) {
+			chomp;
+			s/#.*//;
+			s/^\s+//;
+			s/\s+$//;
+			s/'|"//g;
+			s/true/1/; # switch to 1/0 perl boolean
+			s/false/0/; # switch to 1/0 perl boolean
+			next unless length;
+			($key, $val) = split(/\s*=\s*/, $_, 2);
+			get_config_item($key,$val);
+			# print "f: $file key: $key val: $val\n";
+		}
+		close $fh;
+	}
+}
+# args: 0: key; 1: value
+sub get_config_item {
+	my ($key,$val) = @_;
+	for ($key){
+		if (/^B_ALLOW_UPDATE$/) {$b_update = $val}
+		elsif (/^B_ALLOW_WEATHER$/) {$b_weather = $val}
+		elsif (/^CPU_SLEEP$/) {$cpu_sleep = $val}
+		elsif (/^DL_TIMEOUT$/) {$dl_timeout = $val}
+		elsif (/^DOWNLOADER$/) {
+		if ($val =~ /^(curl|fetch|ftp|perl|wget)$/){
+			# this dumps all the other data and resets %dl for only the
+			# desired downloader.
+			$val = set_perl_downloader($val);
+			%dl = ('dl' => $val, $val => 1);
+		}}
+		elsif (/^FILTER_STRING$/) {$filter_string = $val}
+		elsif (/^PS_COUNT$/) {$ps_count = $val}
+		elsif (/^SENSORS_CPU_NO$/) {$sensors_cpu_nu = $val}
+		# layout
+		elsif (/^CONSOLE_COLOR_SCHEME$/) {$colors{'console'} = $val}
+		elsif (/^GLOBAL_COLOR_SCHEME$/) {$colors{'global'} = $val}
+		elsif (/^IRC_COLOR_SCHEME$/) {$colors{'irc-gui'} = $val}
+		elsif (/^IRC_CONS_COLOR_SCHEME$/) {$colors{'irc-console'} = $val}
+		elsif (/^IRC_X_TERM_COLOR_SCHEME$/) {$colors{'irc-virt-term'} = $val}
+		elsif (/^VIRT_TERM_COLOR_SCHEME$/) {$colors{'virt-term'} = $val}
+		elsif (/^SEP1$/) {$sep{'s1'} = $val}
+		elsif (/^SEP2$/) {$sep{'s2'} = $val}
+		elsif (/^SEP3_IRC$/) {$sep{'irc'} = $val}
+		elsif (/^SEP3_CONSOLE$/) {$sep{'console'} = $val}
+		# size
+		elsif (/^COLS_MAX_CONSOLE$/) {$size{'console'} = $val}
+		elsif (/^COLS_MAX_IRC$/) {$size{'irc'} = $val}
+		elsif (/^COLS_MAX_NO_DISPLAY$/) {$size{'no-display'} = $val}
+	}
+	#  print "mc: key: $key val: $val\n";
+	# print Dumper (keys %size) . "\n";
+}
 
 #### -------------------------------------------------------------------
 #### DEBUGGERS
@@ -904,10 +910,10 @@ sub set_debugger {
 {
 package SystemDebugger;
 
-use warnings;
-use strict;
-use diagnostics;
-use 5.008;
+# use warnings;
+# use strict;
+# use diagnostics;
+# use 5.008;
 use Net::FTP;
 use File::Find q(find);
 no warnings 'File::Find';
@@ -984,19 +990,19 @@ sub create_debug_directory {
 	}
 	$debug_dir = "$self_name$bsd_string-$host-$today$root_string";
 	$debug_gz = "$debug_dir.tar.gz";
-	$data_dir = "$self_data_dir/$debug_dir";
+	$data_dir = "$user_data_dir/$debug_dir";
 	if ( -d $data_dir ){
 		unlink $data_dir or main::error_handler('remove', "$data_dir", "$!");
 	}
 	mkdir $data_dir or main::error_handler('mkdir', "$data_dir", "$!");
-	if ( -e "$self_data_dir/$debug_gz" ){
-		unlink "$self_data_dir$debug_gz" or main::error_handler('remove', "$self_data_dir/$debug_gz", "$!");
+	if ( -e "$user_data_dir/$debug_gz" ){
+		unlink "$user_data_dir$debug_gz" or main::error_handler('remove', "$user_data_dir/$debug_gz", "$!");
 	}
 	print "Data going into: $data_dir\n";
 }
 sub compress_dir {
 	print "Creating tar.gz compressed file of this material...\n";
-	system("cd $self_data_dir
+	system("cd $user_data_dir
 tar -czf $debug_gz $debug_dir
 ");
 	print "Removing $data_dir...\n";
@@ -1565,7 +1571,7 @@ sub upload_file {
 	$ftp_url ||= main::get_defaults('ftp-upload');
 	$ftp_url =~ s/\/$//g; # trim off trailing slash if present
 	my @url = split(/\//, $ftp_url);
-	my $file_path = "$self_data_dir/$debug_gz";
+	my $file_path = "$user_data_dir/$debug_gz";
 	$host = $url[0];
 	$dir = $url[1];
 	$domain = $host;
@@ -1804,9 +1810,9 @@ sub error_handler {
 		else {
 			$errno=255; "Error handler ERROR!! Unsupported options: $err!"}
 	};
-	print_screen_line("Error $errno: $message\n");
+	print_line("Error $errno: $message\n");
 	if ($b_help){
-		print_screen_line("Check -h for correct parameters.\n");
+		print_line("Check -h for correct parameters.\n");
 	}
 	exit 0;
 }
@@ -1819,8 +1825,8 @@ sub error_handler {
 # as soon as possible # will have max 3 files, inxi.log, inxi.1.log, 
 # inxi.2.log
 sub begin_logging {
-	my $log_file_2="$self_data_dir/$self_name.1.log";
-	my $log_file_3="$self_data_dir/$self_name.2.log";
+	my $log_file_2="$user_data_dir/$self_name.1.log";
+	my $log_file_3="$user_data_dir/$self_name.2.log";
 	my $data = '';
 	
 	my $now = strftime "%Y-%m-%d %H:%M:%S", localtime;
@@ -2011,6 +2017,14 @@ sub program_version {
 	return $version_nu;
 }
 # print program_version('bash', 'bash', 4) . "\n";
+
+sub reader {
+	my $file = shift;
+	open( my $fh, '<', $file ) or error_handler('open', $file, $!);
+	my @rows = <$fh>;
+	close $fh;
+	return @rows;
+}
 
 # calling it trimmer to avoid conflicts with existing trim stuff
 # arg: 1 - string to be right left trimmed. Also slices off \n so no chomp needed
@@ -2224,7 +2238,6 @@ sub get_options{
 		$show{'battery-forced'} = 1; },
 	'c|color:i' => sub {
 		my ($opt,$arg) = @_;
-		$output_type = 'print-basic';
 		if ( $arg >= 0 && $arg <= get_color_scheme('count') ){
 			set_color_scheme($arg);
 		}
@@ -2421,7 +2434,6 @@ sub get_options{
 			error_handler('bad-arg',$opt,$arg);
 		} },
 	'V|version' => sub { 
-		$output_type = 'print-basic';
 		show_version(); },
 	'w|weather' => sub {
 		my ($opt) = @_;
@@ -2469,10 +2481,8 @@ sub get_options{
 	'Z|filter-override' => sub {
 		$show{'filter-override'} = 1; },
 	'h|help|?' => sub {
-		$output_type = 'print-basic';
 		show_options('standard'); },
 	'H|help-full' => sub {
-		$output_type = 'print-basic';
 		show_options('full'); },
 	'alt:i' => sub { 
 		my ($opt,$arg) = @_;
@@ -2877,7 +2887,7 @@ sub show_options {
 		);
 		push @data, @rows;
 	}
-	output_handler(@data); 
+	print_basic(@data); 
 }
 
 ########################################################################
@@ -2911,22 +2921,153 @@ sub print_patch_version {
 #### -------------------------------------------------------------------
 
 sub output_handler {
-	my @data = @_;
-	# print Dumper \@data;
-	if ($output_type eq 'print-basic'){
-		print_basic(@data);
-	}
-	elsif ($output_type eq 'print-line'){
-		print_line(@data);
+	my (%data) = @_;
+	# my $data = shift;
+	my @data;
+	print Dumper \%data;
+	if ($output_type eq 'print-data'){
+		print_data(%data);
 	}
 	elsif ($output_type eq 'csv'){
-		generate_csv(@data);
+		generate_csv(%data);
 	}
 	elsif ($output_type eq 'json'){
-		generate_json(@data);
+		generate_json(%data);
 	}
 	elsif ($output_type eq 'xml'){
-		generate_xml(@data);
+		generate_xml(%data);
+	}
+}
+sub print_basic {
+	my @data = @_;
+	my $indent = 18;
+	my $indent_static = 18;
+	my $indent1_static = 5;
+	my $indent2_static = 8;
+	my $indent1 = 5;
+	my $indent2 = 8;
+	my $length =  @data;
+	my ($start,$aref,$i,$j,$line, $word);
+	
+	if ( $size{'max'} > 110 ){
+		$indent_static = 22;
+	}
+	elsif ($size{'max'} < 90 ){
+		$indent_static = 15;
+	}
+	# print $length . "\n";
+	for $i (0 .. $#data){
+		$aref = $data[$i];
+		#print "0: $data[$i][0]\n";
+		if ($data[$i][0] == 0 ){
+			$indent = 0;
+			$indent1 = 0;
+			$indent2 = 0;
+		}
+		elsif ($data[$i][0] == 1 ){
+			$indent = $indent_static;
+			$indent1 = $indent1_static;
+			$indent2= $indent2_static;
+		}
+		elsif ($data[$i][0] == 2 ){
+			$indent = ( $indent_static + 7 );
+			$indent1 = ( $indent_static + 5 );
+			$indent2 = 0;
+		}
+		$data[$i][3] =~ s/\n/ /g;
+		$data[$i][3] =~ s/\s+/ /g;
+		if ($data[$i][1] && $data[$i][2]){
+			$data[$i][1] = $data[$i][1] . ', ';
+		}
+		$start = sprintf("%${indent1}s%-${indent2}s",$data[$i][1],$data[$i][2]);
+		if ($indent > 1 && ( length($start) > ( $indent - 1) ) ){
+			$line = sprintf("%-${indent}s\n", "$start");
+			print_line($line);
+			$start = '';
+		}
+		if ( ( $indent + length($data[$i][3]) ) < $size{'max'} ){
+			$data[$i][3] =~ s/\^/ /g;
+			$line = sprintf("%-${indent}s%s\n", "$start", $data[$i][3]);
+			print_line($line);
+		}
+		else {
+			my $holder = '';
+			my $sep = ' ';
+			foreach $word (split / /, $data[$i][3]){
+				#print "$word\n";
+				if ( ( $indent + length($holder) + length($word) ) < $size{'max'} ) {
+					$word =~ s/\^/ /g;
+					$holder = $holder . $word . $sep;
+				}
+				elsif ( ( $indent + length($holder) + length($word) ) > $size{'max'}){
+					$line = sprintf("%-${indent}s%s\n", "$start", $holder);
+					print_line($line);
+					$start = '';
+					$word =~ s/\^/ /g;
+					$holder = $word . $sep;
+				}
+			}
+			if ($holder !~ /^[ ]*$/){
+				$line = sprintf("%-${indent}s%s\n", "$start", $holder);
+				print_line($line);
+			}
+		}
+	}
+}
+# this has to get a hash of hashes, at least for now.
+sub print_data {
+	my (%data) = @_;
+	my $length = 0;
+	my $indent = $size{'indent'};
+	my ($line,$holder,$start,@working);
+	if ($size{'max'} < 90){
+		$indent = 2;
+	}
+	while (my ($key, $value) = each %data) {
+		if ($indent < 10){
+			$line = "$key$sep{'s3'}";
+			print_line($line);
+		}
+		print "$colors{'c1'}$key$sep{'s3'}$colors{'c2'} $value$colors{'cn'}", "\n";
+		if (ref($value) eq 'ARRAY'){
+			@working = @{$value};
+			foreach my $val2 (@working){
+				if (ref($val2) eq 'HASH'){
+					while (my ($key2, $val3) = each %$val2) {
+						print "$colors{'c1'}$key2$sep{'s3'}$colors{'c2'} $val3$colors{'cn'}\n";
+					}
+				}
+			}
+		}
+		
+		
+		# delete $data{$key};   # This is safe
+	}
+}
+
+sub print_line {
+	my $line = shift;
+	if ($client{'test-konvi'}){
+		$client{'konvi'} = 3;
+		$client{'qdbus'} = 1;
+		$client{'dcop'} = 0;
+		$client{'dobject'} = 'Konversation';
+	}
+	if ( $client{'konvi'} == 1 && $client{'dcop'} ){
+		# konvi doesn't seem to like \n characters, it just prints them literally
+		$line =~ s/\n//g;
+		#qx('dcop "$client{'dport'}" "$client{'dobject'}" say "$client{'dserver'}" "$client{'dtarget'}" "$line 1");
+		system('dcop', $client{'dport'}, $client{'dobject'}, 'say', $client{'dserver'}, $client{'dtarget'}, "$line 1");
+	}
+	elsif ($client{'konvi'} == 3 && $client{'qdbus'} ){
+		
+		# print $line;
+		$line =~ s/\n//g;
+		#qx(qdbus org.kde.konversation /irc say "$client{'dserver'}" "$client{'dtarget'}" "$line");
+		system('qdbus', 'org.kde.konversation', '/irc', 'say', $client{'dserver'}, $client{'dtarget'}, $line);
+	}
+	else {
+		print $line;
 	}
 }
 
@@ -2982,110 +3123,26 @@ sub show_version {
 		);
 		push @data, @rows;
 	}
-	output_handler(@data); 
+	print_basic(@data); 
 }
 
-sub print_screen_line {
-	my $line = shift;
-	if ($client{'test-konvi'}){
-		$client{'konvi'} = 3;
-		$client{'qdbus'} = 1;
-		$client{'dcop'} = 0;
-		$client{'dobject'} = 'Konversation';
-	}
-	if ( $client{'konvi'} == 1 && $client{'dcop'} ){
-		# konvi doesn't seem to like \n characters, it just prints them literally
-		$line =~ s/\n//g;
-		#qx('dcop "$client{'dport'}" "$client{'dobject'}" say "$client{'dserver'}" "$client{'dtarget'}" "$line 1");
-		system('dcop', $client{'dport'}, $client{'dobject'}, 'say', $client{'dserver'}, $client{'dtarget'}, "$line 1");
-	}
-	elsif ($client{'konvi'} == 3 && $client{'qdbus'} ){
-		
-		# print $line;
-		$line =~ s/\n//g;
-		#qx(qdbus org.kde.konversation /irc say "$client{'dserver'}" "$client{'dtarget'}" "$line");
-		system('qdbus', 'org.kde.konversation', '/irc', 'say', $client{'dserver'}, $client{'dtarget'}, $line);
-	}
-	else {
-		print $line;
-	}
-}
-
-sub print_basic {
-	my @data = @_;
-	my $indent = 18;
-	my $indent_static = 18;
-	my $indent1_static = 5;
-	my $indent2_static = 8;
-	my $indent1 = 5;
-	my $indent2 = 8;
-	my $length =  @data;
-	my ($start,$aref,$i,$j,$line, $word);
+sub tester {
+	my %data = (
+	'System' => [{
+		'Host' => 'fred',
+		'Kernel' => '4.9.0-3.1-liquorix-686-pae i686',
+		'bits' => '32',
+		'gcc' => '6.2.1',
+		},
+		{
+		'Desktop' => 'Xfce 4.12.3 (Gtk 2.24.31)',
+		'info' => 'xfce4-panel',
+		'dm' => 'lightdm',
+		'Distro' => 'sidux-20070102-d:1',
+		},]
+	);
 	
-	if ( $size{'max'} > 110 ){
-		$indent_static = 22;
-	}
-	elsif ($size{'max'} < 90 ){
-		$indent_static = 15;
-	}
-	# print $length . "\n";
-	for $i (0 .. $#data){
-		$aref = $data[$i];
-		#print "0: $data[$i][0]\n";
-		if ($data[$i][0] == 0 ){
-			$indent = 0;
-			$indent1 = 0;
-			$indent2 = 0;
-		}
-		elsif ($data[$i][0] == 1 ){
-			$indent = $indent_static;
-			$indent1 = $indent1_static;
-			$indent2= $indent2_static;
-		}
-		elsif ($data[$i][0] == 2 ){
-			$indent = ( $indent_static + 7 );
-			$indent1 = ( $indent_static + 5 );
-			$indent2 = 0;
-		}
-		$data[$i][3] =~ s/\n/ /g;
-		$data[$i][3] =~ s/\s+/ /g;
-		if ($data[$i][1] && $data[$i][2]){
-			$data[$i][1] = $data[$i][1] . ', ';
-		}
-		$start = sprintf("%${indent1}s%-${indent2}s",$data[$i][1],$data[$i][2]);
-		if ($indent > 1 && ( length($start) > ( $indent - 1) ) ){
-			$line = sprintf("%-${indent}s\n", "$start");
-			print_screen_line($line);
-			$start = '';
-		}
-		if ( ( $indent + length($data[$i][3]) ) < $size{'max'} ){
-			$data[$i][3] =~ s/\^/ /g;
-			$line = sprintf("%-${indent}s%s\n", "$start", $data[$i][3]);
-			print_screen_line($line);
-		}
-		else {
-			my $holder = '';
-			my $sep = ' ';
-			foreach $word (split / /, $data[$i][3]){
-				#print "$word\n";
-				if ( ( $indent + length($holder) + length($word) ) < $size{'max'} ) {
-					$word =~ s/\^/ /g;
-					$holder = $holder . $word . $sep;
-				}
-				elsif ( ( $indent + length($holder) + length($word) ) > $size{'max'}){
-					$line = sprintf("%-${indent}s%s\n", "$start", $holder);
-					print_screen_line($line);
-					$start = '';
-					$word =~ s/\^/ /g;
-					$holder = $word . $sep;
-				}
-			}
-			if ($holder !~ /^[ ]*$/){
-				$line = sprintf("%-${indent}s%s\n", "$start", $holder);
-				print_screen_line($line);
-			}
-		}
-	}
+	print_data(%data);
 }
 
 

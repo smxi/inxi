@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: options.pl
-## Version: 1.3
-## Date 2017-12-31
+## Version: 1.4
+## Date 2018-01-01
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -31,7 +31,7 @@ sub set_downloader {}
 sub set_perl_downloader {}
 sub update_me {}
 my (%colors,%show,%dl,$debug,%test,$b_weather,$ps_count,$b_update,
-$display,$output_type,$b_irc,$ftp_alt);
+$display,$b_irc,$ftp_alt);
 my $start = '';
 my $end = '';
 
@@ -64,7 +64,6 @@ sub get_options{
 		$show{'battery-forced'} = 1; },
 	'c|color:i' => sub {
 		my ($opt,$arg) = @_;
-		$output_type = 'print-basic';
 		if ( $arg >= 0 && $arg <= get_color_scheme('count') ){
 			set_color_scheme($arg);
 		}
@@ -261,7 +260,6 @@ sub get_options{
 			error_handler('bad-arg',$opt,$arg);
 		} },
 	'V|version' => sub { 
-		$output_type = 'print-basic';
 		show_version(); },
 	'w|weather' => sub {
 		my ($opt) = @_;
@@ -309,10 +307,8 @@ sub get_options{
 	'Z|filter-override' => sub {
 		$show{'filter-override'} = 1; },
 	'h|help|?' => sub {
-		$output_type = 'print-basic';
 		show_options('standard'); },
 	'H|help-full' => sub {
-		$output_type = 'print-basic';
 		show_options('full'); },
 	'alt:i' => sub { 
 		my ($opt,$arg) = @_;

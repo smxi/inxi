@@ -1,7 +1,7 @@
 #!/usr/bin/perl
-## File: colors.pl
-## Version: 1.2
-## Date 2017-12-31
+## File: colors_configs.pl
+## Version: 1.3
+## Date 2018-01-02
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -10,12 +10,15 @@ use warnings;
 # use diagnostics;
 use 5.008;
 
+use Data::Dumper qw(Dumper); # print_r
+
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2017-12-31';
 my $self_patch='037-p';
 my $self_path = "$ENV{'HOME'}/bin/scripts/inxi/svn/branches/inxi-perl";
-my $self_config_dir= "$ENV{'HOME'}/.config";
+my $user_config_dir= "$ENV{'HOME'}/.config";
+my $user_config_file;
 ## stub code
 
 my (%client,%colors,%size);
@@ -36,7 +39,8 @@ sub error_handler {
 	print "$err $one\n";
 	exit 0;
 }
-sub print_screen_line {
+
+sub print_line {
 	my $line = shift;
 	if ($client{'test-konvi'}){
 		$client{'konvi'} = 3;
@@ -105,13 +109,13 @@ sub print_basic {
 		$start = sprintf("%${indent1}s%-${indent2}s",$data[$i][1],$data[$i][2]);
 		if ($indent > 1 && ( length($start) > ( $indent - 1) ) ){
 			$line = sprintf("%-${indent}s\n", "$start");
-			print_screen_line($line);
+			print_line($line);
 			$start = '';
 		}
 		if ( ( $indent + length($data[$i][3]) ) < $size{'max'} ){
 			$data[$i][3] =~ s/\^/ /g;
 			$line = sprintf("%-${indent}s%s\n", "$start", $data[$i][3]);
-			print_screen_line($line);
+			print_line($line);
 		}
 		else {
 			my $holder = '';
@@ -124,7 +128,7 @@ sub print_basic {
 				}
 				elsif ( ( $indent + length($holder) + length($word) ) > $size{'max'}){
 					$line = sprintf("%-${indent}s%s\n", "$start", $holder);
-					print_screen_line($line);
+					print_line($line);
 					$start = '';
 					$word =~ s/\^/ /g;
 					$holder = $word . $sep;
@@ -132,16 +136,28 @@ sub print_basic {
 			}
 			if ($holder !~ /^[ ]*$/){
 				$line = sprintf("%-${indent}s%s\n", "$start", $holder);
-				print_screen_line($line);
+				print_line($line);
 			}
 		}
 	}
 }
 
-
-use Data::Dumper qw(Dumper); # print_r
+sub reader {
+	my $file = shift;
+	open( my $fh, "<", $file ) or error_handler('open', $file, $!);
+	my @rows = <$fh>;
+	return @rows;
+}
 
 ## start working code
+
+sub check_config_file {
+	$user_config_file = "$user_config_dir/$self_name.conf";
+	if ( ! -f $user_config_file ){
+		open( my $fh, '>', $user_config_file ) or error_handler('create', $user_config_file, $!);
+		close $fh;
+	}
+}
 
 sub get_color_scheme {
 	eval $start;
@@ -256,6 +272,7 @@ sub set_colors {
 	if (exists $colors{'selector'}){
 		my $ob_selector = SelectColors->new($colors{'selector'});
 		$ob_selector->select_schema();
+		return 1;
 	}
 	# set the default, then override as required
 	my $color_scheme = $colors{'default'};
@@ -300,7 +317,6 @@ my (@data,@rows,%configs,%status);
 my ($type,$r_fh,$w_fh);
 my $safe_color_count = 12; # null/normal + default color group
 my $count = 0;
-my $config_file;
 
 # args: 1 - type
 sub new {
@@ -317,7 +333,7 @@ sub select_schema {
 	start_selector();
 	create_color_selections();
 	if (! $b_irc ){
-		check_config_file();
+		main::check_config_file();
 		get_selection();
 	}
 	else {
@@ -400,13 +416,7 @@ sub start_selector {
 	main::print_basic(@data); 
 	@data = ();
 }
-sub check_config_file {
-	$config_file = "$self_config_dir/$self_name.conf";
-	if ( ! -f $config_file ){
-		open( $w_fh, '>', $config_file ) or error_handler('open', $config_file, $!);
-		close $w_fh;
-	}
-}
+
 sub create_color_selections {
 	my $spacer = '^^'; # printer removes double spaces, but replaces ^ with ' '
 	my $i=0;
@@ -446,7 +456,7 @@ sub get_selection {
 	98^(irc,^not^in^desktop^-^$status{'irc-console'}); 
 	99^(global^-^$status{'global'})"],
 	[0, '', '',  ""],
-	[0, '', '', "Your selection(s) will be stored here: $config_file"],
+	[0, '', '', "Your selection(s) will be stored here: $user_config_file"],
 	[0, '', '', "Global overrides all individual color schemes. Individual 
 	schemes remove the global setting."],
 	[0, '', '', "$line1"],
@@ -456,9 +466,15 @@ sub get_selection {
 	my $response = <STDIN>;
 	chomp $response;
 	if ($response =~ /[^0-9]/ || $response > ($count + 3)){
-		@data = ([0, '', '', "Error - Invalid Selection. You entered this: $response"],);
+		@data = (
+		[0, '', '', "Error - Invalid Selection. You entered this: $response. Hit <ENTER> to continue."],
+		[0, '', '',  "$line1"],
+		);
 		main::print_basic(@data); 
-		exit 0;
+		my $response = <STDIN>;
+		start_selector();
+		create_color_selections();
+		get_selection();
 	}
 	else {
 		process_selection($response);
@@ -504,10 +520,8 @@ sub process_selection {
 	}
 }
 sub delete_all_config_colors {
-	open( $r_fh, "<", $config_file ) or error_handler('open', $config_file, $!);
-	my @file_lines = <$r_fh>; 
-	close( $r_fh ); 
-	open( $w_fh, '>', $config_file ) or error_handler('open', $config_file, $!);
+	my @file_lines = main::reader($user_config_file);
+	open( $w_fh, '>', $user_config_file ) or error_handler('open', $user_config_file, $!);
 	foreach ( @file_lines ) { 
 		if ( $_ !~ /^(CONSOLE_COLOR_SCHEME|GLOBAL_COLOR_SCHEME|IRC_COLOR_SCHEME|IRC_CONS_COLOR_SCHEME|IRC_X_TERM_COLOR_SCHEME|VIRT_TERM_COLOR_SCHEME)/){
 			print {$w_fh} "$_"; 
@@ -517,11 +531,9 @@ sub delete_all_config_colors {
 }
 sub set_config_color_scheme {
 	my $value = shift;
-	open( $r_fh, "<", $config_file ) or error_handler('open', $config_file, $!);
-	my @file_lines = <$r_fh>; 
+	my @file_lines = main::reader($user_config_file);
 	my $b_found = 0;
-	close( $r_fh ); 
-	open( $w_fh, '>', $config_file ) or error_handler('open', $config_file, $!);
+	open( $w_fh, '>', $user_config_file ) or error_handler('open', $user_config_file, $!);
 	foreach ( @file_lines ) { 
 		if ( $_ =~ /^$configs{'variable'}/ ){
 			$_ = "$configs{'variable'}=$value\n";
