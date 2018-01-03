@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 ## File: colors_configs.pl
-## Version: 1.3
+## Version: 1.4
 ## Date 2018-01-02
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
@@ -314,7 +314,7 @@ use diagnostics;
 use 5.008;
 
 my (@data,@rows,%configs,%status);
-my ($type,$r_fh,$w_fh);
+my ($type,$w_fh);
 my $safe_color_count = 12; # null/normal + default color group
 my $count = 0;
 
@@ -352,34 +352,28 @@ sub set_status {
 }
 
 sub assign_selectors {
-	$configs{'console'} = 'CONSOLE_COLOR_SCHEME'; # 94
-	$configs{'virt-term'} = 'VIRT_TERM_COLOR_SCHEME'; # 95
-	$configs{'irc-gui'} = 'IRC_COLOR_SCHEME'; # 96
-	$configs{'irc-virt-term'} = 'IRC_X_TERM_COLOR_SCHEME'; # 97
-	$configs{'irc-console'} = 'IRC_CONS_COLOR_SCHEME'; # 98
-	$configs{'global'} = 'GLOBAL_COLOR_SCHEME'; # 99
 	if ($type == 94){
-		$configs{'variable'} = $configs{'console'};
+		$configs{'variable'} = 'CONSOLE_COLOR_SCHEME';
 		$configs{'selection'} = 'console';
 	}
 	elsif ($type == 95){
-		$configs{'variable'} = $configs{'virt-term'};
+		$configs{'variable'} = 'VIRT_TERM_COLOR_SCHEME';
 		$configs{'selection'} = 'virt-term';
 	}
 	elsif ($type == 96){
-		$configs{'variable'} = $configs{'irc-gui'};
+		$configs{'variable'} = 'IRC_COLOR_SCHEME';
 		$configs{'selection'} = 'irc-gui';
 	}
 	elsif ($type == 97){
-		$configs{'variable'} = $configs{'irc-virt-term'};
+		$configs{'variable'} = 'IRC_X_TERM_COLOR_SCHEME';
 		$configs{'selection'} = 'irc-virt-term';
 	}
 	elsif ($type == 98){
-		$configs{'variable'} = $configs{'irc-console'};
+		$configs{'variable'} = 'IRC_CONS_COLOR_SCHEME';
 		$configs{'selection'} = 'irc-console';
 	}
 	elsif ($type == 99){
-		$configs{'variable'} = $configs{'global'};
+		$configs{'variable'} = 'GLOBAL_COLOR_SCHEME';
 		$configs{'selection'} = 'global';
 	}
 }
