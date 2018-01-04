@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: show_options.pl
-## Version: 1.7
-## Date 2018-01-01
+## Version: 1.8
+## Date 2018-01-04
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -346,7 +346,9 @@ sub show_options {
 	If you use this format: ---display 1 it would get it from display 1 instead, or any 
 	display you specify" ],
 	['1', '', '--downloader', "Force $self_name to use [curl|fetch|perl|wget] for downloads." ],
-	['0', '', '', $line ]
+	['1', '', '--ftp', "Use alternate FTP server for --debug 20-22. Must be in format: ftp.site.com/incoming" ],
+	['1', '', '--output', "Change data output type. Options: [csv|json|screen|xml]" ],
+	['0', '', '', $line ],
 	);
 	push @data, @rows;
 	if ( $type eq 'full' ){

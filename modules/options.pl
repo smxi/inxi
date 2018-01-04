@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: options.pl
-## Version: 1.4
-## Date 2018-01-01
+## Version: 1.5
+## Date 2018-01-04
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -31,7 +31,7 @@ sub set_downloader {}
 sub set_perl_downloader {}
 sub update_me {}
 my (%colors,%show,%dl,$debug,%test,$b_weather,$ps_count,$b_update,
-$display,$b_irc,$ftp_alt);
+$display,$b_irc,$ftp_alt,$output_type);
 my $start = '';
 my $end = '';
 
@@ -313,14 +313,16 @@ sub get_options{
 	'alt:i' => sub { 
 		my ($opt,$arg) = @_;
 		my %alts = (
-		'0' => sub {$test{'1'} = 1;},
-		'1' => sub {$test{'1'} = 1;},
-		'2' => sub {$test{'2'} = 1;},
-		'3' => sub {$test{'3'} = 1;},
+		'0' => sub {$test[0] = 1;},
+		'1' => sub {$test[1] = 1;},
+		'2' => sub {$test[2] = 1;},
+		'3' => sub {$test[3] = 1;},
+		'4' => sub {$test[4] = 1;},
+		'5' => sub {$test[5] = 1;},
 		'30' => sub {$b_irc = 0;},
 		'31' => sub {$show{'host'} = 0;},
 		'32' => sub {$show{'host'} = 1;},
-		'33' => sub {$use{'dmidecode'}=1;},
+		'33' => sub {$use{'dmidecode-force'}=1;},
 		'34' => sub {$dl{'no-ssl-opt'}=$dl{'no-ssl'};},
 		'40' => sub {
 			$dl{'tiny'} = 0;
@@ -384,6 +386,14 @@ sub get_options{
 		# pattern: ftp.x.x/x
 		if ($arg =~ /^ftp\..+\..+\/[^\/]+$/ ){
 			$ftp_alt = $arg;
+		}
+		else {
+			error_handler('bad-arg', $opt, $arg);
+		}},
+	'output:s' => sub {
+		my ($opt,$arg) = @_;
+		if ($arg =~ /^csv|json|screen|xml$/){
+			$output_type = $arg;
 		}
 		else {
 			error_handler('bad-arg', $opt, $arg);

@@ -2,8 +2,8 @@
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-01-03';
-my $self_patch='048-p';
+my $self_date='2018-01-04';
+my $self_patch='049-p';
 
 ## infobash: Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif
 ## inxi: Copyright (C) 2008-2018 Harald Hope
@@ -56,7 +56,12 @@ my $start='main::log_data("fs", (caller(1))[3], @_);';
 
 ## Hashes
 my ( %alerts, %colors, %dl, %files, %client, %sep, %size, %show, 
-%system_files, %test, %use, %warnings );
+%system_files, %use, %warnings );
+
+## arrays
+my (@ps_aux);
+my @test = (0,0,0,0,0);
+
 
 # we only want to use HTTP::Tiny if it's present in user system.
 # It is NOT part of core modules.
@@ -98,7 +103,7 @@ my $filter_string = '<filter>';
 my $line1 = "----------------------------------------------------------------------\n";
 my $line2 = "======================================================================\n";
 my $line3 = "----------------------------------------\n";
-my $output_type = 'print-data';
+my $output_type = 'screen';
 # These two determine separators in single line output, to force irc clients 
 # not to break off sections
 
@@ -142,30 +147,19 @@ sub main {
 # 	print Dumper \@ARGV;
 	eval $start;
 	initialize();
-	# https://userbase.kde.org/Konversation/Scripts/Scripting_guide
-# 	if ($b_irc && $client{'test-konvi'}){
-# 		$client{'dserver'} = shift @ARGV;
-# 		$client{'dtarget'} = shift @ARGV;
-# 	}
+	
 	$debug = 10;
 	set_debugger(); # for debugging of konvi issues
 	my $ob_start = StartClient->new();
 	$ob_start->get_client_data();
 	# print_line( Dumper \%client);
-	# print_line( scalar @ARGV);
-	# print_line( scalar @ARGV);
-	# print_line( Dumper \@ARGV);
-	# print "c: $client{'name'}\n";
 	get_options();
 	set_debugger(); # right after so it's set
 	check_tools();
 	set_colors();
 	set_sep();
 	# set_debugger(); # right after so it's set
-	
-	# generate_data('fred', 'gus', 'sam');
 	# print download_file('stdout','https://') . "\n";
-	tester();
 	generate_data();
 	eval $end;
 	cleanup();
@@ -693,7 +687,8 @@ sub get_config_item {
 			%dl = ('dl' => $val, $val => 1);
 		}}
 		elsif (/^FILTER_STRING$/) {$filter_string = $val}
-		elsif (/^PS_COUNT$/) {$ps_count = $val}
+		elsif (/^OUTPUT_TYPE$/) {$output_type = $val if $val =~ /^csv|json|screen|xml$/}
+		elsif (/^PS_COUNT$/) {$ps_count = $val }
 		elsif (/^SENSORS_CPU_NO$/) {$sensors_cpu_nu = $val}
 		# layout
 		elsif (/^CONSOLE_COLOR_SCHEME$/) {$colors{'console'} = $val}
@@ -2076,14 +2071,14 @@ sub program_version {
 	if ( $num > 0 ){
 		$num--;
 	}
-	if ( $app =~ /^dwm|konversation|ksh|scrotwm|spectrwm$/ ) {
+	if ( $app =~ /^bitchx|dwm|finch|gaim|ircii|irssi|irssi-text|konversation|kopete|ksh|kvirc|pidgin|scrotwm|spectrwm$/ ) {
 		$version = '-v';
 	}
 	elsif ($app eq 'epoch' ){
 		$version = 'version';
 	}
 	# note, some wm/apps send version info to stderr instead of stdout
-	if ( $app =~ /^dwm|ksh|scrotwm$/ ) {
+	if ( $app =~ /^dwm|ksh|kvirc|scrotwm$/ ) {
 		$cmd = "$app $version 2>&1";
 	}
 	elsif ( $app eq 'csh' ){
@@ -2590,10 +2585,12 @@ sub get_options{
 	'alt:i' => sub { 
 		my ($opt,$arg) = @_;
 		my %alts = (
-		'0' => sub {$test{'1'} = 1;},
-		'1' => sub {$test{'1'} = 1;},
-		'2' => sub {$test{'2'} = 1;},
-		'3' => sub {$test{'3'} = 1;},
+		'0' => sub {$test[0] = 1;},
+		'1' => sub {$test[1] = 1;},
+		'2' => sub {$test[2] = 1;},
+		'3' => sub {$test[3] = 1;},
+		'4' => sub {$test[4] = 1;},
+		'5' => sub {$test[5] = 1;},
 		'30' => sub {$b_irc = 0;},
 		'31' => sub {$show{'host'} = 0;},
 		'32' => sub {$show{'host'} = 1;},
@@ -2661,6 +2658,14 @@ sub get_options{
 		# pattern: ftp.x.x/x
 		if ($arg =~ /^ftp\..+\..+\/[^\/]+$/ ){
 			$ftp_alt = $arg;
+		}
+		else {
+			error_handler('bad-arg', $opt, $arg);
+		}},
+	'output:s' => sub {
+		my ($opt,$arg) = @_;
+		if ($arg =~ /^csv|json|screen|xml$/){
+			$output_type = $arg;
 		}
 		else {
 			error_handler('bad-arg', $opt, $arg);
@@ -2970,7 +2975,9 @@ sub show_options {
 	If you use this format: ---display 1 it would get it from display 1 instead, or any 
 	display you specify" ],
 	['1', '', '--downloader', "Force $self_name to use [curl|fetch|perl|wget] for downloads." ],
-	['0', '', '', $line ]
+	['1', '', '--ftp', "Use alternate FTP server for --debug 20-22. Must be in format: ftp.site.com/incoming" ],
+	['1', '', '--output', "Change data output type. Options: [csv|json|screen|xml]" ],
+	['0', '', '', $line ],
 	);
 	push @data, @rows;
 	if ( $type eq 'full' ){
@@ -3135,7 +3142,7 @@ sub check_qt4_konvi {
 sub set_konvi_data {
 	eval $start;
 	my $config_tool = '';
-	my $konvi_config="konversation/scripts/inxi.conf";
+	# https://userbase.kde.org/Konversation/Scripts/Scripting_guide
 	if ( $client{'konvi'} == 3 ){
 		$client{'dserver'} = shift @ARGV;
 		$client{'dtarget'} = shift @ARGV;
@@ -3175,21 +3182,25 @@ sub set_konvi_data {
 ########################################################################
 
 #### -------------------------------------------------------------------
-#### FILTERS
+#### FILTERS AND TOOLS
 #### -------------------------------------------------------------------
 
-
-sub clean_patch_version {
-	my $patch = $self_patch;
-	$patch =~ s/^0+//; # strip leading zero(s)
-	if ( $patch ne '' ){
-		$patch="-$patch";
-		# for cases where it was for example: 00-bsd cleaned to --bsd trim out one -
-		$patch =~ s/--/-/;
+sub increment_starters {
+	my $key = shift;
+	my $indexes = shift;
+	my $result = $key;
+	if (defined $$indexes{$key} ){
+		$$indexes{$key}++;
+		$result = "$key-$$indexes{$key}";
 	}
-	return $patch;
+	return $result;
 }
 
+sub prefix {
+	my $num = shift;
+	$$num++;
+	return $$num . "#";
+}
 
 #### -------------------------------------------------------------------
 #### GENERATE OUTPUT
@@ -3200,7 +3211,7 @@ sub output_handler {
 	# my $data = shift;
 	my @data;
 	# print Dumper \%data;
-	if ($output_type eq 'print-data'){
+	if ($output_type eq 'screen'){
 		print_data(%data);
 	}
 	elsif ($output_type eq 'csv'){
@@ -3455,16 +3466,6 @@ sub print_data {
 		}
 	}
 }
-sub increment_starters {
-	my $key = shift;
-	my $indexes = shift;
-	my $result = $key;
-	if (defined $$indexes{$key} ){
-		$$indexes{$key}++;
-		$result = "$key-$$indexes{$key}";
-	}
-	return $result;
-}
 
 sub print_line {
 	my $line = shift;
@@ -3543,7 +3544,123 @@ sub show_version {
 	print_basic(@data); 
 }
 
-sub tester {
+########################################################################
+#### DATA PROCESSORS
+########################################################################
+
+#### -------------------------------------------------------------------
+#### GET DATA
+#### -------------------------------------------------------------------
+
+sub get_repo_data {}
+
+#### -------------------------------------------------------------------
+#### SPECIAL DATA HANDLERS - INITIALIZE DATA VALUES
+#### -------------------------------------------------------------------
+
+sub set_ps_aux {
+	return 1 if @ps_aux;
+	@ps_aux = data_grabber('ps uax');
+	$_=lc for @ps_aux;
+}
+
+
+#### -------------------------------------------------------------------
+#### SPECIAL DATA HANDLERS - UTILITIES FOR GET DATA/PRINT LINES
+#### -------------------------------------------------------------------
+
+sub get_hostname {
+	eval $start;
+	my $hostname = '';
+	if ( $ENV{'HOSTNAME'} ){
+		$hostname = $ENV{'HOSTNAME'};
+	}
+	else {
+		$hostname = hostname;
+	}
+	$hostname ||= 'N/A';
+	return $hostname;
+	eval $end;
+}
+sub get_kernel_data {
+	eval $start;
+	my $kernel = '';
+	my $ksplice = '';
+	# Linux; yawn; 4.9.0-3.1-liquorix-686-pae; #1 ZEN SMP PREEMPT liquorix 4.9-4 (2017-01-14); i686
+	# FreeBSD; siwi.pair.com; 8.2-STABLE; FreeBSD 8.2-STABLE #0: Tue May 31 14:36:14 EDT 2016     erik5@iddhi.pair.com:/usr/obj/usr/src/sys/82PAIRx-AMD64; amd64
+	my @uname = uname();
+	if (@uname){
+		$kernel = $uname[2];
+		if (check_program('uptrack-uname') && $kernel){
+			$ksplice = qx(uptrack-uname -rm);
+			$kernel = ($ksplice) ? $ksplice . ' (ksplice)' : $kernel;
+		}
+		$kernel .= ' ' . $uname[scalar @uname - 1];
+		$kernel = ($bsd_type) ? $uname[0] . ' ' . $kernel : $kernel;
+	}
+	
+	$kernel ||= 'N/A';
+	log_data("kernel: $kernel ksplice: $ksplice");
+	return $kernel;
+	eval $end;
+}
+sub get_self_version {
+	eval $start;
+	my $patch = $self_patch;
+	if ( $patch ne '' ){
+		# for cases where it was for example: 00-b1 clean to -b1
+		$patch =~ s/^[0]+-?//;
+		$patch = "-$patch";
+	}
+	eval $end;
+	return $self_version . $patch;
+}
+
+# 2:58PM  up 437 days,  8:18, 3 users, load averages: 2.03, 1.72, 1.77
+sub get_uptime {
+	eval $start;
+	my $uptime = '';
+	if (check_program('uptime')){
+		$uptime = qx(uptime);
+		$uptime = (split /,\s+/, $uptime)[0];
+		my @temp = split /\s+/, $uptime;
+		$uptime = $temp[2] . ' ' . $temp[3];
+	}
+	$uptime ||= 'N/A';
+	eval $end;
+	return $uptime;
+}
+
+########################################################################
+#### GENERATE LINES
+########################################################################
+
+sub generate_short {
+	eval $start;
+	my $num = 0;
+	my $kernel_os = ($bsd_type)? 'OS' : 'Kernel';
+	
+	my %row = (
+	'0#SHORT' => [
+		{
+		&prefix(\$num) . 'CPU' => 'N/A',
+		&prefix(\$num) . 'speed' => 'N/A',
+		&prefix(\$num) . $kernel_os => &get_kernel_data(),
+		&prefix(\$num) . 'Up' => &get_uptime(),
+		&prefix(\$num) . 'Mem' => 'N/A',
+		&prefix(\$num) . 'HD' => 'N/A',
+		&prefix(\$num) . 'Procs' => scalar @ps_aux - 1, # -1 for headers
+		&prefix(\$num) . 'Client' => $client{'name'},
+		&prefix(\$num) . $self_name => &get_self_version(),
+		},
+	],
+	);
+	eval $end;
+	return %row;
+}
+
+sub generate_test_rows {
+	eval $start;
 	my %data = (
 	'0#System' => [
 		{
@@ -3616,49 +3733,37 @@ sub tester {
 	],
 
 	);
-	print_data(%data);
-}
-
-
-########################################################################
-#### DATA PROCESSORS
-########################################################################
-
-#### -------------------------------------------------------------------
-#### GET DATA
-#### -------------------------------------------------------------------
-
-sub get_repo_data {}
-
-#### -------------------------------------------------------------------
-#### SPECIAL DATA HANDLERS - INITIALIZE DATA VALUES
-#### -------------------------------------------------------------------
-
-
-#### -------------------------------------------------------------------
-#### SPECIAL DATA HANDLERS - UTILITIES FOR GET DATA/PRINT LINES
-#### -------------------------------------------------------------------
-
-sub get_hostname {
-	eval $start;
-	if ( $ENV{'HOSTNAME'} ){
-		return $ENV{'HOSTNAME'};
-	}
-	else {
-		return hostname;
-	}
 	eval $end;
+	return %data;
 }
-
-########################################################################
-#### GENERATE LINES
-########################################################################
 
 #### -------------------------------------------------------------------
 #### DATA CONTROLLERS
 #### -------------------------------------------------------------------
 
 sub generate_data {
+	my (%row,%rows);
+	set_ps_aux();
+	if ($test[3]){
+		%row = generate_test_rows();
+		if ($output_type eq 'screen'){
+			print_data(%row);
+		}
+		else {
+			%rows = (%rows,%row);
+		}
+		return 1;
+	}
+	if ( $show{'short'} ){
+		%row = generate_short();
+		if ($output_type eq 'screen'){
+			print_data(%row);
+		}
+		else {
+			%rows = (%rows,%row);
+		}
+	}
+	output_handler(%rows) if $output_type ne 'screen';
 	eval $start;
 	# log_data('cat', '/proc/mounts');
 	# print "stub: " . (caller(0))[3] . "\n";
