@@ -320,6 +320,7 @@ sub get_options{
 		'30' => sub {$b_irc = 0;},
 		'31' => sub {$show{'host'} = 0;},
 		'32' => sub {$show{'host'} = 1;},
+		'33' => sub {$use{'dmidecode'}=1;},
 		'34' => sub {$dl{'no-ssl-opt'}=$dl{'no-ssl'};},
 		'40' => sub {
 			$dl{'tiny'} = 0;

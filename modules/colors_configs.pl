@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 ## File: colors_configs.pl
-## Version: 1.4
-## Date 2018-01-02
+## Version: 1.5
+## Date 2018-01-03
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -308,10 +308,10 @@ sub set_colors {
 {
 package SelectColors;
 
-use warnings;
-use strict;
-use diagnostics;
-use 5.008;
+# use warnings;
+# use strict;
+# use diagnostics;
+# use 5.008;
 
 my (@data,@rows,%configs,%status);
 my ($type,$w_fh);
@@ -410,7 +410,6 @@ sub start_selector {
 	main::print_basic(@data); 
 	@data = ();
 }
-
 sub create_color_selections {
 	my $spacer = '^^'; # printer removes double spaces, but replaces ^ with ' '
 	my $i=0;
@@ -443,12 +442,12 @@ sub get_selection {
 	[0, '', '', "Simply type the number for the color scheme that looks best to your 
 	eyes for your $configs{'selection'} settings and hit <ENTER>. NOTE: You can bring this 
 	option list up by starting $self_name with option: -c plus one of these numbers:"],
-	[0, '', '', "94^(console,^not^in^desktop^-^$status{'console'}); 
-	95^(terminal,^desktop^-^$status{'virt-term'}); 
-	96^(irc,^gui,^desktop^-^$status{'irc-gui'}); 
-	97^(irc,^desktop,^in^terminal^-^$status{'irc-virt-term'}); 
-	98^(irc,^not^in^desktop^-^$status{'irc-console'}); 
-	99^(global^-^$status{'global'})"],
+	[0, '', '', "94^-^console,^not^in^desktop^-^$status{'console'}"],
+	[0, '', '', "95^-^terminal,^desktop^-^$status{'virt-term'}"],
+	[0, '', '', "96^-^irc,^gui,^desktop^-^$status{'irc-gui'}"],
+	[0, '', '', "97^-^irc,^desktop,^in^terminal^-^$status{'irc-virt-term'}"],
+	[0, '', '', "98^-^irc,^not^in^desktop^-^$status{'irc-console'}"],
+	[0, '', '', "99^-^global^-^$status{'global'}"],
 	[0, '', '',  ""],
 	[0, '', '', "Your selection(s) will be stored here: $user_config_file"],
 	[0, '', '', "Global overrides all individual color schemes. Individual 
@@ -508,13 +507,11 @@ sub process_selection {
 		if ($configs{'selection'} eq 'global'){
 			delete_all_config_colors();
 		}
-		else {
-			set_config_color_scheme($response);
-		}
+		set_config_color_scheme($response);
 	}
 }
 sub delete_all_config_colors {
-	my @file_lines = main::reader($user_config_file);
+	my @file_lines = main::reader( $user_config_file );
 	open( $w_fh, '>', $user_config_file ) or error_handler('open', $user_config_file, $!);
 	foreach ( @file_lines ) { 
 		if ( $_ !~ /^(CONSOLE_COLOR_SCHEME|GLOBAL_COLOR_SCHEME|IRC_COLOR_SCHEME|IRC_CONS_COLOR_SCHEME|IRC_X_TERM_COLOR_SCHEME|VIRT_TERM_COLOR_SCHEME)/){
@@ -525,7 +522,7 @@ sub delete_all_config_colors {
 }
 sub set_config_color_scheme {
 	my $value = shift;
-	my @file_lines = main::reader($user_config_file);
+	my @file_lines = main::reader( $user_config_file );
 	my $b_found = 0;
 	open( $w_fh, '>', $user_config_file ) or error_handler('open', $user_config_file, $!);
 	foreach ( @file_lines ) { 
@@ -559,6 +556,7 @@ sub print_irc_message {
 }
 
 };1;
+
 # print "Your username is: ", getpwuid($<) || "unknown???", "\n";
 # print get_color_scheme('count'), "\n";
 # set_color_scheme(30);

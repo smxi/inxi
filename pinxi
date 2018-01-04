@@ -2,11 +2,11 @@
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-01-02';
-my $self_patch='046-p';
+my $self_date='2018-01-03';
+my $self_patch='048-p';
 
 ## infobash: Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif
-## inxi: Copyright (C) 2008-2017 Harald Hope
+## inxi: Copyright (C) 2008-2018 Harald Hope
 ##       Additional features (C) Scott Rogers - kde, cpu info
 ## Further fixes (listed as known): Horst Tritremmel <hjt at sidux.com>
 ## Steven Barrett (aka: damentz) - usb audio patch; swap percent used patch
@@ -51,12 +51,12 @@ my ($self_path, $user_config_dir, $user_config_file,$user_data_dir);
 my $debug=0;
 my ($fh_l,$fh_c,$fh_j,$fh_x); # log, csv, json, xml file handles.
 my $log_file;
-my $end='log_data("fe", (caller(1))[3], "");';
-my $start='log_data("fs", (caller(1))[3], @_);';
+my $end='main::log_data("fe", (caller(1))[3], "");';
+my $start='main::log_data("fs", (caller(1))[3], @_);';
 
 ## Hashes
-my ( %colors, %dl, %files, %client, %sep, %size, %show, 
-%system_files, %test );
+my ( %alerts, %colors, %dl, %files, %client, %sep, %size, %show, 
+%system_files, %test, %use, %warnings );
 
 # we only want to use HTTP::Tiny if it's present in user system.
 # It is NOT part of core modules.
@@ -117,7 +117,7 @@ $size{'console'} = 115;
 # Default indentation level. NOTE: actual indent is 1 greater to allow for 
 # spacing
 $size{'indent'} = 10;
-$size{'inner'}=0; # for width minus $indent
+$size{'indent-min'} = 90;
 $size{'irc'} = 130;
 $size{'max'}=0;
 $size{'no-display'} = 130;
@@ -127,7 +127,7 @@ $size{'term'}=80;
 $size{'term-lines'}=100;
 
 ## debug temp tools
-$client{'test-konvi'} = 1;
+$client{'test-konvi'} = 0;
 
 
 ########################################################################
@@ -143,23 +143,35 @@ sub main {
 	eval $start;
 	initialize();
 	# https://userbase.kde.org/Konversation/Scripts/Scripting_guide
-	if ($b_irc && $client{'test-konvi'}){
-		$client{'dserver'} = shift @ARGV;
-		$client{'dtarget'} = shift @ARGV;
-	}
+# 	if ($b_irc && $client{'test-konvi'}){
+# 		$client{'dserver'} = shift @ARGV;
+# 		$client{'dtarget'} = shift @ARGV;
+# 	}
+	$debug = 10;
+	set_debugger(); # for debugging of konvi issues
+	my $ob_start = StartClient->new();
+	$ob_start->get_client_data();
+	# print_line( Dumper \%client);
+	# print_line( scalar @ARGV);
+	# print_line( scalar @ARGV);
+	# print_line( Dumper \@ARGV);
+	# print "c: $client{'name'}\n";
 	get_options();
+	set_debugger(); # right after so it's set
+	check_tools();
 	set_colors();
 	set_sep();
-	set_debugger(); # right after so it's set
+	# set_debugger(); # right after so it's set
+	
 	# generate_data('fred', 'gus', 'sam');
 	# print download_file('stdout','https://') . "\n";
 	tester();
 	generate_data();
-	cleanup();
 	eval $end;
+	cleanup();
 	# weechat's executor plugin forced me to do this, and rightfully so, 
 	# because else the exit code from the last command is taken..
-	exit 1;
+	exit 0;
 }
 
 #### -------------------------------------------------------------------
@@ -176,6 +188,90 @@ sub initialize {
 	set_downloader();
 	set_display_width('live');
 }
+
+sub check_tools {
+	my $action = '';
+	my (%commands,%hash);
+	my $apps = '';
+	if ( $show{'memory'} || ( ( $bsd_type || $use{'dmidecode-force'} ) && $show{'machine'}) ){
+		$action = 'use';
+		if (check_program('dmidecode')) {
+			my @data = data_grabber('dmidecode --type chassis 2>&1');
+			#print @data;
+			$action = do {
+				if ( grep { $_ =~ /Permission/i } @data ){'permissions'}
+				elsif ( grep { $_ =~ /No SMBIOS/i } @data ){'smbios'}
+			}
+		}
+		else {
+			$action = 'missing';
+		}
+		%hash = (
+		'dmidecode' => {
+		'action' => $action,
+		'missing' => 'Required program dmidecode not available',
+		'permissions' => 'Unable to run dmidecode. Are you root?',
+		'smbios' => 'No SMBIOS data for dmidecode to process',
+		},
+		);
+		%alerts = (%alerts, %hash);
+	}
+	if ( $show{'graphics'} ){
+		foreach ( qw(xrandr xdpyinfo glxinfo) ){
+			$action = 'use';
+			if (check_program($_)) {
+				if (!$b_display && !defined $display){
+					if (!defined $display){$action = 'in-console' }
+				}
+			}
+			else {
+				$action = 'missing';
+			}
+			%hash = (
+			$_ => {
+			'action' => $action,
+			'missing' => "Missing: $_ - continuing in non desktop mode. Check --recommends",
+			'in-console' => 'See --display option to get graphics data',
+			},
+			);
+			%alerts = (%alerts, %hash);
+		}
+	}
+	# note: gnu/linux has sysctl so it may be used that for something if present
+	# there is lspci for bsds so doesn't hurt to check it
+	%commands = (
+	'lspci' => 'lspci -n 2>&1',
+	);
+	$apps = 'lspci ';
+	if ($bsd_type){
+		%hash = (
+		'pciconf' => 'pciconf -l 2>&1',
+		'sysctl' => 'sysctl kernel.osrelease 2>&1',
+		);
+		%commands = (%commands,%hash);
+		$apps .= 'pciconf sysctl';
+	}
+	foreach ( split /\s+/, $apps ){
+		$action = 'use';
+		if (check_program($_)) {
+			my @data = data_grabber($commands{$_});
+			#print @data;
+			if ( grep { $_ =~ /Permission/i } @data ){$action =  'permissions' }
+		}
+		else {
+			$action = 'missing';
+		}
+		%hash = (
+		$_ => {
+		'action' => $action,
+		'missing' => "Missing system tool: $_. Output will be incomplete",
+		'permissions' => "Unable to run $_. Root required?",
+		},
+		);
+		%alerts = (%alerts, %hash);
+	}
+	# print Dumper \%alerts;
+}
 sub set_basics {
 	### LOCALIZATION - DO NOT CHANGE! ###
 	# set to default LANG to avoid locales errors with , or .
@@ -183,25 +279,21 @@ sub set_basics {
 	$ENV{'LANG'}='C';
 	$ENV{'LC_ALL'}='C';
 	# remember, perl uses the opposite t/f return as shell!!!
-	if ( system('tty>/dev/null') ) {
-		$b_irc=1;
-	}
+	$b_irc = ( system('tty>/dev/null') ) ? 1 : 0;
 	# print "birc: $b_irc\n";
-	if ( $ENV{'DISPLAY'} ){
-		$b_display=1;
-	}
-	if ( $ENV{'HOME'} eq '/root' ){
-		$b_root=1;
-	}
+	$b_display = ( $ENV{'DISPLAY'} ) ? 1 : 0;
+	$b_root = ( $ENV{'HOME'} eq '/root' ) ? 1 : 0;
 	# tiny has been set above via test for module
 	$dl{'dl'} = 'curl';
 	$dl{'curl'} = 1;
 	$dl{'wget'} = 1;
 	$dl{'fetch'} = 1;
 	$client{'console-irc'} = 0;
-	$client{'dcop'} = '';
-	$client{'qdbus'} = '';
+	$client{'dcop'} = (check_program('dcop')) ? 1 : 0;
+	$client{'qdbus'} = (check_program('qdbus')) ? 1 : 0;
 	$client{'konvi'} = 0;
+	$client{'name'} = '';
+	$client{'version'} = '';
 	$colors{'default'} = 2;
 }
 
@@ -246,8 +338,7 @@ sub set_display_width {
 	else {
 		$size{'max'}=$width_override;
 	}
-	$size{'inner'}= ( $size{'max'} - $size{'indent'} - 1 );
-	# print "tc: $size{'term'} cmc: $size{'console'} cm: $size{'max'} ci: $size{'inner'}\n";
+	# print "tc: $size{'term'} cmc: $size{'console'} cm: $size{'max'}\n";
 }
 
 sub set_os {
@@ -338,12 +429,12 @@ sub set_user_paths {
 	}
 	if ( $b_conf && -f "$ENV{'HOME'}/.$self_name/$self_name.conf" ){
 		#system 'mv', "-f $ENV{'HOME'}/.$self_name/$self_name.conf", $user_config_dir;
-		print "WOULD: Moved $self_name.conf from $ENV{'HOME'}/.$self_name to $user_config_dir\n";
+		# print "WOULD: Moved $self_name.conf from $ENV{'HOME'}/.$self_name to $user_config_dir\n";
 	}
 	if ( $b_data && -d "$ENV{'HOME'}/.$self_name" ){
 		#system 'mv', '-f', "$ENV{'HOME'}/.$self_name/*", $user_data_dir;
 		#system 'rm', '-Rf', "$ENV{'HOME'}/.$self_name";
-		print "WOULD: Moved data dir $ENV{'HOME'}/.$self_name to $user_data_dir\n";
+		# print "WOULD: Moved data dir $ENV{'HOME'}/.$self_name to $user_data_dir\n";
 	}
 	$log_file="$user_data_dir/$self_name.log";
 	#system 'echo', "$ENV{'HOME'}/.$self_name/* $user_data_dir";
@@ -555,11 +646,17 @@ sub check_config_file {
 }
 
 sub get_configs {
-	my ($file, $key, $val);
-	my @config_files = (
-	qq(/etc/$self_name.conf), 
-	qq($user_config_dir/$self_name.conf)
-	);
+	my (@configs) = @_;
+	my ($file, $key, $val,@config_files);
+	if (!@configs){
+		@config_files = (
+		qq(/etc/$self_name.conf), 
+		qq($user_config_dir/$self_name.conf)
+		);
+	}
+	else {
+		@config_files = (@configs);
+	}
 	# Config files should be passed in an array as a param to this function.
 	# Default intended use: global @CONFIGS;
 	foreach $file (@config_files) {
@@ -617,7 +714,6 @@ sub get_config_item {
 	#  print "mc: key: $key val: $val\n";
 	# print Dumper (keys %size) . "\n";
 }
-
 
 {
 package SelectColors;
@@ -756,12 +852,12 @@ sub get_selection {
 	[0, '', '', "Simply type the number for the color scheme that looks best to your 
 	eyes for your $configs{'selection'} settings and hit <ENTER>. NOTE: You can bring this 
 	option list up by starting $self_name with option: -c plus one of these numbers:"],
-	[0, '', '', "94^(console,^not^in^desktop^-^$status{'console'}); 
-	95^(terminal,^desktop^-^$status{'virt-term'}); 
-	96^(irc,^gui,^desktop^-^$status{'irc-gui'}); 
-	97^(irc,^desktop,^in^terminal^-^$status{'irc-virt-term'}); 
-	98^(irc,^not^in^desktop^-^$status{'irc-console'}); 
-	99^(global^-^$status{'global'})"],
+	[0, '', '', "94^-^console,^not^in^desktop^-^$status{'console'}"],
+	[0, '', '', "95^-^terminal,^desktop^-^$status{'virt-term'}"],
+	[0, '', '', "96^-^irc,^gui,^desktop^-^$status{'irc-gui'}"],
+	[0, '', '', "97^-^irc,^desktop,^in^terminal^-^$status{'irc-virt-term'}"],
+	[0, '', '', "98^-^irc,^not^in^desktop^-^$status{'irc-console'}"],
+	[0, '', '', "99^-^global^-^$status{'global'}"],
 	[0, '', '',  ""],
 	[0, '', '', "Your selection(s) will be stored here: $user_config_file"],
 	[0, '', '', "Global overrides all individual color schemes. Individual 
@@ -1425,7 +1521,9 @@ cat /proc/modules > $data_dir/proc-modules.txt 2>&1
 cat /proc/net/arp > $data_dir/proc-net-arp.txt  2>&1
 # bsd data
 cat /var/run/dmesg.boot > $data_dir/bsd-var-run-dmesg.boot.txt  2>&1
-echo $size{'inner'} > $data_dir/cols-inner.txt 2>&1
+echo $size{'indent'} > $data_dir/size-indent.txt 2>&1
+echo $size{'indent-min'} > $data_dir/size-indent-min.txt 2>&1
+echo $size{'max'} > $data_dir/size-cols-max.txt 2>&1
 echo $ENV{'XDG_CONFIG_HOME'} > $data_dir/xdg_config_home.txt 2>&1
 echo $ENV{'XDG_CONFIG_DIRS'} > $data_dir/xdg_config_dirs.txt 2>&1
 echo $ENV{'XDG_DATA_HOME'} > $data_dir/xdg_data_home.txt 2>&1
@@ -1617,7 +1715,7 @@ sub new {
 }
 
 sub run_debugger {
-	print "Starting $self_name debugging data collector...\n";
+	# print "Starting $self_name debugging data collector...\n";
 }
 sub upload_file {}
 };1;
@@ -1820,6 +1918,7 @@ sub error_handler {
 # as soon as possible # will have max 3 files, inxi.log, inxi.1.log, 
 # inxi.2.log
 sub begin_logging {
+	return 1 if $fh_l; # if we want to start logging for testing before options
 	my $log_file_2="$user_data_dir/$self_name.1.log";
 	my $log_file_3="$user_data_dir/$self_name.2.log";
 	my $data = '';
@@ -1929,6 +2028,14 @@ sub count_dir_files {
 	my $count = grep { ! /^\.{1,2}/ } readdir $dh; # strips out . and ..
 	return $count;
 }
+# arg: 1 - command to turn into an array; 2 - optional: splitter
+# similar to reader() except this creates an array of data 
+# by lines from the command arg
+sub data_grabber {
+	my ($command,$splitter) = @_;
+	$splitter ||= "\n";
+	return split /$splitter/, qx($command);
+}
 
 # arg 1: type to return
 sub get_defaults {
@@ -1969,7 +2076,7 @@ sub program_version {
 	if ( $num > 0 ){
 		$num--;
 	}
-	if ( $app =~ /^dwm|ksh|scrotwm|spectrwm$/ ) {
+	if ( $app =~ /^dwm|konversation|ksh|scrotwm|spectrwm$/ ) {
 		$version = '-v';
 	}
 	elsif ($app eq 'epoch' ){
@@ -1982,7 +2089,7 @@ sub program_version {
 	elsif ( $app eq 'csh' ){
 		$cmd = "tcsh $version 2>/dev/null";
 	}
-	# debian/buntu hack until I find a universal way to get version for these
+	# quick debian/buntu hack until I find a universal way to get version for these
 	elsif ( $app eq 'dash' ){
 		$cmd = "dpkg -l $app 2>/dev/null";
 	}
@@ -2490,6 +2597,7 @@ sub get_options{
 		'30' => sub {$b_irc = 0;},
 		'31' => sub {$show{'host'} = 0;},
 		'32' => sub {$show{'host'} = 1;},
+		'33' => sub {$use{'dmidecode-force'}=1;},
 		'34' => sub {$dl{'no-ssl-opt'}=$dl{'no-ssl'};},
 		'40' => sub {
 			$dl{'tiny'} = 0;
@@ -2562,11 +2670,6 @@ sub get_options{
 		error_handler('unknown-option', "$opt", "" ); }
 	) ; #or error_handler('unknown-option', "@ARGV", '');
 } 
-
-sub show_optionsXX {
-	print "stub: " . (caller(0))[3] . "\n";
-	exit 1;
-}
 
 sub show_options {
 	if ( $b_irc ){
@@ -2890,6 +2993,182 @@ sub show_options {
 #### STARTUP DATA
 ########################################################################
 
+{
+package StartClient;
+
+# use warnings;
+# use strict;
+
+my $client_name = '';
+my $ppid = '';
+my $pppid = '';
+
+# args: none
+sub new {
+	my $class = shift;
+	my $self = {};
+	# print "$f\n";
+	# print "$type\n";
+	return bless $self, $class;
+}
+
+sub get_client_data {
+	eval $start;
+	if (!$b_irc){
+		$client{'name'} = 'shell';
+	}
+	else {
+		$show{'filter-output'} = (!$show{'filter-override'}) ? 1 : 0;
+		get_client_name();
+		if ($client{'konvi'} == 1 || $client{'konvi'} == 3){
+			set_konvi_data();
+		}
+	}
+	eval $end;
+}
+sub get_client_name {
+	eval $start;
+	$ppid = getppid();
+	# print "$ppid\n";
+	if ($ppid && -e "/proc/$ppid/exe" ){
+		$client_name = lc(readlink "/proc/$ppid/exe");
+		$client_name =~ s/.*\///;
+		if ($client_name =~ /^bash|dash|sh|python.*|perl.*$/){
+			$pppid = (main::data_grabber("ps -p $ppid -o ppid 2>/dev/null"))[1];
+			#my @temp = (main::data_grabber("ps -p $ppid -o ppid 2>/dev/null"))[1];
+			$pppid =~ s/^\s+|\s+$//g;
+			$client_name =~ s/[0-9.]+$//; # clean things like python2.7
+			if ($pppid && -f "/proc/$pppid/exe" ){
+				$client_name = lc(readlink "/proc/$pppid/exe");
+				$client_name =~ s/.*\///;
+				$client{'native'} = 0;
+				
+			}
+		}
+		$client{'name'} = $client_name;
+		# check_qt4_konvi();
+		get_client_version();
+		# set_konvi_data();
+		# print "c:$client_name p:$pppid\n";
+	}
+	else {
+		if (! check_qt4_konvi() ){
+			$ppid = getppid();
+			$client_name = (main::data_grabber("ps -p $ppid 2>/dev/null"))[1];
+			my @data = split /\s+/, $client_name;
+			if ($bsd_type){
+				$client_name = lc($data[5]);
+			}
+			# gnu/linux uses last value
+			else {
+				$client_name = lc($data[scalar @data - 1]);
+			}
+			$client_name =~ s/.*\|-(|)//;
+			if ($client_name){
+				$client{'name'} = $client_name;
+				$client{'native'} = 1;
+				get_client_version();
+			}
+			else {
+				$client{'name'} = "PPID='$ppid' - Empty?";
+			}
+		}
+	}
+	main::log_data("Client: $client{'name'} :: version: $client{'version'} :: konvi: $client{'konvi'} :: PPID: $ppid");
+	eval $end;
+}
+sub get_client_version {
+	eval $start;
+	if ($client{'name'} eq 'python') {
+		perl_python_client();
+	}
+	eval $end;
+}
+sub perl_python_client {
+	eval $start;
+	eval $end;
+}
+## try to infer the use of Konversation >= 1.2, which shows $PPID improperly
+## no known method of finding Konvi >= 1.2 as parent process, so we look to see if it is running,
+## and all other irc clients are not running. As of 2014-03-25 this isn't used in my cases
+sub check_qt4_konvi {
+	eval $start;
+	
+	return 0 if ! $client{'qdbus'};
+	my $b_qt4_konvi = 0;
+	my $konvi_version = '';
+	my $konvi = '';
+	my $pid = '';
+	my (@temp);
+	# main::log_data("name: $client{'name'} :: qdb: $client{'qdbus'} :: version: $client{'version'} :: konvi: $client{'konvi'} :: PPID: $ppid");
+	# sabayon uses /usr/share/apps/konversation as path
+	if ( -d "/usr/share/kde4/apps/konversation" || -d "/usr/share/apps/konversation" ){
+		$pid = (grep { $_ =~ /konversation/i } main::data_grabber('ps -A'))[0];
+		main::log_data("pid: $pid");
+		$pid =~ s/^\s|\s$//g;
+		$pid = (split /\s+/, $pid)[0];
+		$konvi = readlink ("/proc/$pid/exe");
+		$konvi =~ s/.*\///;
+		if ($konvi){
+			$konvi_version = main::program_version($konvi,$konvi,2);
+			@temp = split /\./, $konvi_version;
+			$client{'version'} = $konvi_version;
+			$client{'konvi'} = 3;
+			$client{'name'} = 'konversation';
+			# note: we need to change this back to a single dot number, like 1.3, not 1.3.2
+			$konvi_version = $temp[0] . "." . $temp[1];
+			if ($konvi_version > 1.1){
+				$b_qt4_konvi = 1;
+			}
+		}
+	}
+	main::log_data("name: $client{'name'} :: qdb: $client{'qdbus'} :: version: $konvi_version :: konvi: $konvi :: PID: $pid");
+	main::log_data("b_is_qt4: $b_qt4_konvi");
+	## for testing this module
+# 	my $ppid = getppid();
+# 	system('qdbus org.kde.konversation', '/irc', 'say', $client{'dserver'}, $client{'dtarget'}, 
+# 	"getpid_dir: $konvi_qt4 verNum: $konvi_version pid: $pid ppid: $ppid" );
+	eval $end;
+	return $b_qt4_konvi;
+}
+
+sub set_konvi_data {
+	eval $start;
+	my $config_tool = '';
+	my $konvi_config="konversation/scripts/inxi.conf";
+	if ( $client{'konvi'} == 3 ){
+		$client{'dserver'} = shift @ARGV;
+		$client{'dtarget'} = shift @ARGV;
+		$client{'dobject'} = 'default';
+	}
+	elsif ( $client{'konvi'} == 1 ){
+		$client{'dport'} = shift @ARGV;
+		$client{'dserver'} = shift @ARGV;
+		$client{'dtarget'} = shift @ARGV;
+		$client{'dobject'} = 'Konversation';
+	}
+	# for some reason this logic hiccups on multiple spaces between args
+	@ARGV = grep { $_ ne '' } @ARGV;
+	# there's no current kde 5 konvi config tool that we're aware of. Correct if changes.
+	if ( main::check_program('kde4-config') ){
+		$config_tool = 'kde4-config';
+	}
+	elsif ( main::check_program('kde5-config') ){
+		$config_tool = 'kde5-config';
+	}
+	elsif ( main::check_program('kde-config') ){
+		$config_tool = 'kde-config';
+	}
+	# The section below is on request of Argonel from the Konversation developer team:
+	# it sources config files like $HOME/.kde/share/apps/konversation/scripts/inxi.conf
+	if ($config_tool){
+		my @data = main::data_grabber("$config_tool --path data 2>/dev/null",':');
+		main::get_configs(@data);
+	}
+	eval $end;
+}
+}1;
+
 
 ########################################################################
 #### OUTPUT
@@ -2920,7 +3199,7 @@ sub output_handler {
 	my (%data) = @_;
 	# my $data = shift;
 	my @data;
-	print Dumper \%data;
+	# print Dumper \%data;
 	if ($output_type eq 'print-data'){
 		print_data(%data);
 	}
@@ -3028,7 +3307,7 @@ sub print_data {
 	);
 	my ($key,$key1,$key2,$item,$line,$val1,$val2,%row,@working);
 	# $size{'max'} = 88;
-	if ($size{'max'} < 90){
+	if ($size{'max'} < $size{'indent-min'}){
 		$indent = 2;
 	}
 	foreach $key1 (sort { (split/#/, $a)[0] <=> (split/#/, $b)[0] } keys %data) {
@@ -3191,8 +3470,6 @@ sub print_line {
 	my $line = shift;
 	if ($b_irc && $client{'test-konvi'}){
 		$client{'konvi'} = 3;
-		$client{'qdbus'} = 1;
-		$client{'dcop'} = 0;
 		$client{'dobject'} = 'Konversation';
 	}
 	if ($client{'konvi'} == 1 && $client{'dcop'} ){
@@ -3384,7 +3661,7 @@ sub get_hostname {
 sub generate_data {
 	eval $start;
 	# log_data('cat', '/proc/mounts');
-	print "stub: " . (caller(0))[3] . "\n";
+	# print "stub: " . (caller(0))[3] . "\n";
 	eval $end;
 }
 
