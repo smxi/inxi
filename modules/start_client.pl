@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 ## File: start_client.pl
-## Version: 1.5
+## Version: 1.6
 ## Date 2018-01-04
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
@@ -18,6 +18,28 @@ use 5.008;
 # use File::Basename;
 
 ## stub code
+
+my @ps_aux;
+my %client = (
+'console' => 0,
+'dcop' => 0,
+'konvi' => 0,
+'name' => '',
+'name-print' => '',
+'native' => 1,
+'qdbus' => 1,
+'version' => '',
+);
+my %show = (
+'filter-override' => 0,
+
+);
+my (@app);
+my $start = '';
+my $end = '';
+my $b_irc = 1;
+my $bsd_type = '';
+my $b_display = 1;
 
 sub log_data {}
 
@@ -79,6 +101,50 @@ sub program_version {
 	log_data("Program version: $version_nu");
 	return $version_nu;
 }
+# returns array of:
+# 0 - match string; 1 - search number; 2 - version string; 3 - Print name
+# 4 - console 0/1; 5 - 0/1 exit version loop at first iteration
+sub program_values {
+	my $name = shift;
+	my (@client_data,$ref);
+	my %data = (
+	# shells
+	'bash' => ['^GNU[[:space:]]bash,[[:space:]]version',4,'--version','Bash',1,0],
+	'csh' => ['csh',2,'--version','csh',1,0],
+	'dash' => ['dash',3,'--version','Dash',1,0],
+	'ksh' => ['version',5,'-v','csh',1,0],
+	'tcsh' => ['^tcsh',2,'--version','tcsh',1,0],
+	'zsh' => ['^zsh',2,'--version','zsh',1,0],
+	# clients
+	'bitchx' => ['bitchx',2,'','BitchX',1,0],# special
+	'finch' => ['finch',2,'-v','Finch',1,1],
+	'gaim' => ['[0-9.]+',2,'-v','Gaim',0,1],
+	'ircii' => ['[0-9.]+',3,'-v','ircII',1,1],
+	'irssi' => ['irssi',2,'-v','Irssi',1,1],
+	'irssi-text' => ['irssi',2,'-v','Irssi',1,1],
+	'konversation' => ['konversation',2,'-v','Konversation',0],
+	'kopete' => ['Kopete',2,'-v','Kopete',0,0],
+	'kvirc' => ['[0-9.]+',2,'-v','KVIrc',0,0], # special
+	'pidgin' => ['[0-9.]+',2,'-v','Pidgin',0,1],
+	'quassel' => ['',1,'-v','Quassel [M]',0,0], # special
+	'quasselclient' => ['',1,'-v','Quassel',0,0],# special
+	'quasselcore' => ['',1,'-v','Quassel (core)',0,0],# special
+	'gribble' => ['^Supybot',2,'--version','Gribble',1,0],# special
+	'limnoria' => ['^Supybot',2,'--version','Limnoria',1,0],# special
+	'supybot' => ['^Supybot',2,'--version','Supybot',1,0],# special
+	'weechat' => ['[0-9.]+',1,'-v','WeeChat',1,0],
+	'weechat-curses' => ['[0-9.]+',1,'-v','WeeChat',1,0],
+	'xchat-gnome' => ['[0-9.]+',2,'-v','X-Chat-Gnome',1,1],
+	'xchat' => ['[0-9.]+',2,'-v','X-Chat',1,1],
+	);
+	if ( defined $data{$name} ){
+		$ref = $data{$name};
+		@client_data = @$ref;
+	}
+	#my $debug = main::Dumper \@client_data;
+	# main::log_data("Client Data: " . main::Dumper \@client_data);
+	return @client_data;
+}
 ## returns result of test, 0/1, false/true
 ## arg: program to find in PATH
 sub check_program {
@@ -106,32 +172,30 @@ sub reader {
 	close $fh;
 	return @rows;
 }
-my @ps_aux;
+
 sub set_ps_aux {
 	return 1 if @ps_aux;
 	@ps_aux = data_grabber('ps aux');
 	$_=lc for @ps_aux;
 }
+sub get_shell_data {
+	my $ppid = shift;
+	my $string = qx(ps -p $ppid -o comm= 2>/dev/null);
+	chomp($string);
+	if ($string){
+		@app = main::program_values(lc($string));
+		$client{'version'} = main::program_version($string,$app[0],$app[1],$app[2]);
+		$client{'version'} =~ s/(\(.*|-release|-version)//;
+		$client{'name'} = lc($string);
+		$client{'name-print'} = $string;
+	}
+	else {
+		$client{'name'} = 'shell';
+		$client{'name-print'} = 'Unknown Shell';
+	}
+}
 
-my %client = (
-'console' => 0,
-'dcop' => 0,
-'konvi' => 0,
-'name' => '',
-'name-print' => '',
-'native' => 1,
-'qdbus' => 1,
-'version' => '',
-);
-my %show = (
-'filter-override' => 0,
 
-);
-my (@app);
-my $start = '';
-my $end = '';
-my $b_irc = 1;
-my $bsd_type = '';
 
 ## real code
 
@@ -157,7 +221,7 @@ sub get_client_data {
 	eval $start;
 	$ppid = getppid();
 	if (!$b_irc){
-		get_shell_info();
+		main::get_shell_data($ppid);
 	}
 	else {
 		$show{'filter-output'} = (!$show{'filter-override'}) ? 1 : 0;
@@ -168,21 +232,7 @@ sub get_client_data {
 	}
 	eval $end;
 }
-sub get_shell_info {
-	my $string = qx(ps -p $ppid -o comm= 2>/dev/null);
-	chomp($string);
-	if ($string){
-		@app = client_values(lc($string));
-		$client{'version'} = main::program_version($string,$app[0],$app[1],$app[2]);
-		$client{'version'} =~ s/(\(.*|-release|-version)//;
-		$client{'name'} = lc($string);
-		$client{'name-print'} = $string;
-	}
-	else {
-		$client{'name'} = 'shell';
-		$client{'name-print'} = 'Unknown Shell';
-	}
-}
+
 sub get_client_name {
 	eval $start;
 	my $client_name = '';
@@ -236,7 +286,7 @@ sub get_client_name {
 }
 sub get_client_version {
 	eval $start;
-	@app = client_values($client{'name'});
+	@app = main::program_values($client{'name'});
 	my (@data,$string);
 	if (@app){
 		$string = ($client{'name'} =~ /^gribble|limnoria|supybot$/) ? 'supybot' : $client{'name'};
@@ -324,50 +374,6 @@ sub get_client_version {
 	}
 	eval $end;
 }
-# returns array of:
-# 0 - match string; 1 - search number; 2 - version string; 3 - Print name
-# 4 - console 0/1; 5 - 0/1 exit version loop at first iteration
-sub client_values {
-	my $name = shift;
-	my (@client_data,$ref);
-	my %data = (
-	# shells
-	'bash' => ['^GNU[[:space:]]bash,[[:space:]]version',4,'--version','Bash',1,0],
-	'csh' => ['csh',2,'--version','csh',1,0],
-	'dash' => ['dash',3,'--version','Dash',1,0],
-	'ksh' => ['version',5,'-v','csh',1,0],
-	'tcsh' => ['^tcsh',2,'--version','tcsh',1,0],
-	'zsh' => ['^zsh',2,'--version','zsh',1,0],
-	# clients
-	'bitchx' => ['bitchx',2,'','BitchX',1,0],# special
-	'finch' => ['finch',2,'-v','Finch',1,1],
-	'gaim' => ['[0-9.]+',2,'-v','Gaim',0,1],
-	'ircii' => ['[0-9.]+',3,'-v','ircII',1,1],
-	'irssi' => ['irssi',2,'-v','Irssi',1,1],
-	'irssi-text' => ['irssi',2,'-v','Irssi',1,1],
-	'konversation' => ['konversation',2,'-v','Konversation',0],
-	'kopete' => ['Kopete',2,'-v','Kopete',0,0],
-	'kvirc' => ['[0-9.]+',2,'-v','KVIrc',0,0], # special
-	'pidgin' => ['[0-9.]+',2,'-v','Pidgin',0,1],
-	'quassel' => ['',1,'-v','Quassel [M]',0,0], # special
-	'quasselclient' => ['',1,'-v','Quassel',0,0],# special
-	'quasselcore' => ['',1,'-v','Quassel (core)',0,0],# special
-	'gribble' => ['^Supybot',2,'--version','Gribble',1,0],# special
-	'limnoria' => ['^Supybot',2,'--version','Limnoria',1,0],# special
-	'supybot' => ['^Supybot',2,'--version','Supybot',1,0],# special
-	'weechat' => ['[0-9.]+',1,'-v','WeeChat',1,0],
-	'weechat-curses' => ['[0-9.]+',1,'-v','WeeChat',1,0],
-	'xchat-gnome' => ['[0-9.]+',2,'-v','X-Chat-Gnome',1,1],
-	'xchat' => ['[0-9.]+',2,'-v','X-Chat',1,1],
-	);
-	if ( defined $data{$name} ){
-		$ref = $data{$name};
-		@client_data = @$ref;
-	}
-	#my $debug = main::Dumper \@client_data;
-	# main::log_data("Client Data: " . main::Dumper \@client_data);
-	return @client_data;
-}
 sub get_cmdline {
 	eval $start;
 	my @cmdline;
@@ -403,7 +409,7 @@ sub perl_python_client {
 	# OR via script shortcuts, both cases in fact now
 	# main::print_line("konvi: " . scalar grep { $_ =~ /konversation/ } @ps_aux);
 	if ( $b_display && ( scalar grep { $_ =~ /konversation/ } @ps_aux ) > 0){
-		@app = client_values('konversation');
+		@app = main::program_values('konversation');
 		$client{'version'} = main::program_version('konversation',$app[0],$app[1],$app[2]);
 		$client{'name'} = 'konversation';
 		$client{'name-print'} = $app[3];
@@ -412,7 +418,7 @@ sub perl_python_client {
 	## NOTE: supybot only appears in ps aux using 'SHELL' command; the 'CALL' command
 	## gives the user system irc priority, and you don't see supybot listed, so use SHELL
 	elsif ( !$b_display && ( scalar grep { $_ =~ /supybot/ } @ps_aux ) > 0  ){
-		@app = client_values('supybot');
+		@app = main::program_values('supybot');
 		$client{'version'} = main::program_version('supybot',$app[0],$app[1],$app[2]);
 		if ($client{'version'}){
 			if ( ( scalar grep { $_ =~ /gribble/i } @ps_aux ) > 0){
@@ -461,9 +467,9 @@ sub check_modern_konvi {
 		$pid = (split /\s+/, $pid)[0];
 		$konvi = readlink ("/proc/$pid/exe");
 		$konvi =~ s/.*\///; # basename
-		@app = client_values('konversation');
+		@app = main::program_values('konversation');
 		if ($konvi){
-			@app = client_values('konversation');
+			@app = main::program_values('konversation');
 			$konvi_version = main::program_version($konvi,$app[0],$app[1],$app[2]);
 			@temp = split /\./, $konvi_version;
 			$client{'console-irc'} = $app[4];
@@ -525,6 +531,5 @@ sub set_konvi_data {
 	eval $end;
 }
 }1;
-
 my $ob_start = StartClient->new();
 $ob_start->get_client_data();
