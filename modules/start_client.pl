@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 ## File: start_client.pl
-## Version: 1.3
+## Version: 1.4
 ## Date 2018-01-04
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
@@ -106,6 +106,12 @@ sub reader {
 	close $fh;
 	return @rows;
 }
+my @ps_aux;
+sub set_ps_aux {
+	return 1 if @ps_aux;
+	@ps_aux = data_grabber('ps aux');
+	$_=lc for @ps_aux;
+}
 
 my %client = (
 'console' => 0,
@@ -151,6 +157,7 @@ sub get_client_data {
 	eval $start;
 	if (!$b_irc){
 		$client{'name'} = 'shell';
+		$client{'name-pretty'} = 'shell';
 	}
 	else {
 		$show{'filter-output'} = (!$show{'filter-override'}) ? 1 : 0;
