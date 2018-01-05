@@ -157,7 +157,7 @@ sub get_client_data {
 	eval $start;
 	if (!$b_irc){
 		$client{'name'} = 'shell';
-		$client{'name-pretty'} = 'shell';
+		$client{'name-print'} = 'shell';
 	}
 	else {
 		$show{'filter-output'} = (!$show{'filter-override'}) ? 1 : 0;
@@ -294,7 +294,7 @@ sub get_client_version {
 			if ( $_ =~ /dsirc/ ){
 				$client{'version'} = main::program_version('ksirc','KSirc:',2,'-v',0);
 				$client{'name'} = 'ksirc';
-				$client{'name-pretty'} = 'KSirc';
+				$client{'name-print'} = 'KSirc';
 			}
 		}
 		$client{'console-irc'} = 1;
