@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 ## File: start_client.pl
-## Version: 1.4
+## Version: 1.5
 ## Date 2018-01-04
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
@@ -155,9 +155,18 @@ sub new {
 
 sub get_client_data {
 	eval $start;
+	$ppid = getppid();
 	if (!$b_irc){
-		$client{'name'} = 'shell';
-		$client{'name-print'} = 'shell';
+		my $string = qx(ps -p $ppid -o comm= 2>/dev/null);
+		chomp($string);
+		if ($string){
+			$client{'name'} = lc($string);
+			$client{'name-print'} = "$string shell";
+		}
+		else {
+			$client{'name'} = 'shell';
+			$client{'name-print'} = 'Shell';
+		}
 	}
 	else {
 		$show{'filter-output'} = (!$show{'filter-override'}) ? 1 : 0;
@@ -171,7 +180,7 @@ sub get_client_data {
 sub get_client_name {
 	eval $start;
 	my $client_name = '';
-	$ppid = getppid();
+	
 	# print "$ppid\n";
 	if ($ppid && -e "/proc/$ppid/exe" ){
 		$client_name = lc(readlink "/proc/$ppid/exe");
@@ -180,7 +189,7 @@ sub get_client_name {
 			$pppid = (main::data_grabber("ps -p $ppid -o ppid 2>/dev/null"))[1];
 			#my @temp = (main::data_grabber("ps -p $ppid -o ppid 2>/dev/null"))[1];
 			$pppid =~ s/^\s+|\s+$//g;
-			$client_name =~ s/[0-9.]+$//; # clean things like python2.7
+			$client_name =~ s/[0-9\.]+$//; # clean things like python2.7
 			if ($pppid && -f "/proc/$pppid/exe" ){
 				$client_name = lc(readlink "/proc/$pppid/exe");
 				$client_name =~ s/.*\///;
@@ -205,6 +214,7 @@ sub get_client_name {
 				$client_name = lc($data[scalar @data - 1]);
 			}
 			$client_name =~ s/.*\|-(|)//;
+			$client_name =~ s/[0-9\.]+$//; # clean things like python2.7
 			if ($client_name){
 				$client{'name'} = $client_name;
 				$client{'native'} = 1;
@@ -300,7 +310,7 @@ sub get_client_version {
 		$client{'console-irc'} = 1;
 		perl_python_client();
 	}
-	elsif ($client{'name'} eq 'python') {
+	elsif ($client{'name'} =~ /python/) {
 		perl_python_client();
 	}
 	if (!$client{'name-print'}) {
