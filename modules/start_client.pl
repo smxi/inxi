@@ -157,16 +157,7 @@ sub get_client_data {
 	eval $start;
 	$ppid = getppid();
 	if (!$b_irc){
-		my $string = qx(ps -p $ppid -o comm= 2>/dev/null);
-		chomp($string);
-		if ($string){
-			$client{'name'} = lc($string);
-			$client{'name-print'} = "$string shell";
-		}
-		else {
-			$client{'name'} = 'shell';
-			$client{'name-print'} = 'Shell';
-		}
+		get_shell_info();
 	}
 	else {
 		$show{'filter-output'} = (!$show{'filter-override'}) ? 1 : 0;
@@ -176,6 +167,21 @@ sub get_client_data {
 		}
 	}
 	eval $end;
+}
+sub get_shell_info {
+	my $string = qx(ps -p $ppid -o comm= 2>/dev/null);
+	chomp($string);
+	if ($string){
+		@app = client_values(lc($string));
+		$client{'version'} = main::program_version($string,$app[0],$app[1],$app[2]);
+		$client{'version'} =~ s/(\(.*|-release|-version)//;
+		$client{'name'} = lc($string);
+		$client{'name-print'} = $string;
+	}
+	else {
+		$client{'name'} = 'shell';
+		$client{'name-print'} = 'Unknown Shell';
+	}
 }
 sub get_client_name {
 	eval $start;
@@ -325,6 +331,14 @@ sub client_values {
 	my $name = shift;
 	my (@client_data,$ref);
 	my %data = (
+	# shells
+	'bash' => ['^GNU[[:space:]]bash,[[:space:]]version',4,'--version','Bash',1,0],
+	'csh' => ['csh',2,'--version','csh',1,0],
+	'dash' => ['dash',3,'--version','Dash',1,0],
+	'ksh' => ['version',5,'-v','csh',1,0],
+	'tcsh' => ['^tcsh',2,'--version','tcsh',1,0],
+	'zsh' => ['^zsh',2,'--version','zsh',1,0],
+	# clients
 	'bitchx' => ['bitchx',2,'','BitchX',1,0],# special
 	'finch' => ['finch',2,'-v','Finch',1,1],
 	'gaim' => ['[0-9.]+',2,'-v','Gaim',0,1],
