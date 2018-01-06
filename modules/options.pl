@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: options.pl
-## Version: 1.5
-## Date 2018-01-04
+## Version: 1.6
+## Date 2018-01-06
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -174,37 +174,6 @@ sub get_options{
 		$show{'short'} = 0;
 		$show{'partitions'} = 1;
 		$show{'uuids'} = 1; },
-	'U|update:s' => sub { # 1,2,3 OR http://myserver/path/inxi
-		my ($opt,$arg) = @_;
-		$show{'short'} = 0;
-		my ($self_download,$download_id);
-		if ( $b_update ){
-			if ( $arg =~ /^\d$/){
-				$download_id = "branch $arg";
-				$self_download = get_defaults("inxi-branch-$arg");
-			}
-			elsif ( $arg =~ /^http/){
-				$download_id = 'alt server';
-				$self_download = $arg;
-			}
-			else {
-				$download_id = 'pinxi server';
-				$self_download = get_defaults('inxi-pinxi');
-			}
-# 			else {
-# 				$download_id = 'source server';
-# 				$self_download = get_defaults('inxi-main');
-# 			}
-			if ($self_download){
-				update_me( $self_download, $download_id );
-			}
-			else {
-				error_handler('bad-arg', $opt, $arg);
-			}
-		}
-		else {
-			error_handler('distro-block', $opt);
-		} },
 	'v|verbosity:i' => sub {
 		my ($opt,$arg) = @_;
 		$show{'short'} = 0;
@@ -310,6 +279,7 @@ sub get_options{
 		show_options('standard'); },
 	'H|help-full' => sub {
 		show_options('full'); },
+	## Start advanced options and debuggers
 	'alt:i' => sub { 
 		my ($opt,$arg) = @_;
 		my %alts = (
@@ -398,6 +368,37 @@ sub get_options{
 		else {
 			error_handler('bad-arg', $opt, $arg);
 		}},
+	'U|update:s' => sub { # 1,2,3 OR http://myserver/path/inxi
+		my ($opt,$arg) = @_;
+		$show{'short'} = 0;
+		my ($self_download,$download_id);
+		if ( $b_update ){
+			if ( $arg =~ /^\d$/){
+				$download_id = "branch $arg";
+				$self_download = get_defaults("inxi-branch-$arg");
+			}
+			elsif ( $arg =~ /^http/){
+				$download_id = 'alt server';
+				$self_download = $arg;
+			}
+			else {
+				$download_id = 'pinxi branch';
+				$self_download = get_defaults('inxi-pinxi');
+			}
+# 			else {
+# 				$download_id = 'main branch';
+# 				$self_download = get_defaults('inxi-main');
+# 			}
+			if ($self_download){
+				update_me( $self_download, $download_id );
+			}
+			else {
+				error_handler('bad-arg', $opt, $arg);
+			}
+		}
+		else {
+			error_handler('distro-block', $opt);
+		} },
 	'<>' => sub {
 		my ($opt) = @_;
 		error_handler('unknown-option', "$opt", "" ); }

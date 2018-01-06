@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: system_debugger.pl
-## Version: 2.1
-## Date 2017-12-20
+## Version: 2.2
+## Date 2018-01-06
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -96,10 +96,10 @@ my $line3 = "----------------------------------------\n";
 {
 package SystemDebugger;
 
-use warnings;
-use strict;
-use diagnostics;
-use 5.008;
+# use warnings;
+# use strict;
+# use diagnostics;
+# use 5.008;
 use Net::FTP;
 use File::Find q(find);
 no warnings 'File::Find';
@@ -176,19 +176,19 @@ sub create_debug_directory {
 	}
 	$debug_dir = "$self_name$bsd_string-$host-$today$root_string";
 	$debug_gz = "$debug_dir.tar.gz";
-	$data_dir = "$self_data_dir/$debug_dir";
+	$data_dir = "$user_data_dir/$debug_dir";
 	if ( -d $data_dir ){
 		unlink $data_dir or main::error_handler('remove', "$data_dir", "$!");
 	}
 	mkdir $data_dir or main::error_handler('mkdir', "$data_dir", "$!");
-	if ( -e "$self_data_dir/$debug_gz" ){
-		unlink "$self_data_dir$debug_gz" or main::error_handler('remove', "$self_data_dir/$debug_gz", "$!");
+	if ( -e "$user_data_dir/$debug_gz" ){
+		unlink "$user_data_dir$debug_gz" or main::error_handler('remove', "$user_data_dir/$debug_gz", "$!");
 	}
 	print "Data going into: $data_dir\n";
 }
 sub compress_dir {
 	print "Creating tar.gz compressed file of this material...\n";
-	system("cd $self_data_dir
+	system("cd $user_data_dir
 tar -czf $debug_gz $debug_dir
 ");
 	print "Removing $data_dir...\n";
@@ -616,7 +616,9 @@ cat /proc/modules > $data_dir/proc-modules.txt 2>&1
 cat /proc/net/arp > $data_dir/proc-net-arp.txt  2>&1
 # bsd data
 cat /var/run/dmesg.boot > $data_dir/bsd-var-run-dmesg.boot.txt  2>&1
-echo $size{'inner'} > $data_dir/cols-inner.txt 2>&1
+echo $size{'indent'} > $data_dir/size-indent.txt 2>&1
+echo $size{'indent-min'} > $data_dir/size-indent-min.txt 2>&1
+echo $size{'max'} > $data_dir/size-cols-max.txt 2>&1
 echo $ENV{'XDG_CONFIG_HOME'} > $data_dir/xdg_config_home.txt 2>&1
 echo $ENV{'XDG_CONFIG_DIRS'} > $data_dir/xdg_config_dirs.txt 2>&1
 echo $ENV{'XDG_DATA_HOME'} > $data_dir/xdg_data_home.txt 2>&1
@@ -640,7 +642,7 @@ sub sys_tree {
 		my $dirname = '/sys';
 		my $cmd;
 		system("tree -a -L 10 /sys > $data_dir/sys-tree-full-10.txt");
-		opendir my($dh), $dirname or die "Couldn't open dir '$dirname': $!";
+		opendir my($dh), $dirname or main::error_handler('open-dir',"$dirname", "$!");
 		my @files = readdir $dh;
 		closedir $dh;
 		foreach (@files){
@@ -669,10 +671,10 @@ sub sys_ls {
 	};
 	my @working = ();
 	my $output = '';
-	my ($line, $type, $fh);
+	my ($type);
 	my $result = qx($cmd);
-	open $fh, '<', \$result or die $!;
-	while ( $line = <$fh> ){
+	open my $ch, '<', \$result or main::error_handler('open-data',"$cmd", "$!");
+	while ( my $line = <$ch> ){
 		chomp($line);
 		$line =~ s/^\s+|\s+$//g;
 		@working = split /\s+/, $line;
@@ -695,8 +697,9 @@ sub sys_ls {
 			$output = $output . $line . "\n";
 		}
 	}
-	close $fh;
-	open $fh, '>', "$data_dir/sys-tree-ls-$depth.txt" or die $!;
+	close $ch;
+	my $file = "$data_dir/sys-tree-ls-$depth.txt";
+	open my $fh, '>', $file or main::error_handler('create',"$file", "$!");
 	print $fh $output;
 	close $fh;
 	# print "$output\n";
@@ -733,7 +736,7 @@ sub process_data {
 	foreach (@content){
 		$data='';
 		$sep='';
-		open($fh, "<$_");
+		open($fh, '<', $_);
 		while ($row = <$fh>) {
 			chomp $row;
 			$data .= $sep . '"' . $row . '"';
@@ -752,12 +755,14 @@ sub process_data {
 # args: 2 - optional: alternate ftp upload url
 # NOTE: must be in format: ftp.site.com/incoming
 sub upload_file {
+	require Net::FTP;
+	import Net::FTP;
 	my ($self, $ftp_url) = @_;
 	my ($ftp, $domain, $host, $user, $pass, $dir, $error);
 	$ftp_url ||= main::get_defaults('ftp-upload');
 	$ftp_url =~ s/\/$//g; # trim off trailing slash if present
 	my @url = split(/\//, $ftp_url);
-	my $file_path = "$self_data_dir/$debug_gz";
+	my $file_path = "$user_data_dir/$debug_gz";
 	$host = $url[0];
 	$dir = $url[1];
 	$domain = $host;

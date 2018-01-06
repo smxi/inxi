@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 ## File: start_client.pl
-## Version: 1.6
-## Date 2018-01-04
+## Version: 1.7
+## Date 2018-01-06
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
 
@@ -14,6 +14,7 @@ use strict;
 use warnings;
 # use diagnostics;
 use 5.008;
+use Time::HiRes qw(gettimeofday tv_interval);
 
 # use File::Basename;
 
@@ -40,6 +41,7 @@ my $end = '';
 my $b_irc = 1;
 my $bsd_type = '';
 my $b_display = 1;
+my $b_log;
 
 sub log_data {}
 
@@ -208,6 +210,8 @@ package StartClient;
 my $ppid = '';
 my $pppid = '';
 
+# NOTE: there's no reason to crete an object, we can just access
+# the features statically. 
 # args: none
 sub new {
 	my $class = shift;
@@ -218,7 +222,7 @@ sub new {
 }
 
 sub get_client_data {
-	eval $start;
+	eval $start if $b_log;
 	$ppid = getppid();
 	if (!$b_irc){
 		main::get_shell_data($ppid);
@@ -230,11 +234,11 @@ sub get_client_data {
 			set_konvi_data();
 		}
 	}
-	eval $end;
+	eval $end if $b_log;
 }
 
 sub get_client_name {
-	eval $start;
+	eval $start if $b_log;
 	my $client_name = '';
 	
 	# print "$ppid\n";
@@ -282,10 +286,10 @@ sub get_client_name {
 		}
 	}
 	main::log_data("Client: $client{'name'} :: version: $client{'version'} :: konvi: $client{'konvi'} :: PPID: $ppid");
-	eval $end;
+	eval $end if $b_log;
 }
 sub get_client_version {
-	eval $start;
+	eval $start if $b_log;
 	@app = main::program_values($client{'name'});
 	my (@data,$string);
 	if (@app){
@@ -372,10 +376,10 @@ sub get_client_version {
 	if (!$client{'name-print'}) {
 		$client{'name-print'} = 'Unknown Client: ' . $client{'name'};
 	}
-	eval $end;
+	eval $end if $b_log;
 }
 sub get_cmdline {
-	eval $start;
+	eval $start if $b_log;
 	my @cmdline;
 	my $i = 0;
 	$ppid = getppid();
@@ -398,11 +402,11 @@ sub get_cmdline {
 		$i = ($cmdline[0]) ? 1 : 0;
 	}
 	main::log_data("cmdline: @cmdline count: $i");
-	eval $end;
+	eval $end if $b_log;
 	return @cmdline;
 }
 sub perl_python_client {
-	eval $start;
+	eval $start if $b_log;
 	return 1 if $client{'version'};
 	main::set_ps_aux();
 	# this is a hack to try to show konversation if inxi is running but started via /cmd
@@ -444,13 +448,13 @@ sub perl_python_client {
 		$client{'name-print'} = "Unknown $client{'name'} client";
 	}
 	main::log_data("namep: $client{'name-print'} name: $client{'name'} version: $client{'version'}");
-	eval $end;
+	eval $end if $b_log;
 }
 ## try to infer the use of Konversation >= 1.2, which shows $PPID improperly
 ## no known method of finding Konvi >= 1.2 as parent process, so we look to see if it is running,
 ## and all other irc clients are not running. As of 2014-03-25 this isn't used in my cases
 sub check_modern_konvi {
-	eval $start;
+	eval $start if $b_log;
 	
 	return 0 if ! $client{'qdbus'};
 	my $b_modern_konvi = 0;
@@ -491,12 +495,12 @@ sub check_modern_konvi {
 # 	my $ppid = getppid();
 # 	system('qdbus org.kde.konversation', '/irc', 'say', $client{'dserver'}, $client{'dtarget'}, 
 # 	"getpid_dir: $konvi_qt4 verNum: $konvi_version pid: $pid ppid: $ppid" );
-	eval $end;
+	eval $end if $b_log;
 	return $b_modern_konvi;
 }
 
 sub set_konvi_data {
-	eval $start;
+	eval $start if $b_log;
 	my $config_tool = '';
 	# https://userbase.kde.org/Konversation/Scripts/Scripting_guide
 	if ( $client{'konvi'} == 3 ){
@@ -528,19 +532,25 @@ sub set_konvi_data {
 		my @data = main::data_grabber("$config_tool --path data 2>/dev/null",':');
 		main::get_configs(@data);
 	}
-	eval $end;
- }
+	eval $end if $b_log;
+}
 }1;
-
-if ($ARGV[0] eq 'ob') {
-	my $ob_start = StartClient->new();
-	$ob_start->get_client_data();
+my $type = 'ob';
+my $t0 = [gettimeofday];
+foreach (0 .. 300){
+	if ($type eq 'ob') {
+		my $ob_start = StartClient->new();
+		$ob_start->get_client_data();
+	}
+	# elsif ($ARGV[0] eq 'nc'){
+	# 	get_client_data();
+	# }
+	else {
+		StartClient::get_client_data();
+	}
 }
-elsif ($ARGV[0] eq 'nc'){
-	get_client_data();
-}
-else {
-	StartClient::get_client_data();
-}
+my $t1 = [gettimeofday];
+my $t0_t1 = tv_interval $t0, $t1;
+print "type: $type elapsed: $t0_t1\n";
 
 #print "namep: $client{'name-print'} v: $client{'version'}\n";
