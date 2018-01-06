@@ -3,7 +3,7 @@
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-05';
-my $self_patch='065-p';
+my $self_patch='066-p';
 
 ## infobash: Copyright (C) 2005-2007  Michiel de Boer a.k.a. locsmif
 ## inxi: Copyright (C) 2008-2018 Harald Hope
@@ -39,7 +39,6 @@ use Net::FTP;
 # use Path::Class; # maybe use, maybe not, for ls /sys
 use POSIX qw(uname strftime);
 use Sys::Hostname;
-# use Term::ANSIColor;
 # use feature qw(state);
 
 ### INITIALIZE VARIABLES ###
@@ -103,16 +102,14 @@ my $line1 = "-------------------------------------------------------------------
 my $line2 = "======================================================================\n";
 my $line3 = "----------------------------------------\n";
 my $output_type = 'screen';
-# These two determine separators in single line output, to force irc clients 
-# not to break off sections
 
-$sep{'s1'}='~';
-$sep{'s2'}=' ';
 # these will assign a separator to non irc states. Important! Using ':' can 
-# trigger stupid emoticon
+# trigger stupid emoticon. Note: SEP1/SEP2 from short form not used anymore.
 # behaviors in output on IRC, so do not use those.
-$sep{'irc'}='';
-$sep{'console'}=':';
+$sep{'s2-irc'}='';
+$sep{'s2-console'}=':';
+$sep{'s1-irc'}=':';
+$sep{'s1-console'}=':';
 
 $show{'extra'}=0; # supported values: 0-3
 $show{'host'} = 1;
@@ -149,8 +146,9 @@ sub main {
 	
 	$debug = 10;
 	set_debugger(); # for debugging of konvi issues
-	my $ob_start = StartClient->new();
-	$ob_start->get_client_data();
+	#my $ob_start = StartClient->new();
+	#$ob_start->get_client_data();
+	StartClient::get_client_data();
 	# print_line( Dumper \%client);
 	get_options();
 	set_debugger(); # right after so it's set
@@ -183,13 +181,11 @@ sub initialize {
 }
 
 sub check_tools {
-	my $action = '';
-	my (%commands,%hash);
-	my $apps = '';
+	my ($action,$apps,@data,%commands,%hash);
 	if ( $show{'memory'} || ( ( $bsd_type || $use{'dmidecode-force'} ) && $show{'machine'}) ){
 		$action = 'use';
 		if (check_program('dmidecode')) {
-			my @data = data_grabber('dmidecode --type chassis 2>&1');
+			@data = data_grabber('dmidecode --type chassis 2>&1');
 			#print @data;
 			$action = do {
 				if ( grep { $_ =~ /Permission/i } @data ){'permissions'}
@@ -291,11 +287,10 @@ sub set_basics {
 	$colors{'default'} = 2;
 }
 
-# args: $1 - default OR override default cols max integer count
+# args: $1 - default OR override default cols max integer count. $_[0]
+# is the display width override.
 sub set_display_width {
-	my ($width_override)=@_;
-	
-	if ( $width_override eq 'live' ){
+	if ( $_[0] eq 'live' ){
 		## sometimes tput will trigger an error (mageia) if irc client
 		if ( ! $b_irc ){
 			if ( check_program('tput') ) {
@@ -330,7 +325,7 @@ sub set_display_width {
 		}
 	}
 	else {
-		$size{'max'}=$width_override;
+		$size{'max'}=$_[0];
 	}
 	# print "tc: $size{'term'} cmc: $size{'console'} cm: $size{'max'}\n";
 }
@@ -366,8 +361,8 @@ sub set_path {
 	# Create a difference of $PATH and $extra_paths and add that to $PATH:
 	foreach (@extra_paths) {
 		if ( ! grep(/$_/, @path) ){
-			$added_paths="$added_paths:$_";
-			# print "$path\n";
+			$added_paths .= ":$_";
+			# print "$added_paths\n";
 		}
 	}
 	$ENV{'PATH'} = $ENV{'PATH'} . $added_paths;
@@ -379,14 +374,17 @@ sub set_sep {
 	if ( $b_irc ){
 		# too hard to read if no colors, so force that for users on irc
 		if ($colors{'scheme'} == 0 ){
-			$sep{'s3'} = $sep{'console'};
+			$sep{'s1'} = $sep{'s1-console'};
+			$sep{'s2'} = $sep{'s2-console'};
 		}
 		else {
-			$sep{'s3'} = $sep{'irc'};
+			$sep{'s1'} = $sep{'s1-irc'};
+			$sep{'s2'} = $sep{'s2-irc'};
 		}
 	}
 	else {
-		$sep{'s3'} = $sep{'console'};
+		$sep{'s1'} = $sep{'s1-console'};
+		$sep{'s2'} = $sep{'s2-console'};
 	}
 }
 
@@ -435,10 +433,9 @@ sub set_user_paths {
 	# print "scd: $user_config_dir sdd: $user_data_dir \n";
 }
 # args: 1: set|hash key to return either null or path
+# $_[0] is the arg value
 sub system_files {
-	my ($type) = @_;
-	
-	if ( $type eq 'set'){
+	if ( $_[0] eq 'set'){
 		%files = (
 		'asound-cards' => '/proc/asound/cards',
 		'asound-modules' => '/proc/asound/modules',
@@ -455,8 +452,8 @@ sub system_files {
 		'scsi' => '/proc/scsi/scsi',
 		'xorg-log' => '/var/log/Xorg.0.log'
 		);
-		foreach my $key ( keys %files ){
-			$system_files{$key} = -e $files{$key} ? $files{$key} : '';
+		foreach ( keys %files ){
+			$system_files{$_} = -e $files{$_} ? $files{$_} : '';
 		}
 		if ( ! $system_files{'xorg-log'} && check_program('xset') ){
 			my $data = qx(xset q 2>/dev/null);
@@ -469,10 +466,9 @@ sub system_files {
 		}
 	}
 	else {
-		return $system_files{$type};
+		return $system_files{$_[0]};
 	}
 }
-
 ########################################################################
 #### UTILITIES
 ########################################################################
@@ -481,9 +477,9 @@ sub system_files {
 #### COLORS
 #### -------------------------------------------------------------------
 
+## arg: 1 - the type of action, either integer, count, or full
 sub get_color_scheme {
 	eval $start;
-	my ($type) = @_;
 	my @color_schemes = (
 	[qw(EMPTY EMPTY EMPTY )],
 	[qw(NORMAL NORMAL NORMAL )],
@@ -533,14 +529,14 @@ sub get_color_scheme {
 	[qw(MAGENTA BLUE NORMAL)],
 	[qw(MAGENTA DBLUE NORMAL)],
 	);
-	if ($type eq 'count' ){
+	if ($_[0] eq 'count' ){
 		return scalar @color_schemes;
 	}
-	if ($type eq 'full' ){
+	if ($_[0] eq 'full' ){
 		return @color_schemes;
 	}
 	else {
-		return @{$color_schemes[$type]};
+		return @{$color_schemes[$_[0]]};
 		# print Dumper $color_schemes[$scheme_nu];
 	}
 	eval $end;
@@ -548,7 +544,7 @@ sub get_color_scheme {
 
 sub set_color_scheme {
 	eval $start;
-	$colors{'scheme'} = shift;
+	$colors{'scheme'} = $_[0];
 	my $index = ( $b_irc ) ? 1 : 0; # defaults to non irc
 	
 	# NOTE: qw(...) kills the escape, it is NOT the same as using 
@@ -635,7 +631,6 @@ sub check_config_file {
 	$user_config_file = "$user_config_dir/$self_name.conf";
 	if ( ! -f $user_config_file ){
 		open( my $fh, '>', $user_config_file ) or error_handler('create', $user_config_file, $!);
-		close $fh;
 	}
 }
 
@@ -697,10 +692,12 @@ sub get_config_item {
 		elsif (/^IRC_CONS_COLOR_SCHEME$/) {$colors{'irc-console'} = $val}
 		elsif (/^IRC_X_TERM_COLOR_SCHEME$/) {$colors{'irc-virt-term'} = $val}
 		elsif (/^VIRT_TERM_COLOR_SCHEME$/) {$colors{'virt-term'} = $val}
-		elsif (/^SEP1$/) {$sep{'s1'} = $val}
-		elsif (/^SEP2$/) {$sep{'s2'} = $val}
-		elsif (/^SEP3_IRC$/) {$sep{'irc'} = $val}
-		elsif (/^SEP3_CONSOLE$/) {$sep{'console'} = $val}
+		# note: not using the old short SEP1/SEP2
+		elsif (/^SEP1_IRC$/) {$sep{'s1-irc'} = $val}
+		elsif (/^SEP1_CONSOLE$/) {$sep{'s1-console'} = $val}
+		elsif (/^SEP[23]_IRC$/) {$sep{'s2-irc'} = $val}
+		elsif (/^SEP[23]_CONSOLE$/) {$sep{'s2-console'} = $val}
+		
 		# size
 		elsif (/^COLS_MAX_CONSOLE$/) {$size{'console'} = $val}
 		elsif (/^COLS_MAX_IRC$/) {$size{'irc'} = $val}
@@ -1689,31 +1686,6 @@ sub upload_file {
 	}
 }
 };1;
-{
-package SystemDebuggerXX;
-my $type = 'full';
-my $upload = '';
-my $data_dir = '';
-my $debug_dir = '';
-my $debug_gz = '';
-my @content = (); 
-
-# args: 1 - type
-# args: 2 - upload
-sub new {
-	my $class = shift;
-	($type) = @_;
-	my $self = {};
-	# print "$f\n";
-	print "$type\n";
-	return bless $self, $class;
-}
-
-sub run_debugger {
-	# print "Starting $self_name debugging data collector...\n";
-}
-sub upload_file {}
-};1;
 
 #### -------------------------------------------------------------------
 #### DOWNLOADER
@@ -2027,9 +1999,8 @@ sub count_dir_files {
 # similar to reader() except this creates an array of data 
 # by lines from the command arg
 sub data_grabber {
-	my ($command,$splitter) = @_;
-	$splitter ||= "\n";
-	return split /$splitter/, qx($command);
+	$_[1] ||= "\n";
+	return split /$_[1]/, qx($_[0]);
 }
 
 # arg 1: type to return
@@ -2051,11 +2022,15 @@ sub get_defaults {
 	}
 }
 
+# args: 0 - the string to get piece of
+# 2 - the position in string, starting at 1 for 0 index.
+# 3 - the separator, default is ' '
 sub get_piece {
 	my ($string, $num, $sep) = @_;
 	$num--;
-	$sep ||= ' ';
-	my @temp = split $sep, $string, -1;
+	$sep ||= '\s+';
+	$string =~ s/^\s+|\s+$//;
+	my @temp = split /$sep/, $string, -1;
 	if ( exists $temp[$num] ){
 		return $temp[$num];
 	}
@@ -2064,8 +2039,8 @@ sub get_piece {
 # returns array of:
 # 0 - match string; 1 - search number; 2 - version string; 3 - Print name
 # 4 - console 0/1; 5 - 0/1 exit version loop at first iteration
+# arg: 1 - program lower case name
 sub program_values {
-	my $name = shift;
 	my (@client_data,$ref);
 	my %data = (
 	# shells
@@ -2082,7 +2057,7 @@ sub program_values {
 	'ircii' => ['[0-9.]+',3,'-v','ircII',1,1],
 	'irssi' => ['irssi',2,'-v','Irssi',1,1],
 	'irssi-text' => ['irssi',2,'-v','Irssi',1,1],
-	'konversation' => ['konversation',2,'-v','Konversation',0],
+	'konversation' => ['konversation',2,'-v','Konversation',0,0],
 	'kopete' => ['Kopete',2,'-v','Kopete',0,0],
 	'kvirc' => ['[0-9.]+',2,'-v','KVIrc',0,0], # special
 	'pidgin' => ['[0-9.]+',2,'-v','Pidgin',0,1],
@@ -2097,8 +2072,8 @@ sub program_values {
 	'xchat-gnome' => ['[0-9.]+',2,'-v','X-Chat-Gnome',1,1],
 	'xchat' => ['[0-9.]+',2,'-v','X-Chat',1,1],
 	);
-	if ( defined $data{$name} ){
-		$ref = $data{$name};
+	if ( defined $data{$_[0]} ){
+		$ref = $data{$_[0]};
 		@client_data = @$ref;
 	}
 	#my $debug = main::Dumper \@client_data;
@@ -2167,26 +2142,25 @@ sub program_version {
 # print program_version('bash', 'bash', 4) . "\n";
 
 # arg: 1 - full file path, returns array of file lines.
+# note: chomp has to chomp the entire action, not just <$fh>
 sub reader {
-	my $file = shift;
+	my ($file) = @_;
 	open( my $fh, '<', $file ) or error_handler('open', $file, $!);
-	my @rows = <$fh>;
-	close $fh;
+	chomp(my @rows = <$fh>);
 	return @rows;
 }
-
+# args: 1 - the file to create if not exists
 sub toucher {
 	my $file = shift;
 	if ( ! -e $file ){
 		open( my $fh, '>', $file ) or error_handler('create', $file, $!);
-		close $fh;
 	}
 }
 
 # calling it trimmer to avoid conflicts with existing trim stuff
 # arg: 1 - string to be right left trimmed. Also slices off \n so no chomp needed
 sub trimmer {
-	my $str = shift;
+	my ($str) = @_;
 	$str =~ s/^\s+|\s+$|\n$//g; 
 	return $str;
 }
@@ -3069,14 +3043,16 @@ package StartClient;
 my $ppid = '';
 my $pppid = '';
 
+# NOTE: there's no reason to crete an object, we can just access
+# the features statically. 
 # args: none
-sub new {
-	my $class = shift;
-	my $self = {};
-	# print "$f\n";
-	# print "$type\n";
-	return bless $self, $class;
-}
+# sub new {
+# 	my $class = shift;
+# 	my $self = {};
+# 	# print "$f\n";
+# 	# print "$type\n";
+# 	return bless $self, $class;
+# }
 
 sub get_client_data {
 	eval $start;
@@ -3401,9 +3377,9 @@ sub set_konvi_data {
 #### FILTERS AND TOOLS
 #### -------------------------------------------------------------------
 
+# note used, but keeping logic for now
 sub increment_starters {
-	my $key = shift;
-	my $indexes = shift;
+	my ($key,$indexes) = @_;
 	my $result = $key;
 	if (defined $$indexes{$key} ){
 		$$indexes{$key}++;
@@ -3412,20 +3388,12 @@ sub increment_starters {
 	return $result;
 }
 
-sub prefix {
-	my $num = shift;
-	$$num++;
-	return $$num . "#";
-}
-
 #### -------------------------------------------------------------------
 #### GENERATE OUTPUT
 #### -------------------------------------------------------------------
 
 sub output_handler {
 	my (%data) = @_;
-	# my $data = shift;
-	my @data;
 	# print Dumper \%data;
 	if ($output_type eq 'screen'){
 		print_data(%data);
@@ -3441,7 +3409,7 @@ sub output_handler {
 	}
 }
 sub print_basic {
-	my @data = @_;
+	my (@data) = @_;
 	my $indent = 18;
 	my $indent_static = 18;
 	my $indent1_static = 5;
@@ -3522,17 +3490,16 @@ sub print_basic {
 sub print_data {
 	my (%data) = @_;
 	my $array = 0;
+	my $counter=0;
+	my $split_count = 0;
+	my $hash = 0;
 	my $holder = '';
 	my $start = '';
 	my $start2 = '';
 	my $length = 0;
 	my $indent = $size{'indent'};
-	my %ids = (
-	'Card' => 0,
-	'Device' => 0,
-	'Id' => 0,
-	);
-	my ($key,$key1,$key2,$item,$line,$val1,$val2,%row,@temp,@working);
+	my (@temp,@working,@values,%ids,$holder2,%row);
+	my ($key,$key1,$key2,$item,$line,$val1,$val2,$val3);
 	# $size{'max'} = 88;
 	if ($size{'max'} < $size{'indent-min'}){
 		$indent = 2;
@@ -3540,7 +3507,7 @@ sub print_data {
 	foreach $key1 (sort { (split/#/, $a)[0] <=> (split/#/, $b)[0] } keys %data) {
 		$key = (split/#/, $key1)[1];
 		if ($key ne 'SHORT' ) {
-			$start = sprintf("$colors{'c1'}%-${indent}s$colors{'cn'}","$key$sep{'s3'}");
+			$start = sprintf("$colors{'c1'}%-${indent}s$colors{'cn'}","$key$sep{'s1'}");
 			if ($indent < 10){
 				$line = "$start\n";
 				print_line($line);
@@ -3553,17 +3520,22 @@ sub print_data {
 		}
 		if (ref($data{$key1}) eq 'ARRAY'){
 			# @working = @{$data{$key1}};
+			%ids = (
+			'Card' => 1,
+			'Device' => 1,
+			'Id' => 1,
+			);
 			foreach my $val1 (@{$data{$key1}}){
 				$length = $indent;
 				if (ref($val1) eq 'HASH'){
 					#%row = %$val1;
-					my $counter=0;
-					my $split_count = 0;
-					my $hash = scalar %$val1;
+					$counter=0;
+					$split_count = 0;
+					$hash = scalar %$val1;
 					foreach $key2 (sort { (split/#/, $a)[0] <=> (split/#/, $b)[0] } keys %$val1){
 						$key = (split/#/, $key2)[1];
-						if ($counter == 0){
-							$key = increment_starters($key,\%ids);
+						if ($counter == 0 && defined $ids{$key}){
+							$key .= '-' . $ids{$key}++;
 						}
 						$val2 = $$val1{$key2};
 						if ($val2){
@@ -3573,25 +3545,25 @@ sub print_data {
 						# in Perl 5.08 oddly enough.
 						@temp = split/\s+/, $val2;
 						$split_count = scalar @temp;
-						if ( ( length( "$key$sep{'s3'} $val2" ) + $length ) < $size{'max'} ) {
-							$length += length("$key$sep{'s3'} $val2");
-							$holder .= "$colors{'c1'}$key$sep{'s3'}$colors{'c2'} $val2";
+						if ( ( length( "$key$sep{'s2'} $val2" ) + $length ) < $size{'max'} ) {
+							$length += length("$key$sep{'s2'} $val2");
+							$holder .= "$colors{'c1'}$key$sep{'s2'}$colors{'c2'} $val2";
 							#print "one\n";
 						}
 						# handle case where the opening key/value pair is > max, and where 
 						# there are a lot of terms, like cpu flags, raid types supported. Raid
 						# can have the last row have a lot of devices, or many raid types
-						elsif ( ( length( "$key$sep{'s3'} $val2" ) + $indent ) > $size{'max'} && 
+						elsif ( ( length( "$key$sep{'s2'} $val2" ) + $indent ) > $size{'max'} && 
 								   !defined $ids{$key} && $split_count > 2 ) {
-							my @values = split/\s+/, $val2;
-							my $val3 = shift @values;
-							# $length += length("$key$sep{'s3'} $val3 ") + $indent;
-							$start2 = "$colors{'c1'}$key$sep{'s3'}$colors{'c2'} $val3 ";
-							my $holder2 = '';
-							$length += length("$key$sep{'s3'} $val3 ");
+							@values = split/\s+/, $val2;
+							$val3 = shift @values;
+							# $length += length("$key$sep{'s2'} $val3 ") + $indent;
+							$start2 = "$colors{'c1'}$key$sep{'s2'}$colors{'c2'} $val3 ";
+							$holder2 = '';
+							$length += length("$key$sep{'s2'} $val3 ");
 							# print scalar @values,"\n";
 							foreach (@values){
-								my $l =  (length("$_ ") + $length);
+								# my $l =  (length("$_ ") + $length);
 								#print "$l\n";
 								if ( (length("$_ ") + $length) < $size{'max'} ){
 									#print "a\n";
@@ -3645,13 +3617,13 @@ sub print_data {
 							if ($holder){
 								#print "five\n";
 								$line = sprintf("%-${indent}s%s$colors{'cn'}\n",$start,"$holder");
-								$holder = "$colors{'c1'}$key$sep{'s3'}$colors{'c2'} $val2";
-								$length = length("$key$sep{'s3'} $val2") + $indent;
+								$holder = "$colors{'c1'}$key$sep{'s2'}$colors{'c2'} $val2";
+								$length = length("$key$sep{'s2'} $val2") + $indent;
 								print_line($line);
 								$start = '';
 							}
 							else {
-								$holder = "$colors{'c1'}$key$sep{'s3'}$colors{'c2'} $val2";
+								$holder = "$colors{'c1'}$key$sep{'s2'}$colors{'c2'} $val2";
 								$line = sprintf("%-${indent}s%s$colors{'cn'}\n",$start,"$holder");
 								$length = $indent;
 								$holder = '';
@@ -3673,7 +3645,7 @@ sub print_data {
 					$array=0;
 					foreach $item (@$val1){
 						$array++;
-						$line = "$colors{'c1'}$array$sep{'s3'} $colors{'c2'}$item$colors{'cn'}";
+						$line = "$colors{'c1'}$array$sep{'s2'} $colors{'c2'}$item$colors{'cn'}";
 						$line = sprintf("%-${indent}s%s\n","","$line");
 						print_line($line);
 					}
@@ -3687,7 +3659,7 @@ sub print_data {
 }
 
 sub print_line {
-	my $line = shift;
+	my ($line) = @_;
 	if ($b_irc && $client{'test-konvi'}){
 		$client{'konvi'} = 3;
 		$client{'dobject'} = 'Konversation';
@@ -3804,8 +3776,7 @@ sub get_hostname {
 }
 sub get_kernel_data {
 	eval $start;
-	my $kernel = '';
-	my $ksplice = '';
+	my ($kernel,$ksplice) = ('','');
 	# Linux; yawn; 4.9.0-3.1-liquorix-686-pae; #1 ZEN SMP PREEMPT liquorix 4.9-4 (2017-01-14); i686
 	# FreeBSD; siwi.pair.com; 8.2-STABLE; FreeBSD 8.2-STABLE #0: Tue May 31 14:36:14 EDT 2016     erik5@iddhi.pair.com:/usr/obj/usr/src/sys/82PAIRx-AMD64; amd64
 	my @uname = uname();
@@ -3837,7 +3808,7 @@ sub get_self_version {
 	return $self_version . $patch;
 }
 sub get_shell_data {
-	my $ppid = shift;
+	my ($ppid) = @_;
 	my $string = qx(ps -p $ppid -o comm= 2>/dev/null);
 	chomp($string);
 	if ($string){
@@ -3921,20 +3892,19 @@ sub generate_short_rows {
 	if ($client{'version'}){
 		$client .= ' ' . $client{'version'};
 	}
-	
 	my %row = (
 	'0#SHORT' => [
 		{
-		&prefix(\$num) . 'CPU' => 'N/A',
-		&prefix(\$num) . 'speed' => 'N/A',
-		&prefix(\$num) . $kernel_os => &get_kernel_data(),
-		&prefix(\$num) . 'Up' => &get_uptime(),
-		&prefix(\$num) . 'Mem' => 'N/A',
-		&prefix(\$num) . 'HD' => 'N/A',
+		$num++ . '#CPU' => 'N/A',
+		$num++ . '#speed' => 'N/A',
+		$num++ . '#' . $kernel_os => &get_kernel_data(),
+		$num++ . '#Up' => &get_uptime(),
+		$num++ . '#Mem' => 'N/A',
+		$num++ . '#HD' => 'N/A',
 		# could make -1 for ps aux itself, -2 for ps aux and self
-		&prefix(\$num) . 'Procs' => scalar @ps_aux, 
-		&prefix(\$num) . $client_shell => $client,
-		&prefix(\$num) . $self_name => &get_self_version(),
+		$num++ . '#Procs' => scalar @ps_aux, 
+		$num++ . '#' . $client_shell => $client,
+		$num++ . '#' . $self_name => &get_self_version(),
 		},
 	],
 	);

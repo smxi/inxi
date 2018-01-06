@@ -529,7 +529,18 @@ sub set_konvi_data {
 		main::get_configs(@data);
 	}
 	eval $end;
-}
+ }
 }1;
-my $ob_start = StartClient->new();
-$ob_start->get_client_data();
+
+if ($ARGV[0] eq 'ob') {
+	my $ob_start = StartClient->new();
+	$ob_start->get_client_data();
+}
+elsif ($ARGV[0] eq 'nc'){
+	get_client_data();
+}
+else {
+	StartClient::get_client_data();
+}
+
+#print "namep: $client{'name-print'} v: $client{'version'}\n";
