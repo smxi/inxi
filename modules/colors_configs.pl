@@ -12,6 +12,8 @@ use 5.008;
 
 use Data::Dumper qw(Dumper); # print_r
 
+### START DEFAULT CODE ##
+
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2017-12-31';
@@ -19,7 +21,6 @@ my $self_patch='037-p';
 my $self_path = "$ENV{'HOME'}/bin/scripts/inxi/svn/branches/inxi-perl";
 my $user_config_dir= "$ENV{'HOME'}/.config";
 my $user_config_file;
-## stub code
 
 my (%client,%colors,%size);
 $size{'max'} = 90;
@@ -149,7 +150,11 @@ sub reader {
 	return @rows;
 }
 
-## start working code
+### END DEFAULT CODE ##
+
+### START CODE REQUIRED BY THIS MODULE ##
+
+### START MODULE CODE ##
 
 sub check_config_file {
 	$user_config_file = "$user_config_dir/$self_name.conf";
@@ -556,6 +561,10 @@ sub print_irc_message {
 }
 
 };1;
+
+### END MODULE CODE ##
+
+### START TEST CODE ##
 
 # print "Your username is: ", getpwuid($<) || "unknown???", "\n";
 # print get_color_scheme('count'), "\n";

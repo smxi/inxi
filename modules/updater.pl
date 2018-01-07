@@ -5,7 +5,7 @@
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
-## required program/variable placeholders
+### START DEFAULT CODE ##
 
 my $self_name='pinxi';
 my $self_version='2.9.00';
@@ -14,11 +14,17 @@ my $self_patch='019-p';
 
 sub error_handler {
 	my ($err, $message, $alt1) = @_;
-	
+	print "$err: $message err: $alt1\n";
 }
-sub download_file {
 
-}
+my $start = '';
+my $end = '';
+
+### END DEFAULT CODE ##
+
+my %dl = ( 'dl' => 'test' );
+
+sub download_file {}
 
 # arg 1: type to return
 sub get_defaults {
@@ -39,11 +45,9 @@ sub get_defaults {
 	}
 }
 
-my %dl = ( 'dl' => 'test' );
-my $start = '';
-my $end = '';
+### START CODE REQUIRED BY THIS MODULE ##
 
-## actual updater logic
+### START MODULE CODE ##
 
 # args: 1 - download url, not including file name; 2 - string to print out
 # 3 - update type option
@@ -212,3 +216,7 @@ sub set_version_data {
 	}
 	close $fh;
 }
+
+### END MODULE CODE ##
+
+### START TEST CODE ##

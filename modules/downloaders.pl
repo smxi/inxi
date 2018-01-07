@@ -9,7 +9,8 @@ use strict;
 use warnings;
 use 5.008;
 
-## defaults required to run:
+### START DEFAULT CODE ##
+
 my %dl = (
 'curl' => 'true',
 'fetch' => 'true',
@@ -30,7 +31,12 @@ sub check_program {
 my $start = '';
 my $end = '';
 
-## Start actuala logic
+### END DEFAULT CODE ##
+
+### START CODE REQUIRED BY THIS MODULE ##
+
+
+### START MODULE CODE ##
 
 sub download_file {
 	my ($type, $url, $file) = @_;
@@ -154,3 +160,7 @@ sub set_perl_downloader {
 	$downloader =~ s/perl/tiny/;
 	return $downloader;
 }
+
+### END MODULE CODE ##
+
+### START TEST CODE ##

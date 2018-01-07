@@ -19,7 +19,8 @@ use 5.008;
 
 # use Net::FTP;
 
-## stub functions
+### START DEFAULT CODE ##
+
 sub error_handler {
 
 }
@@ -46,6 +47,10 @@ sub get_defaults {
 sub check_recommends {}
 sub get_repo_data {}
 sub check_program { return 1; }
+
+### END DEFAULT CODE ##
+
+### START CODE REQUIRED BY THIS MODULE ##
 
 # returns count of files in directory, if 0, dir is empty
 sub count_dir_files {
@@ -89,7 +94,7 @@ my $line1 = "-------------------------------------------------------------------
 my $line2 = "======================================================================\n";
 my $line3 = "----------------------------------------\n";
 
-## Start actual logic
+### START MODULE CODE ##
 
 # NOTE: perl 5.008 needs package inside brackets.
 # I believe 5.010 introduced option to have it outside brackets as you'd expect
@@ -792,6 +797,10 @@ sub upload_file {
 	}
 }
 };1;
+
+### END MODULE CODE ##
+
+### START TEST CODE ##
 
 my $ob_sys = SystemDebugger->new('full');
 $ob_sys->run_debugger();

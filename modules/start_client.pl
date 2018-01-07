@@ -18,7 +18,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 
 # use File::Basename;
 
-## stub code
+### START DEFAULT CODE ##
 
 my @ps_aux;
 my %client = (
@@ -153,9 +153,14 @@ sub check_program {
 	grep { -x "$_/$_[0]"}split /:/,$ENV{PATH};
 }
 
+# calling it trimmer to avoid conflicts with existing trim stuff
+# arg: 1 - string to be right left trimmed. Also slices off \n so no chomp needed
+# this thing is super fast, no need to log its times etc, 0.0001 seconds or less
 sub trimmer {
-	my $str = shift;
+	#eval $start if $b_log;
+	my ($str) = @_;
 	$str =~ s/^\s+|\s+$|\n$//g; 
+	#eval $end if $b_log;
 	return $str;
 }
 # arg: 1 - command to turn into an array; 2 - optional: splitter
@@ -167,13 +172,19 @@ sub data_grabber {
 	return split /$splitter/, qx($command);
 }
 # arg: 1 - full file path, returns array of file lines.
+# note: chomp has to chomp the entire action, not just <$fh>
 sub reader {
-	my $file = shift;
+	eval $start if $b_log;
+	my ($file) = @_;
 	open( my $fh, '<', $file ) or error_handler('open', $file, $!);
-	my @rows = <$fh>;
-	close $fh;
+	chomp(my @rows = <$fh>);
+	eval $end if $b_log;
 	return @rows;
 }
+
+### END DEFAULT CODE ##
+
+### START CODE REQUIRED BY THIS MODULE ##
 
 sub set_ps_aux {
 	return 1 if @ps_aux;
@@ -197,9 +208,7 @@ sub get_shell_data {
 	}
 }
 
-
-
-## real code
+### START MODULE CODE ##
 
 {
 package StartClient;
@@ -535,6 +544,11 @@ sub set_konvi_data {
 	eval $end if $b_log;
 }
 }1;
+
+### END MODULE CODE ##
+
+### START TEST CODE ##
+
 my $type = 'ob';
 my $t0 = [gettimeofday];
 foreach (0 .. 300){

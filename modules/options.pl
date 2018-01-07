@@ -15,7 +15,7 @@ use Getopt::Long qw(GetOptions);
 Getopt::Long::Configure ('bundling', 'no_ignore_case', 
 'no_getopt_compat', 'no_auto_abbrev','pass_through');
 
-## NOTE: Includes dummy sub and variables to allow for running for debugging.
+### START DEFAULT CODE ##
 
 sub error_handler {
 	my ($err, $one, $two) = @_;
@@ -39,7 +39,11 @@ $debug,$display,$extra,$ftp_alt,$output_type,$ps_count);
 my $start = '';
 my $end = '';
 
-## start actual code
+### END DEFAULT CODE ##
+
+### START CODE REQUIRED BY THIS MODULE ##
+
+### START MODULE CODE ##
 
 sub get_options{
 	my (@args) = @_;
@@ -423,3 +427,7 @@ sub get_options{
 		show_options($help_type);
 	}
 } 
+
+### END MODULE CODE ##
+
+### START TEST CODE ##

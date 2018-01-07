@@ -10,7 +10,7 @@ use warnings;
 # use diagnostics;
 use 5.008;
 
-## NOTE: Includes dummy sub and variables to allow for running for debugging.
+### START DEFAULT CODE ##
 
 my ($b_irc, $bsd_type);
 my $self_name = 'pinxi';
@@ -22,6 +22,10 @@ my $start = '';
 my $end = '';
 
 sub error_handler {}
+
+### END DEFAULT CODE ##
+
+### START CODE REQUIRED BY THIS MODULE ##
 
 sub print_screen_line {
 	my $line = shift;
@@ -47,8 +51,7 @@ sub get_defaults {
 	}
 }
 
-
-## start actual code
+### START MODULE CODE ##
 
 sub show_options {
 	if ( $b_irc ){
@@ -369,3 +372,7 @@ sub show_options {
 	print_basic(@data); 
 	exit 1;
 }
+
+### END MODULE CODE ##
+
+### START TEST CODE ##
