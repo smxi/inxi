@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 ## File: options.pl
-## Version: 1.6
+## Version: 1.7
 ## Date 2018-01-06
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
@@ -54,10 +54,11 @@ sub get_options{
 		$show{'cpu-basic'} = 1;
 		$show{'raid-basic'} = 1;
 		$show{'disk-total'} = 1;
-		$show{'graphics'} = 1;
+		$show{'graphic'} = 1;
 		$show{'info'} = 1;
 		$show{'machine'} = 1;
-		$show{'network'} = 1;},
+		$show{'network'} = 1;
+		$show{'system'} = 1;},
 	'B|battery' => sub {
 		$show{'short'} = 0;
 		$show{'battery'} = 1;
@@ -83,28 +84,28 @@ sub get_options{
 	'D' => sub {
 		$show{'short'} = 0;
 		$show{'disk'} = 1; },
-	'f|cpu-flags' => sub {
+	'f|flags' => sub {
 		$show{'short'} = 0;
 		$show{'cpu'} = 1;
-		$show{'cpu-flags'} = 1; },
+		$show{'cpu-flag'} = 1; },
 	'F|full' => sub {
 		$show{'short'} = 0;
 		$show{'audio'} = 1;
 		$show{'battery'} = 1;
 		$show{'cpu'} = 1;
 		$show{'disk'} = 1;
-		$show{'graphics'} = 1;
+		$show{'graphic'} = 1;
 		$show{'info'} = 1;
 		$show{'machine'} = 1;
 		$show{'network'} = 1;
 		$show{'network-advanced'} = 1;
-		$show{'partitions'} = 1;
+		$show{'partition'} = 1;
 		$show{'raid'} = 1;
-		$show{'sensors'} = 1;
+		$show{'sensor'} = 1;
 		$show{'system'} = 1; },
 	'G|graphics' => sub {
 		$show{'short'} = 0;
-		$show{'graphics'} = 1; },
+		$show{'graphic'} = 1; },
 	'i|ip' => sub {
 		$show{'short'} = 0;
 		$show{'ip'} = 1;
@@ -115,8 +116,8 @@ sub get_options{
 		$show{'info'} = 1; },
 	'l|label' => sub {
 		$show{'short'} = 0;
-		$show{'labels'} = 1;
-		$show{'partitions'} = 1; },
+		$show{'label'} = 1;
+		$show{'partition'} = 1; },
 	'm|memory' => sub {
 		$show{'short'} = 0;
 		$show{'memory'} = 1; },
@@ -133,23 +134,23 @@ sub get_options{
 	'o|unmounted' => sub {
 		$show{'short'} = 0;
 		$show{'unmounted'} = 1; },
-	'p|partitions-full' => sub {
+	'p|partition-full' => sub {
 		$show{'short'} = 0;
-		$show{'partitions'} = 1;
-		$show{'partitions-full'} = 1; },
-	'P|partitions' => sub {
+		$show{'partition'} = 1;
+		$show{'partition-full'} = 1; },
+	'P|partition' => sub {
 		$show{'short'} = 0;
-		$show{'partitions'} = 1; },
+		$show{'partition'} = 1; },
 	'r|repos' => sub {
 		$show{'short'} = 0;
-		$show{'repos'} = 1; },
+		$show{'repo'} = 1; },
 	'R|raid' => sub {
 		$show{'short'} = 0;
 		$show{'raid'} = 1;
 		$show{'raid-forced'} = 1; },
 	's|sensors' => sub {
 		$show{'short'} = 0;
-		$show{'sensors'} = 1; },
+		$show{'sensor'} = 1; },
 	'S|system' => sub {
 		$show{'short'} = 0;
 		$show{'system'} = 1; },
@@ -157,6 +158,7 @@ sub get_options{
 		my ($opt,$arg) = @_;
 		$show{'short'} = 0;
 		if ( $arg =~ /^([cm]+)([1-9]|1[0-9]|20)?$/ ){
+			$show{'process'} = 1;
 			if ($arg =~ /c/){
 				$show{'ps-cpu'} = 1;
 			}
@@ -172,8 +174,8 @@ sub get_options{
 		} },
 	'u|uuid' => sub {
 		$show{'short'} = 0;
-		$show{'partitions'} = 1;
-		$show{'uuids'} = 1; },
+		$show{'partition'} = 1;
+		$show{'uuid'} = 1; },
 	'v|verbosity:i' => sub {
 		my ($opt,$arg) = @_;
 		$show{'short'} = 0;
@@ -184,7 +186,7 @@ sub get_options{
 			if ($arg >= 1 ){
 				$show{'cpu-basic'} = 1;
 				$show{'disk-total'} = 1;
-				$show{'graphics'} = 1;
+				$show{'graphic'} = 1;
 				$show{'info'} = 1;
 				$show{'system'} = 1;
 			}
@@ -202,20 +204,20 @@ sub get_options{
 			}
 			if ($arg >= 4 ){
 				$show{'disk'} = 1;
-				$show{'partitions'} = 1;
+				$show{'partition'} = 1;
 			}
 			if ($arg >= 5 ){
 				$show{'audio'} = 1;
 				$show{'memory'} = 1;
-				$show{'labels'} = 1;
+				$show{'label'} = 1;
 				$show{'memory'} = 1;
 				$show{'raid'} = 1;
-				$show{'sensors'} = 1;
+				$show{'sensor'} = 1;
 				$show{'uuid'} = 1;
 			}
 			if ($arg >= 6 ){
 				$show{'optical-full'} = 1;
-				$show{'partitions-full'} = 1;
+				$show{'partition-full'} = 1;
 				$show{'unmounted'} = 1;
 				$extra = 2;
 			}
