@@ -198,7 +198,7 @@ sub get_options{
 			if ($arg >= 3 ){
 				$show{'network-advanced'} = 1;
 				$show{'cpu'} = 1;
-				$show{'extra'} = 1;
+				$extra = 1;
 			}
 			if ($arg >= 4 ){
 				$show{'disk'} = 1;
@@ -217,12 +217,12 @@ sub get_options{
 				$show{'optical-full'} = 1;
 				$show{'partitions-full'} = 1;
 				$show{'unmounted'} = 1;
-				$show{'extra'} = 2;
+				$extra = 2;
 			}
 			if ($arg >= 7 ){
 				$show{'ip'} = 1;
 				$show{'raid-forced'} = 1;
-				$show{'extra'} = 3;
+				$extra = 3;
 			}
 		}
 		else {
@@ -258,10 +258,10 @@ sub get_options{
 	'x|extra:i' => sub {
 		my ($opt,$arg) = @_;
 		if ($arg > 0){
-			$show{'extra'} = $arg;
+			$extra = $arg;
 		}
 		else {
-			$show{'extra'}++;
+			$extra++;
 		} },
 	'y|width:i' => sub {
 		my ($opt, $arg) = @_;
