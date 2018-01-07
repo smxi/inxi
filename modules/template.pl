@@ -3,7 +3,7 @@
 ## Version: 1.0
 ## Date 2018-01-07
 ## License: GNU GPL v3 or greater
-## Copyright (C) 2017 Harald Hope
+## Copyright (C) 2018 Harald Hope
 
 use strict;
 use warnings;

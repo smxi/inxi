@@ -1,9 +1,9 @@
 #!/usr/bin/env perl
 ## File: updater.pl
-## Version: 1.3
-## Date 2017-12-19
+## Version: 1.4
+## Date 2018-01-07
 ## License: GNU GPL v3 or greater
-## Copyright (C) 2017 Harald Hope
+## Copyright (C) 2017-18 Harald Hope
 
 ### START DEFAULT CODE ##
 

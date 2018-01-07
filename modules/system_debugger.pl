@@ -1,9 +1,9 @@
 #!/usr/bin/env perl
 ## File: system_debugger.pl
-## Version: 2.2
-## Date 2018-01-06
+## Version: 2.3
+## Date 2018-01-07
 ## License: GNU GPL v3 or greater
-## Copyright (C) 2017 Harald Hope
+## Copyright (C) 2017-18 Harald Hope
 
 ## INXI INFO ##
 my $self_name='pinxi';
