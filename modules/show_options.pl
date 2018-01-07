@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: show_options.pl
-## Version: 1.9
-## Date 2018-01-06
+## Version: 2.0
+## Date 2018-01-07
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -17,9 +17,11 @@ my $self_name = 'pinxi';
 my $ps_count = 5;
 my $b_weather = 'true';
 my $b_update = 'true';
-my %size( 'max' => 100 );
+my %size = ( 'max' => 100 );
 my $start = '';
 my $end = '';
+
+sub error_handler {}
 
 sub print_screen_line {
 	my $line = shift;
@@ -28,19 +30,20 @@ sub print_screen_line {
 
 # arg 1: type to return
 sub get_defaults {
-	my ($arg) = @_;
+	my ($type) = @_;
 	my %defaults = (
 	'ftp-upload' => 'ftp.techpatterns.com/incoming',
 	# 'inxi-branch-1' => 'https://github.com/smxi/inxi/raw/one/',
 	# 'inxi-branch-2' => 'https://github.com/smxi/inxi/raw/two/',
-	'inxi-main' => 'https://github.com/smxi/inxi/raw/inxi-perl/',
+	'inxi-main' => 'https://github.com/smxi/inxi/raw/master/',
+	'inxi-pinxi' => 'https://github.com/smxi/inxi/raw/inxi-perl/',
 	'inxi-man' => "https://github.com/smxi/inxi/raw/master/$self_name.1.gz",
 	);
 	if ( exists $defaults{$type}){
 		return $defaults{$type};
 	}
 	else {
-		error_handler('bad-arg', $arg);
+		error_handler('bad-arg-int', $type);
 	}
 }
 
@@ -271,8 +274,7 @@ sub show_options {
 	}
 	@rows = (
 	['1', '-y', '--width', "Required extra option: integer, 80 or greater. Set the output 
-	line width max. Overrides IRC/Terminal settings or actual widths. If used 
-	with -h, put -y option first. Example:^inxi^-y^130" ],
+	line width max. Overrides IRC/Terminal settings or actual widths. Example:^inxi^-y^130" ],
 	['1', '-z', '--filter', "Security filters for IP/Mac addresses, location, user home 
 	directory name. Default on for irc clients." ],
 	['1', '-Z', '--filter-override', "Absolute override for output filters. Useful for debugging 

@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: options.pl
-## Version: 1.7
-## Date 2018-01-06
+## Version: 1.8
+## Date 2018-01-07
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017 Harald Hope
 
@@ -29,9 +29,13 @@ sub set_color_scheme {}
 sub set_display_width {}
 sub set_downloader {}
 sub set_perl_downloader {}
+sub show_options {}
+sub show_version {}
 sub update_me {}
-my (%colors,%show,%dl,$debug,%test,$b_weather,$ps_count,$b_update,
-$display,$b_irc,$ftp_alt,$output_type);
+my (@test,
+%colors,%dl,%show,%use,
+$b_irc,$b_update,$b_weather,
+$debug,$display,$extra,$ftp_alt,$output_type,$ps_count);
 my $start = '';
 my $end = '';
 
@@ -39,11 +43,8 @@ my $end = '';
 
 sub get_options{
 	my (@args) = @_;
-	# my @argv = @ARGV;
 	$show{'short'} = 1;
-	# $show{''} = 1;
-	#$opt_parser->configure('no_ignore_case');
-	# GetOptionsFromArray(\@argv, 
+	my ($b_downloader,$b_updater,$b_version,$help_type,$self_download, $download_id);
 	GetOptions (
 	'A|audio' => sub {
 		$show{'short'} = 0;
@@ -110,7 +111,8 @@ sub get_options{
 		$show{'short'} = 0;
 		$show{'ip'} = 1;
 		$show{'network'} = 1;
-		$show{'network-advanced'} = 1; },
+		$show{'network-advanced'} = 1;
+		$b_downloader = 1 if ! check_program('dig');},
 	'I|info' => sub {
 		$show{'short'} = 0;
 		$show{'info'} = 1; },
@@ -222,6 +224,7 @@ sub get_options{
 				$extra = 2;
 			}
 			if ($arg >= 7 ){
+				$b_downloader = 1 if ! check_program('dig');
 				$show{'ip'} = 1;
 				$show{'raid-forced'} = 1;
 				$extra = 3;
@@ -230,11 +233,10 @@ sub get_options{
 		else {
 			error_handler('bad-arg',$opt,$arg);
 		} },
-	'V|version' => sub { 
-		show_version(); },
 	'w|weather' => sub {
 		my ($opt) = @_;
 		$show{'short'} = 0;
+		$b_downloader = 1;
 		if ( $b_weather ){
 			$show{'weather'} = 1;
 		}
@@ -245,6 +247,7 @@ sub get_options{
 		my ($opt,$arg) = @_;
 		$arg ||= '';
 		$show{'short'} = 0;
+		$b_downloader = 1;
 		if ( $b_weather ){
 			if ( $arg){
 				$show{'weather'} = 1;
@@ -277,11 +280,8 @@ sub get_options{
 		$show{'filter'} = 1; },
 	'Z|filter-override' => sub {
 		$show{'filter-override'} = 1; },
-	'h|help|?' => sub {
-		show_options('standard'); },
-	'H|help-full' => sub {
-		show_options('full'); },
-	## Start advanced options and debuggers
+	
+	## Start non data options
 	'alt:i' => sub { 
 		my ($opt,$arg) = @_;
 		my %alts = (
@@ -298,22 +298,22 @@ sub get_options{
 		'34' => sub {$dl{'no-ssl-opt'}=$dl{'no-ssl'};},
 		'40' => sub {
 			$dl{'tiny'} = 0;
-			set_downloader();},
+			$b_downloader = 1;},
 		'41' => sub {
 			$dl{'curl'} = 0;
-			set_downloader();},
+			$b_downloader = 1;},
 		'42' => sub {
 			$dl{'fetch'} = 0;
-			set_downloader();},
+			$b_downloader = 1;},
 		'43' => sub {
 			$dl{'wget'} = 0;
-			set_downloader();
+			$b_downloader = 1;;
 		},
 		'44' => sub {
 			$dl{'curl'} = 0;
 			$dl{'fetch'} = 0;
 			$dl{'wget'} = 0;
-			set_downloader();
+			$b_downloader = 1;;
 		}
 		);
 		if ($alts{$arg}){
@@ -348,7 +348,7 @@ sub get_options{
 			# desired downloader.
 			$arg = set_perl_downloader($arg);
 			%dl = ('dl' => $arg, $arg => 1);
-			set_downloader();
+			$b_downloader = 1;
 		}
 		else {
 			error_handler('bad-arg', $opt, $arg);
@@ -362,6 +362,10 @@ sub get_options{
 		else {
 			error_handler('bad-arg', $opt, $arg);
 		}},
+	'h|help|?' => sub {
+		$help_type = 'standard'; },
+	'H|help-full' => sub {
+		$help_type = 'full'; },
 	'output:s' => sub {
 		my ($opt,$arg) = @_;
 		if ($arg =~ /^csv|json|screen|xml$/){
@@ -373,8 +377,9 @@ sub get_options{
 	'U|update:s' => sub { # 1,2,3 OR http://myserver/path/inxi
 		my ($opt,$arg) = @_;
 		$show{'short'} = 0;
-		my ($self_download,$download_id);
+		$b_downloader = 1;
 		if ( $b_update ){
+			$b_updater = 1;
 			if ( $arg =~ /^\d$/){
 				$download_id = "branch $arg";
 				$self_download = get_defaults("inxi-branch-$arg");
@@ -391,18 +396,30 @@ sub get_options{
 # 				$download_id = 'main branch';
 # 				$self_download = get_defaults('inxi-main');
 # 			}
-			if ($self_download){
-				update_me( $self_download, $download_id );
-			}
-			else {
+			if (!$self_download){
 				error_handler('bad-arg', $opt, $arg);
 			}
 		}
 		else {
 			error_handler('distro-block', $opt);
 		} },
+	'V|version' => sub { 
+		$b_version = 1 },
 	'<>' => sub {
 		my ($opt) = @_;
 		error_handler('unknown-option', "$opt", "" ); }
 	) ; #or error_handler('unknown-option', "@ARGV", '');
+	## run all these after so that we can change widths, downloaders, etc
+	if ( $b_downloader ){
+		set_downloader();
+	}
+	if ($b_updater){
+		update_me( $self_download, $download_id );
+	}
+	if ($b_version){
+		show_version();
+	}
+	if ($help_type){
+		show_options($help_type);
+	}
 } 
