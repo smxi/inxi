@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-## File: template.pl
+## File: runlevel.pl
 ## Version: 1.0
 ## Date 2018-01-07
 ## License: GNU GPL v3 or greater
@@ -85,9 +85,51 @@ sub reader {
 
 ### START MODULE CODE ##
 
+# # check? /var/run/nologin for bsds?
+sub get_runlevel_data {
+	eval $start if $b_log;
+	my (@runlevels,@data);
+	my ($runlevel,@default) = ('','');;
+	if (check_program('runlevel')){
+		$runlevel = (data_grabber('runlevel'))[0];
+		$runlevel =~ s/[^\d]//g;
+	}
+	if ($extra > 1){
+		@default = get_runlevel_data_default();
+	}
+	if ($runlevel){
+		@runlevels = ($runlevel,@default);
+	}
+	eval $end if $b_log;
+	return @runlevels;
+}
+sub get_runlevel_data_default {
+	eval $start if $b_log;
+	my $default = '';
+	my $b_systemd = 0;
+	my $inittab = '/etc/inittab';
+	my $systemd = '/etc/systemd/system/default.target';
+	my $upstart = '/etc/init/rc-sysinit.conf';
+	if (-e $systemd){
+		$default = readlink($systemd);
+		$default =~ s/.*\/// if $default; 
+		$b_systemd = 1;
+	}
+	elsif (-e $upstart){
+		$default = (grep { /^env[[:space:]]+DEFAULT_RUNLEVEL/ } reader($upstart))[0];
+		$default = (split /=/, $default)[1];
+	}
+	if (!$default && -e $inittab ){
+		$default = (grep { /^id.*initdefault/ } reader($inittab))[0];
+		$default = (split /:/, $default)[1];
+	}
+	eval $end if $b_log;
+	return ($default,$b_systemd);
+}
+
 ### END MODULE CODE ##
 
 ### START TEST CODE ##
 
-
+print join( ', ', get_runlevel_data()), "\n";
 

@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-07';
-my $self_patch='087-p';
+my $self_patch='089-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -3863,7 +3863,7 @@ sub get_memory_data_linux {
 		}
 	}
 	my $used = $total - $not_used;
-	$memory = sprintf("%.1f/%.1fMB", $used/1024, $total/1024);
+	$memory = sprintf("%.1f/%.1f MB", $used/1024, $total/1024);
 	log_data("memory: $memory");
 	eval $end if $b_log;
 	return $memory;
@@ -3879,6 +3879,48 @@ sub get_memory_data_bsd {
 }
 
 sub get_repo_data {}
+
+# # check? /var/run/nologin for bsds?
+sub get_runlevel_data {
+	eval $start if $b_log;
+	my (@runlevels,@data);
+	my ($runlevel,@default) = ('','');;
+	if (check_program('runlevel')){
+		$runlevel = (data_grabber('runlevel'))[0];
+		$runlevel =~ s/[^\d]//g;
+	}
+	if ($extra > 1){
+		@default = get_runlevel_data_default();
+	}
+	if ($runlevel){
+		@runlevels = ($runlevel,@default);
+	}
+	eval $end if $b_log;
+	return @runlevels;
+}
+sub get_runlevel_data_default {
+	eval $start if $b_log;
+	my $default = '';
+	my $b_systemd = 0;
+	my $inittab = '/etc/inittab';
+	my $systemd = '/etc/systemd/system/default.target';
+	my $upstart = '/etc/init/rc-sysinit.conf';
+	if (-e $systemd){
+		$default = readlink($systemd);
+		$default =~ s/.*\/// if $default; 
+		$b_systemd = 1;
+	}
+	elsif (-e $upstart){
+		$default = (grep { /^env[[:space:]]+DEFAULT_RUNLEVEL/ } reader($upstart))[0];
+		$default = (split /=/, $default)[1];
+	}
+	if (!$default && -e $inittab ){
+		$default = (grep { /^id.*initdefault/ } reader($inittab))[0];
+		$default = (split /:/, $default)[1];
+	}
+	eval $end if $b_log;
+	return ($default,$b_systemd);
+}
 
 #### -------------------------------------------------------------------
 #### SPECIAL DATA HANDLERS - INITIALIZE DATA VALUES
@@ -4391,7 +4433,7 @@ sub generate_info_data {
 	my $gcc = 'N/A';
 	my $gcc_alt = '';
 	my $data_name = $prefix++ . '#Info';
-	my (%row,$ref,$index,$val1);
+	my (%row,$index,$ref,$val1);
 	my $client_shell = ($b_irc) ? 'Client' : 'Shell';
 	my $client = $client{'name-print'};
 	my @gccs = get_gcc_data();
@@ -4438,9 +4480,15 @@ sub generate_info_data {
 		if ($extra > 1 ){
 			$data{$data_name}[$index]{$num++ . '#v'} = 'N/A';
 		}
-		$data{$data_name}[$index]{$num++ . '#runlevel'} = 'N/A';
+		my @result = get_runlevel_data();
+		if ($result[0]){
+			$data{$data_name}[$index]{$num++ . '#runlevel'} = $result[0];
+		}
 		if ($extra > 1 ){
-			$data{$data_name}[$index]{$num++ . '#default'} = 'N/A';
+			if ($result[1]){
+				my $default = ($result[2]) ? 'target' : 'default';
+				$data{$data_name}[$index]{$num++ . "#$default"} = $result[1];
+			}
 		}
 		$data{$data_name}[$index]{$num++ . '#GCC System'} = $gcc;
 		if ($gcc_alt && $extra > 1 ){

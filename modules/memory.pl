@@ -26,6 +26,7 @@ my $bsd_type = '';
 my $b_display = 1;
 my $b_root = 0;
 my $b_log;
+my $extra = 2;
 
 ## returns result of test, 0/1, false/true
 ## arg: program to find in PATH
@@ -124,6 +125,19 @@ sub system_files {
 
 ### START MODULE CODE ##
 
+# openbsd/linux
+# procs    memory       page                    disks    traps          cpu
+# r b w    avm     fre  flt  re  pi  po  fr  sr wd0 wd1  int   sys   cs us sy id
+# 0 0 0  55256 1484092  171   0   0   0   0   0   2   0   12   460   39  3  1 96
+# freebsd:
+# procs      memory      page                    disks     faults         cpu
+# r b w     avm    fre   flt  re  pi  po    fr  sr ad0 ad1   in   sy   cs us sy id
+# 0 0 0  21880M  6444M   924  32  11   0   822 827   0   0  853  832  463  8  3 88
+# dragonfly
+#  procs      memory      page                    disks     faults      cpu
+#  r b w     avm    fre  flt  re  pi  po  fr  sr ad0 ad1   in   sy  cs us sy id
+#  0 0 0       0  84060 30273993 2845 12742 1164 407498171 320960902   0   0 424453025 1645645889 1254348072 35 38 26
+
 sub get_memory_data {
 	eval $start if $b_log;
 	my ($memory);
@@ -153,29 +167,16 @@ sub get_memory_data_linux {
 		}
 	}
 	my $used = $total - $not_used;
-	$memory = sprintf("%.1f/%.1fMB", $used/1024, $total/1024);
+	$memory = sprintf("%.1f/%.1f MB", $used/1024, $total/1024);
 	log_data("memory: $memory");
 	eval $end if $b_log;
 	return $memory;
 }
-# openbsd/linux
-# procs    memory       page                    disks    traps          cpu
-# r b w    avm     fre  flt  re  pi  po  fr  sr wd0 wd1  int   sys   cs us sy id
-# 0 0 0  55256 1484092  171   0   0   0   0   0   2   0   12   460   39  3  1 96
-# freebsd:
-# procs      memory      page                    disks     faults         cpu
-# r b w     avm    fre   flt  re  pi  po    fr  sr ad0 ad1   in   sy   cs us sy id
-# 0 0 0  21880M  6444M   924  32  11   0   822 827   0   0  853  832  463  8  3 88
-# dragonfly
-#  procs      memory      page                    disks     faults      cpu
-#  r b w     avm    fre  flt  re  pi  po  fr  sr ad0 ad1   in   sy  cs us sy id
-#  0 0 0       0  84060 30273993 2845 12742 1164 407498171 320960902   0   0 424453025 1645645889 1254348072 35 38 26
 sub get_memory_data_bsd {
 	eval $start if $b_log;
-	my $memory = 'BSD dev';
+	my $memory = '';
 	my $total = 0;
 	my $not_used = 0;
-	
 	
 	eval $end if $b_log;
 	return $memory;

@@ -26,6 +26,7 @@ my $bsd_type = '';
 my $b_display = 1;
 my $b_root = 0;
 my $b_log;
+my $extra = 2;
 
 sub error_handler {
 	my ($err, $message, $alt1) = @_;
