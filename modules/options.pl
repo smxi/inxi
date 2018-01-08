@@ -17,6 +17,15 @@ Getopt::Long::Configure ('bundling', 'no_ignore_case',
 
 ### START DEFAULT CODE ##
 
+my (@test,
+%colors,%dl,%show,%use,
+$b_irc,$b_update,$b_weather,
+$debug,$display,$extra,$ftp_alt,$output_type,$ps_count);
+my $start = '';
+my $end = '';
+## Tools
+my $display_opt = '';
+
 sub error_handler {
 	my ($err, $one, $two) = @_;
 	print "Err: $err Value: $one Value2: $two\n";
@@ -32,12 +41,7 @@ sub set_perl_downloader {}
 sub show_options {}
 sub show_version {}
 sub update_me {}
-my (@test,
-%colors,%dl,%show,%use,
-$b_irc,$b_update,$b_weather,
-$debug,$display,$extra,$ftp_alt,$output_type,$ps_count);
-my $start = '';
-my $end = '';
+
 
 ### END DEFAULT CODE ##
 

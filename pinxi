@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-07';
-my $self_patch='089-p';
+my $self_patch='091-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -78,6 +78,7 @@ my $sensors_cpu_nu = 0;
 
 ## Tools
 my ($display, $ftp_alt);
+my $display_opt = '';
 
 ## Output
 my $extra = 0;# supported values: 0-3
@@ -198,6 +199,7 @@ sub check_tools {
 			}
 			else {
 				$action = 'missing';
+				$show{'display-data'}  = 0;
 			}
 			%hash = (
 			$_ => {
@@ -268,6 +270,8 @@ sub set_basics {
 	$client{'name-print'} = '';
 	$client{'version'} = '';
 	$colors{'default'} = 2;
+	# --display out of x override happens before this, so we need to retain that switch
+	$show{'display-data'} = ( $b_display || $show{'display-data'} == 2 ) ? 1 : 0;
 }
 
 # args: $1 - default OR override default cols max integer count. $_[0]
@@ -2671,8 +2675,12 @@ sub get_options{
 		} },
 	'display:s' => sub { 
 		my ($opt,$arg) = @_;
-		if ($arg =~ /^:?[0-9]+$/){
+		if ($arg =~ /^:?([0-9]+)?$/){
 			$display=$arg;
+			$display ||= ':0';
+			$b_display = 1;
+			$show{'display-data'} = 2;
+			$display_opt = "-display $arg";
 		}
 		else {
 			error_handler('bad-arg', $opt, $arg);
@@ -3834,6 +3842,93 @@ sub get_compiler_version_linux {
 	return @compiler;
 }
 
+sub get_init_data {
+	eval $start if $b_log;
+	my $runlevel = get_runlevel_data();
+	my $default = ($extra > 1) ? get_runlevel_default() : '';
+	my ($init,$init_version,$rc,$rc_version) = ('','','','');
+	
+	my $comm = ( -e '/proc/1/comm' ) ? (reader('/proc/1/comm'))[0] : '';
+	# this test is pretty solid, if pid 1 is owned by systemd, it is systemd
+	# otherwise that is 'init', which covers the rest of the init systems.
+	# more data may be needed for other init systems.
+	if ($comm && $comm =~ /systemd/ ){
+		$init = 'systemd';
+		if (check_program('systemd')){
+			$init_version = program_version('systemd','^systemd','2','--version');
+		}
+		if (!$init_version && check_program('systemctl')){
+			$init_version = program_version('systemctl','^systemd','2','--version');
+		}
+	}
+	else {
+		# /sbin/init --version == init (upstart 1.12.1)
+		if ($comm =~ /upstart/){
+			$init = 'Upstart';
+			$init_version = program_version('init', 'upstart', '3','--version');
+		}
+		# epoch version == Epoch Init System 1.0.1 "Sage"
+		elsif ($comm =~ /epoch/){
+			$init = 'Epoch';
+			$init_version = program_version('epoch', '^Epoch', '4','--version');
+		}
+		# missing data: note, runit can install as a dependency without being the 
+		# init system: http://smarden.org/runit/sv.8.html
+		# NOTE: the proc test won't work on bsds, so if runit is used on bsds we 
+		# will need more data
+		elsif ($comm =~ /runit/){
+			$init = 'runit';
+		}
+		elsif (check_program('launchctl')){
+			$init = 'launchd';
+		}
+		elsif ( -f '/etc/inittab' ){
+			$init = 'SysVinit';
+			if (check_programs('strings')){
+				$init_version = ( grep { /version[[:space:]]+[0-9]/ } data_dumper('strings /sbin/init') )[0];
+				if ($init_version){
+					$init_version = get_piece($init_version,2);
+				}
+			}
+		}
+		elsif ( -f '/etc/ttys' ){
+			$init = 'init (BSD)';
+		}
+		if ( grep { /openrc/ } </run/*> ){
+			$rc = 'OpenRC';
+			# /sbin/openrc --version == openrc (OpenRC) 0.13
+			if (check_program('openrc')){
+				$rc_version = program_version('openrc', '^openrc', '3','--version');
+			}
+			# /sbin/rc --version == rc (OpenRC) 0.11.8 (Gentoo Linux)
+			elsif (check_program('rc')){
+				$rc_version = program_version('rc', '^rc', '3','--version');
+			}
+			if ( -e '/run/openrc/softlevel' ){
+				$runlevel = (reader('/run/openrc/softlevel'))[0];
+			}
+			elsif ( -e '/var/run/openrc/softlevel'){
+				$runlevel = (reader('/var/run/openrc/softlevel'))[0];
+			}
+			elsif ( check_program('rc-status')){
+				$runlevel = (data_grabber('rc-status -r 2>/dev/null'))[0];
+			}
+		}
+	}
+	
+	my %init = (
+	'init-type' => $init,
+	'init-version' => $init_version,
+	'rc-type' => $rc,
+	'rc-version' => $rc_version,
+	'runlevel' => $runlevel,
+	'default' => $default,
+	);
+	
+	eval $end if $b_log;
+	return %init;
+}
+
 sub get_memory_data {
 	eval $start if $b_log;
 	my ($memory);
@@ -3883,25 +3978,18 @@ sub get_repo_data {}
 # # check? /var/run/nologin for bsds?
 sub get_runlevel_data {
 	eval $start if $b_log;
-	my (@runlevels,@data);
-	my ($runlevel,@default) = ('','');;
+	my ($runlevel) = ('');;
 	if (check_program('runlevel')){
 		$runlevel = (data_grabber('runlevel'))[0];
 		$runlevel =~ s/[^\d]//g;
 	}
-	if ($extra > 1){
-		@default = get_runlevel_data_default();
-	}
-	if ($runlevel){
-		@runlevels = ($runlevel,@default);
-	}
 	eval $end if $b_log;
-	return @runlevels;
+	return $runlevel;
 }
 # note: it appears that at least as of 2014-01-13, /etc/inittab is going 
 # to be used for default runlevel in upstart/sysvinit. systemd default is 
 # not always set so check to see if it's linked.
-sub get_runlevel_data_default {
+sub get_runlevel_default {
 	eval $start if $b_log;
 	my $default = '';
 	my $b_systemd = 0;
@@ -3928,7 +4016,7 @@ sub get_runlevel_data_default {
 		$default = (split /:/, $default)[1];
 	}
 	eval $end if $b_log;
-	return ($default,$b_systemd);
+	return $default;
 }
 
 #### -------------------------------------------------------------------
@@ -4484,21 +4572,25 @@ sub generate_info_data {
 	],
 	);
 	$index = scalar(@{ $data{$data_name} } ) - 1;
-	if ($extra > 0 ){
-		$data{$data_name}[$index]{$num++ . '#Init'} = 'N/A';
+	if ( !$show{'display-data'} || $extra > 0 ){
+		my %init = get_init_data();
+		my $init_type = ($init{'init-type'}) ? $init{'init-type'}: 'N/A';
+		$data{$data_name}[$index]{$num++ . '#Init'} = $init_type;
 		if ($extra > 1 ){
-			$data{$data_name}[$index]{$num++ . '#v'} = 'N/A';
+			my $init_version = ($init{'init-version'}) ? $init{'init-version'}: 'N/A';
+			$data{$data_name}[$index]{$num++ . '#v'} = $init_version;
 		}
-		my @result = get_runlevel_data();
-		if ($result[0]){
-			$data{$data_name}[$index]{$num++ . '#runlevel'} = $result[0];
+		if ($init{'runlevel'}){
+			$data{$data_name}[$index]{$num++ . '#runlevel'} = $init{'runlevel'};
 		}
 		if ($extra > 1 ){
-			if ($result[1]){
-				my $default = ($result[2]) ? 'target' : 'default';
-				$data{$data_name}[$index]{$num++ . "#$default"} = $result[1];
+			if ($init{'default'}){
+				my $default = ($init{'init-type'} eq 'systemd' && $init{'default'} =~ /[^0-9]$/ ) ? 'target' : 'default';
+				$data{$data_name}[$index]{$num++ . "#$default"} = $init{'default'};
 			}
 		}
+	}
+	if ($extra > 0 ){
 		$data{$data_name}[$index]{$num++ . '#GCC System'} = $gcc;
 		if ($gcc_alt && $extra > 1 ){
 			$data{$data_name}[$index]{$num++ . '#alt'} = $gcc_alt;
