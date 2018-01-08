@@ -104,7 +104,7 @@ sub get_compiler_version {
 		@compiler = get_compiler_version_linux($file);
 	}
 	else {
-		@compiler = get_compiler_version_bsd($file);
+		@compiler = get_compiler_version_bsd();
 	}
 	eval $end if $b_log;
 	return @compiler;

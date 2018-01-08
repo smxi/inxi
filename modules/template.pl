@@ -45,6 +45,11 @@ sub data_grabber {
 	return @result;
 }
 
+sub error_handler {
+	my ($err, $message, $alt1) = @_;
+	print "$err: $message err: $alt1\n";
+}
+
 # args: 0 - the string to get piece of
 # 2 - the position in string, starting at 1 for 0 index.
 # 3 - the separator, default is ' '
@@ -59,11 +64,6 @@ sub get_piece {
 	if ( exists $temp[$num] ){
 		return $temp[$num];
 	}
-}
-
-sub error_handler {
-	my ($err, $message, $alt1) = @_;
-	print "$err: $message err: $alt1\n";
 }
 
 sub log_data {}
