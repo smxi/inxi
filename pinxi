@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-08';
-my $self_patch='093-p';
+my $self_patch='094-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -53,11 +53,10 @@ my $debug=0;
 my ($end,$start,$t0,$t1,$t2,$t3,$fh_l,$log_file); # log file handle, file
 
 ## Hashes
-my ( %alerts, %client, %colors, %dl, %files, %rows, %sep, %size, %show, 
-%system_files, %use );
+my ( %alerts, %client, %colors, %dl, %files, %rows, %system_files, %use );
 
 ## arrays
-my (@app,@paths,@ps_aux);
+my (@app,@ps_aux);
 my @test = (0,0,0,0,0);
 
 #my $opt_parser = Getopt::Long::Parser->new;
@@ -65,8 +64,7 @@ my @test = (0,0,0,0,0);
 ## Booleans
 my ($b_console_irc,$b_display,$b_force_dmidecode,$b_irc,$b_log,
 $b_log_colors,$b_log_full,$b_root,$b_running_in_display);
-my $b_update = 1;
-my $b_weather = 1;
+my ($b_update,$b_weather) = (1,1);
 
 ## System
 my $bsd_type = '';
@@ -74,6 +72,9 @@ my $cpu_sleep = 0.3;
 my $dl_timeout = 4;
 my $os = '';
 my $ps_count = 5;
+my @paths = ('/sbin','/bin','/usr/sbin','/usr/bin','/usr/X11R6/bin',
+'/usr/local/sbin','/usr/local/bin','/opt/local/bin');
+$ENV{'PATH'} = join(':',@paths);
 my $sensors_cpu_nu = 0;
 
 ## Tools
@@ -92,29 +93,31 @@ my $prefix = 0; # for the primiary row hash key prefix
 # these will assign a separator to non irc states. Important! Using ':' can 
 # trigger stupid emoticon. Note: SEP1/SEP2 from short form not used anymore.
 # behaviors in output on IRC, so do not use those.
-$sep{'s2-irc'}='';
-$sep{'s2-console'}=':';
-$sep{'s1-irc'}=':';
-$sep{'s1-console'}=':';
+my %sep = ( 
+'s1-irc' => ':',
+'s1-console' => ':',
+'s2-irc' => '',
+'s2-console' => ':',
+);
 
-$show{'host'} = 1;
+my %show = ('host' => 1);
 
-$size{'console'} = 115;
+my %size = (
+'console' => 115,
 # Default indentation level. NOTE: actual indent is 1 greater to allow for 
 # spacing
-$size{'indent'} = 11;
-$size{'indent-min'} = 90;
-$size{'irc'} = 130;
-$size{'max'}=0;
-$size{'no-display'} = 130;
-
+'indent' => 11,
+'indent-min' => 90,
+'irc' => 130,
+'max' => 0,
+'no-display' => 130,
 # these will be set dynamically in set_display_width()
-$size{'term'}=80;
-$size{'term-lines'}=100;
+'term' => 80,
+'term-lines' => 100,
+);
 
 ## debug temp tools
 $client{'test-konvi'} = 0;
-
 
 ########################################################################
 #### STARTUP
@@ -156,7 +159,7 @@ sub main {
 
 sub initialize {
 	set_os();
-	set_path();
+	# set_path();
 	set_user_paths();
 	set_basics();
 	system_files('set');
@@ -338,16 +341,13 @@ sub set_os {
 		}
 	}
 }
-
+# not used, leaving for now in case something unaccounted happens.
+# this data is now hard set top of program
 sub set_path {
 	my $added_paths = '';
 	# Extra path variable to make execute failures less likely, merged below
-	@paths = ('/sbin','/bin','/usr/sbin','/usr/bin','/usr/X11R6/bin','/usr/local/sbin','/usr/local/bin','/opt/local/bin');
 	my @path = split ':', $ENV{'PATH'};
 	#print "PATH=$ENV{'PATH'}\n";
-	# this needs to be set here because various options call the parent 
-	# initialize function directly.
-	$self_path=dirname "$0";
 	# Create a difference of $PATH and $extra_paths and add that to $PATH:
 	foreach (@paths) {
 		if ( ! grep (/$_/, @path) ){
@@ -380,6 +380,9 @@ sub set_sep {
 
 sub set_user_paths {
 	my ( $b_conf, $b_data );
+	# this needs to be set here because various options call the parent 
+	# initialize function directly.
+	$self_path=dirname "$0";
 	
 	if ( defined $ENV{'XDG_CONFIG_HOME'} && $ENV{'XDG_CONFIG_HOME'} ){
 		$user_config_dir=$ENV{'XDG_CONFIG_HOME'};
@@ -968,6 +971,7 @@ sub set_debugger {
 			if ( $debug > 20 ){
 				$ob_sys->upload_file($ftp_alt);
 			}
+			exit 0;
 		}
 	}
 	elsif ($debug >= 10 && $debug <= 12){
@@ -991,11 +995,11 @@ package SystemDebugger;
 # use 5.008;
 # use Net::FTP; # never load until needed
 
-use File::Find q(find);
-no warnings 'File::Find';
-use File::Spec::Functions;
-use File::Copy;
-use POSIX qw(strftime);
+# use File::Find q(find);
+#no warnings 'File::Find';
+# use File::Spec::Functions;
+#use File::Copy;
+#use POSIX qw(strftime);
 
 my $type = 'full';
 my $upload = '';
@@ -1016,6 +1020,10 @@ sub new {
 }
 
 sub run_debugger {
+	require File::Copy;
+	import File::Copy;
+	require File::Spec::Functions;
+	import File::Spec::Functions;
 	print "Starting $self_name debugging data collector...\n";
 	create_debug_directory();
 	print "Note: for dmidecode data you must be root.\n" if $b_root;
@@ -1308,10 +1316,12 @@ sub perl_modules {
 # 	foreach (@INC){
 # 		print "$_\n";
 # 	}
-	find { wanted => sub { push @modules, canonpath $_ if /\.pm\z/  }, no_chdir => 1 }, @INC;
+	File::Find::find { wanted => sub { 
+		push @modules, File::Spec->canonpath($_) if /\.pm\z/  
+	}, no_chdir => 1 }, @INC;
 	@modules = sort(@modules);
 	foreach (@modules){
-		$mods = $mods . $_ . "\n";
+		$mods .= $_ . "\n";
 	}
 	open (my $fh, '>', "$data_dir/$filename");
 	print $fh $mods;
@@ -1521,9 +1531,9 @@ ls -w 1 /sys > $data_dir/sys-tree-ls-1-basic.txt 2>&1
 sub run_self {
 	print "Creating $self_name output file now. This can take a few seconds...\n";
 	print "Starting $self_name from: $self_path\n";
-	my $cmd = "$self_path/$self_name -FRfrploudmxxx -c 0 --debug=10 -y 120 > $data_dir/inxi-FRfrploudmxxxy120.txt";
+	my $cmd = "$self_path/$self_name -FRfrploudmxxx -c 0 --debug 10 -y 120 > $data_dir/inxi-FRfrploudmxxxy120.txt 2>&1";
 	system($cmd);
-	copy($log_file, "$data_dir/") or main::error_handler('copy-failed', "$log_file", "$!");
+	copy($log_file, "$data_dir") or main::error_handler('copy-failed', "$log_file", "$!");
 }
 
 sub sys_tree {
@@ -1597,7 +1607,7 @@ sub sys_ls {
 
 sub sys_traverse_data {
 	print "Parsing /sys files...\n";
-	find( \&wanted, "/sys");
+	File::Find::find( \&wanted, "/sys");
 	process_data();
 }
 sub wanted {
@@ -2004,10 +2014,10 @@ sub check_programxx {
 # 	print_line("path::$path:'}\n");
 # 	return $path;
 }
+# arg: 1 - string to strip start/end space/\n from
+# note: a few nano seconds are saved by using raw $_[0] for program
 sub check_program {
-	my ($program) = @_;
-	$program = (grep { return "$_/$program" if -e "$_/$program"} @paths)[0];
-	return $program;
+	(grep { return "$_/$_[0]" if -e "$_/$_[0]"} @paths)[0];
 }
 
 sub cleanup {
@@ -2105,9 +2115,9 @@ sub program_values {
 	# desktops 
 	# shells
 	'bash' => ['^GNU[[:space:]]bash,[[:space:]]version',4,'--version','Bash',1,0],
-	'csh' => ['csh',2,'--version','csh',1,0],
+	'csh' => ['^tcsh',2,'--version','csh',1,0],
 	'dash' => ['dash',3,'--version','Dash',1,0], # no version, uses dpkg query, sigh
-	'ksh' => ['version',5,'-v','csh',1,0],
+	'ksh' => ['version',5,'-v','csh',1,0], # ksh is too weird to try to handle with version
 	'tcsh' => ['^tcsh',2,'--version','tcsh',1,0],
 	'zsh' => ['^zsh',2,'--version','zsh',1,0],
 	# tools
@@ -2143,9 +2153,6 @@ sub program_version {
 	if ( $app =~ /^dwm|ksh|scrotwm|spectrwm$/ ) {
 		$version = '-v';
 	}
-	if ($app eq 'csh'){
-		
-	}
 	# konvi in particular doesn't like using $ENV{'PATH'} as set, so we need
 	# to always assign the full path if it hasn't already been done
 	if ( $app !~ /^\//){
@@ -2155,9 +2162,9 @@ sub program_version {
 	if ( $app =~ /\/(dwm|ksh|kvirc|scrotwm)$/ ) {
 		$cmd = "$app $version 2>&1";
 	}
-	elsif ( $app eq 'csh' ){
-		$cmd = "tcsh $version 2>/dev/null";
-	}
+# 	elsif ( $app eq 'csh' ){
+# 		$app = 'tcsh';
+# 	}
 	# quick debian/buntu hack until I find a universal way to get version for these
 	elsif ( $app eq 'dash' ){
 		$cmd = "dpkg -l $app 2>/dev/null";
@@ -2165,7 +2172,7 @@ sub program_version {
 	else {
 		$cmd = "$app $version 2>/dev/null";
 	}
-	log_data("version: $version num: $num search: $search command: $cmd");
+	log_data("version: $version num: $num search: $search command: $cmd") if $b_log;
 	$output = qx($cmd);
 	# sample: dwm-5.8.2, ©.. etc, why no space? who knows. Also get rid of v in number string
 	# xfce, and other, output has , in it, so dump all commas and parentheses
@@ -2186,7 +2193,7 @@ sub program_version {
 		}
 		close $ch if $ch;
 	}
-	log_data("Program version: $version_nu");
+	log_data("Program version: $version_nu") if $b_log;
 	eval $end if $b_log;
 	return $version_nu;
 }
@@ -3154,15 +3161,15 @@ sub get_client_name {
 	# print "$ppid\n";
 	if ($ppid && -e "/proc/$ppid/exe" ){
 		$client_name = lc(readlink "/proc/$ppid/exe");
-		$client_name =~ s/.*\///;
+		$client_name =~ s/^.*\///;
 		if ($client_name =~ /^bash|dash|sh|python.*|perl.*$/){
-			$pppid = (main::data_grabber("ps -p $ppid -o ppid 2>/dev/null"))[1];
+			$pppid = (main::data_grabber("ps -p $ppid -o ppid"))[1];
 			#my @temp = (main::data_grabber("ps -p $ppid -o ppid 2>/dev/null"))[1];
 			$pppid =~ s/^\s+|\s+$//g;
 			$client_name =~ s/[0-9\.]+$//; # clean things like python2.7
 			if ($pppid && -f "/proc/$pppid/exe" ){
 				$client_name = lc(readlink "/proc/$pppid/exe");
-				$client_name =~ s/.*\///;
+				$client_name =~ s/^.*\///;
 				$client{'native'} = 0;
 			}
 		}
@@ -3173,7 +3180,7 @@ sub get_client_name {
 	else {
 		if (! check_modern_konvi() ){
 			$ppid = getppid();
-			$client_name = (main::data_grabber("ps -p $ppid 2>/dev/null"))[1];
+			$client_name = (main::data_grabber("ps -p $ppid"))[1];
 			
 			my @data = split /\s+/, $client_name;
 			if ($bsd_type){
@@ -3195,7 +3202,7 @@ sub get_client_name {
 			}
 		}
 	}
-	main::log_data("Client: $client{'name'} :: version: $client{'version'} :: konvi: $client{'konvi'} :: PPID: $ppid");
+	main::log_data("Client: $client{'name'} :: version: $client{'version'} :: konvi: $client{'konvi'} :: PPID: $ppid") if $b_log;
 	eval $end if $b_log;
 }
 sub get_client_version {
@@ -3311,7 +3318,7 @@ sub get_cmdline {
 		$cmdline[0] = $rows[0];
 		$i = ($cmdline[0]) ? 1 : 0;
 	}
-	main::log_data("cmdline: @cmdline count: $i");
+	main::log_data("cmdline: @cmdline count: $i") if $b_log;
 	eval $end if $b_log;
 	return @cmdline;
 }
@@ -3357,7 +3364,7 @@ sub perl_python_client {
 	else {
 		$client{'name-print'} = "Unknown $client{'name'} client";
 	}
-	main::log_data("namep: $client{'name-print'} name: $client{'name'} version: $client{'version'}");
+	main::log_data("namep: $client{'name-print'} name: $client{'name'} version: $client{'version'}") if $b_log;
 	eval $end if $b_log;
 }
 ## try to infer the use of Konversation >= 1.2, which shows $PPID improperly
@@ -3372,15 +3379,15 @@ sub check_modern_konvi {
 	my $konvi = '';
 	my $pid = '';
 	my (@temp);
-	# main::log_data("name: $client{'name'} :: qdb: $client{'qdbus'} :: version: $client{'version'} :: konvi: $client{'konvi'} :: PPID: $ppid");
+	# main::log_data("name: $client{'name'} :: qdb: $client{'qdbus'} :: version: $client{'version'} :: konvi: $client{'konvi'} :: PPID: $ppid") if $b_log;
 	# sabayon uses /usr/share/apps/konversation as path
 	if ( -d '/usr/share/kde4/apps/konversation' || -d '/usr/share/apps/konversation' ){
 		$pid = (grep { $_ =~ /konversation/i } main::data_grabber('ps -A'))[0];
-		main::log_data("pid: $pid");
+		main::log_data("pid: $pid") if $b_log;
 		$pid =~ s/^\s|\s$//g;
 		$pid = (split /\s+/, $pid)[0];
 		$konvi = readlink ("/proc/$pid/exe");
-		$konvi =~ s/.*\///; # basename
+		$konvi =~ s/^.*\///; # basename
 		@app = main::program_values('konversation');
 		if ($konvi){
 			@app = main::program_values('konversation');
@@ -3399,8 +3406,8 @@ sub check_modern_konvi {
 		}
 	}
 	main::log_data("name: $client{'name'} name print: $client{'name-print'} 
-	qdb: $client{'qdbus'} version: $konvi_version konvi: $konvi PID: $pid");
-	main::log_data("b_is_qt4: $b_modern_konvi");
+	qdb: $client{'qdbus'} version: $konvi_version konvi: $konvi PID: $pid") if $b_log;
+	main::log_data("b_is_qt4: $b_modern_konvi") if $b_log;
 	## for testing this module
 # 	my $ppid = getppid();
 # 	system('qdbus org.kde.konversation', '/irc', 'say', $client{'dserver'}, $client{'dtarget'}, 
@@ -3854,7 +3861,7 @@ sub get_compiler_version_linux {
 		$type ||= 'N/A'; # we don't really know what linux clang looks like!
 		@compiler = ($1,$type);
 	}
-	log_data(@compiler);
+	log_data(@compiler) if $b_log;
 	
 	eval $end if $b_log;
 	return @compiler;
@@ -3976,7 +3983,7 @@ sub get_memory_data_linux {
 	}
 	my $used = $total - $not_used;
 	$memory = sprintf("%.1f/%.1f MB", $used/1024, $total/1024);
-	log_data("memory: $memory");
+	log_data("memory: $memory") if $b_log;
 	eval $end if $b_log;
 	return $memory;
 }
@@ -4071,7 +4078,8 @@ sub get_gcc_data {
 		@gccs = grep { /\S/ } @gccs; # remove empty values
 	}
 	unshift @gccs, $gcc;
-	log_data("gccs: @gccs");
+	@gccs = ();
+	log_data("gccs: @gccs") if $b_log;
 	eval $end if $b_log;
 	return @gccs;
 }
@@ -4106,7 +4114,7 @@ sub get_kernel_data {
 	}
 	
 	$kernel ||= 'N/A';
-	log_data("kernel: $kernel ksplice: $ksplice");
+	log_data("kernel: $kernel ksplice: $ksplice") if $b_log;
 	eval $end if $b_log;
 	return $kernel;
 }
@@ -4136,14 +4144,24 @@ sub get_self_version {
 sub get_shell_data {
 	eval $start if $b_log;
 	my ($ppid) = @_;
-	my $string = qx(ps -p $ppid -o comm= 2>/dev/null);
-	chomp($string);
-	if ($string){
-		@app = main::program_values(lc($string));
-		$client{'version'} = main::program_version($string,$app[0],$app[1],$app[2]);
-		$client{'version'} =~ s/(\(.*|-release|-version)//;
-		$client{'name'} = lc($string);
-		$client{'name-print'} = $string;
+	my $shell = qx(ps -p $ppid -o comm= 2>/dev/null);
+	chomp($shell);
+	if ($shell){
+		# when run in debugger subshell, would return sh as shell,
+		# and parent as perl, that is, pinxi itself, which is actually right.
+		if ($shell eq 'sh' && $shell ne $ENV{'SHELL'}){
+			$shell = $ENV{'SHELL'};
+			$shell =~ s/^.*\///;
+		}
+		# sh because -v/--version doesn't work on it, ksh because
+		# it takes too much work to handle all the variants
+		if ( $shell ne 'sh' && $shell ne 'ksh' ) {
+			@app = main::program_values(lc($shell));
+			$client{'version'} = main::program_version($shell,$app[0],$app[1],$app[2]);
+			$client{'version'} =~ s/(\(.*|-release|-version)//;
+		}
+		$client{'name'} = lc($shell);
+		$client{'name-print'} = $shell;
 	}
 	else {
 		$client{'name'} = 'shell';
@@ -4166,7 +4184,7 @@ sub get_shell_source {
 			$shell_parent = get_shell_parent($script_parent);
 		}
 	}
-	log_data("parents: script: $script_parent shell: $shell_parent");
+	log_data("parents: script: $script_parent shell: $shell_parent") if $b_log;
 	eval $end if $b_log;
 	return $shell_parent;
 }
@@ -4174,7 +4192,7 @@ sub get_shell_source {
 # arg: 1 - parent id
 sub get_start_parent {
 	my ($parent) = @_;
-	my $script_parent = (grep { /$parent/ } data_grabber("ps -j -fp $parent 2>/dev/null"))[0];
+	my $script_parent = (grep { /$parent/ } data_grabber("ps -j -fp $parent"))[0];
 	if ($script_parent){
 		$script_parent = get_piece($script_parent,3);
 	}
@@ -4183,7 +4201,7 @@ sub get_start_parent {
 # arg: 1 - parent id
 sub get_shell_parent {
 	my ($parent) = @_;
-	my $shell_parent = (grep { /$parent/ } data_grabber("ps -j -p $parent 2>/dev/null"))[0];
+	my $shell_parent = (grep { /$parent/ } data_grabber("ps -j -p $parent"))[0];
 	if ($shell_parent) {
 		my @data = split /\s+/, trimmer($shell_parent);
 		if (@data ){
@@ -4315,7 +4333,7 @@ sub generate_data {
 	if ( $output_type ne 'screen' ){
 		output_handler(%rows);
 	}
-	# log_data('cat', '/proc/mounts');
+	# log_data('cat', '/proc/mounts') if $b_log;
 	# print "stub: " . (caller(0))[3] . "\n";
 	eval $end if $b_log;
 }
