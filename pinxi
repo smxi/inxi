@@ -16,7 +16,7 @@
 
 use strict;
 use warnings;
-# use diagnostics;
+ use diagnostics;
 use 5.008;
 
 use Cwd; # qw(abs_path);
@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-07';
-my $self_patch='091-p';
+my $self_patch='092-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -57,7 +57,7 @@ my ( %alerts, %client, %colors, %dl, %files, %rows, %sep, %size, %show,
 %system_files, %use );
 
 ## arrays
-my (@ps_aux,@app);
+my (@app,@paths,@ps_aux);
 my @test = (0,0,0,0,0);
 
 #my $opt_parser = Getopt::Long::Parser->new;
@@ -134,6 +134,7 @@ sub main {
 	#my $ob_start = StartClient->new();
 	#$ob_start->get_client_data();
 	StartClient::get_client_data();
+	#print_line("path: $ENV{'PATH'}");
 	# print_line( Dumper \%client);
 	get_options();
 	set_debugger(); # right after so it's set
@@ -341,20 +342,20 @@ sub set_os {
 sub set_path {
 	my $added_paths = '';
 	# Extra path variable to make execute failures less likely, merged below
+	@paths = ('/sbin','/bin','/usr/sbin','/usr/bin','/usr/X11R6/bin','/usr/local/sbin','/usr/local/bin','/opt/local/bin');
 	my @path = split ':', $ENV{'PATH'};
-	my @extra_paths=split ':', '/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:/opt/local/bin';
 	#print "PATH=$ENV{'PATH'}\n";
 	# this needs to be set here because various options call the parent 
 	# initialize function directly.
 	$self_path=dirname "$0";
 	# Create a difference of $PATH and $extra_paths and add that to $PATH:
-	foreach (@extra_paths) {
+	foreach (@paths) {
 		if ( ! grep (/$_/, @path) ){
 			$added_paths .= ":$_";
 			# print "$added_paths\n";
 		}
 	}
-	$ENV{'PATH'} = $ENV{'PATH'} . $added_paths;
+	$ENV{'PATH'} .= $added_paths;
 	# print "PATH=$ENV{'PATH'}\n";
 	##/bin/sh -c 'echo "PATH in subshell=\"$PATH\""'
 }
@@ -1996,8 +1997,16 @@ sub check_recommends {}
 
 ## returns result of test, 0/1, false/true
 ## arg: program to find in PATH
+sub check_programxx {
+	#print_line("path: $ENV{'PATH'}");
+	grep { -x "$_/$_[0]"} split /:/,$ENV{'PATH'};
+# 	print_line("path::$path:'}\n");
+# 	return $path;
+}
 sub check_program {
-	grep { -x "$_/$_[0]"}split /:/,$ENV{PATH};
+	my ($program) = @_;
+	$program = (grep { return "$_/$program" if -e "$_/$program"} @paths)[0];
+	return $program;
 }
 
 sub cleanup {
@@ -2124,6 +2133,7 @@ sub program_version {
 	my $count = 0;
 	$exit ||= 100; # basically don't exit ever
 	$version ||= '--version';
+	
 	# adjust to array index, not human readable
 	if ( $num > 0 ){
 		$num--;
@@ -2132,11 +2142,16 @@ sub program_version {
 	if ( $app =~ /^dwm|ksh|scrotwm|spectrwm$/ ) {
 		$version = '-v';
 	}
-	elsif ($app eq 'epoch' ){
-		$version = 'version';
+	if ($app eq 'csh'){
+		
+	}
+	# konvi in particular doesn't like using $ENV{'PATH'} as set, so we need
+	# to always assign the full path if it hasn't already been done
+	if ( $app !~ /^\//){
+		$app = check_program($app);
 	}
 	# note, some wm/apps send version info to stderr instead of stdout
-	if ( $app =~ /^dwm|ksh|kvirc|scrotwm$/ ) {
+	if ( $app =~ /\/(dwm|ksh|kvirc|scrotwm)$/ ) {
 		$cmd = "$app $version 2>&1";
 	}
 	elsif ( $app eq 'csh' ){
@@ -3846,19 +3861,18 @@ sub get_init_data {
 	eval $start if $b_log;
 	my $runlevel = get_runlevel_data();
 	my $default = ($extra > 1) ? get_runlevel_default() : '';
-	my ($init,$init_version,$rc,$rc_version) = ('','','','');
-	
+	my ($init,$init_version,$rc,$rc_version,$program) = ('','','','','');
 	my $comm = ( -e '/proc/1/comm' ) ? (reader('/proc/1/comm'))[0] : '';
 	# this test is pretty solid, if pid 1 is owned by systemd, it is systemd
 	# otherwise that is 'init', which covers the rest of the init systems.
 	# more data may be needed for other init systems.
 	if ($comm && $comm =~ /systemd/ ){
 		$init = 'systemd';
-		if (check_program('systemd')){
-			$init_version = program_version('systemd','^systemd','2','--version');
+		if ( $program = check_program('systemd')){
+			$init_version = program_version($program,'^systemd','2','--version');
 		}
-		if (!$init_version && check_program('systemctl')){
-			$init_version = program_version('systemctl','^systemd','2','--version');
+		if (!$init_version && ($program = check_program('systemctl') ) ){
+			$init_version = program_version($program,'^systemd','2','--version');
 		}
 	}
 	else {
@@ -3870,7 +3884,7 @@ sub get_init_data {
 		# epoch version == Epoch Init System 1.0.1 "Sage"
 		elsif ($comm =~ /epoch/){
 			$init = 'Epoch';
-			$init_version = program_version('epoch', '^Epoch', '4','--version');
+			$init_version = program_version('epoch', '^Epoch', '4','version');
 		}
 		# missing data: note, runit can install as a dependency without being the 
 		# init system: http://smarden.org/runit/sv.8.html
@@ -3978,10 +3992,11 @@ sub get_repo_data {}
 # # check? /var/run/nologin for bsds?
 sub get_runlevel_data {
 	eval $start if $b_log;
-	my ($runlevel) = ('');;
-	if (check_program('runlevel')){
-		$runlevel = (data_grabber('runlevel'))[0];
+	my $runlevel = '';
+	if ( my $program = check_program('runlevel')){
+		$runlevel = (data_grabber($program))[0];
 		$runlevel =~ s/[^\d]//g;
+		#print_line($runlevel . ";;");
 	}
 	eval $end if $b_log;
 	return $runlevel;

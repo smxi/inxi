@@ -27,12 +27,14 @@ my $b_display = 1;
 my $b_root = 0;
 my $b_log;
 my $extra = 2;
+my @paths = ('/sbin','/bin','/usr/sbin','/usr/bin','/usr/X11R6/bin','/usr/local/sbin','/usr/local/bin');
 
 ## returns result of test, 0/1, false/true
 ## arg: program to find in PATH
-sub check_program {
+sub checkxx_program {
 	grep { -x "$_/$_[0]"}split /:/,$ENV{PATH};
 }
+
 
 # arg: 1 - command to turn into an array; 2 - optional: splitter
 # similar to reader() except this creates an array of data 
