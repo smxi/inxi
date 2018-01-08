@@ -153,7 +153,7 @@ sub get_memory_data_linux {
 		}
 	}
 	my $used = $total - $not_used;
-	$memory = sprintf("%.1f/%.1fMB\n", $used/1024, $total/1024);
+	$memory = sprintf("%.1f/%.1fMB", $used/1024, $total/1024);
 	log_data("memory: $memory");
 	eval $end if $b_log;
 	return $memory;
