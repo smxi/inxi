@@ -133,7 +133,6 @@ Note that my current development goals are, roughly in this order:
       Status: DONE
    
 9. Start on get data and print lines, which is about 2/3 the program.
-
    
    Status of Lines:
      Short: Started (missing cpu/speed, and memory for BSD)
@@ -178,12 +177,7 @@ almost every line of logic in binxi is there to handle real events
 that have happened and which the logic has seen, which means, it 
 does very little good to skip stuff you don't think matters, or that
 you don't understand, etc, it's all got to be translated, every bit,
-well, then, I really would welcome your help. As long as you are not
-interested in creating write only Perl code, which would be the long
-term death knell for pinxi as a project. Be verbose!!! Celebrate!!
-Use 3 lines where one could do it!! Separate conditions from
-statements and actions!! You can do it!! I believe in you!! Be nice
-to the future, not mean.
+well, then, I really would welcome your help. 
 
 BSD?
 I need help on all BSD functions and tools. Those will be obvious as
