@@ -133,12 +133,13 @@ Note that my current development goals are, roughly in this order:
       Status: DONE
    
 9. Start on get data and print lines, which is about 2/3 the program.
+
    
    Status of Lines:
      Short: Started (missing cpu/speed, and memory for BSD)
      System: Started
      Machine: Started
-     Batter: Started
+     Battery: Started
      Memory: Started
      Sensors: Started
      Info: DONE (except BSD memory)
