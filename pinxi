@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-08';
-my $self_patch='097-p';
+my $self_patch='098-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -173,10 +173,10 @@ sub check_tools {
 	if ( $show{'memory'} || ( ( $bsd_type || $use{'dmidecode-force'} ) && ($show{'machine'} || $show{'battery'}) ) ){
 		$action = 'use';
 		if ($program = check_program('dmidecode')) {
-			my $result = system("$program -t chassis >/dev/null 2>&1");
+			my $result = system("$program -t chassis >/dev/null");
 			if (!$result){
 				if ($b_root) {
-					@data = data_grabber("$program --type chassis 2>&1");
+					@data = data_grabber("$program --type chassis 2>/dev/null");
 					if ( grep { $_ =~ /No SMBIOS/i } @data ){
 						$action = 'smbios';
 					}
@@ -238,7 +238,9 @@ sub check_tools {
 		$action = 'use';
 		if ($program = check_program($_)) {
 			# > 0 means error in shell
-			$action = 'permissions' if system("$program $commands{$_} >/dev/null 2>&1");
+			#my $cmd = "$program $commands{$_} >/dev/null";
+			#print "$cmd\n";
+			$action = 'permissions' if system("$program $commands{$_} >/dev/null");
 		}
 		else {
 			$action = 'missing';
@@ -2078,8 +2080,8 @@ sub get_piece {
 	my ($string, $num, $sep) = @_;
 	$num--;
 	$sep ||= '\s+';
-	$string =~ s/^\s+|\s+$//;
-	my @temp = split /$sep/, $string, -1;
+	$string =~ s/^\s+|\s+$//g;
+	my @temp = split(/$sep/, $string);
 	eval $end if $b_log;
 	if ( exists $temp[$num] ){
 		return $temp[$num];
@@ -4067,22 +4069,28 @@ sub set_ps_aux {
 
 sub get_gcc_data {
 	eval $start if $b_log;
-	my @gccs = ();
+	my ($gcc,@gccs) = ('',());
 	# NOTE: We can't use program_version because we don't yet know where
 	# the version number is
-	my $gcc = ( grep { /^gcc/ } qx(gcc --version 2>/dev/null) )[0];
+	if (my $program = check_program('gcc') ){
+		$gcc = ( grep { /^gcc/ } data_grabber("$program --version 2>/dev/null") )[0];
+	}
 	if ($gcc){
 		# strip out: gcc (Debian 6.3.0-18) 6.3.0 20170516
+		# gcc (GCC) 4.2.2 20070831 prerelease [FreeBSD]
 		$gcc =~ s/\([^\)]*\)//g;
 		$gcc = get_piece($gcc,2);
 	}
+	
 	if ($extra > 1){
 		# glob /usr/bin for gccs, strip out all non numeric values
 		@gccs = grep { s/.*\/gcc-[^0-9]+.*|.*\/gcc-// } </usr/bin/gcc-*>;
 		@gccs = grep { /\S/ } @gccs; # remove empty values
 	}
 	unshift @gccs, $gcc;
-	@gccs = ();
+	if (!@gccs){
+		@gccs = ();
+	}
 	log_data("gccs: @gccs") if $b_log;
 	eval $end if $b_log;
 	return @gccs;
@@ -4221,11 +4229,26 @@ sub get_shell_parent {
 	return $shell_parent;
 }
 
+sub get_tty_console_irc {
+	eval $start if $b_log;
+	my $ppid = getppid();
+	my $tty = (grep { /.*$ppid.*$client{'name'}/ } @ps_aux )[0];
+	if ($tty){
+		$tty = get_piece($tty,7);
+		$tty =~ s/^[^[0-9]+// if $tty;
+	}
+	$tty ||= '';
+	log_data("conole-irc-tty:$tty") if $b_log;
+	eval $end if $b_log;
+	return $tty;
+}
 sub get_tty_number {
 	eval $start if $b_log;
 	my $tty = POSIX::ttyname(1);
 	#variants: /dev/pts/1 /dev/tty1 /dev/pts/5 /dev/ttyp2 /dev/pts/1
-	$tty =~ s/.*\/[^0-9]*//g;
+	$tty =~ s/.*\/[^0-9]*//g if $tty;
+	$tty ||= '';
+	log_data("tty:$tty") if $b_log;
 	eval $end if $b_log;
 	return $tty;
 }
@@ -4829,6 +4852,7 @@ sub generate_system_data {
 	my $num = 0;
 	my (%row,$ref,$index,$val1);
 	my $data_name = $prefix++ . '#System';
+	my ($desktop,$desktop_extra,$desktop_key) = ('','','Desktop');
 	
 	my %data = (
 	$data_name => [{}],
@@ -4846,7 +4870,19 @@ sub generate_system_data {
 		}
 		$data{$data_name}[$index]{$num++ . "#$compiler[0]"} = $compiler[1];
 	}
-	$data{$data_name}[$index]{$num++ . '#Desktop'} = 'N/A';
+	if (!$b_display || ( ! $desktop && $b_root) ){
+		my $tty = get_tty_number();
+		if (!$desktop){
+			$desktop_extra = '';
+		}
+		if (!$tty && $client{'console-irc'}){
+			$tty = get_tty_console_irc();
+		}
+		$desktop = "tty $tty" if $tty;
+		$desktop_key = 'Console';
+	}
+	$desktop ||= 'N/A';
+	$data{$data_name}[$index]{$num++ . "#$desktop_key"} = $desktop;
 	if ($extra > 2){
 		my $info = 'N/A';
 		$data{$data_name}[$index]{$num++ . '#info'} = $info;
