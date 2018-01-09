@@ -28,10 +28,10 @@ my $b_root = 0;
 my $b_log;
 my $extra = 2;
 
-## returns result of test, 0/1, false/true
-## arg: program to find in PATH
+# arg: 1 - string to strip start/end space/\n from
+# note: a few nano seconds are saved by using raw $_[0] for program
 sub check_program {
-	grep { -x "$_/$_[0]"}split /:/,$ENV{PATH};
+	(grep { return "$_/$_[0]" if -e "$_/$_[0]"} @paths)[0];
 }
 
 # arg: 1 - command to turn into an array; 2 - optional: splitter

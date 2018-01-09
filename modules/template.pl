@@ -29,12 +29,11 @@ my $b_log;
 my $extra = 2;
 my @paths = ('/sbin','/bin','/usr/sbin','/usr/bin','/usr/X11R6/bin','/usr/local/sbin','/usr/local/bin');
 
-## returns result of test, 0/1, false/true
-## arg: program to find in PATH
-sub checkxx_program {
-	grep { -x "$_/$_[0]"}split /:/,$ENV{PATH};
+# arg: 1 - string to strip start/end space/\n from
+# note: a few nano seconds are saved by using raw $_[0] for program
+sub check_program {
+	(grep { return "$_/$_[0]" if -e "$_/$_[0]"} @paths)[0];
 }
-
 
 # arg: 1 - command to turn into an array; 2 - optional: splitter
 # similar to reader() except this creates an array of data 
@@ -51,7 +50,9 @@ sub data_grabber {
 sub error_handler {
 	my ($err, $message, $alt1) = @_;
 	print "$err: $message err: $alt1\n";
+	exit;
 }
+
 
 # args: 0 - the string to get piece of
 # 2 - the position in string, starting at 1 for 0 index.
@@ -62,7 +63,7 @@ sub get_piece {
 	$num--;
 	$sep ||= '\s+';
 	$string =~ s/^\s+|\s+$//;
-	my @temp = split /$sep/, $string, -1;
+	my @temp = split /$sep/, $string;
 	eval $end if $b_log;
 	if ( exists $temp[$num] ){
 		return $temp[$num];
@@ -81,6 +82,17 @@ sub reader {
 	eval $end if $b_log;
 	return @rows;
 }
+# calling it trimmer to avoid conflicts with existing trim stuff
+# arg: 1 - string to be right left trimmed. Also slices off \n so no chomp needed
+# this thing is super fast, no need to log its times etc, 0.0001 seconds or less
+sub trimmer {
+	#eval $start if $b_log;
+	my ($str) = @_;
+	$str =~ s/^\s+|\s+$|\n$//g; 
+	#eval $end if $b_log;
+	return $str;
+}
+
 ### START CODE REQUIRED BY THIS MODULE ##
 
 ### END CODE REQUIRED BY THIS MODULE ##

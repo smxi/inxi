@@ -28,10 +28,10 @@ my $b_root = 0;
 my $b_log;
 my $extra = 2;
 
-## returns result of test, 0/1, false/true
-## arg: program to find in PATH
+# arg: 1 - string to strip start/end space/\n from
+# note: a few nano seconds are saved by using raw $_[0] for program
 sub check_program {
-	grep { -x "$_/$_[0]"}split /:/,$ENV{PATH};
+	(grep { return "$_/$_[0]" if -e "$_/$_[0]"} @paths)[0];
 }
 
 # arg: 1 - command to turn into an array; 2 - optional: splitter
@@ -60,7 +60,7 @@ sub get_piece {
 	$num--;
 	$sep ||= '\s+';
 	$string =~ s/^\s+|\s+$//;
-	my @temp = split /$sep/, $string, -1;
+	my @temp = split /$sep/, $string;
 	eval $end if $b_log;
 	if ( exists $temp[$num] ){
 		return $temp[$num];
@@ -168,7 +168,7 @@ sub get_memory_data_linux {
 	}
 	my $used = $total - $not_used;
 	$memory = sprintf("%.1f/%.1f MB", $used/1024, $total/1024);
-	log_data("memory: $memory");
+	log_data("memory: $memory") if $b_log;
 	eval $end if $b_log;
 	return $memory;
 }
@@ -181,6 +181,7 @@ sub get_memory_data_bsd {
 	eval $end if $b_log;
 	return $memory;
 }
+
 
 ### END MODULE CODE ##
 

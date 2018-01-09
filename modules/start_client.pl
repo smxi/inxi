@@ -43,6 +43,12 @@ my $bsd_type = '';
 my $b_display = 1;
 my $b_log;
 
+# arg: 1 - string to strip start/end space/\n from
+# note: a few nano seconds are saved by using raw $_[0] for program
+sub check_program {
+	(grep { return "$_/$_[0]" if -e "$_/$_[0]"} @paths)[0];
+}
+
 sub log_data {}
 
 # args: 1 - desktop/app command for --version; 2 - search string; 
@@ -146,11 +152,6 @@ sub program_values {
 	#my $debug = main::Dumper \@client_data;
 	# main::log_data("Client Data: " . main::Dumper \@client_data);
 	return @client_data;
-}
-## returns result of test, 0/1, false/true
-## arg: program to find in PATH
-sub check_program {
-	grep { -x "$_/$_[0]"}split /:/,$ENV{PATH};
 }
 
 # calling it trimmer to avoid conflicts with existing trim stuff

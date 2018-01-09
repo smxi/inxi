@@ -15,6 +15,7 @@ my $self_patch='019-p';
 sub error_handler {
 	my ($err, $message, $alt1) = @_;
 	print "$err: $message err: $alt1\n";
+	exit;
 }
 
 my $start = '';

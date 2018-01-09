@@ -22,8 +22,10 @@ use 5.008;
 ### START DEFAULT CODE ##
 
 sub error_handler {
-
+	my ($err, $message, $alt1) = @_;
+	print "$err: $message err: $alt1\n";
 }
+
 sub get_hostname {
 	return 'tester';
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 ## File: compiler.pl
-## Version: 1.0
+## Version: 1.1
 ## Date 2018-01-07
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
@@ -28,18 +28,20 @@ my $b_root = 0;
 my $b_log;
 my $extra = 2;
 
+# arg: 1 - string to strip start/end space/\n from
+# note: a few nano seconds are saved by using raw $_[0] for program
+sub check_program {
+	(grep { return "$_/$_[0]" if -e "$_/$_[0]"} @paths)[0];
+}
+
 sub error_handler {
 	my ($err, $message, $alt1) = @_;
 	print "$err: $message err: $alt1\n";
+	exit;
 }
 
 sub log_data {}
 
-## returns result of test, 0/1, false/true
-## arg: program to find in PATH
-sub check_program {
-	grep { -x "$_/$_[0]"}split /:/,$ENV{PATH};
-}
 # arg: 1 - full file path, returns array of file lines.
 # note: chomp has to chomp the entire action, not just <$fh>
 sub reader {
@@ -131,7 +133,7 @@ sub get_compiler_version_linux {
 		$type ||= 'N/A'; # we don't really know what linux clang looks like!
 		@compiler = ($1,$type);
 	}
-	log_data(@compiler);
+	log_data(@compiler) if $b_log;
 	
 	eval $end if $b_log;
 	return @compiler;

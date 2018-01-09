@@ -24,8 +24,10 @@ eval "use HTTP::Tiny"; # if not found, return has error messages etc
 if ( $@ ) {
 	$dl{'tiny'} = '';
 }
+# arg: 1 - string to strip start/end space/\n from
+# note: a few nano seconds are saved by using raw $_[0] for program
 sub check_program {
-	return 1;
+	(grep { return "$_/$_[0]" if -e "$_/$_[0]"} @paths)[0];
 }
 
 my $start = '';
