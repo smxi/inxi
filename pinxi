@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-08';
-my $self_patch='096-p';
+my $self_patch='097-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -173,11 +173,17 @@ sub check_tools {
 	if ( $show{'memory'} || ( ( $bsd_type || $use{'dmidecode-force'} ) && ($show{'machine'} || $show{'battery'}) ) ){
 		$action = 'use';
 		if ($program = check_program('dmidecode')) {
-			@data = data_grabber("$program --type chassis 2>&1");
-			#print @data;
-			$action = do {
-				if ( grep { $_ =~ /Permission/i } @data ){'permissions'}
-				elsif ( grep { $_ =~ /No SMBIOS/i } @data ){'smbios'}
+			my $result = system("$program -t chassis >/dev/null 2>&1");
+			if (!$result){
+				if ($b_root) {
+					@data = data_grabber("$program --type chassis 2>&1");
+					if ( grep { $_ =~ /No SMBIOS/i } @data ){
+						$action = 'smbios';
+					}
+				}
+			}
+			elsif ($result){
+				$action = 'permissions';
 			}
 		}
 		else {
@@ -219,21 +225,20 @@ sub check_tools {
 	# note: gnu/linux has sysctl so it may be used that for something if present
 	# there is lspci for bsds so doesn't hurt to check it
 	%commands = (
-	'lspci' => 'lspci -n 2>&1',
+	'lspci' => '-n',
 	);
 	if ($bsd_type){
 		%hash = (
-		'pciconf' => 'pciconf -l 2>&1',
-		'sysctl' => 'sysctl kernel.osrelease 2>&1',
+		'pciconf' => '-l',
+		'sysctl' => 'kernel.osrelease',
 		);
 		%commands = (%commands,%hash);
 	}
 	foreach ( keys %commands ){
 		$action = 'use';
-		if (check_program($_)) {
-			my @data = data_grabber($commands{"$_"});
-			# print (@data,"\n");
-			if ( grep { $_ =~ /Permission/i } @data ){$action =  'permissions' }
+		if ($program = check_program($_)) {
+			# > 0 means error in shell
+			$action = 'permissions' if system("$program $commands{$_} >/dev/null 2>&1");
 		}
 		else {
 			$action = 'missing';
