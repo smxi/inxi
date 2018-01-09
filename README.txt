@@ -132,28 +132,28 @@ Note that my current development goals are, roughly in this order:
    2. full, hash print out, colorizer, sizer. real inxi output.
       Status: DONE
    
-9. Start on get data and print lines, which is about 1/2 the program.
-   This will probably start by line data collection, then move to a
-   radically altered print handler, which I expect to be far far 
-   more simple than the binxi version has.
-   To keep this sane, I'll probably work on .pm files that contain the
-   data collection logic per line, or feature, I'll see. Shared logic
-   will go in the:
-   SPECIAL DATA HANDLERS - UTILITIES FOR GET DATA/PRINT LINES
-   section.
-   Status: STARTED
+9. Start on get data and print lines, which is about 2/3 the program.
+   
+   Status of Lines:
+     Short: Started (missing cpu/speed, and memory for BSD)
+     System: Started
+     Machine: Started
+     Batter: Started
+     Memory: Started
+     Sensors: Started
+     Info: DONE (except BSD memory)
    
 10. Look into adding support for language hashes, that would replace 
     the hack key values in the print arrays with the alternate language 
     equivalent. Or, if missing that key, print the english. That would
     solve the issue of people flaking out on language support over time.
-    Status: NOT STARTED (but support is designed in as I go along)
+    Status: NOT Started (but support is designed in as I go along)
 
 11. Related to 10, add support for alternate output formats, using 
     json or csv or xml. I assume Perl has modules that make that easy, but 
     it's not very hard to do that manually either once you have the line
     data in hashes.
-    Status: STARTED (Support built in as I go along, only the actual 
+    Status: Started (Support built in as I go along, only the actual 
     output engines will need to be created.)
 
 ====================================================================
