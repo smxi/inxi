@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: show_options.pl
-## Version: 2.0
-## Date 2018-01-07
+## Version: 2.1
+## Date 2018-01-09
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
 
@@ -54,9 +54,7 @@ sub get_defaults {
 ### START MODULE CODE ##
 
 sub show_options {
-	if ( $b_irc ){
-		error_handler('not-in-irc', 'help');
-	}
+	error_handler('not-in-irc', 'help') if $b_irc;
 	my ($type) = @_;
 	my (@row,@rows,@data);
 	my $line = '';

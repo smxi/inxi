@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: options.pl
-## Version: 1.8
-## Date 2018-01-07
+## Version: 1.9
+## Date 2018-01-09
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
 
@@ -41,6 +41,10 @@ sub set_perl_downloader {}
 sub show_options {}
 sub show_version {}
 sub update_me {}
+{
+package CheckRecommends;
+sub run {}
+};
 
 
 ### END DEFAULT CODE ##
@@ -50,9 +54,11 @@ sub update_me {}
 ### START MODULE CODE ##
 
 sub get_options{
+	eval $start if $b_log;
 	my (@args) = @_;
 	$show{'short'} = 1;
-	my ($b_downloader,$b_updater,$b_version,$help_type,$self_download, $download_id);
+	my ($b_downloader,$b_recommends,$b_updater,$b_version,$help_type,
+	$self_download, $download_id);
 	GetOptions (
 	'A|audio' => sub {
 		$show{'short'} = 0;
@@ -342,8 +348,12 @@ sub get_options{
 		} },
 	'display:s' => sub { 
 		my ($opt,$arg) = @_;
-		if ($arg =~ /^:?[0-9]+$/){
+		if ($arg =~ /^:?([0-9]+)?$/){
 			$display=$arg;
+			$display ||= ':0';
+			$b_display = 1;
+			$show{'display-data'} = 2;
+			$display_opt = "-display $arg";
 		}
 		else {
 			error_handler('bad-arg', $opt, $arg);
@@ -382,9 +392,10 @@ sub get_options{
 		else {
 			error_handler('bad-arg', $opt, $arg);
 		}},
+	'recommends' => sub {
+		$b_recommends = 1; },
 	'U|update:s' => sub { # 1,2,3 OR http://myserver/path/inxi
 		my ($opt,$arg) = @_;
-		$show{'short'} = 0;
 		$b_downloader = 1;
 		if ( $b_update ){
 			$b_updater = 1;
@@ -418,18 +429,12 @@ sub get_options{
 		error_handler('unknown-option', "$opt", "" ); }
 	) ; #or error_handler('unknown-option', "@ARGV", '');
 	## run all these after so that we can change widths, downloaders, etc
-	if ( $b_downloader ){
-		set_downloader();
-	}
-	if ($b_updater){
-		update_me( $self_download, $download_id );
-	}
-	if ($b_version){
-		show_version();
-	}
-	if ($help_type){
-		show_options($help_type);
-	}
+	eval $end if $b_log;
+	CheckRecommends::run() if $b_recommends;
+	set_downloader() if $b_downloader;
+	show_version() if $b_version;
+	show_options($help_type) if $help_type;
+	update_me( $self_download, $download_id ) if $b_updater;
 } 
 
 ### END MODULE CODE ##
