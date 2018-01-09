@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: updater.pl
-## Version: 1.4
-## Date 2018-01-07
+## Version: 1.5
+## Date 2018-01-08
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
 
@@ -54,12 +54,13 @@ sub get_defaults {
 # 3 - update type option
 # note that 1 must end in / to properly construct the url path
 sub update_me {
-	eval $start;
+	eval $start if $b_log;
 	my ( $self_download, $download_id ) = @_;
 	my $downloader_error=1;
 	my $file_contents='';
 	my $output = '';
 	my $b_man = 0;
+	$self_path =~ s/\/$//; # dirname sometimes ends with /, sometimes not
 	my $full_self_path = "$self_path/$self_name";
 	
 	if ( $b_irc ){
@@ -84,7 +85,7 @@ sub update_me {
 		# make sure the whole file got downloaded and is in the variable
 		if ( $file_contents =~ /###\*\*EOF\*\*###/ ){
 			open(my $fh, '>', $full_self_path);
-			print $fh $file_contents or error_handler('write-error', "$full_self_path", "$!" );
+			print $fh $file_contents or error_handler('write', "$full_self_path", "$!" );
 			close $fh;
 			qx( chmod +x '$self_path/$self_name' );
 			set_version_data();
@@ -112,7 +113,7 @@ sub update_me {
 	else {
 		error_handler('download-error', $self_download, $download_id);
 	}
-	eval $end;
+	eval $end if $b_log;
 }
 
 sub update_man {
@@ -211,12 +212,13 @@ sub set_version_data {
 		elsif ($row =~ /^my \$self_patch/ ){
 			$self_patch = (split /=/, $row)[1];
 		}
-		elsif ($row =~ /infobash/){
+		elsif ($row =~ /^## END INXI INFO/){
 			last;
 		}
 	}
 	close $fh;
 }
+
 
 ### END MODULE CODE ##
 
