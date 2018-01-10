@@ -71,7 +71,7 @@ sub get_defaults {
 sub get_hostname {
 	return 'tester';
 }
-sub get_repo_data {}
+sub get_repo_data {return ();}
 
 my $f = 'joe';
 my $bsd_type = '';
@@ -602,7 +602,7 @@ fi
 }
 sub system_files {
 	print "Collecting system files data...\n";
-	# main::get_repo_data($data_dir);
+	main::get_repo_data($data_dir);
 	# main::check_recommends() > $data_dir/check-recommends.txt 2>&1
 	no warnings 'uninitialized';
 	my (%data,@files,@files2);

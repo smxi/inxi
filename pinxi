@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-10';
-my $self_patch='109-p';
+my $self_patch='110-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -1599,11 +1599,12 @@ fi
 }
 sub system_files {
 	print "Collecting system files data...\n";
-	# main::get_repo_data($data_dir);
-	# main::check_recommends() > $data_dir/check-recommends.txt 2>&1
-	no warnings 'uninitialized';
-	my (%data,@files,@files2);
 	
+	no warnings 'uninitialized';
+	# main::check_recommends() > $data_dir/check-recommends.txt 2>&1
+	my (%data,@files,@files2);
+	@files = main::get_repo_data($data_dir);
+	copy_files(\@files, 'repo');
 	# chdir "/etc";
 	@files = glob q("/etc/*[-_]{[rR]elease,[vV]ersion}");
 	push (@files, '/etc/issue');
@@ -2332,6 +2333,20 @@ sub trimmer {
 	$str =~ s/^\s+|\s+$|\n$//g; 
 	#eval $end if $b_log;
 	return $str;
+}
+sub uniq {
+	my %seen;
+	grep !$seen{$_}++, @_;
+}
+# arg: 1 file full  path to write to; 2 - array of data to write. 
+# NOTE: we can use non referenced content but let's be safe
+sub writer {
+	my ($path, $ref_content) = @_;
+	my ($content);
+	$content = join "\n", @$ref_content or die "failed with error $!";
+	open(my $fh, '>', $path) or die "Failed to open error: $!";
+	print $content $fh;
+	close $fh;
 }
 
 #### -------------------------------------------------------------------
@@ -4099,7 +4114,97 @@ sub get_memory_data_bsd {
 	return $memory;
 }
 
-sub get_repo_data {}
+sub get_repo_data {
+	eval $start if $b_log;
+	my ($debugger_dir) = @_;
+	my $num = 0;
+	my (@content,@data,@repos,@repo_files,$working,@debugger_repos);
+	my $apt = '/etc/apt/sources.list';
+	my $pacman = '/etc/pacman.conf';
+	
+	# apt - debian, buntus, also sometimes some yum/rpm repos may create 
+	# apt repos here as well
+	if (-f $apt || -d "$apt.d"){
+		@repo_files = </etc/apt/sources.list.d/*.list>;
+		push @repo_files, $apt;
+		log_data('apt repo files: ' . join('; ', @repo_files) ) if $b_log;
+		foreach ( sort @repo_files){
+			if (-r $_ ){
+				push @debugger_repos, $_ if $debugger_dir;
+				# no empty lines, no lines starting with #
+				@content = grep {!/^[[:space:]]*$|^[[:space:]]*#/} reader($_);
+				@content = repo_data_cleaner(@content);
+				@content = repo_url_cleaner(@content);
+				@content = ('No repos found in this file!') if ! @content;
+				@data = (
+				{$num++ . '#Active apt sources in' => $_},
+				[@content],
+				);
+				@repos = (@repos,@data);
+			}
+		}
+	}
+	if (-f $pacman){
+		@repo_files = grep {/^\s*Include/i} reader($pacman);
+		@repo_files = map {
+			$_ =~ s/^\s+|\s+$//g; 
+			my @working = split( /\s+=\s+/, $_); 
+			$working[1];
+		} @repo_files;
+		@repo_files = sort(@repo_files);
+		@repo_files = uniq(@repo_files);
+		foreach (sort @repo_files){
+			push @debugger_repos, $_ if $debugger_dir;
+			if (-f $_){
+				@content = grep {/^[[:space:]]*Server/} reader($_);
+				@content = repo_data_cleaner(@content);
+				@content = map { my @inner = split (/\s+=\s+/, $_);$inner[1]} @content;
+				@content = repo_url_cleaner(@content);
+				@content = ('No repos found in this file!') if ! @content;
+				@data = (
+				{$num++ . '#Active Pacman repo servers in' => $_},
+				[@content],
+				);
+			}
+			else {
+				@data = (
+				{$num++ . "#File listed in" => $pacman},
+				[("$_ does not seem to exist.")],
+				);
+			}
+			@repos = (@repos,@data);
+		}
+	}
+	# print Dumper \@repos;
+	eval $end if $b_log;
+	if ($debugger_dir){
+		return @debugger_repos;
+	}
+	else {
+		return @repos;
+	}
+}
+sub repo_data_cleaner {
+	my (@content) = @_;
+	# basics: trim white space, get rid of double spaces
+	@content = map { $_ =~ s/^\s+|\s+$//g; $_ =~ s/\s\s+/ /g; $_} @content;
+	return @content;
+}
+# clean if irc
+sub repo_url_cleaner {
+	my (@content) = @_;
+	@content = map { $_ =~ s/:\//: \//; $_} @content if $b_irc;
+	return @content;
+}
+sub repo_file_path {
+	my ($filename,$dir) = @_;
+	my ($working);
+	$working = $filename;
+	$working =~ s/^\///;
+	$working =~ s/\//-/g;
+	$working = "$dir/file-repo-$working.txt";
+	return $working;
+}
 
 # # check? /var/run/nologin for bsds?
 sub get_runlevel_data {
@@ -4912,16 +5017,23 @@ sub generate_raid_data {
 sub generate_repo_data {
 	eval $start if $b_log;
 	my $num = 0;
-	my (%row,$ref,$index,$val1);
+	my (%data,%row,$ref,$index,$val1);
 	my $data_name = $prefix++ . '#Repos';
-	
-	my %data = (
-	$data_name => [
-		{
-		$num++ . '#Status' => 'under development',
-		},
-	],
-	);
+	my @repos = get_repo_data();
+	if (@repos){
+		%data = (
+		$data_name => \@repos,
+		);
+	}
+	else {
+		%data = (
+		$data_name => [
+			{
+			$num++ . '#Status' => 'under development',
+			},
+		],
+		);
+	}
 	$index = scalar(@{ $data{$data_name} } ) - 1;
 	
 	eval $end if $b_log;
