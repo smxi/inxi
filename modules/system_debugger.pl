@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 ## File: system_debugger.pl
-## Version: 2.4
+## Version: 2.5
 ## Date 2018-01-09
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
@@ -221,11 +221,11 @@ sub compress_dir {
 	print "Creating tar.gz compressed file of this material...\n";
 	print "File: $debug_gz\n";
 	system("cd $user_data_dir; tar -czf $debug_gz $debug_dir");
-	print "Removing $data_dir.... ";
+	print "Removing $data_dir...\n";
 	#rmdir $data_dir or print "failed removing: $data_dir error: $!\n";
 	return 1 if !$b_delete_dir;
 	if (system('rm','-rf',$data_dir) ){
-		print "\nFailed removing: $data_dir\nError: $?\n";
+		print "Failed removing: $data_dir\nError: $?\n";
 	}
 	else {
 		print "Directory removed.\n";
@@ -265,40 +265,40 @@ ls -l /dev/disk/by-wwn > $data_dir/dev-disk-wwn-data.txt 2>&1
 ls -l /dev/disk/by-path > $data_dir/dev-disk-path-data.txt 2>&1
 ls -l /dev/mapper > $data_dir/dev-disk-mapper-data.txt 2>&1
 readlink /dev/root > $data_dir/dev-root.txt 2>&1
-df -h -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs > $data_dir/program-df-h-T-P-excludes.txt 2>&1
-df -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs > $data_dir/program-df-T-P-excludes.txt 2>&1
-df -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs --total > $data_dir/program-df-T-P-excludes-total.txt 2>&1
-df -h -T > $data_dir/program-BSD-df-h-T-no-excludes.txt 2>&1
-df -h > $data_dir/program-BSD-df-h-no-excludes.txt 2>&1
-df -k -T > $data_dir/program-BSD-df-k-T-no-excludes.txt 2>&1
-df -k > $data_dir/program-BSD-df-k-no-excludes.txt 2>&1
-atacontrol list > $data_dir/program-BSD-atacontrol-list.txt 2>&1
-camcontrol devlist > $data_dir/program-BSD-camcontrol-devlist.txt 2>&1
+df -h -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs > $data_dir/cmd-df-h-T-P-excludes.txt 2>&1
+df -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs > $data_dir/cmd-df-T-P-excludes.txt 2>&1
+df -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs --total > $data_dir/cmd-df-T-P-excludes-total.txt 2>&1
+df -h -T > $data_dir/cmd-BSD-df-h-T-no-excludes.txt 2>&1
+df -h > $data_dir/cmd-BSD-df-h-no-excludes.txt 2>&1
+df -k -T > $data_dir/cmd-BSD-df-k-T-no-excludes.txt 2>&1
+df -k > $data_dir/cmd-BSD-df-k-no-excludes.txt 2>&1
+atacontrol list > $data_dir/cmd-BSD-atacontrol-list.txt 2>&1
+camcontrol devlist > $data_dir/cmd-BSD-camcontrol-devlist.txt 2>&1
 # bsd tool
-mount > $data_dir/program-mount.txt 2>&1
+mount > $data_dir/cmd-mount.txt 2>&1
 if which btrfs >/dev/null 2>&1; then
-	btrfs filesystem show  > $data_dir/program-btrfs-filesystem-show.txt 2>&1
-	btrfs filesystem show --mounted  > $data_dir/program-btrfs-filesystem-show-mounted.txt 2>&1
-	# btrfs filesystem show --all-devices > $data_dir/program-btrfs-filesystem-show-all-devices.txt 2>&1
+	btrfs filesystem show  > $data_dir/cmd-btrfs-filesystem-show.txt 2>&1
+	btrfs filesystem show --mounted  > $data_dir/cmd-btrfs-filesystem-show-mounted.txt 2>&1
+	# btrfs filesystem show --all-devices > $data_dir/cmd-btrfs-filesystem-show-all-devices.txt 2>&1
 else
-	touch $data_dir/program-btrfs-absent
+	touch $data_dir/cmd-btrfs-absent
 fi
-gpart list > $data_dir/program-BSD-gpart-list.txt 2>&1
-gpart show > $data_dir/program-BSD-gpart-show.txt 2>&1
-gpart status > $data_dir/program-BSD-gpart-status.txt 2>&1
-swapctl -l -k > $data_dir/program-BSD-swapctl-l-k.txt 2>&1
-swapon -s > $data_dir/program-swapon-s.txt 2>&1
-sysctl -b kern.geom.conftxt > $data_dir/program-BSD-sysctl-b-kern.geom.conftxt.txt 2>&1
-sysctl -b kern.geom.confxml > $data_dir/program-BSD-sysctl-b-kern.geom.confxml.txt 2>&1
-zfs list > $data_dir/program-zfs-list.txt 2>&1
-zpool list > $data_dir/program-zpool-list.txt 2>&1
-zpool list -v > $data_dir/program-zpool-list-v.txt 2>&1
-df -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 > $data_dir/program-df-P-excludes.txt 2>&1
-df -P > $data_dir/program-BSD-df-P-no-excludes.txt 2>&1
+gpart list > $data_dir/cmd-BSD-gpart-list.txt 2>&1
+gpart show > $data_dir/cmd-BSD-gpart-show.txt 2>&1
+gpart status > $data_dir/cmd-BSD-gpart-status.txt 2>&1
+swapctl -l -k > $data_dir/cmd-BSD-swapctl-l-k.txt 2>&1
+swapon -s > $data_dir/cmd-swapon-s.txt 2>&1
+sysctl -b kern.geom.conftxt > $data_dir/cmd-BSD-sysctl-b-kern.geom.conftxt.txt 2>&1
+sysctl -b kern.geom.confxml > $data_dir/cmd-BSD-sysctl-b-kern.geom.confxml.txt 2>&1
+zfs list > $data_dir/cmd-zfs-list.txt 2>&1
+zpool list > $data_dir/cmd-zpool-list.txt 2>&1
+zpool list -v > $data_dir/cmd-zpool-list-v.txt 2>&1
+df -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 > $data_dir/cmd-df-P-excludes.txt 2>&1
+df -P > $data_dir/cmd-BSD-df-P-no-excludes.txt 2>&1
 if which nvme >/dev/null 2>&1; then
-	touch $data_dir/program-nvme-present
+	touch $data_dir/cmd-nvme-present
 else
-	touch $data_dir/program-nvme-absent
+	touch $data_dir/cmd-nvme-absent
 fi
 ");
 }
@@ -344,84 +344,84 @@ sub display_data {
 	no warnings 'uninitialized';
 	system("PATH=$ENV{'PATH'}
 if which weston-info >/dev/null 2>&1; then
-	weston-info > $data_dir/program-weston-info.txt 2>&1
+	weston-info > $data_dir/cmd-weston-info.txt 2>&1
 else
-	touch $data_dir/program-weston-info-absent
+	touch $data_dir/cmd-weston-info-absent
 fi
 if which weston >/dev/null 2>&1; then
-	weston --version > $data_dir/program-weston-version.txt 2>&1
+	weston --version > $data_dir/cmd-weston-version.txt 2>&1
 else
-	touch $data_dir/program-weston-absent
+	touch $data_dir/cmd-weston-absent
 fi
 if which xprop >/dev/null 2>&1; then
-	xprop -root > $data_dir/program-xprop_root.txt 2>&1
+	xprop -root > $data_dir/cmd-xprop_root.txt 2>&1
 else
-	touch $data_dir/program-xprop-absent
+	touch $data_dir/cmd-xprop-absent
 fi
 if which glxinfo >/dev/null 2>&1; then
-	glxinfo > $data_dir/program-glxinfo-full.txt 2>&1
-	glxinfo -B > $data_dir/program-glxinfo-B.txt 2>&1
+	glxinfo > $data_dir/cmd-glxinfo-full.txt 2>&1
+	glxinfo -B > $data_dir/cmd-glxinfo-B.txt 2>&1
 else
-	touch $data_dir/program-glxinfo-absent
+	touch $data_dir/cmd-glxinfo-absent
 fi
 if which xdpyinfo >/dev/null 2>&1; then
-	xdpyinfo > $data_dir/program-xdpyinfo.txt 2>&1
+	xdpyinfo > $data_dir/cmd-xdpyinfo.txt 2>&1
 else
-	touch $data_dir/program-xdpyinfo-absent
+	touch $data_dir/cmd-xdpyinfo-absent
 fi
 if which xrandr >/dev/null 2>&1; then
-	xrandr > $data_dir/program-xrandr.txt 2>&1
+	xrandr > $data_dir/cmd-xrandr.txt 2>&1
 else
-	touch $data_dir/program-xrandr-absent
+	touch $data_dir/cmd-xrandr-absent
 fi
 if which X >/dev/null 2>&1; then
-	X -version > $data_dir/program-x-version.txt 2>&1
+	X -version > $data_dir/cmd-x-version.txt 2>&1
 else
-	touch $data_dir/program-x-absent
+	touch $data_dir/cmd-x-absent
 fi
 if which Xorg >/dev/null 2>&1; then
-	Xorg -version > $data_dir/program-xorg-version.txt 2>&1
+	Xorg -version > $data_dir/cmd-xorg-version.txt 2>&1
 else
-	touch $data_dir/program-xorg-absent
+	touch $data_dir/cmd-xorg-absent
 fi
 if which kf5-config >/dev/null 2>&1; then
-	kf5-config --version > $data_dir/program-kde-kf5-config-version-data.txt 2>&1
+	kf5-config --version > $data_dir/cmd-kde-kf5-config-version-data.txt 2>&1
 elif which kf6-config >/dev/null 2>&1; then
-	kf6-config --version > $data_dir/program-kde-kf6-config-version-data.txt 2>&1
+	kf6-config --version > $data_dir/cmd-kde-kf6-config-version-data.txt 2>&1
 elif which kf$ENV{'KDE_SESSION_VERSION'}-config >/dev/null 2>&1; then
-	kf$ENV{'KDE_SESSION_VERSION'}-config --version > $data_dir/program-kde-kf$ENV{'KDE_SESSION_VERSION'}-KSV-config-version-data.txt 2>&1
+	kf$ENV{'KDE_SESSION_VERSION'}-config --version > $data_dir/cmd-kde-kf$ENV{'KDE_SESSION_VERSION'}-KSV-config-version-data.txt 2>&1
 else
-	touch $data_dir/program-kde-kf-config-absent
+	touch $data_dir/cmd-kde-kf-config-absent
 fi
 if which plasmashell >/dev/null 2>&1; then
-	plasmashell --version > $data_dir/program-kde-plasmashell-version-data.txt 2>&1
+	plasmashell --version > $data_dir/cmd-kde-plasmashell-version-data.txt 2>&1
 else
-	touch $data_dir/program-kde-plasmashell-absent
+	touch $data_dir/cmd-kde-plasmashell-absent
 fi
 if which kwin_x11 >/dev/null 2>&1; then
-	kwin_x11 --version > $data_dir/program-kde-kwin_x11-version-data.txt 2>&1
+	kwin_x11 --version > $data_dir/cmd-kde-kwin_x11-version-data.txt 2>&1
 else
-	touch $data_dir/program-kde-kwin_x11-absent
+	touch $data_dir/cmd-kde-kwin_x11-absent
 fi
 if which kded4 >/dev/null 2>&1; then
-	kded4 --version > $data_dir/program-kded4-version-data.txt 2>&1
+	kded4 --version > $data_dir/cmd-kded4-version-data.txt 2>&1
 elif which kded5 >/dev/null 2>&1; then
-	kded5 --version > $data_dir/program-kded5-version-data.txt 2>&1
+	kded5 --version > $data_dir/cmd-kded5-version-data.txt 2>&1
 elif which kded >/dev/null 2>&1; then
-	kded --version > $data_dir/program-kded-version-data.txt 2>&1
+	kded --version > $data_dir/cmd-kded-version-data.txt 2>&1
 else
-	touch $data_dir/program-kded-$ENV{'KDE_SESSION_VERSION'}-absent
+	touch $data_dir/cmd-kded-$ENV{'KDE_SESSION_VERSION'}-absent
 fi
 # kde 5/plasma desktop 5, this is maybe an extra package and won't be used
 if which about-distro >/dev/null 2>&1; then
-	about-distro > $data_dir/program-kde-about-distro.txt 2>&1
+	about-distro > $data_dir/cmd-kde-about-distro.txt 2>&1
 else
-	touch $data_dir/program-kde-about-distro-absent
+	touch $data_dir/cmd-kde-about-distro-absent
 fi
 if which loginctl >/dev/null 2>&1;then
-	loginctl --no-pager list-sessions > $data_dir/program-loginctl-list-sessions.txt 2>&1
+	loginctl --no-pager list-sessions > $data_dir/cmd-loginctl-list-sessions.txt 2>&1
 else
-	touch $data_dir/program-loginctl-absent
+	touch $data_dir/cmd-loginctl-absent
 fi
 ");
 }
@@ -430,14 +430,14 @@ sub network_data {
 	no warnings 'uninitialized';
 	system("PATH=$ENV{'PATH'}
 if which ifconfig >/dev/null 2>&1;then
-	ifconfig > $data_dir/program-ifconfig.txt 2>&1
+	ifconfig > $data_dir/cmd-ifconfig.txt 2>&1
 else
-	touch $data_dir/program-ifconfig-absent
+	touch $data_dir/cmd-ifconfig-absent
 fi
 if which ip >/dev/null 2>&1;then
-	ip addr > $data_dir/program-ip-addr.txt 2>&1
+	ip addr > $data_dir/cmd-ip-addr.txt 2>&1
 else
-	touch $data_dir/program-ip-absent
+	touch $data_dir/cmd-ip-absent
 fi
 ");
 }
@@ -468,145 +468,146 @@ sub system_data {
 # bsd tools http://cb.vu/unixtoolbox.xhtml
 # freebsd
 if which pciconf >/dev/null 2>&1;then
-	pciconf -l -cv > $data_dir/program-BSD-pciconf-cvl.txt 2>&1
-	pciconf -vl > $data_dir/program-BSD-pciconf-vl.txt 2>&1
-	pciconf -l > $data_dir/program-BSD-pciconf-l.txt 2>&1
+	pciconf -l -cv > $data_dir/cmd-BSD-pciconf-cvl.txt 2>&1
+	pciconf -vl > $data_dir/cmd-BSD-pciconf-vl.txt 2>&1
+	pciconf -l > $data_dir/cmd-BSD-pciconf-l.txt 2>&1
 else
-	touch $data_dir/program-BSD-pciconf-absent
+	touch $data_dir/cmd-BSD-pciconf-absent
 fi
 # openbsd
 if which pcidump >/dev/null 2>&1;then
-	pcidump > $data_dir/program-BSD-pcidump-openbsd.txt 2>&1
-	pcidump -v > $data_dir/program-BSD-pcidump-v-openbsd.txt 2>&1
+	pcidump > $data_dir/cmd-BSD-pcidump-openbsd.txt 2>&1
+	pcidump -v > $data_dir/cmd-BSD-pcidump-v-openbsd.txt 2>&1
 else
-	touch $data_dir/program-BSD-pcidump-openbsd-absent
+	touch $data_dir/cmd-BSD-pcidump-openbsd-absent
 fi
 # netbsd
 if which pcictl >/dev/null 2>&1;then
-	pcictl list > $data_dir/program-BSD-pcictl-list-netbsd.txt 2>&1
-	pcictl list -n > $data_dir/program-BSD-pcictl-list-n-netbsd.txt 2>&1
+	pcictl list > $data_dir/cmd-BSD-pcictl-list-netbsd.txt 2>&1
+	pcictl list -n > $data_dir/cmd-BSD-pcictl-list-n-netbsd.txt 2>&1
 else
-	touch $data_dir/program-BSD-pcictl-netbsd-absent
+	touch $data_dir/cmd-BSD-pcictl-netbsd-absent
 fi
 if which sysctl >/dev/null 2>&1;then
-	sysctl -a > $data_dir/program-BSD-sysctl-a.txt 2>&1
+	sysctl -a > $data_dir/cmd-BSD-sysctl-a.txt 2>&1
 else
-	touch $data_dir/program-BSD-sysctl-absent
+	touch $data_dir/cmd-BSD-sysctl-absent
 fi
 if which usbdevs >/dev/null 2>&1;then
-	usbdevs -v > $data_dir/program-BSD-usbdevs-v.txt 2>&1
+	usbdevs -v > $data_dir/cmd-BSD-usbdevs-v.txt 2>&1
 else
-	touch $data_dir/program-BSD-usbdevs-absent
+	touch $data_dir/cmd-BSD-usbdevs-absent
 fi
 if which kldstat >/dev/null 2>&1;then
-	kldstat > $data_dir/program-BSD-kldstat.txt 2>&1
+	kldstat > $data_dir/cmd-BSD-kldstat.txt 2>&1
 else
-	touch $data_dir/program-BSD-kldstat-absent
+	touch $data_dir/cmd-BSD-kldstat-absent
 fi
 # diskinfo -v <disk>
 # fdisk <disk>
-dmidecode > $data_dir/program-dmidecode.txt 2>&1
-dmesg > $data_dir/program-dmesg.txt 2>&1
+dmidecode > $data_dir/cmd-dmidecode.txt 2>&1
+dmesg > $data_dir/cmd-dmesg.txt 2>&1
 if which lscpu > /dev/null 2>&1;then
-	lscpu > $data_dir/program-lscpu.txt 2>&1
+	lscpu > $data_dir/cmd-lscpu.txt 2>&1
 else
-	touch $data_dir/program-lscpu-absent
+	touch $data_dir/cmd-lscpu-absent
 fi
 if which lspci > /dev/null 2>&1;then
-	lspci > $data_dir/program-lspci.txt 2>&1
-	lspci -k > $data_dir/program-lspci-k.txt 2>&1
-	lspci -knn > $data_dir/program-lspci-knn.txt 2>&1
-	lspci -n > $data_dir/program-lspci-n.txt 2>&1
-	lspci -nn > $data_dir/program-lspci-nn.txt 2>&1
-	lspci -mm > $data_dir/program-lspci-mm.txt 2>&1
-	lspci -mmnn > $data_dir/program-lspci-mmnn.txt 2>&1
-	lspci -mmnnv > $data_dir/program-lspci-mmnnv.txt 2>&1
-	lspci -v > $data_dir/program-lspci-v.txt 2>&1
+	lspci > $data_dir/cmd-lspci.txt 2>&1
+	lspci -k > $data_dir/cmd-lspci-k.txt 2>&1
+	lspci -knn > $data_dir/cmd-lspci-knn.txt 2>&1
+	lspci -n > $data_dir/cmd-lspci-n.txt 2>&1
+	lspci -nn > $data_dir/cmd-lspci-nn.txt 2>&1
+	lspci -mm > $data_dir/cmd-lspci-mm.txt 2>&1
+	lspci -mmnn > $data_dir/cmd-lspci-mmnn.txt 2>&1
+	lspci -mmnnv > $data_dir/cmd-lspci-mmnnv.txt 2>&1
+	lspci -v > $data_dir/cmd-lspci-v.txt 2>&1
 else 
-	touch $data_dir/program-lspci-absent
+	touch $data_dir/cmd-lspci-absent
 fi
 if which lspci > /dev/null 2>&1;then
-	lsusb > $data_dir/program-lsusb.txt 2>&1
+	lsusb > $data_dir/cmd-lsusb.txt 2>&1
 else
-	touch $data_dir/program-lsusb-absent
+	touch $data_dir/cmd-lsusb-absent
 fi
 if which hciconfig >/dev/null 2>&1;then
-	hciconfig -a > $data_dir/program-hciconfig-a.txt 2>&1
+	hciconfig -a > $data_dir/cmd-hciconfig-a.txt 2>&1
 else
-	touch $data_dir/program-hciconfig-absent
+	touch $data_dir/cmd-hciconfig-absent
 fi
-ps aux > $data_dir/program-ps-aux.txt 2>&1
-ps -e > $data_dir/program-ps-e.txt 2>&1
-ps -p 1 > $data_dir/program-ps-p-1.txt 2>&1
+ps aux > $data_dir/cmd-ps-aux.txt 2>&1
+ps -e > $data_dir/cmd-ps-e.txt 2>&1
+ps -p 1 > $data_dir/cmd-ps-p-1.txt 2>&1
 if which runlevel > /dev/null 2>&1;then
-	runlevel > $data_dir/program-runlevel.txt 2>&1
+	runlevel > $data_dir/cmd-runlevel.txt 2>&1
 else
-	touch $data_dir/program-runlevel-absent
+	touch $data_dir/cmd-runlevel-absent
 fi
 if which rc-status >/dev/null 2>&1;then
-	rc-status -a > $data_dir/program-rc-status-a.txt 2>&1
-	rc-status -l > $data_dir/program-rc-status-l.txt 2>&1
-	rc-status -r > $data_dir/program-rc-status-r.txt 2>&1
+	rc-status -a > $data_dir/cmd-rc-status-a.txt 2>&1
+	rc-status -l > $data_dir/cmd-rc-status-l.txt 2>&1
+	rc-status -r > $data_dir/cmd-rc-status-r.txt 2>&1
 else
-	touch $data_dir/program-rc-status-absent
+	touch $data_dir/cmd-rc-status-absent
 fi
 if which systemctl >/dev/null 2>&1;then
-	systemctl list-units > $data_dir/program-systemctl-list-units.txt 2>&1
-	systemctl list-units --type=target > $data_dir/program-systemctl-list-units-target.txt 2>&1
+	systemctl list-units > $data_dir/cmd-systemctl-list-units.txt 2>&1
+	systemctl list-units --type=target > $data_dir/cmd-systemctl-list-units-target.txt 2>&1
 else
-	touch $data_dir/program-systemctl-absent
+	touch $data_dir/cmd-systemctl-absent
 fi
 if which initctl >/dev/null 2>&1;then
-	initctl list > $data_dir/program-initctl-list.txt 2>&1
+	initctl list > $data_dir/cmd-initctl-list.txt 2>&1
 else
-	touch $data_dir/program-initctl-absent
+	touch $data_dir/cmd-initctl-absent
 fi
 if which sensors >/dev/null 2>&1;then
-	sensors > $data_dir/program-sensors.txt 2>&1
+	sensors > $data_dir/cmd-sensors.txt 2>&1
 else
-	touch $data_dir/program-sensors-absent
+	touch $data_dir/cmd-sensors-absent
 fi
 if which strings >/dev/null 2>&1;then
-	touch $data_dir/program-strings-present
+	touch $data_dir/cmd-strings-present
 else
-	touch $data_dir/program-strings-absent
+	touch $data_dir/cmd-strings-absent
 fi
 # leaving this commented out to remind that some systems do not
 # support strings --version, but will just simply hang at that command
 # which you can duplicate by simply typing: strings then hitting enter, you will get hang.
 # strings --version > $data_dir/strings.txt 2>&1
 if which nvidia-smi >/dev/null 2>&1;then
-	nvidia-smi -q > $data_dir/program-nvidia-smi-q.txt 2>&1
-	nvidia-smi -q -x > $data_dir/program-nvidia-smi-xq.txt 2>&1
+	nvidia-smi -q > $data_dir/cmd-nvidia-smi-q.txt 2>&1
+	nvidia-smi -q -x > $data_dir/cmd-nvidia-smi-xq.txt 2>&1
 else
-	touch $data_dir/program-nvidia-smi-absent
+	touch $data_dir/cmd-nvidia-smi-absent
 fi
-echo $ENV{'CC'} > $data_dir/program-cc-content.txt 2>&1
-ls /usr/bin/gcc* > $data_dir/program-gcc-sys-versions.txt 2>&1
+echo $ENV{'CC'} > $data_dir/cmd-cc-content.txt 2>&1
+ls /usr/bin/gcc* > $data_dir/cmd-gcc-sys-versions.txt 2>&1
 if which gcc >/dev/null 2>&1;then
-	gcc --version > $data_dir/program-gcc-version.txt 2>&1
+	gcc --version > $data_dir/cmd-gcc-version.txt 2>&1
 else
-	touch $data_dir/program-gcc-absent
+	touch $data_dir/cmd-gcc-absent
 fi
 if which clang >/dev/null 2>&1;then
-	clang --version > $data_dir/program-clang-version.txt 2>&1
+	clang --version > $data_dir/cmd-clang-version.txt 2>&1
 else
-	touch $data_dir/program-clang-absent
+	touch $data_dir/cmd-clang-absent
 fi
 if which systemd-detect-virt >/dev/null 2>&1;then
-	systemd-detect-virt > $data_dir/program-systemd-detect-virt-info.txt 2>&1
+	systemd-detect-virt > $data_dir/cmd-systemd-detect-virt-info.txt 2>&1
 else
-	touch $data_dir/program-systemd-detect-virt-absent
+	touch $data_dir/cmd-systemd-detect-virt-absent
 fi
 ");
 }
 sub system_files {
 	print "Collecting system files data...\n";
-	main::get_repo_data($data_dir);
-	# main::check_recommends() > $data_dir/check-recommends.txt 2>&1
-	no warnings 'uninitialized';
-	my (%data,@files,@files2);
 	
+	no warnings 'uninitialized';
+	# main::check_recommends() > $data_dir/check-recommends.txt 2>&1
+	my (%data,@files,@files2);
+	@files = main::get_repo_data($data_dir);
+	copy_files(\@files, 'repo');
 	# chdir "/etc";
 	@files = glob q("/etc/*[-_]{[rR]elease,[vV]ersion}");
 	push (@files, '/etc/issue');
