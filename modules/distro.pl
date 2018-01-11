@@ -153,7 +153,7 @@ sub get_distro_linux {
 	my (@working,$b_osr);
 	my @derived = qw(antix-version aptosid-version kanotix-version knoppix-version 
 	mandrake-release mx-version pardus-release porteus-version sabayon-release 
-	siduction-version sidux-versionxx slitaz-release solusos-release turbolinux-release 
+	siduction-version sidux-version slitaz-release solusos-release turbolinux-release 
 	zenwalk-version);
 	my $derived_s = join "|", @derived;
 	my @primary = qw(arch-release gentoo-release redhat-release slackware-version 
