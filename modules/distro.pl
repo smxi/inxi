@@ -128,7 +128,6 @@ sub get {
 
 sub get_bsd_os {
 	eval $start if $b_log;
-	
 	if ($bsd_type eq 'darwin'){
 		my $file = '/System/Library/CoreServices/SystemVersion.plist';
 		if (-f $file){
@@ -143,8 +142,8 @@ sub get_bsd_os {
 		$distro = "$uname[0] $uname[2]";
 	}
 	
-	return $distro;
 	eval $end if $b_log;
+	return $distro;
 }
 
 sub get_linux_distro {
@@ -249,8 +248,8 @@ sub get_linux_distro {
 		}
 	}
 	$distro ||= 'unknown';
-	return $distro;
 	eval $end if $b_log;
+	return $distro;
 }
 sub get_lsb_release {
 	
