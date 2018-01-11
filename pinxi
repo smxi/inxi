@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-11';
-my $self_patch='118-p';
+my $self_patch='119-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -4079,18 +4079,28 @@ sub get_linux_distro {
 		$distro = get_os_release();
 		$b_osr = 1;
 	}
+	# if distro id file was found and it's not in the exluded primary distro file list, read it
 	elsif ( $distro_file && -s $distro_file && $distro_file !~ /\/etc\/($exclude_s)$/){
-		#print "$distro_file\n";
+		# new opensuse uses os-release, but older ones may have a similar syntax, so just use 
+		# the first line
 		if ($distro_file eq '/etc/SuSE-release'){
+			# leaving off extra data since all new suse have it, in os-release, this file has 
+			# line breaks, like os-release  but in case we  want it, it's: 
+			# CODENAME = Mantis  | VERSION = 12.2 
+			# for now, just take first occurrence, which should be the first line, which does 
+			# not use a variable type format
 			$distro = (main::clean_characters( grep { /suse/i } main::reader($distro_file)))[0];
 		}
 		else {
 			$distro = (main::reader($distro_file))[0];
 		}
 	}
+	# otherwise try  the default debian/ubuntu /etc/issue file
 	elsif (-f $issue){
 		@working = main::reader($issue);
 		my $b_mint = scalar (grep {/mint/i} @working); 
+		# os-release/lsb gives more manageable and accurate output than issue, 
+		# but mint should use issue for now.
 		if ($b_os_release && !$b_mint){
 			$distro = get_os_release();
 			$b_osr = 1;
@@ -4099,9 +4109,27 @@ sub get_linux_distro {
 			$distro = get_lsb_release();
 		}
 		else {
-		
+			# debian issue can end with weird escapes like \n \l
+			$distro = (map {s/\\[a-z]|,|\*|\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} main::reader($issue))[0];
+			# this handles an arch bug where /etc/arch-release is empty and /etc/issue 
+			# is corrupted only older arch installs that have not been updated should 
+			# have this fallback required, new ones use os-release
+			if ( $distro =~ /arch linux/i){
+				$distro = 'Arch Linux';
+			}
 		}
 	}
+	# a final check. If a long value, before assigning the debugger output, if os-release
+	# exists then let's use that if it wasn't tried already. Maybe that will be better.
+	# not handling the corrupt data, maybe later if needed
+	if ($distro && length($distro) > 50 ){
+		if (!$b_osr && $b_os_release){
+			$distro = get_os_release();
+		}
+	}
+	# test for /etc/lsb-release as a backup in case of failure, in cases 
+	# where > one version/release file were found but the above resulted 
+	# in null distro value. 
 	if (!$distro){
 		if ($b_os_release){
 			$distro = get_os_release();
@@ -4110,12 +4138,56 @@ sub get_linux_distro {
 			$distro = get_lsb_release();
 		}
 	}
+	# now some final null tries
+	if (!$distro ){
+		# if the file was null but present, which can happen in some cases, then use 
+		# the file name itself to set the distro value. Why say unknown if we have 
+		# a pretty good idea, after all?
+		if ($distro_file){
+			$distro_file =~ s/[-_]|release|version//g;
+		}
+	}
+	## finally, if all else has failed, give up
 	$distro ||= 'unknown';
 	eval $end if $b_log;
 	return $distro;
 }
 sub get_lsb_release {
+	eval $start if $b_log;
+	my ($distro,$id,$release,$codename,$description,) = ('','','','','');
+	my @content = map {s/,|\*|\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} main::reader('/etc/lsb-release');
+	foreach (@content){
+		my @working = split /\s*=\s*/, $_;
+		if ($working[0] eq 'DISTRIB_ID' && $working[1]){
+			if ($working[1] =~ /^Arch$/i){
+				$id = 'Arch Linux';
+			}
+			else {
+				$id = $working[1];
+			}
+		}
+		if ($working[0] eq 'DISTRIB_RELEASE' && $working[1]){
+			$release = $working[1];
+		}
+		if ($working[0] eq 'DISTRIB_CODENAME' && $working[1]){
+			$codename = $working[1];
+		}
+		# sometimes some distros cannot do their lsb-release files correctly, 
+		# so here is one last chance to get it right.
+		if ($working[0] eq 'DISTRIB_DESCRIPTION' && $working[1]){
+			$description = $working[1];
+		}
+	}
+	if (!$id && !$release && !$codename && $description){
+		$distro = $description;
+	}
+	else {
+		$distro = "$id $release $codename";
+		$distro =~ s/^\s+|\s\s+|\s+$//g; # get rid of double and trailling spaces 
+	}
 	
+	eval $end if $b_log;
+	return $distro;
 }
 sub get_os_release {
 	eval $start if $b_log;
