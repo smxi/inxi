@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-11';
-my $self_patch='119-p';
+my $self_patch='120-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -1111,6 +1111,7 @@ sub set_debugger {
 	}
 }
 
+# SystemDebugger
 {
 package SystemDebugger;
 
@@ -1443,17 +1444,39 @@ fi
 sub perl_modules {
 	print "Collecting Perl module data (this can take a while)...\n";
 	my @modules = ();
-	my $mods = '';
+	my ($dirname,$holder,$mods,$value) = ('','','','');
 	my $filename = 'perl-modules.txt';
-# 	foreach (@INC){
-# 		print "$_\n";
-# 	}
+	my @inc;
+	foreach (sort @INC){
+		if (-d $_){
+			$_ =~ s/\/$//; # just in case, trim off trailing slash
+			$value .= "EXISTS: $_\n";
+			push @inc, $_;
+		} 
+		else {
+			$value .= "ABSENT: $_\n";
+		}
+	}
+	main::writer("$data_dir/perl-inc-data.txt",$value);
 	File::Find::find { wanted => sub { 
 		push @modules, File::Spec->canonpath($_) if /\.pm\z/  
-	}, no_chdir => 1 }, @INC;
+	}, no_chdir => 1 }, @inc;
 	@modules = sort(@modules);
 	foreach (@modules){
-		$mods .= $_ . "\n";
+		my $dir = $_;
+		$dir =~ s/[^\/]+$//;
+		if (!$holder || $holder ne $dir ){
+			$holder = $dir;
+			$value = "DIR: $dir\n";
+			$_ =~ s/^$dir//;
+			$value .= " $_\n";
+		}
+		else {
+			$value = $_;
+			$value =~ s/^$dir//;
+			$value = " $value\n";
+		}
+		$mods .= $value;
 	}
 	open (my $fh, '>', "$data_dir/$filename");
 	print $fh $mods;
@@ -1797,6 +1820,7 @@ sub sys_ls {
 
 sub sys_traverse_data {
 	print "Parsing /sys files...\n";
+	no warnings 'File::Find';
 	File::Find::find( \&wanted, "/sys");
 	process_data();
 }
@@ -2099,6 +2123,7 @@ sub error_handler {
 #### RECOMMENDS
 #### -------------------------------------------------------------------
 
+# CheckRecommends
 {
 package CheckRecommends;
 sub run {
@@ -2340,14 +2365,21 @@ sub uniq {
 	my %seen;
 	grep !$seen{$_}++, @_;
 }
-# arg: 1 file full  path to write to; 2 - array of data to write. 
-# NOTE: we can use non referenced content but let's be safe
+# arg: 1 file full  path to write to; 2 - arrayof data to write. 
+# note: turning off strict refs so we can pass it a scalar or an array reference.
 sub writer {
 	my ($path, $ref_content) = @_;
 	my ($content);
-	$content = join "\n", @$ref_content or die "failed with error $!";
-	open(my $fh, '>', $path) or die "Failed to open error: $!";
-	print $content $fh;
+	no strict 'refs';
+	# print Dumper $ref_content, "\n";
+	if (ref $ref_content eq 'ARRAY'){
+		$content = join "\n", @$ref_content or die "failed with error $!";
+	}
+	else {
+		$content = scalar $ref_content;
+	}
+	open(my $fh, '>', $path) or error_handler('open',"$path", "$!");
+	print $fh $content;
 	close $fh;
 }
 
@@ -3225,6 +3257,7 @@ sub show_options {
 #### STARTUP DATA
 ########################################################################
 
+# StartClient
 {
 package StartClient;
 

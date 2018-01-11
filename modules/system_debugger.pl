@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: system_debugger.pl
-## Version: 2.6
-## Date 2018-01-10
+## Version: 2.7
+## Date 2018-01-11
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
 
@@ -36,6 +36,24 @@ sub toucher {
 	if ( ! -e $file ){
 		open( my $fh, '>', $file ) or error_handler('create', $file, $!);
 	}
+}
+
+# arg: 1 file full  path to write to; 2 - arrayof data to write. 
+# note: turning off strict refs so we can pass it a scalar or an array reference.
+sub writer {
+	my ($path, $ref_content) = @_;
+	my ($content);
+	no strict 'refs';
+	# print Dumper $ref_content, "\n";
+	if (ref $ref_content eq 'ARRAY'){
+		$content = join "\n", @$ref_content or die "failed with error $!";
+	}
+	else {
+		$content = scalar $ref_content;
+	}
+	open(my $fh, '>', $path) or error_handler('open',"$path", "$!");
+	print $fh $content;
+	close $fh;
 }
 
 ### END DEFAULT CODE ##
@@ -112,6 +130,7 @@ my $line3 = "----------------------------------------\n";
 
 # NOTE: perl 5.008 needs package inside brackets.
 # I believe 5.010 introduced option to have it outside brackets as you'd expect
+# SystemDebugger
 {
 package SystemDebugger;
 
@@ -444,17 +463,39 @@ fi
 sub perl_modules {
 	print "Collecting Perl module data (this can take a while)...\n";
 	my @modules = ();
-	my $mods = '';
+	my ($dirname,$holder,$mods,$value) = ('','','','');
 	my $filename = 'perl-modules.txt';
-# 	foreach (@INC){
-# 		print "$_\n";
-# 	}
+	my @inc;
+	foreach (sort @INC){
+		if (-d $_){
+			$_ =~ s/\/$//; # just in case, trim off trailing slash
+			$value .= "EXISTS: $_\n";
+			push @inc, $_;
+		} 
+		else {
+			$value .= "ABSENT: $_\n";
+		}
+	}
+	main::writer("$data_dir/perl-inc-data.txt",$value);
 	File::Find::find { wanted => sub { 
 		push @modules, File::Spec->canonpath($_) if /\.pm\z/  
-	}, no_chdir => 1 }, @INC;
+	}, no_chdir => 1 }, @inc;
 	@modules = sort(@modules);
 	foreach (@modules){
-		$mods .= $_ . "\n";
+		my $dir = $_;
+		$dir =~ s/[^\/]+$//;
+		if (!$holder || $holder ne $dir ){
+			$holder = $dir;
+			$value = "DIR: $dir\n";
+			$_ =~ s/^$dir//;
+			$value .= " $_\n";
+		}
+		else {
+			$value = $_;
+			$value =~ s/^$dir//;
+			$value = " $value\n";
+		}
+		$mods .= $value;
 	}
 	open (my $fh, '>', "$data_dir/$filename");
 	print $fh $mods;
@@ -606,7 +647,7 @@ sub system_files {
 	no warnings 'uninitialized';
 	# main::check_recommends() > $data_dir/check-recommends.txt 2>&1
 	my (%data,@files,@files2);
-	@files = main::get_repo_data($data_dir);
+	@files = RepoData::get($data_dir);
 	copy_files(\@files, 'repo');
 	# chdir "/etc";
 	@files = glob q("/etc/*[-_]{[rR]elease,[vV]ersion}");
@@ -798,6 +839,7 @@ sub sys_ls {
 
 sub sys_traverse_data {
 	print "Parsing /sys files...\n";
+	no warnings 'File::Find';
 	File::Find::find( \&wanted, "/sys");
 	process_data();
 }

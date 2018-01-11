@@ -53,7 +53,6 @@ sub error_handler {
 	exit;
 }
 
-
 # args: 0 - the string to get piece of
 # 2 - the position in string, starting at 1 for 0 index.
 # 3 - the separator, default is ' '
@@ -82,6 +81,14 @@ sub reader {
 	eval $end if $b_log;
 	return @rows;
 }
+
+# args: 1 - the file to create if not exists
+sub toucher {
+	my ($file ) = @_;
+	if ( ! -e $file ){
+		open( my $fh, '>', $file ) or error_handler('create', $file, $!);
+	}
+}
 # calling it trimmer to avoid conflicts with existing trim stuff
 # arg: 1 - string to be right left trimmed. Also slices off \n so no chomp needed
 # this thing is super fast, no need to log its times etc, 0.0001 seconds or less
@@ -96,6 +103,24 @@ sub trimmer {
 sub uniq {
 	my %seen;
 	grep !$seen{$_}++, @_;
+}
+
+# arg: 1 file full  path to write to; 2 - arrayof data to write. 
+# note: turning off strict refs so we can pass it a scalar or an array reference.
+sub writer {
+	my ($path, $ref_content) = @_;
+	my ($content);
+	no strict 'refs';
+	# print Dumper $ref_content, "\n";
+	if (ref $ref_content eq 'ARRAY'){
+		$content = join "\n", @$ref_content or die "failed with error $!";
+	}
+	else {
+		$content = scalar $ref_content;
+	}
+	open(my $fh, '>', $path) or error_handler('open',"$path", "$!");
+	print $fh $content;
+	close $fh;
 }
 
 ### START CODE REQUIRED BY THIS MODULE ##
