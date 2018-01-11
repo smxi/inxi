@@ -118,15 +118,15 @@ package DistroData;
 my ($distro);
 sub get {
 	if ($bsd_type){
-		get_distro_bsd();
+		get_bsd_os();
 	}
 	else {
-		get_distro_linux();
+		get_linux_distro();
 	}
 	return $distro;
 }
 
-sub get_distro_bsd {
+sub get_bsd_os {
 	eval $start if $b_log;
 	
 	if ($bsd_type eq 'darwin'){
@@ -147,7 +147,7 @@ sub get_distro_bsd {
 	eval $end if $b_log;
 }
 
-sub get_distro_linux {
+sub get_linux_distro {
 	eval $start if $b_log;
 	my $distro_file = '';
 	my (@working,$b_osr);
@@ -181,7 +181,6 @@ sub get_distro_linux {
 		@working = (@derived,@primary);
 		foreach my $file (@working){
 			if ( "/etc/$file" =~ /($distro_files_s)$/){
-				
 				# Now lets see if the distro file is in the known-good working-lsb-list
 				# if so, use lsb-release, if not, then just use the found file
 				# this is for only those distro's with self named release/version files
@@ -294,7 +293,6 @@ sub get_os_release {
 	return $distro;
 }
 }
-
 ### END MODULE CODE ##
 
 ### START TEST CODE ##
