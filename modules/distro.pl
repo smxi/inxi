@@ -117,7 +117,6 @@ sub clean_characters {
 package DistroData;
 my ($distro);
 sub get {
-	my ();
 	if ($bsd_type){
 		get_distro_bsd();
 	}
