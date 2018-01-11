@@ -93,6 +93,11 @@ sub trimmer {
 	return $str;
 }
 
+sub uniq {
+	my %seen;
+	grep !$seen{$_}++, @_;
+}
+
 ### START CODE REQUIRED BY THIS MODULE ##
 
 ### END CODE REQUIRED BY THIS MODULE ##

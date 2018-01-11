@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 ## File: repos.pl
-## Version: 1.0
+## Version: 1.1
 ## Date 2018-01-10
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2018 Harald Hope
@@ -93,12 +93,18 @@ sub trimmer {
 	return $str;
 }
 
+sub uniq {
+	my %seen;
+	grep !$seen{$_}++, @_;
+}
+
 ### START CODE REQUIRED BY THIS MODULE ##
 
 ### END CODE REQUIRED BY THIS MODULE ##
 
 ### START MODULE CODE ##
 
+## RepoData
 {
 package RepoData;
 my $num = 0;
@@ -131,13 +137,6 @@ sub get_repos_linux {
 	eval $start if $b_log;
 	my $apt = '/etc/apt/sources.list';
 	my $pacman = '/etc/pacman.conf';
-	# BSDs
-	my $bsd_pkg = '/usr/local/etc/pkg/repos/';
-	my $freebsd = '/etc/freebsd-update.conf';
-	my $freebsd_pkg = '/etc/pkg/FreeBSD.conf';
-	my $netbsd = '/usr/pkg/etc/pkgin/repositories.conf';
-	my $openbsd = '/etc/pkg.conf';
-	
 	# apt - debian, buntus, also sometimes some yum/rpm repos may create 
 	# apt repos here as well
 	if (-f $apt || -d "$apt.d"){
@@ -157,10 +156,10 @@ sub get_repos_linux {
 			$working[1];
 		} @repo_files;
 		@repo_files = sort(@repo_files);
-		@repo_files = uniq(@repo_files);
+		@repo_files = main::uniq(@repo_files);
 		foreach (sort @repo_files){
 			if (-f $_){
-				repo_builder($_,'pacman','^[[:space:]]*Server','\s+=\s+',1);
+				repo_builder($_,'pacman','^[[:space:]]*Server','\s*=\s*',1);
 			}
 			else {
 				push @dbg_files, $_ if $debugger_dir;
@@ -182,17 +181,16 @@ sub get_repos_bsd {
 	my $freebsd_pkg = '/etc/pkg/FreeBSD.conf';
 	my $netbsd = '/usr/pkg/etc/pkgin/repositories.conf';
 	my $openbsd = '/etc/pkg.conf';
-	my $ports =  '/etc/portsnap.conf';
-	
-	if ( -f $ports || -f $freebsd || -d $bsd_pkg){
-		if ( -f $ports ) {
-			repo_builder($ports,'ports','^\s*SERVERNAME','\s+=\s+',1);
+	my $portsnap =  '/etc/portsnap.conf';
+	if ( -f $portsnap || -f $freebsd || -d $bsd_pkg){
+		if ( -f $portsnap ) {
+			repo_builder($portsnap,'portsnap','^\s*SERVERNAME','\s*=\s*',1);
 		}
 		if ( -f $freebsd ){
-			repo_builder($ports,'freebsd','^\s*ServerName','\s+',1);
+			repo_builder($freebsd,'freebsd','^\s*ServerName','\s+',1);
 		}
 		if ( -f $freebsd_pkg ){
-			repo_builder($ports,'freebsd-pkg','^\s*url',':\s+',1);
+			repo_builder($freebsd_pkg,'freebsd-pkg','^\s*url',':\s+',1);
 		}
 		if ( -d $bsd_pkg){
 			@repo_files = </usr/local/etc/pkg/repos/*.conf>;
@@ -233,11 +231,11 @@ sub get_repos_bsd {
 		}
 	}
 	elsif (-f $openbsd) {
-		repo_builder($ports,'openbsd','^installpath','\s+=\s+',1);
+		repo_builder($openbsd,'openbsd','^installpath','\s*=\s*',1);
 	}
 	elsif (-f $netbsd){
 		# not an empty row, and not a row starting with #
-		repo_builder($ports,'netbsd','^\s*[^#]+$');
+		repo_builder($netbsd,'netbsd','^\s*[^#]+$');
 	}
 	
 	eval $start if $b_log;
@@ -249,7 +247,7 @@ sub repo_builder {
 	'apt' => 'No repos found in this file',
 	'bsd-package' => 'No package servers found in this file',
 	'pacman' => 'No repos found in this file',
-	'ports' => 'No ports servers found in this file',
+	'portsnap' => 'No ports servers found in this file',
 	'freebsd' => 'No update servers found in this file',
 	'freebsd-pkg' => 'No default pkg server found in this file',
 	'openbsd' => 'No pkg mirrors found in this file',
@@ -262,7 +260,7 @@ sub repo_builder {
 	'pacman' => 'Active Pacman repo servers in',
 	'freebsd' => 'FreeBSD update server',
 	'freebsd-pkg' => 'FreeBSD default pkg server',
-	'ports' => 'BSD ports server',
+	'portsnap' => 'BSD ports server',
 	'openbsd' => 'OpenBSD pkg mirror',
 	'netbsd' => 'NetBSD pkg servers',
 	);
