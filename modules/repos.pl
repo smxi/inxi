@@ -140,6 +140,7 @@ sub get_repos_linux {
 	my $pacman = '/etc/pacman.conf';
 	my $slackpkg = '/etc/slackpkg/mirrors';
 	my $slackpkg_plus = '/etc/slackpkg/slackpkgplus.conf';
+	
 	# apt - debian, buntus, also sometimes some yum/rpm repos may create 
 	# apt repos here as well
 	if (-f $apt || -d "$apt.d"){
@@ -174,19 +175,34 @@ sub get_repos_linux {
 			}
 		}
 	}
+	# slackware
 	elsif (-f $slackpkg || -f $slackpkg_plus){
 		if (-f $slackpkg){
 			repo_builder($slackpkg,'slackpkg','^[[:space:]]*#*');
 		}
 		if (-f $slackpkg_plus){
+			print "here\n";
 			push @dbg_files, $slackpkg_plus if $debugger_dir;
-			@content = reader($slackpkg_plus);
-			foreach (@content){
-				
-				@data2 = split /\s*=\s*/, $_;
-				@data2 = map { $_ =~ s/^\s+|\s+$/g; $_ } @data2;
+			@data = main::reader($slackpkg_plus);
+			my (@repoplus_list,$active_repos);
+			foreach my $row (@data){
+				@data2 = map {$_ !~ /\s*#|^\s*$/;$_} split /\s*=\s*/, $row;
+				@data2 = map { $_ =~ s/^\s+|\s+$//g ; $_ } @data2;
 				last if $data2[0] =~ /^SLACKPKGPLUS/ && $data2[1] eq 'off';
-				push @content,@data if $data2[0] =~ ^REPOPLUS/;
+				# REPOPLUS=( slackpkgplus restricted alienbob ktown multilib slacky)
+				if ($data2[0] =~ /^REPOPLUS/){
+					@repoplus_list = split /\s+/, $data2[1];
+					@repoplus_list = map {s/\(|\)//g; $_} @repoplus_list;
+					$active_repos = join ('|',@repoplus_list);
+					
+				}
+				# MIRRORPLUS['multilib']=http://taper.alienbase.nl/mirrors/people/alien/multilib/14.1/
+				if ($active_repos && $data2[0] =~ /^MIRRORPLUS/){
+					$data2[0] =~ s/MIRRORPLUS\[\'|\'\]//g;
+					if ($data2[0] =~ /$active_repos/){
+						push @content,"$data2[0] ~ $data2[1]";
+					}
+				}
 			}
 			@content = ('No slackpkg+ sources found in file') if ! @content;
 			@data = (

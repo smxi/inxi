@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-10';
-my $self_patch='113-p';
+my $self_patch='114-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -4137,8 +4137,12 @@ sub get {
 
 sub get_repos_linux {
 	eval $start if $b_log;
+	my $apk = '/etc/apk/repositories';
 	my $apt = '/etc/apt/sources.list';
 	my $pacman = '/etc/pacman.conf';
+	my $slackpkg = '/etc/slackpkg/mirrors';
+	my $slackpkg_plus = '/etc/slackpkg/slackpkgplus.conf';
+	
 	# apt - debian, buntus, also sometimes some yum/rpm repos may create 
 	# apt repos here as well
 	if (-f $apt || -d "$apt.d"){
@@ -4172,6 +4176,50 @@ sub get_repos_linux {
 				@repos = (@repos,@data);
 			}
 		}
+	}
+	# slackware
+	elsif (-f $slackpkg || -f $slackpkg_plus){
+		if (-f $slackpkg){
+			repo_builder($slackpkg,'slackpkg','^[[:space:]]*#*');
+		}
+		if (-f $slackpkg_plus){
+			print "here\n";
+			push @dbg_files, $slackpkg_plus if $debugger_dir;
+			@data = main::reader($slackpkg_plus);
+			my (@repoplus_list,$active_repos);
+			foreach my $row (@data){
+				@data2 = map {$_ !~ /\s*#|^\s*$/;$_} split /\s*=\s*/, $row;
+				@data2 = map { $_ =~ s/^\s+|\s+$//g ; $_ } @data2;
+				last if $data2[0] =~ /^SLACKPKGPLUS/ && $data2[1] eq 'off';
+				# REPOPLUS=( slackpkgplus restricted alienbob ktown multilib slacky)
+				if ($data2[0] =~ /^REPOPLUS/){
+					@repoplus_list = split /\s+/, $data2[1];
+					@repoplus_list = map {s/\(|\)//g; $_} @repoplus_list;
+					$active_repos = join ('|',@repoplus_list);
+					
+				}
+				# MIRRORPLUS['multilib']=http://taper.alienbase.nl/mirrors/people/alien/multilib/14.1/
+				if ($active_repos && $data2[0] =~ /^MIRRORPLUS/){
+					$data2[0] =~ s/MIRRORPLUS\[\'|\'\]//g;
+					if ($data2[0] =~ /$active_repos/){
+						push @content,"$data2[0] ~ $data2[1]";
+					}
+				}
+			}
+			@content = ('No slackpkg+ sources found in file') if ! @content;
+			@content = url_cleaner(@content);
+			@data = (
+			{$num++ . "#slackpkg+ sources" => $slackpkg_plus},
+			[@content],
+			);
+			@data = url_cleaner(@data);
+			@repos = (@repos,@data);
+			@content = ();
+		}
+	}
+	# Alpine linux
+	elsif (-f $apk){
+		repo_builder($apk,'apk','^\s*[^#]+');
 	}
 	# print Dumper \@repos;
 	eval $end if $b_log;
@@ -4221,6 +4269,7 @@ sub get_repos_bsd {
 							}
 						}
 					}
+					@data3 = url_cleaner(@data3);
 					@data3 = ('No pkg enabled servers found in file') if ! @data3;
 					@data = (
 					{$num++ . "#BSD pkg enabled servers" => $_},
@@ -4246,6 +4295,7 @@ sub repo_builder {
 	my ($file,$type,$search,$split,$count) = @_;
 	my ($missing,$key);
 	my %unfound = (
+	'apk' => 'No repos found in this file',
 	'apt' => 'No repos found in this file',
 	'bsd-package' => 'No package servers found in this file',
 	'pacman' => 'No repos found in this file',
@@ -4254,9 +4304,12 @@ sub repo_builder {
 	'freebsd-pkg' => 'No default pkg server found in this file',
 	'openbsd' => 'No pkg mirrors found in this file',
 	'netbsd' => 'No pkg servers found in this file',
+	'slackpkg' => 'No sources found in this file',
+	'slackpkg-plus' => 'No sources found in this file',
 	);
 	$missing = $unfound{$type};
 	my %keys = (
+	'apk' => 'APK repo',
 	'apt' => 'Active apt sources in',
 	'bsd-package' => 'BSD pkg server',
 	'pacman' => 'Active Pacman repo servers in',
@@ -4265,11 +4318,13 @@ sub repo_builder {
 	'portsnap' => 'BSD ports server',
 	'openbsd' => 'OpenBSD pkg mirror',
 	'netbsd' => 'NetBSD pkg servers',
+	'slackpkg' => 'slackpkg sources',
+	'slackpkg-plus' => 'slackpkg+ sources',
 	);
 	$key = $keys{$type};
 
 	push @dbg_files, $file if $debugger_dir;
-	@content = grep {/$search/i} main::reader($file);
+	@content = grep {/$search/i && !/^\s*$/} main::reader($file);
 	@content = data_cleaner(@content);
 	if ($split){
 		@content = map { my @inner = split (/$split/, $_);$inner[$count]} @content;
@@ -4281,6 +4336,7 @@ sub repo_builder {
 	[@content],
 	);
 	@repos = (@repos,@data);
+	@content = ();
 }
 sub data_cleaner {
 	my (@content) = @_;
