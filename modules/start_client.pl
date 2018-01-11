@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 ## File: start_client.pl
-## Version: 1.8
-## Date 2018-01-07
+## Version: 1.9
+## Date 2018-01-10
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
 
@@ -15,6 +15,7 @@ use warnings;
 # use diagnostics;
 use 5.008;
 use Time::HiRes qw(gettimeofday tv_interval);
+use Data::Dumper qw(Dumper); # print_r
 
 # use File::Basename;
 

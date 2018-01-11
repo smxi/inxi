@@ -1,13 +1,14 @@
 #!/usr/bin/env perl
 ## File: file_downloader.pl
-## Version: 1.4
-## Date 2018-01-07
+## Version: 1.5
+## Date 2018-01-10
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
 
 use strict;
 use warnings;
 use 5.008;
+use Data::Dumper qw(Dumper); # print_r
 
 ### START DEFAULT CODE ##
 

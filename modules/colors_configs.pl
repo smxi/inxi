@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 ## File: colors_configs.pl
-## Version: 1.6
-## Date 2018-01-07
+## Version: 1.7
+## Date 2018-01-10
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
 

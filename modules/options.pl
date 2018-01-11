@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: options.pl
-## Version: 1.9
-## Date 2018-01-09
+## Version: 2.0
+## Date 2018-01-10
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
 
@@ -9,6 +9,7 @@ use strict;
 use warnings;
 # use diagnostics;
 use 5.008;
+use Data::Dumper qw(Dumper); # print_r
 
 use Getopt::Long qw(GetOptions);
 # Note: default auto_abbrev is enabled, that's fine
@@ -298,46 +299,36 @@ sub get_options{
 	## Start non data options
 	'alt:i' => sub { 
 		my ($opt,$arg) = @_;
-		my %alts = (
-		'0' => sub {$test[0] = 1;},
-		'1' => sub {$test[1] = 1;},
-		'2' => sub {$test[2] = 1;},
-		'3' => sub {$test[3] = 1;},
-		'4' => sub {$test[4] = 1;},
-		'5' => sub {$test[5] = 1;},
-		'30' => sub {$b_irc = 0;},
-		'31' => sub {$show{'host'} = 0;},
-		'32' => sub {$show{'host'} = 1;},
-		'33' => sub {$use{'dmidecode-force'}=1;},
-		'34' => sub {$dl{'no-ssl-opt'}=$dl{'no-ssl'};},
-		'40' => sub {
+		if ($arg == 1) {$test[1] = 1}
+		elsif ($arg == 2) {$test[2] = 1}
+		elsif ($arg == 3) {$test[3] = 1}
+		elsif ($arg == 4) {$test[4] = 1}
+		elsif ($arg == 5) {$test[5] = 1}
+		elsif ($arg == 30) {$b_irc = 0}
+		elsif ($arg == 31) {$show{'host'} = 0}
+		elsif ($arg == 32) {$show{'host'} = 1}
+		elsif ($arg == 33) {$use{'dmidecode-force'}=1}
+		elsif ($arg == 34) {$dl{'no-ssl-opt'}=$dl{'no-ssl'}}
+		elsif ($arg == 40) {
 			$dl{'tiny'} = 0;
-			$b_downloader = 1;},
-		'41' => sub {
+			$b_downloader = 1;}
+		elsif ($arg == 41) {
 			$dl{'curl'} = 0;
-			$b_downloader = 1;},
-		'42' => sub {
+			$b_downloader = 1;}
+		elsif ($arg == 42) {
 			$dl{'fetch'} = 0;
-			$b_downloader = 1;},
-		'43' => sub {
+			$b_downloader = 1;}
+		elsif ($arg == 43) {
 			$dl{'wget'} = 0;
-			$b_downloader = 1;;
-		},
-		'44' => sub {
+			$b_downloader = 1;}
+		elsif ($arg == 44) {
 			$dl{'curl'} = 0;
 			$dl{'fetch'} = 0;
 			$dl{'wget'} = 0;
-			$b_downloader = 1;;
-		}
-		);
-		if ($alts{$arg}){
-			$alts{$arg}->();
-		}
+			$b_downloader = 1;}
 		else {
 			error_handler('bad-arg', $opt, $arg);
-		}
-		# print "alt $arg\n"; 
-		},
+		}},
 	'debug:i' => sub { 
 		my ($opt,$arg) = @_;
 		if ($arg =~ /^[1-3]|[1-2][0-2]$/){

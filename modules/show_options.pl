@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: show_options.pl
-## Version: 2.1
-## Date 2018-01-09
+## Version: 2.2
+## Date 2018-01-10
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
 
@@ -9,6 +9,7 @@ use strict;
 use warnings;
 # use diagnostics;
 use 5.008;
+use Data::Dumper qw(Dumper); # print_r
 
 ### START DEFAULT CODE ##
 

@@ -1,14 +1,14 @@
 #!/usr/bin/env perl
 ## File: init.pl
-## Version: 1.1
-## Date 2018-01-07
+## Version: 1.2
+## Date 2018-01-10
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2018 Harald Hope
 
 use strict;
 use warnings;
 use 5.008;
-use Net::FTP;
+use Data::Dumper qw(Dumper); # print_r
 
 ### START DEFAULT CODE ##
 

@@ -1,9 +1,14 @@
 #!/usr/bin/env perl
 ## File: updater.pl
-## Version: 1.5
-## Date 2018-01-08
+## Version: 1.6
+## Date 2018-01-10
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
+
+use strict;
+use warnings;
+use 5.008;
+use Data::Dumper qw(Dumper); # print_r
 
 ### START DEFAULT CODE ##
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: system_debugger.pl
-## Version: 2.5
-## Date 2018-01-09
+## Version: 2.6
+## Date 2018-01-10
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
 
