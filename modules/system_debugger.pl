@@ -467,7 +467,8 @@ sub perl_modules {
 	my $filename = 'perl-modules.txt';
 	my @inc;
 	foreach (sort @INC){
-		if (-d $_){
+		# some BSD installs have . n @INC path
+		if (-d $_ && $_ ne '.'){
 			$_ =~ s/\/$//; # just in case, trim off trailing slash
 			$value .= "EXISTS: $_\n";
 			push @inc, $_;
