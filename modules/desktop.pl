@@ -59,7 +59,6 @@ sub awk {
 	eval $end if $b_log;
 	return $result;
 }
-
 # arg: 1 - string to strip start/end space/\n from
 # note: a few nano seconds are saved by using raw $_[0] for program
 sub check_program {

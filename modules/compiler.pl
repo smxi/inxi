@@ -123,15 +123,17 @@ sub get_compiler_version_bsd {
 sub get_compiler_version_linux {
 	eval $start if $b_log;
 	my ($file) = @_;
-	my (@compiler,$type,$version);
-	
-	my $result = (reader($file))[0];
-	$result =~ /(gcc|clang).*version\s([\S]+)/;
-	# $result = $result =~ /\*(gcc|clang)\*eval\*/;
-	if ($1){
-		my $type = $2;
-		$type ||= 'N/A'; # we don't really know what linux clang looks like!
-		@compiler = ($1,$type);
+	my (@compiler,$type);
+	my @data = reader($file);
+	my $result = $data[0] if @data;
+	if ($result){
+		$result =~ /(gcc|clang).*version\s([\S]+)/;
+		# $result = $result =~ /\*(gcc|clang)\*eval\*/;
+		if ($1){
+			$type = $2;
+			$type ||= 'N/A'; # we don't really know what linux clang looks like!
+			@compiler = ($1,$type);
+		}
 	}
 	log_data(@compiler) if $b_log;
 	

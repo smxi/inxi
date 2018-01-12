@@ -44,6 +44,35 @@ my $bsd_type = '';
 my $b_display = 1;
 my $b_log;
 
+# Duplicates the functionality of awk to allow for one liner
+# type data parsing. note: -1 corresponds to awk NF
+# args 1: array of data; 2: search term; 3: field result; 4: separator
+# correpsonds to: awk -F='separator' '/search/ {print $2}' <<< @data
+# array is sent by reference so it must be dereferenced
+# NOTE: if you just want the first row, pass it \S as search string
+# NOTE: if $num is undefined, it will skip the second step
+sub awk {
+	eval $start if $b_log;
+	my ($ref,$search,$num,$sep) = @_;
+	my ($result);
+	return if ! @$ref || ! $search;
+	foreach (@$ref){
+		if (/$search/i){
+			$result = $_;
+			$result =~ s/^\s+|\s+$//g;
+			last;
+		}
+	}
+	if ($result && defined $num){
+		$sep ||= '\s+';
+		$num-- if $num > 0; # retain the negative values as is
+		$result = (split /$sep/, $result)[$num];
+		$result =~ s/^\s+|\s+$//g if $result;
+	}
+	eval $end if $b_log;
+	return $result;
+}
+
 # arg: 1 - string to strip start/end space/\n from
 # note: a few nano seconds are saved by using raw $_[0] for program
 sub check_program {
