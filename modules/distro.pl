@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: distro.pl
-## Version: 1.2
-## Date 2018-01-11
+## Version: 1.3
+## Date 2018-01-12
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2018 Harald Hope
 
@@ -131,7 +131,7 @@ sub get_bsd_os {
 	if ($bsd_type eq 'darwin'){
 		my $file = '/System/Library/CoreServices/SystemVersion.plist';
 		if (-f $file){
-			my @data = grep {/(ProductName|ProductVersion)/} reader($file);
+			my @data = grep {/(ProductName|ProductVersion)/} main::reader($file);
 			@data = grep {/<string>/} @data;
 			@data = map {s/<[\/]?string>//g; } @data;
 			$distro = join (' ', @data);
@@ -226,7 +226,9 @@ sub get_linux_distro {
 			# CODENAME = Mantis  | VERSION = 12.2 
 			# for now, just take first occurrence, which should be the first line, which does 
 			# not use a variable type format
-			$distro = (main::clean_characters( grep { /suse/i } main::reader($distro_file)))[0];
+			@working = main::reader($distro_file);
+			$distro = main::awk(\@working,'suse');
+			$distro = main::clean_characters($distro) if $distro;
 		}
 		else {
 			$distro = (main::reader($distro_file))[0];
@@ -247,7 +249,8 @@ sub get_linux_distro {
 		}
 		else {
 			# debian issue can end with weird escapes like \n \l
-			$distro = (map {s/\\[a-z]|,|\*|\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} main::reader($issue))[0];
+			@working = main::reader($issue);
+			$distro = (map {s/\\[a-z]|,|\*|\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} @working)[0];
 			# this handles an arch bug where /etc/arch-release is empty and /etc/issue 
 			# is corrupted only older arch installs that have not been updated should 
 			# have this fallback required, new ones use os-release

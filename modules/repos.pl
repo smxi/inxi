@@ -104,7 +104,7 @@ sub uniq {
 
 ### START MODULE CODE ##
 
-## RepoData
+## Get RepoData
 {
 package RepoData;
 my $num = 0;
@@ -146,7 +146,7 @@ sub get_repos_linux {
 	if (-f $apt || -d "$apt.d"){
 		@repo_files = </etc/apt/sources.list.d/*.list>;
 		push @repo_files, $apt;
-		log_data('apt repo files: ' . join('; ', @repo_files) ) if $b_log;
+		main::log_data('apt repo files: ' . join('; ', @repo_files) ) if $b_log;
 		foreach ( sort @repo_files){
 			repo_builder($_,'apt','^\s*deb') if -r $_;
 		}
@@ -356,7 +356,7 @@ sub file_path {
 	$working = "$dir/file-repo-$working.txt";
 	return $working;
 }
-};1;
+}
 
 ### END MODULE CODE ##
 

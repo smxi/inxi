@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: desktop.pl
-## Version: 1.3
-## Date 2018-01-11
+## Version: 1.5
+## Date 2018-01-12
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2018 Harald Hope
 
@@ -30,6 +30,35 @@ my $display;
 my $display_opt = '';
 my $extra = 3;
 my @paths = ('/sbin','/bin','/usr/sbin','/usr/bin','/usr/X11R6/bin','/usr/local/sbin','/usr/local/bin');
+
+# Duplicates the functionality of awk to allow for one liner
+# type data parsing. note: -1 corresponds to awk NF
+# args 1: array of data; 2: search term; 3: field result; 4: separator
+# correpsonds to: awk -F='separator' '/search/ {print $2}' <<< @data
+# array is sent by reference so it must be dereferenced
+# NOTE: if you just want the first row, pass it \S as search string
+# NOTE: if $num is undefined, it will skip the second step
+sub awk {
+	eval $start if $b_log;
+	my ($ref,$search,$num,$sep) = @_;
+	my ($result);
+	return if ! @$ref || ! $search;
+	foreach (@$ref){
+		if (/$search/i){
+			$result = $_;
+			$result =~ s/^\s+|\s+$//g;
+			last;
+		}
+	}
+	if ($result && defined $num){
+		$sep ||= '\s+';
+		$num-- if $num > 0; # retain the negative values as is
+		$result = (split /$sep/, $result)[$num];
+		$result =~ s/^\s+|\s+$//g if $result;
+	}
+	eval $end if $b_log;
+	return $result;
+}
 
 # arg: 1 - string to strip start/end space/\n from
 # note: a few nano seconds are saved by using raw $_[0] for program
@@ -261,6 +290,9 @@ sub program_version {
 	return $version_nu;
 }
 
+### END CODE REQUIRED BY THIS MODULE ##
+
+### START MODULE CODE ##
 
 # Get DesktopEnvironment
 ## returns array:
@@ -322,31 +354,33 @@ sub get_kde_data {
 			# kf5-config: 1.0
 			# for QT, and Frameworks if we use it
 			if ($program = main::check_program("kded$kde_session_version")){
-				@version_data = data_grabber("$program --version 2>/dev/null");
+				@version_data = main::data_grabber("$program --version 2>/dev/null");
 			}
 			if ($program = main::check_program("plasmashell")){
-				@version_data2 = data_grabber("$program --version 2>/dev/null");
-				$desktop[1] = (split /\s+/, (grep {/^plasmashell/i} @version_data2)[0])[-1];
+				@version_data2 = main::data_grabber("$program --version 2>/dev/null");
+				$desktop[1] = main::awk(\@version_data2,'^plasmashell',-1,'\s+');
 			}
+			$desktop[0] = 'KDE Plasma';
 		}
 		if (!$desktop[1]){
 			$desktop[1] = $kde_session_version;
 		}
+		print Data::Dumper::Dumper \@version_data;
 		if ($extra > 0 && @version_data){
 			$desktop[2] = 'Qt';
-			$desktop[3] = (split /\s+/, (grep {/^Qt:/} @version_data)[0])[1];
+			$desktop[3] = main::awk(\@version_data,'^Qt:', 2,'\s+');
 		}
 	}
 	# KDE_FULL_SESSION property is only available since KDE 3.5.5.
 	elsif ($kde_full_session eq 'true'){
-		@version_data = data_grabber("kded --version 2>/dev/null");
+		@version_data = main::data_grabber("kded --version 2>/dev/null");
 		$desktop[0] = 'KDE';
-		$desktop[1] = (split /\s+/, (grep {/^KDE:/} @version_data)[0])[1];
+		$desktop[1] = main::awk(\@version_data,'^KDE:',2,'\s+');
 		if (!$desktop[1]){
 			$desktop[1] = '3.5';
 		}
 		if ($extra > 0){
-			$desktop[3] = (split /\s+/, (grep {/^Qt:/} @version_data)[0])[1];
+			$desktop[3] = main::awk(\@version_data,'^Qt:',2,'\s+');
 		}
 	}
 	eval $end if $b_log;
@@ -377,7 +411,7 @@ sub get_env_de_data {
 			if ($program = main::check_program("kded$kde_session_version") ){
 				@version_data = main::data_grabber("$program --version 2>/dev/null");
 				$desktop[2] = 'Qt';
-				$desktop[3] = (grep {/^Qt:/i} @version_data)[1];
+				$desktop[3] = main::awk(\@version_data,'^Qt:',2);
 			}
 			elsif ($program = main::check_program("qtdiag") ){
 				@data = main::program_values('qtdiag');
@@ -404,14 +438,14 @@ sub get_env_xprop_de_data {
 	# but it will still trigger the next gnome true case, so this needs to go 
 	# before gnome test eventually this needs to be better organized so all the 
 	# xprop tests are in the same section, but this is good enough for now.
-	if ($b_xprop && grep {/_muffin/} @xprop){
+	if ($b_xprop && main::awk(\@xprop,'_muffin' )){
 		@data = main::program_values('cinnamon');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('cinnamon',$data[0],$data[1],$data[2],$data[5]);
 		set_gtk_data() if $extra > 0;
 		$desktop[0] ||= 'Cinnamon';
 	}
-	elsif ($xdg_desktop eq 'MATE' || $b_xprop && grep {/_marco/} @xprop){
+	elsif ($xdg_desktop eq 'MATE' || $b_xprop && main::awk(\@xprop,'_marco')){
 		@data = main::program_values('mate');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('mate-about',$data[0],$data[1],$data[2],$data[5]);
@@ -440,7 +474,7 @@ sub get_xprop_de_data {
 	#print join "\n", @xprop, "\n";
 	# String: "This is xfdesktop version 4.2.12"
 	# alternate: xfce4-about --version > xfce4-about 4.10.0 (Xfce 4.10)
-	if (grep {/xfce/} @xprop){
+	if (main::awk(\@xprop,'xfce' )){
 		if (grep {/\"xfce4\"/} @xprop){
 			$version = '4';
 		}
@@ -469,8 +503,9 @@ sub get_xprop_de_data {
 			$desktop[3] = main::program_version('xfdesktop',$data[0],$data[1],$data[2],$data[5]);
 			$desktop[2] = $data[3];
 		}
+		
 	}
-	elsif ( grep {/blackbox_pid/} @xprop){
+	elsif ( main::awk(\@xprop,'blackbox_pid' )){
 		if (grep {/fluxbox/} @ps_cmd){
 			@data = main::program_values('fluxbox');
 			$desktop[0] = $data[3];
@@ -480,19 +515,19 @@ sub get_xprop_de_data {
 			$desktop[0] = 'Blackbox';
 		}
 	}
-	elsif ( grep {/openbox_pid/} @xprop){
+	elsif ( main::awk(\@xprop,'openbox_pid' )){
 		# note: openbox-lxde --version may be present, but returns openbox data
 		@data = main::program_values('openbox');
 		$desktop[1] = main::program_version('openbox',$data[0],$data[1],$data[2],$data[5]);
-		if ($xdg_desktop eq 'LXDE' || grep {/lxsession/} @ps_cmd){
+		if ($xdg_desktop eq 'LXDE' || main::awk(\@ps_cmd, 'lxsession')){
 			$desktop[1] = "(Openbox $desktop[1])" if $desktop[1];
 			$desktop[0] = 'LXDE';
 		}
-		elsif ($xdg_desktop eq 'Razor' || $xdg_desktop eq 'LXQt' || grep {/razor-desktop|lxqt-session/} @ps_cmd) {
-			if (grep {/lxqt-session/} @ps_cmd){
+		elsif ($xdg_desktop eq 'Razor' || $xdg_desktop eq 'LXQt' || main::awk(\@ps_cmd, 'razor-desktop|lxqt-session')) {
+			if (main::awk(\@ps_cmd,'lxqt-session' )){
 				$desktop[0] = 'LXQt';
 			}
-			elsif (grep {/razor-desktop/} @ps_cmd){
+			elsif (main::awk(\@ps_cmd, 'razor-desktop')){
 				$desktop[0] = 'Razor-Qt';
 			}
 			else {
@@ -504,35 +539,35 @@ sub get_xprop_de_data {
 			$desktop[0] = 'Openbox';
 		}
 	}
-	elsif ( grep {/icewm/} @xprop){
+	elsif (main::awk(\@xprop,'icewm' )){
 		@data = main::program_values('icewm');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('icewm',$data[0],$data[1],$data[2],$data[5]);
 	}
-	elsif ( grep {/enlightenment/} @xprop){
+	elsif (main::awk(\@xprop,'enlightenment' )){
 		$desktop[0] = 'Enlightenment';
 		# no -v or --version but version is in xprop -root
 		# ENLIGHTENMENT_VERSION(STRING) = "Enlightenment 0.16.999.49898"
-		$desktop[1] = (grep {/enlightenment_version/} @xprop)[0];
-		$desktop[1] = (split /"/, $desktop[1])[1];
-		$desktop[1] = (split /\s+/, $desktop[1])[1];
+		$desktop[1] = main::awk(\@xprop,'enlightenment_version',2,'\s+=\s+' );
+		$desktop[1] = (split /"/, $desktop[1])[1] if $desktop[1];
+		$desktop[1] = (split /\s+/, $desktop[1])[1] if $desktop[1];
 	}
-	elsif ( grep {/^i3_/} @xprop){
+	elsif (main::awk(\@xprop,'^i3_' )){
 		@data = main::program_values('i3');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('i3',$data[0],$data[1],$data[2],$data[5]);
 	}
-	elsif ( grep {/^windowmaker/} @xprop){
+	elsif (main::awk(\@xprop,'^windowmaker' )){
 		@data = main::program_values('wmaker');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('wmaker',$data[0],$data[1],$data[2],$data[5]);
 	}
-	elsif ( grep {/^_wm2/} @xprop){
+	elsif (main::awk(\@xprop,'^_wm2' )){
 		@data = main::program_values('wm2');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('wm2',$data[0],$data[1],$data[2],$data[5]);
 	}
-	elsif ( grep {/herbstluftwm/} @xprop){
+	elsif (main::awk(\@xprop,'herbstluftwm' )){
 		@data = main::program_values('herbstluftwm');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('herbstluftwm',$data[0],$data[1],$data[2],$data[5]);
@@ -543,61 +578,61 @@ sub get_xprop_de_data {
 sub get_ps_de_data {
 	eval $start if $b_log;
 	my ($program,@version_data);
-	if ( grep {/fvwm-crystal/} @ps_cmd){
+	if ( main::awk(\@ps_cmd,'fvwm-crystal' )){
 		@data = main::program_values('fvwm-crystal');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('fvwm',$data[0],$data[1],$data[2],$data[5]);
 	}
-	elsif ( grep {/fvwm/} @ps_cmd){
+	elsif (main::awk(\@ps_cmd,'fvwm' )){
 		@data = main::program_values('fvwm');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('fvwm',$data[0],$data[1],$data[2],$data[5]);
 	}
-	elsif ( grep {/pekwm/} @ps_cmd){
+	elsif (main::awk(\@ps_cmd,'pekwm' )){
 		@data = main::program_values('pekwm');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('pekwm',$data[0],$data[1],$data[2],$data[5]);
 	}
-	elsif ( grep {/awesome/} @ps_cmd){
+	elsif (main::awk(\@ps_cmd,'awesome' )){
 		@data = main::program_values('awesome');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('awesome',$data[0],$data[1],$data[2],$data[5]);
 	}
-	elsif ( grep {/scrotwm/} @ps_cmd){
+	elsif (main::awk(\@ps_cmd,'scrotwm' )){
 		@data = main::program_values('scrotwm');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('scrotwm',$data[0],$data[1],$data[2],$data[5]);
 	}
-	elsif ( grep {/spectrwm/} @ps_cmd){
+	elsif (main::awk(\@ps_cmd,'spectrwm' )){
 		@data = main::program_values('spectrwm');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('spectrwm',$data[0],$data[1],$data[2],$data[5]);
 	}
-	elsif ( grep {/([[:space:]]|\/)twm/} @ps_cmd){
+	elsif (main::awk(\@ps_cmd,'(\s|\/)twm' )){
 		# no version
 		$desktop[0] = 'Twm';
 	}
-	elsif ( grep {/([[:space:]]|\/)dwm/} @ps_cmd){
+	elsif (main::awk(\@ps_cmd,'(\s|\/)dwm' )){
 		@data = main::program_values('dwm');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('dwm',$data[0],$data[1],$data[2],$data[5]);
 	}
-	elsif ( grep {/wmii2/} @ps_cmd){
+	elsif (main::awk(\@ps_cmd,'wmii2' )){
 		@data = main::program_values('wmii2');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('wmii2',$data[0],$data[1],$data[2],$data[5]);
 	}
-	elsif ( grep {/wmii/} @ps_cmd){
+	elsif (main::awk(\@ps_cmd,'wmii' )){
 		@data = main::program_values('wmii');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('wmii',$data[0],$data[1],$data[2],$data[5]);
 	}
-	elsif ( grep {/([[:space:]]|\/)jwm/} @ps_cmd){
+	elsif (main::awk(\@ps_cmd,'(\s|\/)jwm' )){
 		@data = main::program_values('jwm');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('jwm',$data[0],$data[1],$data[2],$data[5]);
 	}
-	elsif ( grep {/sawfish/} @ps_cmd){
+	elsif (main::awk(\@ps_cmd,'sawfish' )){
 		@data = main::program_values('sawfish');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('sawfish',$data[0],$data[1],$data[2],$data[5]);
@@ -612,17 +647,20 @@ sub get_ps_de_data {
 
 sub set_gtk_data {
 	eval $start if $b_log;
-	my ($version,$program);
+	my ($version,$program,@data);
 	# this is a hack, and has to be changed with every toolkit version change, and 
 	# only dev systems 	# have this installed, but it's a cross distro command try it.
 	if ($program = main::check_program('pkg-config')){
-		$version = (main::data_grabber("$program --modversion gtk+-4.0 2>/dev/null"))[0];
+		@data = main::data_grabber("$program --modversion gtk+-4.0 2>/dev/null");
+		$version = main::awk(\@data,'\S');
 		# note: opensuse gets null output here, we need the command to get version and output sample
 		if ( !$version ){
-			$version = (main::data_grabber("$program --modversion gtk+-3.0 2>/dev/null"))[0];
+			@data = main::data_grabber("$program --modversion gtk+-3.0 2>/dev/null");
+			$version = main::awk(\@data,'\S');
 		}
 		if ( !$version ){
-			$version = (main::data_grabber("$program --modversion gtk+-2.0 2>/dev/null"))[0];
+			@data = main::data_grabber("$program --modversion gtk+-2.0 2>/dev/null");
+			$version = main::awk(\@data,'\S');
 		}
 	}
 	# now let's go to more specific version tests, this will never cover everything and that's fine.
@@ -631,53 +669,45 @@ sub set_gtk_data {
 		# this is the most likely order as of: 2014-01-13. Not going to try to support all 
 		# package managers too much work, just the very biggest ones.
 		if ($program = main::check_program('dpkg')){
-			$version = (grep {/^[[:space:]]*Version/} main::data_grabber("$program -s libgtk-3-0 2>/dev/null"))[0];
-			$version = (split /\s+/, $version)[1];
+			@data = main::data_grabber("$program -s libgtk-3-0 2>/dev/null");
+			$version = main::awk(\@data,'^\s*Version',2,'\s+');
 			# just guessing on gkt 4 package name
 			if (!$version){
-				$version = (grep {/^[[:space:]]*Version/} main::data_grabber("$program -s libgtk-4-0 2>/dev/null"))[0];
-				$version = (split /\s+/, $version)[1];
+				@data = main::data_grabber("$program -s libgtk-4-0 2>/dev/null");
+				$version = main::awk(\@data,'^\s*Version',2,'\s+');
 			}
 			if (!$version){
-				$version = (grep {/^[[:space:]]*Version/} main::data_grabber("$program -s libgtk2.0-0 2>/dev/null"))[0];
-				$version = (split /\s+/, $version)[1];
+				@data = main::data_grabber("$program -s libgtk2.0-0 2>/dev/null");
+				$version = main::awk(\@data,'^\s*Version',2,'\s+');
 			}
 		}
 		elsif ($program = main::check_program('pacman')){
-			$version = (grep {/^[[:space:]]*Version/} main::data_grabber("$program -Qi gtk3 2>/dev/null"))[0];
-			$version = (split /\s*:\s*/, $version)[1];
-			$version = main::trimmer($version);
+			@data = main::data_grabber("$program -Qi gtk3 2>/dev/null");
+			$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
 			# just guessing on gkt 4 package name
 			if (!$version){
-				$version = (grep {/^[[:space:]]*Version/} main::data_grabber("$program -Qi gtk3 2>/dev/null"))[0];
-				$version = (split /\s*:\s*/, $version)[1];
-				$version = main::trimmer($version);
+				@data = main::data_grabber("$program -Qi gtk4 2>/dev/null");
+				$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
 			}
 			if (!$version){
-				$version = (grep {/^[[:space:]]*Version/} main::data_grabber("$program -Qi gtk3 2>/dev/null"))[0];
-				$version = (split /\s*:\s*/, $version)[1];
-				$version = main::trimmer($version);
+				@data = main::data_grabber("$program -Qi gtk2 2>/dev/null");
+				$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
 			}
 		}
 		elsif ($program = main::check_program('rpm')){
-			$version = (grep {/^[[:space:]]*Version/} main::data_grabber("$program -qi libgtk-3-0 2>/dev/null"))[0];
-			$version = (split /\s*:\s*/, $version)[1];
-			$version = main::trimmer($version);
+			@data = main::data_grabber("$program -qi libgtk-3-0 2>/dev/null");
+			$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
 			# just guessing on gkt 4 package name
 			if (!$version){
-				$version = (grep {/^[[:space:]]*Version/} main::data_grabber("$program -qi libgtk-4-0 2>/dev/null"))[0];
-				$version = (split /\s*:\s*/, $version)[1];
-				$version = main::trimmer($version);
+				@data = main::data_grabber("$program -qi libgtk-4-0 2>/dev/null");
+				$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
 			}
 			if (!$version){
-				$version = (grep {/^[[:space:]]*Version/} main::data_grabber("$program -qi libgtk-2-0 2>/dev/null"))[0];
-				$version = (split /\s*:\s*/, $version)[1];
-				$version = main::trimmer($version);
+				@data = main::data_grabber("$program -qi libgtk-3-0 2>/dev/null");
+				$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
 			}
-			
 		}
 	}
-	
 	$desktop[2] = 'Gtk';
 	eval $end if $b_log;
 }
@@ -687,7 +717,7 @@ sub set_info_data {
 	if (@data = grep {/gnome-shell|gnome-panel|kicker|lxpanel|mate-panel|plasma-desktop|plasma-netbook|xfce4-panel/} @ps_cmd ) {
 		# only one entry per type, can be multiple
 		foreach $item (@data){
-			if (! grep {/$item/} @info){
+			if (! main::awk(\@info, "$item")){
 				$item = main::trimmer($item);
 				push @info, (split /\s+/, $item)[0];
 			}
@@ -711,7 +741,7 @@ sub set_xprop {
 
 sub get_display_manager {
 	eval $start if $b_log;
-	my (@found,$working,$temp);
+	my (@data,@found,$temp,$working);
 	# ldm - LTSP display manager. Note that sddm does not appear to have a .pid 
 	# extension in Arch note: to avoid positives with directories, test for -f 
 	# explicitly, not -e
@@ -731,15 +761,16 @@ sub get_display_manager {
 		$working =~ s/\.\S+$//;
 		# note: there's always been an issue with duplicated dm's in inxi, this should now correct it
 		if ( ( -f "/run/$id" || -d "/run/$working" || -f "/var/run/$id" ) && ! grep {/$working/} @found ){
-			if ($extra > 2 && grep {/$working/} @dms_version ){
-				$temp = (split /\s+/, (main::data_grabber("$working --version 2>&1") )[0])[1];
+			if ($extra > 2 && awk( \@dms_version, $working) ){
+				@data = main::data_grabber("$working --version 2>&1");
+				$temp = awk(\@data,'\S',2,'\s+');
 				$working .= ' ' . $temp if $temp;
 			}
 			push @found, $working;
 		}
 	}
 	if (!@found && grep {/\/usr.*\/x/ && !/\/xprt/} @ps_cmd){
-		if (grep {/startx/} @ps_cmd){
+		if (awk (\@ps_cmd, 'startx') ){
 			$found[0] = 'startx';
 		}
 	}
@@ -750,14 +781,13 @@ sub get_display_manager {
 	return join ',', @found if @found;
 }
 
-### END CODE REQUIRED BY THIS MODULE ##
-
-### START MODULE CODE ##
-
 ### END MODULE CODE ##
 
 ### START TEST CODE ##
 
 my @desktop = DesktopEnvironment::get();
 print Dumper \@desktop;
+
+my $dm = get_display_manager();
+print Dumper $dm;
 

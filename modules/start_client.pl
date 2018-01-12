@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 ## File: start_client.pl
-## Version: 1.9
-## Date 2018-01-10
+## Version: 2.0
+## Date 2018-01-12
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
 
@@ -212,6 +212,7 @@ sub get_shell_data {
 
 ### START MODULE CODE ##
 
+# StartClient
 {
 package StartClient;
 
@@ -224,17 +225,18 @@ my $pppid = '';
 # NOTE: there's no reason to crete an object, we can just access
 # the features statically. 
 # args: none
-sub new {
-	my $class = shift;
-	my $self = {};
-	# print "$f\n";
-	# print "$type\n";
-	return bless $self, $class;
-}
+# sub new {
+# 	my $class = shift;
+# 	my $self = {};
+# 	# print "$f\n";
+# 	# print "$type\n";
+# 	return bless $self, $class;
+# }
 
 sub get_client_data {
 	eval $start if $b_log;
 	$ppid = getppid();
+	main::set_ps_aux() if ! @ps_aux;
 	if (!$b_irc){
 		main::get_shell_data($ppid);
 	}
@@ -255,15 +257,15 @@ sub get_client_name {
 	# print "$ppid\n";
 	if ($ppid && -e "/proc/$ppid/exe" ){
 		$client_name = lc(readlink "/proc/$ppid/exe");
-		$client_name =~ s/.*\///;
+		$client_name =~ s/^.*\///;
 		if ($client_name =~ /^bash|dash|sh|python.*|perl.*$/){
-			$pppid = (main::data_grabber("ps -p $ppid -o ppid 2>/dev/null"))[1];
+			$pppid = (main::data_grabber("ps -p $ppid -o ppid"))[1];
 			#my @temp = (main::data_grabber("ps -p $ppid -o ppid 2>/dev/null"))[1];
 			$pppid =~ s/^\s+|\s+$//g;
 			$client_name =~ s/[0-9\.]+$//; # clean things like python2.7
 			if ($pppid && -f "/proc/$pppid/exe" ){
 				$client_name = lc(readlink "/proc/$pppid/exe");
-				$client_name =~ s/.*\///;
+				$client_name =~ s/^.*\///;
 				$client{'native'} = 0;
 			}
 		}
@@ -274,7 +276,7 @@ sub get_client_name {
 	else {
 		if (! check_modern_konvi() ){
 			$ppid = getppid();
-			$client_name = (main::data_grabber("ps -p $ppid 2>/dev/null"))[1];
+			$client_name = (main::data_grabber("ps -p $ppid"))[1];
 			
 			my @data = split /\s+/, $client_name;
 			if ($bsd_type){
@@ -296,13 +298,13 @@ sub get_client_name {
 			}
 		}
 	}
-	main::log_data("Client: $client{'name'} :: version: $client{'version'} :: konvi: $client{'konvi'} :: PPID: $ppid");
+	main::log_data("Client: $client{'name'} :: version: $client{'version'} :: konvi: $client{'konvi'} :: PPID: $ppid") if $b_log;
 	eval $end if $b_log;
 }
 sub get_client_version {
 	eval $start if $b_log;
 	@app = main::program_values($client{'name'});
-	my (@data,$string);
+	my (@data,@working,$string);
 	if (@app){
 		$string = ($client{'name'} =~ /^gribble|limnoria|supybot$/) ? 'supybot' : $client{'name'};
 		$client{'version'} = main::program_version($string,$app[0],$app[1],$app[2]);
@@ -314,12 +316,14 @@ sub get_client_version {
 		$client{'console-irc'} = 1;
 	}
 	elsif ($client{'name'} eq 'bitchx') {
-		@data = data_grabber("$client{'name'} -v");
-		$string = (grep {$_ =~ /Version/} @data)[0];
-		$string =~ s/[()]|bitchx-//g; 
-		@data = split /\s+/, $string;
-		$_=lc for @data;
-		$client{'version'} = ($data[1] eq 'version') ? $data[2] : $data[1];
+		@data = main::data_grabber("$client{'name'} -v");
+		$string = awk(\@data,'Version');
+		if ($string){
+			$string =~ s/[()]|bitchx-//g; 
+			@data = split /\s+/, $string;
+			$_=lc for @data;
+			$client{'version'} = ($data[1] eq 'version') ? $data[2] : $data[1];
+		}
 	}
 	# 'hexchat' => ['',0,'','HexChat',0,0], # special
 	# the hexchat author decided to make --version/-v return a gtk dialogue box, lol...
@@ -333,13 +337,7 @@ sub get_client_version {
 		elsif ( -f '~/.config/hexchat/xchat.conf' ){
 			@data = main::reader('~/.config/hexchat/xchat.conf');
 		}
-		if (@data){
-			foreach (@data){
-				$_ = trimmer($_);
-				$client{'version'} = ( grep { last if $_ =~ /version/i } split /\s*=\s*/, $_)[1];
-				last if $client{'version'};
-			}
-		}
+		$client{'version'} = main::awk(\@data,'version',2,'\s*=\s*');
 		$client{'name-print'} = 'HexChat';
 	}
 	# note: see legacy inxi konvi logic if we need to restore any of the legacy code.
@@ -347,7 +345,7 @@ sub get_client_version {
 		$client{'konvi'} = ( ! $client{'native'} ) ? 2 : 1;
 	}
 	elsif ($client{'name'} =~ /quassel/) {
-		@data = data_grabber("$client{'name'} -v 2>/dev/null");
+		@data = main::data_grabber("$client{'name'} -v 2>/dev/null");
 		foreach (@data){
 			if ($_ =~ /^Quassel IRC:/){
 				$client{'version'} = (split /\s+/, $_ )[2];
@@ -362,7 +360,7 @@ sub get_client_version {
 	}
 	# then do some perl type searches, do this last since it's a wildcard search
 	elsif ($client{'name'} =~ /^perl.*|ksirc|dsirc$/ ) {
-		my @cmdline = get_cmdline();
+		my @cmdline = main::get_cmdline();
 		# Dynamic runpath detection is too complex with KSirc, because KSirc is started from
 		# kdeinit. /proc/<pid of the grandparent of this process>/exe is a link to /usr/bin/kdeinit
 		# with one parameter which contains parameters separated by spaces(??), first param being KSirc.
@@ -412,18 +410,17 @@ sub get_cmdline {
 		$cmdline[0] = $rows[0];
 		$i = ($cmdline[0]) ? 1 : 0;
 	}
-	main::log_data("cmdline: @cmdline count: $i");
+	main::log_data("cmdline: @cmdline count: $i") if $b_log;
 	eval $end if $b_log;
 	return @cmdline;
 }
 sub perl_python_client {
 	eval $start if $b_log;
 	return 1 if $client{'version'};
-	main::set_ps_aux();
 	# this is a hack to try to show konversation if inxi is running but started via /cmd
 	# OR via script shortcuts, both cases in fact now
-	# main::print_line("konvi: " . scalar grep { $_ =~ /konversation/ } @ps_aux);
-	if ( $b_display && ( scalar grep { $_ =~ /konversation/ } @ps_aux ) > 0){
+	# main::print_line("konvi: " . scalar grep { $_ =~ /konversation/ } @ps_cmd);
+	if ( $b_display && ( scalar grep { $_ =~ /konversation/ } @ps_cmd ) > 0){
 		@app = main::program_values('konversation');
 		$client{'version'} = main::program_version('konversation',$app[0],$app[1],$app[2]);
 		$client{'name'} = 'konversation';
@@ -432,15 +429,15 @@ sub perl_python_client {
 	}
 	## NOTE: supybot only appears in ps aux using 'SHELL' command; the 'CALL' command
 	## gives the user system irc priority, and you don't see supybot listed, so use SHELL
-	elsif ( !$b_display && ( scalar grep { $_ =~ /supybot/ } @ps_aux ) > 0  ){
+	elsif ( !$b_display && ( scalar grep { $_ =~ /supybot/ } @ps_cmd ) > 0  ){
 		@app = main::program_values('supybot');
 		$client{'version'} = main::program_version('supybot',$app[0],$app[1],$app[2]);
 		if ($client{'version'}){
-			if ( ( scalar grep { $_ =~ /gribble/i } @ps_aux ) > 0){
+			if ( ( scalar grep { $_ =~ /gribble/ } @ps_cmd ) > 0){
 				$client{'name'} = 'gribble';
 				$client{'name-print'} = 'Gribble';
 			}
-			if ( ( scalar grep { $_ =~ /limnoria/i } @ps_aux ) > 0){
+			if ( ( scalar grep { $_ =~ /limnoria/ } @ps_cmd ) > 0){
 				$client{'name'} = 'limnoria';
 				$client{'name-print'} = 'Limnoria';
 			}
@@ -458,7 +455,7 @@ sub perl_python_client {
 	else {
 		$client{'name-print'} = "Unknown $client{'name'} client";
 	}
-	main::log_data("namep: $client{'name-print'} name: $client{'name'} version: $client{'version'}");
+	main::log_data("namep: $client{'name-print'} name: $client{'name'} version: $client{'version'}") if $b_log;
 	eval $end if $b_log;
 }
 ## try to infer the use of Konversation >= 1.2, which shows $PPID improperly
@@ -473,15 +470,14 @@ sub check_modern_konvi {
 	my $konvi = '';
 	my $pid = '';
 	my (@temp);
-	# main::log_data("name: $client{'name'} :: qdb: $client{'qdbus'} :: version: $client{'version'} :: konvi: $client{'konvi'} :: PPID: $ppid");
+	# main::log_data("name: $client{'name'} :: qdb: $client{'qdbus'} :: version: $client{'version'} :: konvi: $client{'konvi'} :: PPID: $ppid") if $b_log;
 	# sabayon uses /usr/share/apps/konversation as path
 	if ( -d '/usr/share/kde4/apps/konversation' || -d '/usr/share/apps/konversation' ){
-		$pid = (grep { $_ =~ /konversation/i } main::data_grabber('ps -A'))[0];
-		main::log_data("pid: $pid");
-		$pid =~ s/^\s|\s$//g;
-		$pid = (split /\s+/, $pid)[0];
+		@temp = main::data_grabber('ps -A');
+		$pid = main::awk(\@ps_aux,'konversation',2,'\s+');
+		main::log_data("pid: $pid") if $b_log;
 		$konvi = readlink ("/proc/$pid/exe");
-		$konvi =~ s/.*\///; # basename
+		$konvi =~ s/^.*\///; # basename
 		@app = main::program_values('konversation');
 		if ($konvi){
 			@app = main::program_values('konversation');
@@ -500,8 +496,8 @@ sub check_modern_konvi {
 		}
 	}
 	main::log_data("name: $client{'name'} name print: $client{'name-print'} 
-	qdb: $client{'qdbus'} version: $konvi_version konvi: $konvi PID: $pid");
-	main::log_data("b_is_qt4: $b_modern_konvi");
+	qdb: $client{'qdbus'} version: $konvi_version konvi: $konvi PID: $pid") if $b_log;
+	main::log_data("b_is_qt4: $b_modern_konvi") if $b_log;
 	## for testing this module
 # 	my $ppid = getppid();
 # 	system('qdbus org.kde.konversation', '/irc', 'say', $client{'dserver'}, $client{'dtarget'}, 
@@ -545,7 +541,7 @@ sub set_konvi_data {
 	}
 	eval $end if $b_log;
 }
-}1;
+}
 
 ### END MODULE CODE ##
 
