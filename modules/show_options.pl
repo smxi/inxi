@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: show_options.pl
-## Version: 2.2
-## Date 2018-01-10
+## Version: 2.3
+## Date 2018-01-11
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
 
@@ -265,7 +265,7 @@ sub show_options {
 	['2', '-m', '', "Width of memory bus, data and total (if present and greater 
 	than data); Detail, if present, for Type; module voltage, if available." ],
 	['2', '-S', '', "Panel/shell information in desktop output, if in X 
-	(like gnome-shell, cinnamon, mate-panel)." ]
+	(like gnome-shell, cinnamon, mate-panel); if available, dm version number." ]
 	);
 	push @data, @rows;
 	if ( $b_weather ){

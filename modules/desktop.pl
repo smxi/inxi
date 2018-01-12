@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 ## File: desktop.pl
-## Version: 1.2
+## Version: 1.3
 ## Date 2018-01-11
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2018 Harald Hope
@@ -149,7 +149,11 @@ sub program_values {
 	'jwm' => ['^jwm',2,'--version','JWM',0,1],
 	'i3' => ['^i3',2,'--version','i3',0,1],
 	'icewm' => ['^icewm',2,'--version','IceWM',0,1],
+	'kded' => ['^KDE:',2,'--version','KDE',0,1],
 	'kded3' => ['^KDE Development Platform:',4,'--version','KDE',0,1],
+	'kded4' => ['^KDE Development Platform:',4,'--version','KDE',0,1],
+	'kf5-config' => ['^KDE Frameworks:',2,'--version','KDE Plasma',0,1],
+	'kf6-config' => ['^KDE Frameworks:',2,'--version','KDE Plasma',0,1],
 	# command: lxqt-about
 	'lxqt' => ['^lxqt-about',2,'--version','LXQT',0,1],
 	'mate' => ['^MATE[[:space:]]DESKTOP',-1,'--version','MATE',0,1],
@@ -258,415 +262,18 @@ sub program_version {
 }
 
 
-# Get DesktopEnvironment
-## returns array:
-# 0 - desktop name
-# 1 - version
-# 2 - toolkit
-# 3 - toolkit version
-# 4 - info extra desktop data
-{
-package DesktopEnvironment;
-my ($b_xprop,$kde_session_version,$xdg_desktop,@desktop,@data,@xprop);
-sub get {
-	# works on 4, assume 5 will id the same, why not, no need to update in future
-	# KDE_SESSION_VERSION is the integer version of the desktop
-	# NOTE: as of plasma 5, the tool: about-distro MAY be available, that will show
-	# actual desktop data, so once that's in debian/ubuntu, if it gets in, add that test
-	$xdg_desktop = ( $ENV{'XDG_CURRENT_DESKTOP'} ) ? $ENV{'XDG_CURRENT_DESKTOP'} : '';
-	$kde_session_version = ($ENV{'KDE_SESSION_VERSION'}) ? $ENV{'KDE_SESSION_VERSION'} : '';
-	get_kde_data();
-	
-	if (!@desktop){
-		get_env_de_data();
-	}
-	if (!@desktop){
-		get_env_xprop_de_data();
-	}
-	if (!@desktop && $b_xprop ){
-		get_xprop_de_data();
-	}
-	if (!@desktop){
-		get_ps_de_data();
-	}
-	if ($extra > 2 && @desktop){
-		set_info_data();
-	}
-	main::log_data('desktop data: ' . join '; ', @desktop) if $b_log;
-	return @desktop;
-}
-sub get_kde_data {
-	eval $start if $b_log;
-	my $kde_full_session = ($ENV{'KDE_FULL_SESSION'}) ? $ENV{'KDE_FULL_SESSION'} : '';
-	return 1 if ($xdg_desktop ne 'KDE' && !$kde_session_version && $kde_full_session ne 'true' );
-	
-	
-	eval $end if $b_log;
-}
-sub get_env_de_data {
-	eval $start if $b_log;
-	my ($program,@version_data);
-	
-	if ($xdg_desktop eq 'Unity'){
-		@data = main::program_values('unity');
-		$desktop[0] = $data[3];
-		$desktop[0] ||= 'Unity';
-		$desktop[1] = main::program_version('cinnamon',$data[0],$data[1],$data[2],$data[5]);
-		set_gtk_data() if $extra > 0;
-	}
-	elsif ( $xdg_desktop =~ /Budgie/i ){
-		@data = main::program_values('budgie');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('budgie-desktop',$data[0],$data[1],$data[2],$data[5]);
-		set_gtk_data() if $extra > 0;
-	}
-	elsif ( $xdg_desktop eq 'LXQT' ){
-		@data = main::program_values('lxqt');
-		$desktop[0] = $data[3];
-		$desktop[0] ||= 'LXQT';
-		$desktop[1] = main::program_version('lxqt-about',$data[0],$data[1],$data[2],$data[5]);
-		if ( $extra > 0 ){
-			if ($program = main::check_program("kded$kde_session_version") ){
-				@version_data = main::data_grabber("$program --version 2>/dev/null");
-				$desktop[2] = 'Qt';
-				$desktop[3] = (grep {/^Qt:/i} @version_data)[1];
-			}
-			elsif ($program = main::check_program("qtdiag") ){
-				@data = main::program_values('qtdiag');
-				$desktop[3] = main::program_version($program,$data[0],$data[1],$data[2],$data[5]);
-				$desktop[2] = $data[3];
-			}
-		}
-	}
-	# note, X-Cinnamon value strikes me as highly likely to change, so just 
-	# search for the last part
-	elsif ( $xdg_desktop =~ /Cinnamon/i ){
-		@data = main::program_values('cinnamon');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('cinnamon',$data[0],$data[1],$data[2],$data[5]);
-		set_gtk_data() if $extra > 0;
-	}
-	eval $end if $b_log;
-}
-sub get_env_xprop_de_data {
-	eval $start if $b_log;
-	my ($program,@version_data);
-	set_xprop();
-	# note that cinnamon split from gnome, and and can now be id'ed via xprop,
-	# but it will still trigger the next gnome true case, so this needs to go 
-	# before gnome test eventually this needs to be better organized so all the 
-	# xprop tests are in the same section, but this is good enough for now.
-	if ($b_xprop && grep {/_muffin/} @xprop){
-		@data = main::program_values('cinnamon');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('cinnamon',$data[0],$data[1],$data[2],$data[5]);
-		set_gtk_data() if $extra > 0;
-		$desktop[0] ||= 'Cinnamon';
-	}
-	elsif ($xdg_desktop eq 'MATE' || $b_xprop && grep {/_marco/} @xprop){
-		@data = main::program_values('mate');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('mate-about',$data[0],$data[1],$data[2],$data[5]);
-		set_gtk_data() if $extra > 0;
-		$desktop[0] ||= 'MATE';
-	}
-	# note, GNOME_DESKTOP_SESSION_ID is deprecated so we'll see how that works out
-	# https://bugzilla.gnome.org/show_bug.cgi?id=542880
-	elsif ($xdg_desktop eq 'GNOME' || $ENV{'GNOME_DESKTOP_SESSION_ID'}){
-		if ($program = main::check_program('gnome-about') ) {
-			@data = main::program_values('gnome-about');
-			$desktop[1] = main::program_version('gnome-about',$data[0],$data[1],$data[2],$data[5]);
-		}
-		elsif ($program = main::check_program('gnome-shell') ) {
-			@data = main::program_values('gnome-shell');
-			$desktop[1] = main::program_version('gnome-shell',$data[0],$data[1],$data[2],$data[5]);
-		}
-		set_gtk_data() if $extra > 0;
-		$desktop[0] = ($data[3])?$data[3] :'Gnome';
-	}
-	eval $end if $b_log;
-}
-sub get_xprop_de_data {
-	eval $start if $b_log;
-	my ($program,@version_data,$version);
-	#print join "\n", @xprop, "\n";
-	# String: "This is xfdesktop version 4.2.12"
-	# alternate: xfce4-about --version > xfce4-about 4.10.0 (Xfce 4.10)
-	if (grep {/xfce/} @xprop){
-		
-		if (grep {/\"xfce4\"/} @xprop){
-			$version = '4';
-		}
-		elsif (grep {/\"xfce5\"/} @xprop){
-			$version = '5';
-		}
-		else {
-			$version = '4';
-		}
-		@data = main::program_values('xfdesktop');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('xfdesktop',$data[0],$data[1],$data[2],$data[5]);
-		if ( !$desktop[1] ){
-			@data = main::program_values("xfce${version}-panel");
-			print Data::Dumper::Dumper \@data;
-			$desktop[1] = main::program_version("xfce${version}-panel",$data[0],$data[1],$data[2],$data[5]);
-		}
-		$desktop[0] ||= 'Xfce';
-		$desktop[1] ||= 4;
-		if ($extra > 0){
-			@data = main::program_values('xfdesktop-toolkit');
-			$desktop[3] = main::program_version('xfdesktop',$data[0],$data[1],$data[2],$data[5]);
-			$desktop[2] = $data[3];
-		}
-	}
-	elsif ( grep {/blackbox_pid/} @xprop){
-		if (grep {/fluxbox/} @ps_cmd){
-			@data = main::program_values('fluxbox');
-			$desktop[0] = $data[3];
-			$desktop[1] = main::program_version('fluxbox',$data[0],$data[1],$data[2],$data[5]);
-		}
-		else {
-			$desktop[0] = 'Blackbox';
-		}
-	}
-	elsif ( grep {/openbox_pid/} @xprop){
-		# note: openbox-lxde --version may be present, but returns openbox data
-		@data = main::program_values('openbox');
-		$desktop[1] = main::program_version('openbox',$data[0],$data[1],$data[2],$data[5]);
-		if ($xdg_desktop eq 'LXDE' || grep {/lxsession/} @ps_cmd){
-			$desktop[1] = "(Openbox $desktop[1])" if $desktop[1];
-			$desktop[0] = 'LXDE';
-		}
-		elsif ($xdg_desktop eq 'Razor' || $xdg_desktop eq 'LXQt' || grep {/razor-desktop|lxqt-session/} @ps_cmd) {
-			if (grep {/lxqt-session/} @ps_cmd){
-				$desktop[0] = 'LXQt';
-			}
-			elsif (grep {/razor-desktop/} @ps_cmd){
-				$desktop[0] = 'Razor-Qt';
-			}
-			else {
-				$desktop[0] = 'LX-Qt-Variant';
-			}
-			$desktop[1] = "(Openbox $desktop[1])" if $desktop[1];
-		}
-		else {
-			$desktop[0] = 'Openbox';
-		}
-	}
-	elsif ( grep {/icewm/} @xprop){
-		@data = main::program_values('icewm');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('icewm',$data[0],$data[1],$data[2],$data[5]);
-	}
-	elsif ( grep {/enlightenment/} @xprop){
-		$desktop[0] = 'Enlightenment';
-		# no -v or --version but version is in xprop -root
-		# ENLIGHTENMENT_VERSION(STRING) = "Enlightenment 0.16.999.49898"
-		$desktop[1] = (grep {/enlightenment_version/} @xprop)[0];
-		$desktop[1] = (split /"/, $desktop[1])[1];
-		$desktop[1] = (split /\s+/, $desktop[1])[1];
-	}
-	elsif ( grep {/^i3_/} @xprop){
-		@data = main::program_values('i3');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('i3',$data[0],$data[1],$data[2],$data[5]);
-	}
-	elsif ( grep {/^windowmaker/} @xprop){
-		@data = main::program_values('wmaker');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('wmaker',$data[0],$data[1],$data[2],$data[5]);
-	}
-	elsif ( grep {/^_wm2/} @xprop){
-		@data = main::program_values('wm2');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('wm2',$data[0],$data[1],$data[2],$data[5]);
-	}
-	elsif ( grep {/herbstluftwm/} @xprop){
-		@data = main::program_values('herbstluftwm');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('herbstluftwm',$data[0],$data[1],$data[2],$data[5]);
-	}
-	# need to check starts line because it's so short
-	eval $end if $b_log;
-}
-sub get_ps_de_data {
-	eval $start if $b_log;
-	my ($program,@version_data);
-	if ( grep {/fvwm-crystal/} @ps_cmd){
-		@data = main::program_values('fvwm-crystal');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('fvwm',$data[0],$data[1],$data[2],$data[5]);
-	}
-	elsif ( grep {/fvwm/} @ps_cmd){
-		@data = main::program_values('fvwm');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('fvwm',$data[0],$data[1],$data[2],$data[5]);
-	}
-	elsif ( grep {/pekwm/} @ps_cmd){
-		@data = main::program_values('pekwm');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('pekwm',$data[0],$data[1],$data[2],$data[5]);
-	}
-	elsif ( grep {/awesome/} @ps_cmd){
-		@data = main::program_values('awesome');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('awesome',$data[0],$data[1],$data[2],$data[5]);
-	}
-	elsif ( grep {/scrotwm/} @ps_cmd){
-		@data = main::program_values('scrotwm');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('scrotwm',$data[0],$data[1],$data[2],$data[5]);
-	}
-	elsif ( grep {/spectrwm/} @ps_cmd){
-		@data = main::program_values('spectrwm');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('spectrwm',$data[0],$data[1],$data[2],$data[5]);
-	}
-	elsif ( grep {/([[:space:]]|\/)twm/} @ps_cmd){
-		# no version
-		$desktop[0] = 'Twm';
-	}
-	elsif ( grep {/([[:space:]]|\/)dwm/} @ps_cmd){
-		@data = main::program_values('dwm');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('dwm',$data[0],$data[1],$data[2],$data[5]);
-	}
-	elsif ( grep {/wmii2/} @ps_cmd){
-		@data = main::program_values('wmii2');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('wmii2',$data[0],$data[1],$data[2],$data[5]);
-	}
-	elsif ( grep {/wmii/} @ps_cmd){
-		@data = main::program_values('wmii');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('wmii',$data[0],$data[1],$data[2],$data[5]);
-	}
-	elsif ( grep {/([[:space:]]|\/)jwm/} @ps_cmd){
-		@data = main::program_values('jwm');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('jwm',$data[0],$data[1],$data[2],$data[5]);
-	}
-	elsif ( grep {/sawfish/} @ps_cmd){
-		@data = main::program_values('sawfish');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('sawfish',$data[0],$data[1],$data[2],$data[5]);
-	}
-	elsif ( grep {/afterstep/} @ps_cmd){
-		@data = main::program_values('afterstep');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('afterstep',$data[0],$data[1],$data[2],$data[5]);
-	}
-	eval $end if $b_log;
-}
-
-sub set_gtk_data {
-	eval $start if $b_log;
-	my ($version,$program);
-	# this is a hack, and has to be changed with every toolkit version change, and 
-	# only dev systems 	# have this installed, but it's a cross distro command try it.
-	if ($program = main::check_program('pkg-config')){
-		$version = (main::data_grabber("$program --modversion gtk+-4.0 2>/dev/null"))[0];
-		# note: opensuse gets null output here, we need the command to get version and output sample
-		if ( !$version ){
-			$version = (main::data_grabber("$program --modversion gtk+-3.0 2>/dev/null"))[0];
-		}
-		if ( !$version ){
-			$version = (main::data_grabber("$program --modversion gtk+-2.0 2>/dev/null"))[0];
-		}
-	}
-	# now let's go to more specific version tests, this will never cover everything and that's fine.
-	if (!$version){
-		# we'll try some known package managers next. dpkg will handle a lot of distros 
-		# this is the most likely order as of: 2014-01-13. Not going to try to support all 
-		# package managers too much work, just the very biggest ones.
-		if ($program = main::check_program('dpkg')){
-			$version = (grep {/^[[:space:]]*Version/} main::data_grabber("$program -s libgtk-3-0 2>/dev/null"))[0];
-			$version = (split /\s+/, $version)[1];
-			# just guessing on gkt 4 package name
-			if (!$version){
-				$version = (grep {/^[[:space:]]*Version/} main::data_grabber("$program -s libgtk-4-0 2>/dev/null"))[0];
-				$version = (split /\s+/, $version)[1];
-			}
-			if (!$version){
-				$version = (grep {/^[[:space:]]*Version/} main::data_grabber("$program -s libgtk2.0-0 2>/dev/null"))[0];
-				$version = (split /\s+/, $version)[1];
-			}
-		}
-		elsif ($program = main::check_program('pacman')){
-			$version = (grep {/^[[:space:]]*Version/} main::data_grabber("$program -Qi gtk3 2>/dev/null"))[0];
-			$version = (split /\s*:\s*/, $version)[1];
-			$version = main::trimmer($version);
-			# just guessing on gkt 4 package name
-			if (!$version){
-				$version = (grep {/^[[:space:]]*Version/} main::data_grabber("$program -Qi gtk3 2>/dev/null"))[0];
-				$version = (split /\s*:\s*/, $version)[1];
-				$version = main::trimmer($version);
-			}
-			if (!$version){
-				$version = (grep {/^[[:space:]]*Version/} main::data_grabber("$program -Qi gtk3 2>/dev/null"))[0];
-				$version = (split /\s*:\s*/, $version)[1];
-				$version = main::trimmer($version);
-			}
-		}
-		elsif ($program = main::check_program('rpm')){
-			$version = (grep {/^[[:space:]]*Version/} main::data_grabber("$program -qi libgtk-3-0 2>/dev/null"))[0];
-			$version = (split /\s*:\s*/, $version)[1];
-			$version = main::trimmer($version);
-			# just guessing on gkt 4 package name
-			if (!$version){
-				$version = (grep {/^[[:space:]]*Version/} main::data_grabber("$program -qi libgtk-4-0 2>/dev/null"))[0];
-				$version = (split /\s*:\s*/, $version)[1];
-				$version = main::trimmer($version);
-			}
-			if (!$version){
-				$version = (grep {/^[[:space:]]*Version/} main::data_grabber("$program -qi libgtk-2-0 2>/dev/null"))[0];
-				$version = (split /\s*:\s*/, $version)[1];
-				$version = main::trimmer($version);
-			}
-			
-		}
-	}
-	
-	$desktop[2] = 'Gtk';
-	eval $end if $b_log;
-}
-sub set_info_data {
-	eval $start if $b_log;
-	my (@data,@info,$item);
-	if (@data = grep {/gnome-shell|gnome-panel|kicker|lxpanel|mate-panel|plasma-desktop|plasma-netbook|xfce4-panel/} @ps_cmd ) {
-		# only one entry per type, can be multiple
-		foreach $item (@data){
-			if (! grep {/$item/} @info){
-				$item = main::trimmer($item);
-				push @info, (split /\s+/, $item)[0];
-			}
-		}
-	}
-	$desktop[4] = join (',', @info) if @info;
-	eval $end if $b_log;
-}
-
-sub set_xprop {
-	eval $start if $b_log;
-	if (my $program = main::check_program('xprop')){
-		@xprop = grep {/^\S/} main::data_grabber("xprop -root $display_opt 2>/dev/null");
-		$_=lc for @xprop;
-		$b_xprop = 1 if scalar @xprop > 5;
-	}
-	eval $end if $b_log;
-}
-
-}
-
 sub get_display_manager {
 	eval $start if $b_log;
-	my (@found,$working);
+	my (@found,$working,$temp);
 	# ldm - LTSP display manager. Note that sddm does not appear to have a .pid 
 	# extension in Arch note: to avoid positives with directories, test for -f 
 	# explicitly, not -e
 	my @dms = qw(entranced.pid gdm.pid gdm3.pid kdm.pid ldm.pid 
 	lightdm.pid lxdm.pid mdm.pid nodm.pid sddm.pid sddm slim.lock 
 	tint2.pid wdm.pid xdm.pid);
+	# this is the only one I know of so far that has --version
+	# lightdm outputs to stderr, so it has to be redirected
+	my @dms_version = qw(lightdm);
 	foreach my $id (@dms){
 		# note: ${dm_id%.*}/$dm_id will create a dir name out of the dm id, then 
 		# test if pid is in that note: sddm, in an effort to be unique and special, 
@@ -677,6 +284,10 @@ sub get_display_manager {
 		$working =~ s/\.\S+$//;
 		# note: there's always been an issue with duplicated dm's in inxi, this should now correct it
 		if ( ( -f "/run/$id" || -d "/run/$working" || -f "/var/run/$id" ) && ! grep {/$working/} @found ){
+			if ($extra > 2 && grep {/$working/} @dms_version ){
+				$temp = (split /\s+/, (main::data_grabber("$working --version 2>&1") )[0])[1];
+				$working .= ' ' . $temp if $temp;
+			}
 			push @found, $working;
 		}
 	}
@@ -690,6 +301,259 @@ sub get_display_manager {
 	log_data('display manager: ' . join ',', @dms) if $b_log;
 	eval $end if $b_log;
 	return join ',', @found if @found;
+}
+
+## Get DistroData
+{
+package DistroData;
+my ($distro);
+sub get {
+	if ($bsd_type){
+		get_bsd_os();
+	}
+	else {
+		get_linux_distro();
+	}
+	return $distro;
+}
+
+sub get_bsd_os {
+	eval $start if $b_log;
+	if ($bsd_type eq 'darwin'){
+		my $file = '/System/Library/CoreServices/SystemVersion.plist';
+		if (-f $file){
+			my @data = grep {/(ProductName|ProductVersion)/} reader($file);
+			@data = grep {/<string>/} @data;
+			@data = map {s/<[\/]?string>//g; } @data;
+			$distro = join (' ', @data);
+		}
+	}
+	else {
+		my @uname = POSIX::uname();
+		$distro = "$uname[0] $uname[2]";
+	}
+	
+	eval $end if $b_log;
+	return $distro;
+}
+
+sub get_linux_distro {
+	eval $start if $b_log;
+	my $distro_file = '';
+	my (@working,$b_osr);
+	my @derived = qw(antix-version aptosid-version kanotix-version knoppix-version 
+	mandrake-release mx-version pardus-release porteus-version sabayon-release 
+	siduction-version sidux-version slitaz-release solusos-release turbolinux-release 
+	zenwalk-version);
+	my $derived_s = join "|", @derived;
+	my @primary = qw(arch-release gentoo-release redhat-release slackware-version 
+	SuSE-release);
+	my $primary_s = join "|", @primary;
+	my $exclude_s = 'debian_version|devuan_version|ubuntu_version';
+	my $lsb_good_s = 'mandrake-release|mandriva-release|mandrakelinux-release';
+	my $os_release_good_s = 'arch-release|SuSE-release';
+	# note: always exceptions, so wild card after release/version: 
+	# /etc/lsb-release-crunchbang
+	# wait to handle since crunchbang file is one of the few in the world that 
+	# uses this method
+	my @distro_files = </etc/*[-_]{[rR]elease,[vV]ersion}*>;
+	my $distro_files_s = join "|", @distro_files;
+	my $lsb_release = '/etc/lsb-release';
+	my $b_lsb = ( -f $lsb_release ) ? 1 : 0;
+	my $issue = '/etc/issue';
+	my $os_release = '/etc/os-release';
+	my $b_os_release = ( -f $os_release ) ? 1 : 0;
+	main::log_data( "distro files: " . join "; ",@distro_files);
+	if ( $#distro_files == 1 ){
+		$distro_file = $distro_files[0];
+	}
+	else {
+		@working = (@derived,@primary);
+		foreach my $file (@working){
+			if ( "/etc/$file" =~ /($distro_files_s)$/){
+				# Now lets see if the distro file is in the known-good working-lsb-list
+				# if so, use lsb-release, if not, then just use the found file
+				# this is for only those distro's with self named release/version files
+				# because Mint does not use such, it must be done as below 
+				## this if statement requires the spaces and * as it is, else it won't work
+				if ($b_lsb && $file =~ /$lsb_good_s/){
+					$distro_file = $lsb_release;
+				}
+				elsif ($b_os_release && $file =~ /($os_release_good_s)$/){
+					$distro_file = $os_release;
+				}
+				else {
+					$distro_file = "/etc/$file";
+				}
+				last;
+			}
+		}
+		main::log_data("distro_file: $distro_file");
+	}
+	
+	# first test for the legacy antiX distro id file
+	if ( -f '/etc/antiX'){
+		@working = main::clean_characters( grep { /antix.*\.iso/} main::reader('/etc/antiX') );
+		$distro = $working[0];
+	}
+	# this handles case where only one release/version file was found, and it's lsb-release. 
+	# This would never apply for ubuntu or debian, which will filter down to the following 
+	# conditions. In general if there's a specific distro release file available, that's to 
+	# be preferred, but this is a good backup.
+	elsif ($distro_file && $b_lsb && ($distro_file =~ /\/etc\/($lsb_good_s)$/ || $distro_file eq $lsb_release) ){
+		$distro = get_lsb_release();
+	}
+	elsif ($distro_file eq $os_release){
+		$distro = get_os_release();
+		$b_osr = 1;
+	}
+	# if distro id file was found and it's not in the exluded primary distro file list, read it
+	elsif ( $distro_file && -s $distro_file && $distro_file !~ /\/etc\/($exclude_s)$/){
+		# new opensuse uses os-release, but older ones may have a similar syntax, so just use 
+		# the first line
+		if ($distro_file eq '/etc/SuSE-release'){
+			# leaving off extra data since all new suse have it, in os-release, this file has 
+			# line breaks, like os-release  but in case we  want it, it's: 
+			# CODENAME = Mantis  | VERSION = 12.2 
+			# for now, just take first occurrence, which should be the first line, which does 
+			# not use a variable type format
+			$distro = (main::clean_characters( grep { /suse/i } main::reader($distro_file)))[0];
+		}
+		else {
+			$distro = (main::reader($distro_file))[0];
+		}
+	}
+	# otherwise try  the default debian/ubuntu /etc/issue file
+	elsif (-f $issue){
+		@working = main::reader($issue);
+		my $b_mint = scalar (grep {/mint/i} @working); 
+		# os-release/lsb gives more manageable and accurate output than issue, 
+		# but mint should use issue for now.
+		if ($b_os_release && !$b_mint){
+			$distro = get_os_release();
+			$b_osr = 1;
+		}
+		elsif ($b_lsb && !$b_mint){
+			$distro = get_lsb_release();
+		}
+		else {
+			# debian issue can end with weird escapes like \n \l
+			$distro = (map {s/\\[a-z]|,|\*|\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} main::reader($issue))[0];
+			# this handles an arch bug where /etc/arch-release is empty and /etc/issue 
+			# is corrupted only older arch installs that have not been updated should 
+			# have this fallback required, new ones use os-release
+			if ( $distro =~ /arch linux/i){
+				$distro = 'Arch Linux';
+			}
+		}
+	}
+	# a final check. If a long value, before assigning the debugger output, if os-release
+	# exists then let's use that if it wasn't tried already. Maybe that will be better.
+	# not handling the corrupt data, maybe later if needed
+	if ($distro && length($distro) > 50 ){
+		if (!$b_osr && $b_os_release){
+			$distro = get_os_release();
+		}
+	}
+	# test for /etc/lsb-release as a backup in case of failure, in cases 
+	# where > one version/release file were found but the above resulted 
+	# in null distro value. 
+	if (!$distro){
+		if ($b_os_release){
+			$distro = get_os_release();
+		}
+		elsif ($b_lsb){
+			$distro = get_lsb_release();
+		}
+	}
+	# now some final null tries
+	if (!$distro ){
+		# if the file was null but present, which can happen in some cases, then use 
+		# the file name itself to set the distro value. Why say unknown if we have 
+		# a pretty good idea, after all?
+		if ($distro_file){
+			$distro_file =~ s/[-_]|release|version//g;
+		}
+	}
+	## finally, if all else has failed, give up
+	$distro ||= 'unknown';
+	eval $end if $b_log;
+	return $distro;
+}
+sub get_lsb_release {
+	eval $start if $b_log;
+	my ($distro,$id,$release,$codename,$description,) = ('','','','','');
+	my @content = map {s/,|\*|\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} main::reader('/etc/lsb-release');
+	foreach (@content){
+		my @working = split /\s*=\s*/, $_;
+		if ($working[0] eq 'DISTRIB_ID' && $working[1]){
+			if ($working[1] =~ /^Arch$/i){
+				$id = 'Arch Linux';
+			}
+			else {
+				$id = $working[1];
+			}
+		}
+		if ($working[0] eq 'DISTRIB_RELEASE' && $working[1]){
+			$release = $working[1];
+		}
+		if ($working[0] eq 'DISTRIB_CODENAME' && $working[1]){
+			$codename = $working[1];
+		}
+		# sometimes some distros cannot do their lsb-release files correctly, 
+		# so here is one last chance to get it right.
+		if ($working[0] eq 'DISTRIB_DESCRIPTION' && $working[1]){
+			$description = $working[1];
+		}
+	}
+	if (!$id && !$release && !$codename && $description){
+		$distro = $description;
+	}
+	else {
+		$distro = "$id $release $codename";
+		$distro =~ s/^\s+|\s\s+|\s+$//g; # get rid of double and trailling spaces 
+	}
+	
+	eval $end if $b_log;
+	return $distro;
+}
+sub get_os_release {
+	eval $start if $b_log;
+	my ($pretty_name,$name,$version_name,$version_id,
+	$distro_name,$distro) = ('','','','','','');
+	my @content = map {s/\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} main::reader('/etc/os-release');
+	foreach (@content){
+		my @working = split /\s*=\s*/, $_;
+		if ($working[0] eq 'PRETTY_NAME' && $working[1]){
+			$pretty_name = $working[1];
+		}
+		if ($working[0] eq 'NAME' && $working[1]){
+			$name = $working[1];
+		}
+		if ($working[0] eq 'VERSION' && $working[1]){
+			$version_name = $working[1];
+		}
+		if ($working[0] eq 'VERSION_ID' && $working[1]){
+			$version_id = $working[1];
+		}
+	}
+	# NOTE: tumbleweed has pretty name but pretty name does not have version id
+	if ($pretty_name && $pretty_name !~ /tumbleweed/i){
+		$distro = $pretty_name;
+	}
+	elsif ($name){
+		$distro = $name;
+		if ($version_name){
+			$distro .= ' ' . $version_name;
+		}
+		elsif ($version_id){
+			$distro .= ' ' . $version_id;
+		}
+		
+	}
+	eval $end if $b_log;
+	return $distro;
+}
 }
 
 ### END CODE REQUIRED BY THIS MODULE ##
