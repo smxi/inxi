@@ -17,13 +17,22 @@ Getopt::Long::Configure ('bundling', 'no_ignore_case',
 'no_getopt_compat', 'no_auto_abbrev','pass_through');
 
 ### START DEFAULT CODE ##
+my (@app);
+my (%files,%system_files);
+my $start = '';
+my $end = '';
+my $b_irc = 1;
+my $bsd_type = '';
+my $b_display = 1;
+my $b_root = 0;
+my $b_log;
+my $extra = 2;
+my @paths = ('/sbin','/bin','/usr/sbin','/usr/bin','/usr/X11R6/bin','/usr/local/sbin','/usr/local/bin');
 
 my (@test,
 %colors,%dl,%show,%use,
-$b_irc,$b_update,$b_weather,
-$debug,$display,$extra,$ftp_alt,$output_type,$ps_count);
-my $start = '';
-my $end = '';
+$b_update,$b_weather,
+$debug,$display,$ftp_alt,$output_type,$ps_count);
 ## Tools
 my $display_opt = '';
 

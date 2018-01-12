@@ -73,7 +73,7 @@ sub count_dir_files {
 sub get_defaults {
 	my ($type) = @_;
 	my %defaults = (
-	'ftp-upload' => 'ftp.techpatterns.com/incoming',
+	'ftp-upload' => 'ftp.tobechpatterns.com/incoming',
 	# 'inxi-branch-1' => 'https://github.com/smxi/inxi/raw/one/',
 	# 'inxi-branch-2' => 'https://github.com/smxi/inxi/raw/two/',
 	'inxi-main' => 'https://github.com/smxi/inxi/raw/inxi-perl/',
@@ -89,7 +89,10 @@ sub get_defaults {
 sub get_hostname {
 	return 'tester';
 }
-sub get_repo_data {return ();}
+{
+package RepoData;
+sub get{}
+}
 
 my $f = 'joe';
 my $bsd_type = '';

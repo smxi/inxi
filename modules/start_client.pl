@@ -43,6 +43,7 @@ my $b_irc = 1;
 my $bsd_type = '';
 my $b_display = 1;
 my $b_log;
+my @paths = ('/sbin','/bin','/usr/sbin','/usr/bin','/usr/X11R6/bin','/usr/local/sbin','/usr/local/bin');
 
 # Duplicates the functionality of awk to allow for one liner
 # type data parsing. note: -1 corresponds to awk NF
@@ -217,10 +218,24 @@ sub reader {
 
 ### START CODE REQUIRED BY THIS MODULE ##
 
+my @ps_cmd;
+
 sub set_ps_aux {
-	return 1 if @ps_aux;
-	@ps_aux = data_grabber('ps aux');
-	$_=lc for @ps_aux;
+	eval $start if $b_log;
+	@ps_aux = split "\n",qx(ps aux);;
+	shift @ps_aux; # get rid of header row
+	$_=lc for @ps_aux; # this is a super fast way to set to lower
+	# this is for testing for the presence of the command
+	@ps_cmd = map {
+		my @split = split /\s+/, $_;
+		# slice out 10th to last elements of ps aux rows
+		my $final = $#split;
+		# some stuff has a lot of data, chrome for example
+		$final = ($final > 12) ? 12 : $final;
+		@split = @split[10 .. $final ];
+		join " ", @split;
+	} @ps_aux;
+	eval $end if $b_log;
 }
 sub get_shell_data {
 	my $ppid = shift;
@@ -576,12 +591,12 @@ sub set_konvi_data {
 
 ### START TEST CODE ##
 
-my $type = 'ob';
+my $type = 'st';
 my $t0 = [gettimeofday];
 foreach (0 .. 300){
 	if ($type eq 'ob') {
-		my $ob_start = StartClient->new();
-		$ob_start->get_client_data();
+# 		my $ob_start = StartClient->new();
+# 		$ob_start->get_client_data();
 	}
 	# elsif ($ARGV[0] eq 'nc'){
 	# 	get_client_data();

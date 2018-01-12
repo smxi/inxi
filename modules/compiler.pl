@@ -27,6 +27,7 @@ my $b_display = 1;
 my $b_root = 0;
 my $b_log;
 my $extra = 2;
+my @paths = ('/sbin','/bin','/usr/sbin','/usr/bin','/usr/X11R6/bin','/usr/local/sbin','/usr/local/bin');
 
 # arg: 1 - string to strip start/end space/\n from
 # note: a few nano seconds are saved by using raw $_[0] for program
