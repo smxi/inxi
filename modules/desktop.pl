@@ -474,10 +474,10 @@ sub get_xprop_de_data {
 	# String: "This is xfdesktop version 4.2.12"
 	# alternate: xfce4-about --version > xfce4-about 4.10.0 (Xfce 4.10)
 	if (main::awk(\@xprop,'xfce' )){
-		if (grep {/\"xfce4\"/} @xprop){
+		if (main::awk(\@xprop, '\"xfce4\"'){
 			$version = '4';
 		}
-		elsif (grep {/\"xfce5\"/} @xprop){
+		elsif (main::awk(\@xprop, '\"xfce5\"'){
 			$version = '5';
 		}
 		else {
