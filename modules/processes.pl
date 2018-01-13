@@ -224,7 +224,7 @@ sub cpu_processes {
 	my @rows = sort { 
 		my @a = split(/\s+/,$a); 
 		my @b = split(/\s+/,$b); 
-		$b[3] <=> $a[3] } @ps_aux;
+		$b[2] <=> $a[2] } @ps_aux;
 	@rows = splice @rows,0,$count;
 	$cpu_mem = ' - Memory: MB / % used' if $extra > 0;
 	$j = scalar @rows;
@@ -317,7 +317,7 @@ sub mem_processes {
 			$row[10] =~ s/^.*\///;
 			$cmd = $row[10];
 		}
-		$mem = sprintf( "%.2f", $row[5]/1024 ) . ' MB';
+		$mem = sprintf( "%.3f", $row[5]/1024 ) . ' MB';
 		if ($extra > 0){
 			$mem .= " (" . $row[3] . "%)"; 
 		}
@@ -353,6 +353,7 @@ sub throttled {
 	return $throttled;
 }
 }
+
 
 ### END MODULE CODE ##
 
