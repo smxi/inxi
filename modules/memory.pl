@@ -200,12 +200,12 @@ sub get_memory_data_bsd {
 	## code to get total goes here:
 	my $type = ($b_free) ? ' free':'' ;
 	if ($avg && !$total){
-		$memory = "$avg MB$type / (total N/A)";
+		$memory = "$avg$type/(total N/A) MB";
 	}
 	elsif ($avg && $total) {
 		my $used = (!$b_free) ? $avg : $total - $avg;
 		my $percent = ($used && $total) ? sprintf(" (%.1f%%)", ($used/$total)*100) : '';
-		$memory = "$used MB$type/$total MB" . $percent;
+		$memory = "$used$type/$total MB" . $percent;
 	}
 	eval $end if $b_log;
 	return $memory;
