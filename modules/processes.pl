@@ -292,9 +292,9 @@ sub mem_processes {
 		$num = 1;
 		$j = scalar @processes;
 		my @row = split /\s+/, $_;
-		$row[5] = ($row[5]) ? sprintf( "%.2f", $row[5]/1024 ) : 'N/A';
+		my $decimals = ($row[5]/1024 > 10 ) ? 1 : 2;
+		$mem = ($row[5]) ? sprintf( "%.${decimals}f", $row[5]/1024 ) . ' MB' : 'N/A';
 		my @command = process_starter(scalar @row, $row[10],$row[11]);
-		$mem = sprintf( "%.3f", $row[5]/1024 ) . ' MB';
 		if ($extra > 0){
 			$mem .= " (" . $row[2] . "%)"; 
 		}
@@ -347,7 +347,6 @@ sub throttled {
 	return $throttled;
 }
 }
-
 ### END MODULE CODE ##
 
 ### START TEST CODE ##
