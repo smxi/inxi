@@ -37,7 +37,7 @@ sub check_program {
 # arg: 1 - command to turn into an array; 2 - optional: splitter
 # similar to reader() except this creates an array of data 
 # by lines from the command arg
-sub data_grabber {
+sub grabber {
 	eval $start if $b_log;
 	my ($cmd,$split) = @_;
 	$split ||= "\n";
@@ -217,7 +217,7 @@ sub get_init_data {
 				$runlevel = (reader('/var/run/openrc/softlevel'))[0];
 			}
 			elsif ( check_program('rc-status')){
-				$runlevel = (data_grabber('rc-status -r 2>/dev/null'))[0];
+				$runlevel = (grabber('rc-status -r 2>/dev/null'))[0];
 			}
 		}
 	}
@@ -240,7 +240,7 @@ sub get_runlevel_data {
 	eval $start if $b_log;
 	my ($runlevel) = ('');;
 	if (check_program('runlevel')){
-		$runlevel = (data_grabber('runlevel'))[0];
+		$runlevel = (grabber('runlevel'))[0];
 		$runlevel =~ s/[^\d]//g;
 	}
 	eval $end if $b_log;

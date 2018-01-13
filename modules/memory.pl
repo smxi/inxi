@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: memory.pl
-## Version: 1.1
-## Date 2018-01-10
+## Version: 1.2
+## Date 2018-01-13
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2018 Harald Hope
 
@@ -38,7 +38,7 @@ sub check_program {
 # arg: 1 - command to turn into an array; 2 - optional: splitter
 # similar to reader() except this creates an array of data 
 # by lines from the command arg
-sub data_grabber {
+sub grabber {
 	eval $start if $b_log;
 	my ($cmd,$split) = @_;
 	$split ||= "\n";
@@ -126,19 +126,6 @@ sub system_files {
 
 ### START MODULE CODE ##
 
-# openbsd/linux
-# procs    memory       page                    disks    traps          cpu
-# r b w    avm     fre  flt  re  pi  po  fr  sr wd0 wd1  int   sys   cs us sy id
-# 0 0 0  55256 1484092  171   0   0   0   0   0   2   0   12   460   39  3  1 96
-# freebsd:
-# procs      memory      page                    disks     faults         cpu
-# r b w     avm    fre   flt  re  pi  po    fr  sr ad0 ad1   in   sy   cs us sy id
-# 0 0 0  21880M  6444M   924  32  11   0   822 827   0   0  853  832  463  8  3 88
-# dragonfly
-#  procs      memory      page                    disks     faults      cpu
-#  r b w     avm    fre  flt  re  pi  po  fr  sr ad0 ad1   in   sy  cs us sy id
-#  0 0 0       0  84060 30273993 2845 12742 1164 407498171 320960902   0   0 424453025 1645645889 1254348072 35 38 26
-
 sub get_memory_data {
 	eval $start if $b_log;
 	my ($memory);
@@ -168,17 +155,65 @@ sub get_memory_data_linux {
 		}
 	}
 	my $used = $total - $not_used;
-	$memory = sprintf("%.1f/%.1f MB", $used/1024, $total/1024);
+	my $percent = ($used && $total) ? sprintf(" (%.1f%%)", ($used/$total)*100) : '';
+	$memory = sprintf("%.1f/%.1f MB", $used/1024, $total/1024) . $percent;
 	log_data("memory: $memory") if $b_log;
 	eval $end if $b_log;
 	return $memory;
 }
+# openbsd/linux
+# procs    memory       page                    disks    traps          cpu
+# r b w    avm     fre  flt  re  pi  po  fr  sr wd0 wd1  int   sys   cs us sy id
+# 0 0 0  55256 1484092  171   0   0   0   0   0   2   0   12   460   39  3  1 96
+# freebsd:
+# procs      memory      page                    disks     faults         cpu
+# r b w     avm    fre   flt  re  pi  po    fr  sr ad0 ad1   in   sy   cs us sy id
+# 0 0 0  21880M  6444M   924  32  11   0   822 827   0   0  853  832  463  8  3 88
+# with -H
+# 2 0 0 14925812  936448    36  13  10   0    84  35   0   0   84   30   42 11  3 86
+# dragonfly
+#  procs      memory      page                    disks     faults      cpu
+#  r b w     avm    fre  flt  re  pi  po  fr  sr ad0 ad1   in   sy  cs us sy id
+#  0 0 0       0  84060 30273993 2845 12742 1164 407498171 320960902   0   0 ....
 sub get_memory_data_bsd {
 	eval $start if $b_log;
 	my $memory = 'BSD-dev';
 	my $total = 0;
-	my $not_used = 0;
+	my $free = 0;
+	my (@data,$b_avg);
 	
+	if (my $program = check_program('vmstat')){
+		# see above, it's the last line
+		my $row = (grabber('vmstat -H 2>/dev/null'))[-1];
+		if ( $row ){
+			@data = split /\s+/, $row;
+			# dragonfly can have 0 fre, but they may fix that so make test dynamic
+			if ($data[3] != 0){
+				$free = sprintf ('%.1f',$data[3]/1024);
+			}
+			elsif ($data[4] != 0){
+				$b_avg = 1;
+				$free = sprintf ('%.1f',$data[4]/1024);
+			}
+		}
+	}
+	## code to get total goes here:
+	
+	if ($free && !$total){
+		my $type = ($b_avg)? 'free':'avg' ;
+		$memory = "$free MB $type (total N/A)";
+	}
+	elsif ($free && $total) {
+		my $used = $total - $free if !$b_avg;
+		my $percent = ($used && $total) ? sprintf(" (%.1f%%)", ($used/$total)*100) : '';
+		if ($used){
+			$memory = "$used MB/$total MB" . $percent;
+		}
+		else {
+			$memory = "$free MB avg/$total MB";
+		}
+		
+	}
 	eval $end if $b_log;
 	return $memory;
 }

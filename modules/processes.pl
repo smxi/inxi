@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: processes.pl
-## Version: 1.1
-## Date 2018-01-12
+## Version: 1.2
+## Date 2018-01-13
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2018 Harald Hope
 
@@ -67,7 +67,7 @@ sub check_program {
 # arg: 1 - command to turn into an array; 2 - optional: splitter
 # similar to reader() except this creates an array of data 
 # by lines from the command arg
-sub data_grabber {
+sub grabber {
 	eval $start if $b_log;
 	my ($cmd,$split) = @_;
 	$split ||= "\n";
@@ -205,14 +205,17 @@ sub get_memory_data_bsd {
 ## Get ProcessData 
 {
 package ProcessData;
-my (@processes);
+
 sub get {
 	eval $start if $b_log;
+	my (@processes,@rows);
 	if ($show{'ps-cpu'}){
-		cpu_processes();
+		@rows = cpu_processes();
+		@processes = (@processes,@rows);
 	}
 	if ($show{'ps-mem'}){
-		mem_processes();
+		@rows = mem_processes();
+		@processes = (@processes,@rows);
 	}
 	return @processes;
 	eval $end if $b_log;
@@ -220,6 +223,7 @@ sub get {
 sub cpu_processes {
 	eval $start if $b_log;
 	my ($j,$num,$cpu,$cpu_mem,$mem) = (0,0,'','','');
+	my (@processes);
 	my $count = ($b_irc)? 5: $ps_count;
 	my @rows = sort { 
 		my @a = split(/\s+/,$a); 
@@ -259,13 +263,13 @@ sub cpu_processes {
 		}
 		#print Data::Dumper::Dumper \@processes, "i: $i; j: $j ";
 	}
-	return 
 	eval $end if $b_log;
+	return @processes;
 }
 sub mem_processes {
 	eval $start if $b_log;
 	my ($j,$num,$cpu,$cpu_mem,$mem) = (0,0,'','','');
-	my (@data,$memory);
+	my (@data,@processes,$memory);
 	my $count = ($b_irc)? 5: $ps_count;
 	my @rows = sort { 
 		my @a = split(/\s+/,$a); 
@@ -318,6 +322,7 @@ sub mem_processes {
 		#print Data::Dumper::Dumper \@processes, "i: $i; j: $j ";
 	}
 	eval $end if $b_log;
+	return @processes;
 }
 sub process_starter {
 	my ($count, $row10, $row11) = @_;
@@ -348,6 +353,7 @@ sub throttled {
 	return $throttled;
 }
 }
+
 ### END MODULE CODE ##
 
 ### START TEST CODE ##

@@ -39,8 +39,8 @@ use Time::HiRes qw(gettimeofday tv_interval);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-01-12';
-my $self_patch='140-p';
+my $self_date='2018-01-13';
+my $self_patch='141-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -179,7 +179,7 @@ sub check_tools {
 			my $result = system("$program -t chassis >/dev/null 2>&1");
 			if (!$result){
 				if ($b_root) {
-					@data = data_grabber("$program --type chassis");
+					@data = grabber("$program --type chassis");
 					if ( grep { $_ =~ /No SMBIOS/i } @data ){
 						$action = 'smbios';
 					}
@@ -2174,18 +2174,10 @@ sub awk {
 		$sep ||= '\s+';
 		$num-- if $num > 0; # retain the negative values as is
 		$result = (split /$sep/, $result)[$num];
-		$result =~ s/^\s+|\s+$//g if $result;
+		$result =~ s/^\s+|,|\s+$//g if $result;
 	}
 	eval $end if $b_log;
 	return $result;
-}
-## returns result of test, 0/1, false/true
-## arg: program to find in PATH
-sub check_programxx {
-	#print_line("path: $ENV{'PATH'}");
-	grep { -x "$_/$_[0]"} split /:/,$ENV{'PATH'};
-# 	print_line("path::$path:'}\n");
-# 	return $path;
 }
 # arg: 1 - string to strip start/end space/\n from
 # note: a few nano seconds are saved by using raw $_[0] for program
@@ -2208,17 +2200,6 @@ sub count_dir_files {
 	opendir my $dh, $_[0] or error_handler('open-dir-failed', "$_[0]", $!); 
 	my $count = grep { ! /^\.{1,2}/ } readdir $dh; # strips out . and ..
 	return $count;
-}
-# arg: 1 - command to turn into an array; 2 - optional: splitter
-# similar to reader() except this creates an array of data 
-# by lines from the command arg
-sub data_grabber {
-	eval $start if $b_log;
-	my ($cmd,$split) = @_;
-	$split ||= "\n";
-	my @result = split /$split/, qx($cmd);
-	eval $end if $b_log;
-	return @result;
 }
 
 # arg 1: type to return
@@ -2252,8 +2233,21 @@ sub get_piece {
 	my @temp = split(/$sep/, $string);
 	eval $end if $b_log;
 	if ( exists $temp[$num] ){
+		$temp[$num] =~ s/,//g;
 		return $temp[$num];
 	}
+}
+
+# arg: 1 - command to turn into an array; 2 - optional: splitter
+# similar to reader() except this creates an array of data 
+# by lines from the command arg
+sub grabber {
+	eval $start if $b_log;
+	my ($cmd,$split) = @_;
+	$split ||= "\n";
+	my @result = split /$split/, qx($cmd);
+	eval $end if $b_log;
+	return @result;
 }
 
 # returns array of:
@@ -2395,7 +2389,7 @@ sub program_version {
 				$_ = trimmer($_);
 				# print "$_ ::$num\n";
 				$version_nu = (split /\s+/, $_)[$num];
-				$version_nu =~ s/(,|dwm-|wmii2-|wmii-|v|V|\(|\))//g;
+				$version_nu =~ s/(,|dwm-|wmii2-|wmii-|v|V|\(|\|\))//g;
 				# print "$version_nu\n";
 				last;
 			}
@@ -3382,8 +3376,8 @@ sub get_client_name {
 		$client_name = lc(readlink "/proc/$ppid/exe");
 		$client_name =~ s/^.*\///;
 		if ($client_name =~ /^bash|dash|sh|python.*|perl.*$/){
-			$pppid = (main::data_grabber("ps -p $ppid -o ppid"))[1];
-			#my @temp = (main::data_grabber("ps -p $ppid -o ppid 2>/dev/null"))[1];
+			$pppid = (main::grabber("ps -p $ppid -o ppid"))[1];
+			#my @temp = (main::grabber("ps -p $ppid -o ppid 2>/dev/null"))[1];
 			$pppid =~ s/^\s+|\s+$//g;
 			$client_name =~ s/[0-9\.]+$//; # clean things like python2.7
 			if ($pppid && -f "/proc/$pppid/exe" ){
@@ -3399,7 +3393,7 @@ sub get_client_name {
 	else {
 		if (! check_modern_konvi() ){
 			$ppid = getppid();
-			$client_name = (main::data_grabber("ps -p $ppid"))[1];
+			$client_name = (main::grabber("ps -p $ppid"))[1];
 			
 			my @data = split /\s+/, $client_name;
 			if ($bsd_type){
@@ -3439,7 +3433,7 @@ sub get_client_version {
 		$client{'console-irc'} = 1;
 	}
 	elsif ($client{'name'} eq 'bitchx') {
-		@data = main::data_grabber("$client{'name'} -v");
+		@data = main::grabber("$client{'name'} -v");
 		$string = awk(\@data,'Version');
 		if ($string){
 			$string =~ s/[()]|bitchx-//g; 
@@ -3468,7 +3462,7 @@ sub get_client_version {
 		$client{'konvi'} = ( ! $client{'native'} ) ? 2 : 1;
 	}
 	elsif ($client{'name'} =~ /quassel/) {
-		@data = main::data_grabber("$client{'name'} -v 2>/dev/null");
+		@data = main::grabber("$client{'name'} -v 2>/dev/null");
 		foreach (@data){
 			if ($_ =~ /^Quassel IRC:/){
 				$client{'version'} = (split /\s+/, $_ )[2];
@@ -3596,7 +3590,7 @@ sub check_modern_konvi {
 	# main::log_data("name: $client{'name'} :: qdb: $client{'qdbus'} :: version: $client{'version'} :: konvi: $client{'konvi'} :: PPID: $ppid") if $b_log;
 	# sabayon uses /usr/share/apps/konversation as path
 	if ( -d '/usr/share/kde4/apps/konversation' || -d '/usr/share/apps/konversation' ){
-		@temp = main::data_grabber('ps -A');
+		@temp = main::grabber('ps -A');
 		$pid = main::awk(\@ps_aux,'konversation',2,'\s+');
 		main::log_data("pid: $pid") if $b_log;
 		$konvi = readlink ("/proc/$pid/exe");
@@ -3659,7 +3653,7 @@ sub set_konvi_data {
 	# The section below is on request of Argonel from the Konversation developer team:
 	# it sources config files like $HOME/.kde/share/apps/konversation/scripts/inxi.conf
 	if ($config_tool){
-		my @data = main::data_grabber("$config_tool --path data 2>/dev/null",':');
+		my @data = main::grabber("$config_tool --path data 2>/dev/null",':');
 		main::get_configs(@data);
 	}
 	eval $end if $b_log;
@@ -4152,10 +4146,10 @@ sub get_kde_data {
 			# kf5-config: 1.0
 			# for QT, and Frameworks if we use it
 			if ($program = main::check_program("kded$kde_session_version")){
-				@version_data = main::data_grabber("$program --version 2>/dev/null");
+				@version_data = main::grabber("$program --version 2>/dev/null");
 			}
 			if ($program = main::check_program("plasmashell")){
-				@version_data2 = main::data_grabber("$program --version 2>/dev/null");
+				@version_data2 = main::grabber("$program --version 2>/dev/null");
 				$desktop[1] = main::awk(\@version_data2,'^plasmashell',-1,'\s+');
 			}
 			$desktop[0] = 'KDE Plasma';
@@ -4171,7 +4165,7 @@ sub get_kde_data {
 	}
 	# KDE_FULL_SESSION property is only available since KDE 3.5.5.
 	elsif ($kde_full_session eq 'true'){
-		@version_data = main::data_grabber("kded --version 2>/dev/null");
+		@version_data = main::grabber("kded --version 2>/dev/null");
 		$desktop[0] = 'KDE';
 		$desktop[1] = main::awk(\@version_data,'^KDE:',2,'\s+');
 		if (!$desktop[1]){
@@ -4207,7 +4201,7 @@ sub get_env_de_data {
 		$desktop[1] = main::program_version('lxqt-about',$data[0],$data[1],$data[2],$data[5]);
 		if ( $extra > 0 ){
 			if ($program = main::check_program("kded$kde_session_version") ){
-				@version_data = main::data_grabber("$program --version 2>/dev/null");
+				@version_data = main::grabber("$program --version 2>/dev/null");
 				$desktop[2] = 'Qt';
 				$desktop[3] = main::awk(\@version_data,'^Qt:',2);
 			}
@@ -4284,7 +4278,7 @@ sub get_xprop_de_data {
 		}
 		@data = main::program_values('xfdesktop');
 		$desktop[0] = $data[3];
-		@version_data = main::data_grabber('xfdesktop --version 2>/dev/null');
+		@version_data = main::grabber('xfdesktop --version 2>/dev/null');
 		# out of x, this error goes to stderr, so it's an empty result
 		$desktop[1] = main::awk(\@version_data,$data[0],$data[1],'\s+');
 		#$desktop[1] = main::program_version('xfdesktop',$data[0],$data[1],$data[2],$data[5]);
@@ -4452,15 +4446,15 @@ sub set_gtk_data {
 	# this is a hack, and has to be changed with every toolkit version change, and 
 	# only dev systems 	# have this installed, but it's a cross distro command try it.
 	if ($program = main::check_program('pkg-config')){
-		@data = main::data_grabber("$program --modversion gtk+-4.0 2>/dev/null");
+		@data = main::grabber("$program --modversion gtk+-4.0 2>/dev/null");
 		$version = main::awk(\@data,'\S');
 		# note: opensuse gets null output here, we need the command to get version and output sample
 		if ( !$version ){
-			@data = main::data_grabber("$program --modversion gtk+-3.0 2>/dev/null");
+			@data = main::grabber("$program --modversion gtk+-3.0 2>/dev/null");
 			$version = main::awk(\@data,'\S');
 		}
 		if ( !$version ){
-			@data = main::data_grabber("$program --modversion gtk+-2.0 2>/dev/null");
+			@data = main::grabber("$program --modversion gtk+-2.0 2>/dev/null");
 			$version = main::awk(\@data,'\S');
 		}
 	}
@@ -4470,41 +4464,41 @@ sub set_gtk_data {
 		# this is the most likely order as of: 2014-01-13. Not going to try to support all 
 		# package managers too much work, just the very biggest ones.
 		if ($program = main::check_program('dpkg')){
-			@data = main::data_grabber("$program -s libgtk-3-0 2>/dev/null");
+			@data = main::grabber("$program -s libgtk-3-0 2>/dev/null");
 			$version = main::awk(\@data,'^\s*Version',2,'\s+');
 			# just guessing on gkt 4 package name
 			if (!$version){
-				@data = main::data_grabber("$program -s libgtk-4-0 2>/dev/null");
+				@data = main::grabber("$program -s libgtk-4-0 2>/dev/null");
 				$version = main::awk(\@data,'^\s*Version',2,'\s+');
 			}
 			if (!$version){
-				@data = main::data_grabber("$program -s libgtk2.0-0 2>/dev/null");
+				@data = main::grabber("$program -s libgtk2.0-0 2>/dev/null");
 				$version = main::awk(\@data,'^\s*Version',2,'\s+');
 			}
 		}
 		elsif ($program = main::check_program('pacman')){
-			@data = main::data_grabber("$program -Qi gtk3 2>/dev/null");
+			@data = main::grabber("$program -Qi gtk3 2>/dev/null");
 			$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
 			# just guessing on gkt 4 package name
 			if (!$version){
-				@data = main::data_grabber("$program -Qi gtk4 2>/dev/null");
+				@data = main::grabber("$program -Qi gtk4 2>/dev/null");
 				$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
 			}
 			if (!$version){
-				@data = main::data_grabber("$program -Qi gtk2 2>/dev/null");
+				@data = main::grabber("$program -Qi gtk2 2>/dev/null");
 				$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
 			}
 		}
 		elsif ($program = main::check_program('rpm')){
-			@data = main::data_grabber("$program -qi libgtk-3-0 2>/dev/null");
+			@data = main::grabber("$program -qi libgtk-3-0 2>/dev/null");
 			$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
 			# just guessing on gkt 4 package name
 			if (!$version){
-				@data = main::data_grabber("$program -qi libgtk-4-0 2>/dev/null");
+				@data = main::grabber("$program -qi libgtk-4-0 2>/dev/null");
 				$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
 			}
 			if (!$version){
-				@data = main::data_grabber("$program -qi libgtk-3-0 2>/dev/null");
+				@data = main::grabber("$program -qi libgtk-3-0 2>/dev/null");
 				$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
 			}
 		}
@@ -4531,7 +4525,7 @@ sub set_info_data {
 sub set_xprop {
 	eval $start if $b_log;
 	if (my $program = main::check_program('xprop')){
-		@xprop = grep {/^\S/} main::data_grabber("xprop -root $display_opt 2>/dev/null");
+		@xprop = grep {/^\S/} main::grabber("xprop -root $display_opt 2>/dev/null");
 		$_=lc for @xprop;
 		$b_xprop = 1 if scalar @xprop > 5;
 	}
@@ -4563,7 +4557,7 @@ sub get_display_manager {
 		# note: there's always been an issue with duplicated dm's in inxi, this should now correct it
 		if ( ( -f "/run/$id" || -d "/run/$working" || -f "/var/run/$id" ) && ! grep {/$working/} @found ){
 			if ($extra > 2 && awk( \@dms_version, $working) ){
-				@data = main::data_grabber("$working --version 2>&1");
+				@data = main::grabber("$working --version 2>&1");
 				$temp = awk(\@data,'\S',2,'\s+');
 				$working .= ' ' . $temp if $temp;
 			}
@@ -4906,7 +4900,7 @@ sub get_init_data {
 				$runlevel = (reader('/var/run/openrc/softlevel'))[0];
 			}
 			elsif ( $program = check_program('rc-status')){
-				$runlevel = (data_grabber("$program -r 2>/dev/null"))[0];
+				$runlevel = (grabber("$program -r 2>/dev/null"))[0];
 			}
 		}
 	}
@@ -4951,17 +4945,65 @@ sub get_memory_data_linux {
 		}
 	}
 	my $used = $total - $not_used;
-	$memory = sprintf("%.1f/%.1f MB", $used/1024, $total/1024);
+	my $percent = ($used && $total) ? sprintf(" (%.1f%%)", ($used/$total)*100) : '';
+	$memory = sprintf("%.1f/%.1f MB", $used/1024, $total/1024) . $percent;
 	log_data("memory: $memory") if $b_log;
 	eval $end if $b_log;
 	return $memory;
 }
+# openbsd/linux
+# procs    memory       page                    disks    traps          cpu
+# r b w    avm     fre  flt  re  pi  po  fr  sr wd0 wd1  int   sys   cs us sy id
+# 0 0 0  55256 1484092  171   0   0   0   0   0   2   0   12   460   39  3  1 96
+# freebsd:
+# procs      memory      page                    disks     faults         cpu
+# r b w     avm    fre   flt  re  pi  po    fr  sr ad0 ad1   in   sy   cs us sy id
+# 0 0 0  21880M  6444M   924  32  11   0   822 827   0   0  853  832  463  8  3 88
+# with -H
+# 2 0 0 14925812  936448    36  13  10   0    84  35   0   0   84   30   42 11  3 86
+# dragonfly
+#  procs      memory      page                    disks     faults      cpu
+#  r b w     avm    fre  flt  re  pi  po  fr  sr ad0 ad1   in   sy  cs us sy id
+#  0 0 0       0  84060 30273993 2845 12742 1164 407498171 320960902   0   0 ....
 sub get_memory_data_bsd {
 	eval $start if $b_log;
 	my $memory = 'BSD-dev';
 	my $total = 0;
-	my $not_used = 0;
+	my $free = 0;
+	my (@data,$b_avg);
 	
+	if (my $program = check_program('vmstat')){
+		# see above, it's the last line
+		my $row = (grabber('vmstat -H 2>/dev/null'))[-1];
+		if ( $row ){
+			@data = split /\s+/, $row;
+			# dragonfly can have 0 fre, but they may fix that so make test dynamic
+			if ($data[3] != 0){
+				$free = sprintf ('%.1f',$data[3]/1024);
+			}
+			elsif ($data[4] != 0){
+				$b_avg = 1;
+				$free = sprintf ('%.1f',$data[4]/1024);
+			}
+		}
+	}
+	## code to get total goes here:
+	
+	if ($free && !$total){
+		my $type = ($b_avg)? 'free':'avg' ;
+		$memory = "$free MB $type (total N/A)";
+	}
+	elsif ($free && $total) {
+		my $used = $total - $free if !$b_avg;
+		my $percent = ($used && $total) ? sprintf(" (%.1f%%)", ($used/$total)*100) : '';
+		if ($used){
+			$memory = "$used MB/$total MB" . $percent;
+		}
+		else {
+			$memory = "$free MB avg/$total MB";
+		}
+		
+	}
 	eval $end if $b_log;
 	return $memory;
 }
@@ -4969,14 +5011,17 @@ sub get_memory_data_bsd {
 ## Get ProcessData 
 {
 package ProcessData;
-my (@processes);
+
 sub get {
 	eval $start if $b_log;
+	my (@processes,@rows);
 	if ($show{'ps-cpu'}){
-		cpu_processes();
+		@rows = cpu_processes();
+		@processes = (@processes,@rows);
 	}
 	if ($show{'ps-mem'}){
-		mem_processes();
+		@rows = mem_processes();
+		@processes = (@processes,@rows);
 	}
 	return @processes;
 	eval $end if $b_log;
@@ -4984,6 +5029,7 @@ sub get {
 sub cpu_processes {
 	eval $start if $b_log;
 	my ($j,$num,$cpu,$cpu_mem,$mem) = (0,0,'','','');
+	my (@processes);
 	my $count = ($b_irc)? 5: $ps_count;
 	my @rows = sort { 
 		my @a = split(/\s+/,$a); 
@@ -5023,13 +5069,13 @@ sub cpu_processes {
 		}
 		#print Data::Dumper::Dumper \@processes, "i: $i; j: $j ";
 	}
-	return 
 	eval $end if $b_log;
+	return @processes;
 }
 sub mem_processes {
 	eval $start if $b_log;
 	my ($j,$num,$cpu,$cpu_mem,$mem) = (0,0,'','','');
-	my (@data,$memory);
+	my (@data,@processes,$memory);
 	my $count = ($b_irc)? 5: $ps_count;
 	my @rows = sort { 
 		my @a = split(/\s+/,$a); 
@@ -5082,6 +5128,7 @@ sub mem_processes {
 		#print Data::Dumper::Dumper \@processes, "i: $i; j: $j ";
 	}
 	eval $end if $b_log;
+	return @processes;
 }
 sub process_starter {
 	my ($count, $row10, $row11) = @_;
@@ -5375,7 +5422,7 @@ sub get_runlevel_data {
 	eval $start if $b_log;
 	my $runlevel = '';
 	if ( my $program = check_program('runlevel')){
-		$runlevel = (data_grabber($program))[0];
+		$runlevel = (grabber($program))[0];
 		$runlevel =~ s/[^\d]//g;
 		#print_line($runlevel . ";;");
 	}
@@ -5448,7 +5495,7 @@ sub get_gcc_data {
 	# NOTE: We can't use program_version because we don't yet know where
 	# the version number is
 	if (my $program = check_program('gcc') ){
-		@data = data_grabber("$program --version 2>/dev/null");
+		@data = grabber("$program --version 2>/dev/null");
 		$gcc = awk(\@data,'^gcc');
 	}
 	if ($gcc){
@@ -5583,14 +5630,14 @@ sub get_shell_source {
 # arg: 1 - parent id
 sub get_start_parent {
 	my ($parent) = @_;
-	my @data = data_grabber("ps -j -fp $parent");
+	my @data = grabber("ps -j -fp $parent");
 	my $script_parent = awk(\@data,"$parent",3,'\s+');
 	return $script_parent;
 }
 # arg: 1 - parent id
 sub get_shell_parent {
 	my ($parent) = @_;
-	my @data = data_grabber("ps -j -p $parent");
+	my @data = grabber("ps -j -p $parent");
 	my $shell_parent = awk(\@data, "$parent",-1,'\s+',);
 	return $shell_parent;
 }

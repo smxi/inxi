@@ -65,24 +65,11 @@ sub check_program {
 	(grep { return "$_/$_[0]" if -e "$_/$_[0]"} @paths)[0];
 }
 
-# arg: 1 - command to turn into an array; 2 - optional: splitter
-# similar to reader() except this creates an array of data 
-# by lines from the command arg
-sub data_grabber {
-	eval $start if $b_log;
-	my ($cmd,$split) = @_;
-	$split ||= "\n";
-	my @result = split /$split/, qx($cmd);
-	eval $end if $b_log;
-	return @result;
-}
-
 sub error_handler {
 	my ($err, $message, $alt1) = @_;
 	print "$err: $message err: $alt1\n";
 	exit;
 }
-
 
 # args: 0 - the string to get piece of
 # 2 - the position in string, starting at 1 for 0 index.
@@ -98,6 +85,19 @@ sub get_piece {
 	if ( exists $temp[$num] ){
 		return $temp[$num];
 	}
+}
+
+# arg: 1 - command to turn into an array; 2 - optional: splitter
+# similar to reader() except this creates an array of data 
+# by lines from the command arg
+sub grabber {
+	eval $start if $b_log;
+	my ($cmd,$split) = @_;
+	$split ||= "\n";
+	my @result = split /$split/, qx($cmd);
+	@result = map { s/^\s+|\s+$//g; $_} @result if @result;
+	eval $end if $b_log;
+	return @result;
 }
 
 sub log_data {}
@@ -353,10 +353,10 @@ sub get_kde_data {
 			# kf5-config: 1.0
 			# for QT, and Frameworks if we use it
 			if ($program = main::check_program("kded$kde_session_version")){
-				@version_data = main::data_grabber("$program --version 2>/dev/null");
+				@version_data = main::grabber("$program --version 2>/dev/null");
 			}
 			if ($program = main::check_program("plasmashell")){
-				@version_data2 = main::data_grabber("$program --version 2>/dev/null");
+				@version_data2 = main::grabber("$program --version 2>/dev/null");
 				$desktop[1] = main::awk(\@version_data2,'^plasmashell',-1,'\s+');
 			}
 			$desktop[0] = 'KDE Plasma';
@@ -372,7 +372,7 @@ sub get_kde_data {
 	}
 	# KDE_FULL_SESSION property is only available since KDE 3.5.5.
 	elsif ($kde_full_session eq 'true'){
-		@version_data = main::data_grabber("kded --version 2>/dev/null");
+		@version_data = main::grabber("kded --version 2>/dev/null");
 		$desktop[0] = 'KDE';
 		$desktop[1] = main::awk(\@version_data,'^KDE:',2,'\s+');
 		if (!$desktop[1]){
@@ -408,7 +408,7 @@ sub get_env_de_data {
 		$desktop[1] = main::program_version('lxqt-about',$data[0],$data[1],$data[2],$data[5]);
 		if ( $extra > 0 ){
 			if ($program = main::check_program("kded$kde_session_version") ){
-				@version_data = main::data_grabber("$program --version 2>/dev/null");
+				@version_data = main::grabber("$program --version 2>/dev/null");
 				$desktop[2] = 'Qt';
 				$desktop[3] = main::awk(\@version_data,'^Qt:',2);
 			}
@@ -485,7 +485,7 @@ sub get_xprop_de_data {
 		}
 		@data = main::program_values('xfdesktop');
 		$desktop[0] = $data[3];
-		@version_data = main::data_grabber('xfdesktop --version 2>/dev/null');
+		@version_data = main::grabber('xfdesktop --version 2>/dev/null');
 		# out of x, this error goes to stderr, so it's an empty result
 		$desktop[1] = main::awk(\@version_data,$data[0],$data[1],'\s+');
 		#$desktop[1] = main::program_version('xfdesktop',$data[0],$data[1],$data[2],$data[5]);
@@ -653,15 +653,15 @@ sub set_gtk_data {
 	# this is a hack, and has to be changed with every toolkit version change, and 
 	# only dev systems 	# have this installed, but it's a cross distro command try it.
 	if ($program = main::check_program('pkg-config')){
-		@data = main::data_grabber("$program --modversion gtk+-4.0 2>/dev/null");
+		@data = main::grabber("$program --modversion gtk+-4.0 2>/dev/null");
 		$version = main::awk(\@data,'\S');
 		# note: opensuse gets null output here, we need the command to get version and output sample
 		if ( !$version ){
-			@data = main::data_grabber("$program --modversion gtk+-3.0 2>/dev/null");
+			@data = main::grabber("$program --modversion gtk+-3.0 2>/dev/null");
 			$version = main::awk(\@data,'\S');
 		}
 		if ( !$version ){
-			@data = main::data_grabber("$program --modversion gtk+-2.0 2>/dev/null");
+			@data = main::grabber("$program --modversion gtk+-2.0 2>/dev/null");
 			$version = main::awk(\@data,'\S');
 		}
 	}
@@ -671,41 +671,41 @@ sub set_gtk_data {
 		# this is the most likely order as of: 2014-01-13. Not going to try to support all 
 		# package managers too much work, just the very biggest ones.
 		if ($program = main::check_program('dpkg')){
-			@data = main::data_grabber("$program -s libgtk-3-0 2>/dev/null");
+			@data = main::grabber("$program -s libgtk-3-0 2>/dev/null");
 			$version = main::awk(\@data,'^\s*Version',2,'\s+');
 			# just guessing on gkt 4 package name
 			if (!$version){
-				@data = main::data_grabber("$program -s libgtk-4-0 2>/dev/null");
+				@data = main::grabber("$program -s libgtk-4-0 2>/dev/null");
 				$version = main::awk(\@data,'^\s*Version',2,'\s+');
 			}
 			if (!$version){
-				@data = main::data_grabber("$program -s libgtk2.0-0 2>/dev/null");
+				@data = main::grabber("$program -s libgtk2.0-0 2>/dev/null");
 				$version = main::awk(\@data,'^\s*Version',2,'\s+');
 			}
 		}
 		elsif ($program = main::check_program('pacman')){
-			@data = main::data_grabber("$program -Qi gtk3 2>/dev/null");
+			@data = main::grabber("$program -Qi gtk3 2>/dev/null");
 			$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
 			# just guessing on gkt 4 package name
 			if (!$version){
-				@data = main::data_grabber("$program -Qi gtk4 2>/dev/null");
+				@data = main::grabber("$program -Qi gtk4 2>/dev/null");
 				$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
 			}
 			if (!$version){
-				@data = main::data_grabber("$program -Qi gtk2 2>/dev/null");
+				@data = main::grabber("$program -Qi gtk2 2>/dev/null");
 				$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
 			}
 		}
 		elsif ($program = main::check_program('rpm')){
-			@data = main::data_grabber("$program -qi libgtk-3-0 2>/dev/null");
+			@data = main::grabber("$program -qi libgtk-3-0 2>/dev/null");
 			$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
 			# just guessing on gkt 4 package name
 			if (!$version){
-				@data = main::data_grabber("$program -qi libgtk-4-0 2>/dev/null");
+				@data = main::grabber("$program -qi libgtk-4-0 2>/dev/null");
 				$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
 			}
 			if (!$version){
-				@data = main::data_grabber("$program -qi libgtk-3-0 2>/dev/null");
+				@data = main::grabber("$program -qi libgtk-3-0 2>/dev/null");
 				$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
 			}
 		}
@@ -732,7 +732,7 @@ sub set_info_data {
 sub set_xprop {
 	eval $start if $b_log;
 	if (my $program = main::check_program('xprop')){
-		@xprop = grep {/^\S/} main::data_grabber("xprop -root $display_opt 2>/dev/null");
+		@xprop = grep {/^\S/} main::grabber("xprop -root $display_opt 2>/dev/null");
 		$_=lc for @xprop;
 		$b_xprop = 1 if scalar @xprop > 5;
 	}
@@ -764,7 +764,7 @@ sub get_display_manager {
 		# note: there's always been an issue with duplicated dm's in inxi, this should now correct it
 		if ( ( -f "/run/$id" || -d "/run/$working" || -f "/var/run/$id" ) && ! grep {/$working/} @found ){
 			if ($extra > 2 && awk( \@dms_version, $working) ){
-				@data = main::data_grabber("$working --version 2>&1");
+				@data = main::grabber("$working --version 2>&1");
 				$temp = awk(\@data,'\S',2,'\s+');
 				$working .= ' ' . $temp if $temp;
 			}

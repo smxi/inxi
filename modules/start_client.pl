@@ -198,7 +198,7 @@ sub trimmer {
 # arg: 1 - command to turn into an array; 2 - optional: splitter
 # similar to reader() except this creates an array of data 
 # by lines from the command arg
-sub data_grabber {
+sub grabber {
 	my ($command,$splitter) = @_;
 	$splitter ||= "\n";
 	return split /$splitter/, qx($command);
@@ -303,8 +303,8 @@ sub get_client_name {
 		$client_name = lc(readlink "/proc/$ppid/exe");
 		$client_name =~ s/^.*\///;
 		if ($client_name =~ /^bash|dash|sh|python.*|perl.*$/){
-			$pppid = (main::data_grabber("ps -p $ppid -o ppid"))[1];
-			#my @temp = (main::data_grabber("ps -p $ppid -o ppid 2>/dev/null"))[1];
+			$pppid = (main::grabber("ps -p $ppid -o ppid"))[1];
+			#my @temp = (main::grabber("ps -p $ppid -o ppid 2>/dev/null"))[1];
 			$pppid =~ s/^\s+|\s+$//g;
 			$client_name =~ s/[0-9\.]+$//; # clean things like python2.7
 			if ($pppid && -f "/proc/$pppid/exe" ){
@@ -320,7 +320,7 @@ sub get_client_name {
 	else {
 		if (! check_modern_konvi() ){
 			$ppid = getppid();
-			$client_name = (main::data_grabber("ps -p $ppid"))[1];
+			$client_name = (main::grabber("ps -p $ppid"))[1];
 			
 			my @data = split /\s+/, $client_name;
 			if ($bsd_type){
@@ -360,7 +360,7 @@ sub get_client_version {
 		$client{'console-irc'} = 1;
 	}
 	elsif ($client{'name'} eq 'bitchx') {
-		@data = main::data_grabber("$client{'name'} -v");
+		@data = main::grabber("$client{'name'} -v");
 		$string = awk(\@data,'Version');
 		if ($string){
 			$string =~ s/[()]|bitchx-//g; 
@@ -389,7 +389,7 @@ sub get_client_version {
 		$client{'konvi'} = ( ! $client{'native'} ) ? 2 : 1;
 	}
 	elsif ($client{'name'} =~ /quassel/) {
-		@data = main::data_grabber("$client{'name'} -v 2>/dev/null");
+		@data = main::grabber("$client{'name'} -v 2>/dev/null");
 		foreach (@data){
 			if ($_ =~ /^Quassel IRC:/){
 				$client{'version'} = (split /\s+/, $_ )[2];
@@ -517,7 +517,7 @@ sub check_modern_konvi {
 	# main::log_data("name: $client{'name'} :: qdb: $client{'qdbus'} :: version: $client{'version'} :: konvi: $client{'konvi'} :: PPID: $ppid") if $b_log;
 	# sabayon uses /usr/share/apps/konversation as path
 	if ( -d '/usr/share/kde4/apps/konversation' || -d '/usr/share/apps/konversation' ){
-		@temp = main::data_grabber('ps -A');
+		@temp = main::grabber('ps -A');
 		$pid = main::awk(\@ps_aux,'konversation',2,'\s+');
 		main::log_data("pid: $pid") if $b_log;
 		$konvi = readlink ("/proc/$pid/exe");
@@ -580,7 +580,7 @@ sub set_konvi_data {
 	# The section below is on request of Argonel from the Konversation developer team:
 	# it sources config files like $HOME/.kde/share/apps/konversation/scripts/inxi.conf
 	if ($config_tool){
-		my @data = main::data_grabber("$config_tool --path data 2>/dev/null",':');
+		my @data = main::grabber("$config_tool --path data 2>/dev/null",':');
 		main::get_configs(@data);
 	}
 	eval $end if $b_log;

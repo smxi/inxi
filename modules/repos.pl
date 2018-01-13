@@ -67,7 +67,7 @@ sub check_program {
 # arg: 1 - command to turn into an array; 2 - optional: splitter
 # similar to reader() except this creates an array of data 
 # by lines from the command arg
-sub data_grabber {
+sub grabber {
 	eval $start if $b_log;
 	my ($cmd,$split) = @_;
 	$split ||= "\n";

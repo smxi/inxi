@@ -64,17 +64,6 @@ sub check_program {
 	(grep { return "$_/$_[0]" if -e "$_/$_[0]"} @paths)[0];
 }
 
-# arg: 1 - command to turn into an array; 2 - optional: splitter
-# similar to reader() except this creates an array of data 
-# by lines from the command arg
-sub data_grabber {
-	eval $start if $b_log;
-	my ($cmd,$split) = @_;
-	$split ||= "\n";
-	my @result = split /$split/, qx($cmd);
-	eval $end if $b_log;
-	return @result;
-}
 
 sub error_handler {
 	my ($err, $message, $alt1) = @_;
@@ -98,6 +87,18 @@ sub get_piece {
 	}
 }
 
+# arg: 1 - command to turn into an array; 2 - optional: splitter
+# similar to reader() except this creates an array of data 
+# by lines from the command arg
+sub grabber {
+	eval $start if $b_log;
+	my ($cmd,$split) = @_;
+	$split ||= "\n";
+	my @result = split /$split/, qx($cmd);
+	@result = map { s/^\s+|\s+$//g; $_} @result if @result;
+	eval $end if $b_log;
+	return @result;
+}
 sub log_data {}
 
 # arg: 1 - full file path, returns array of file lines.
