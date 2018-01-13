@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-12';
-my $self_patch='136-p';
+my $self_patch='137-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -986,7 +986,7 @@ sub print_irc_message {
 	exit 1;
 }
 
-};1;
+}
 
 #### -------------------------------------------------------------------
 #### DEBUGGERS
@@ -1906,7 +1906,7 @@ sub upload_file {
 		main::error_handler('ftp-bad-path', "$file_path");
 	}
 }
-};1;
+}
 
 #### -------------------------------------------------------------------
 #### DOWNLOADER
@@ -2145,7 +2145,7 @@ sub run {
 	eval $end if $b_log;
 	exit 1;
 }
-};1;
+}
 
 #### -------------------------------------------------------------------
 #### TOOLS
@@ -2758,7 +2758,9 @@ sub get_options{
 	't|processes:s' => sub {
 		my ($opt,$arg) = @_;
 		$show{'short'} = 0;
-		if ( $arg =~ /^([cm]+)([1-9]|1[0-9]|20)?$/ ){
+		my $num = $arg;
+		$num =~ s/^[cm]+// if $num;
+		if ( $arg =~ /^([cm]+)([0-9]+)?$/ && (!$num || $num =~ /^\d+/) ){
 			$show{'process'} = 1;
 			if ($arg =~ /c/){
 				$show{'ps-cpu'} = 1;
@@ -2766,9 +2768,7 @@ sub get_options{
 			if ($arg =~ /m/){
 				$show{'ps-mem'} = 1;
 			}
-			if ($arg =~ /([0-9]+)/ ){
-				$ps_count = $1;
-			}
+			$ps_count = $num if $num;
 		}
 		else {
 			error_handler('bad-arg',$opt,$arg);
@@ -3116,7 +3116,7 @@ sub show_options {
 	['1', '-S', '--system', "System information: host name, kernel, desktop environment 
 	(if in X), distro" ],
 	['1', '-t', '--processes', "Processes. Requires extra options: c^(cpu) m^(memory) cm^(cpu+memory). 
-	If followed by numbers 1-20, shows that number of processes for each type 
+	If followed by numbers 1-X, shows that number of processes for each type 
 	(default:^$ps_count; if in irc, max:^5): -t^cm10" ],
 	['1', '', '', "Make sure to have no space between letters and numbers 
 	(-t^cm10 - right, -t^cm^10 - wrong)." ],
@@ -3664,7 +3664,7 @@ sub set_konvi_data {
 	}
 	eval $end if $b_log;
 }
-};1;
+}
 
 ########################################################################
 #### OUTPUT
@@ -4538,7 +4538,7 @@ sub set_xprop {
 	eval $end if $b_log;
 }
 
-};1;
+}
 
 sub get_display_manager {
 	eval $start if $b_log;
@@ -4836,7 +4836,7 @@ sub get_os_release {
 	eval $end if $b_log;
 	return $distro;
 }
-};1;
+}
 
 sub get_init_data {
 	eval $start if $b_log;
@@ -4966,32 +4966,156 @@ sub get_memory_data_bsd {
 	return $memory;
 }
 
-sub get_process_data {
+## Get ProcessData 
+{
+package ProcessData;
+my (@processes);
+sub get {
 	eval $start if $b_log;
-	
-	my (@rows,@cpu,@mem,$count);
-	my $num = 0;
-	$count = ($b_irc)? 5: $ps_count;
-	# USER PID %CPU %MEM VSZ  RSS TTY STAT START TIME COMMAND
 	if ($show{'ps-cpu'}){
-		my @cpu = sort { 
-			my @a = split(/\s+/,$a); 
-			my @b = split(/\s+/,$b); 
-			$b[3] <=> $a[3] } @ps_aux;
-		@cpu = splice @cpu,0,$count;
+		cpu_processes();
 	}
 	if ($show{'ps-mem'}){
-		my @mem = sort { 
-			my @a = split(/\s+/,$a); 
-			my @b = split(/\s+/,$b); 
-			$b[5] <=> $a[5] } @ps_aux;
-		@mem = splice @mem,0,$count;
+		mem_processes();
 	}
-	
-	
-		
+	return @processes;
 	eval $end if $b_log;
-	return @rows;
+}
+sub cpu_processes {
+	eval $start if $b_log;
+	my ($j,$num,$cpu,$cpu_mem,$mem) = (0,0,'','','');
+	my $count = ($b_irc)? 5: $ps_count;
+	my @rows = sort { 
+		my @a = split(/\s+/,$a); 
+		my @b = split(/\s+/,$b); 
+		$b[3] <=> $a[3] } @ps_aux;
+	@rows = splice @rows,0,$count;
+	$cpu_mem = ' - Memory: MB / % used' if $extra > 0;
+	$j = scalar @rows;
+	my $throttled = throttled($ps_count,$count,$j);
+	my @data = (
+	{$num++ . "#CPU  % used - Command - pid$cpu_mem - top" => "$count$throttled",},
+	);
+	@processes = (@processes,@data);
+	my $i = 1;
+	foreach (@rows){
+		$num = 1;
+		my ($cmd,$starter);
+		$j = scalar @processes;
+		my @row = split /\s+/, $_;
+		$row[5] = ($row[5]) ? sprintf( "%.2f", $row[5]/1024 ) : 'N/A';
+		if (scalar @row > 11 && $row[11] =~ /^\//){
+			$row[11] =~ s/^.*\///;
+			$cmd = $row[11];
+			$row[10] =~ s/^.*\///;
+			$starter = $row[10];
+			$row[10] = "$row[11] started by $row[10]"
+		}
+		else {
+			$row[10] =~ s/^.*\///;
+			$cmd = $row[10];
+		}
+		@data = (
+		{
+		$num++ . "#" . $i++ => '',
+		$num++ . "#cpu" => $row[2] . '%',
+		$num++ . "#command" => $cmd,
+		},
+		);
+		@processes = (@processes,@data);
+		if ($starter) {
+			$processes[$j]{$num++ . "#started by"} = $starter;
+		}
+		$processes[$j]{$num++ . "#pid"} = $row[1];
+		if ($extra > 0){
+			$mem = sprintf( "%.2f", $row[5]/1024 ) . ' MB';
+			$mem .= ' (' . $row[3] . '%)';
+			$processes[$j]{$num++ . "#mem"} = $mem;
+		}
+		#print Data::Dumper::Dumper \@processes, "i: $i; j: $j ";
+	}
+	return 
+	eval $end if $b_log;
+}
+sub mem_processes {
+	eval $start if $b_log;
+	my ($j,$num,$cpu,$cpu_mem,$mem) = (0,0,'','','');
+	my (@data,$memory);
+	my $count = ($b_irc)? 5: $ps_count;
+	my @rows = sort { 
+		my @a = split(/\s+/,$a); 
+		my @b = split(/\s+/,$b); 
+		$b[5] <=> $a[5] } @ps_aux;
+	@rows = splice @rows,0,$count;
+	if (!$show{'info'}){
+		$memory = main::get_memory_data();
+		$memory ||= 'N/A';
+		@data = (
+		{$num++ . "#System Memory" => '',
+		$num++ . "#Used/Total" => $memory,},
+		);
+		@processes = (@processes,@data);
+	}
+	$cpu_mem = ' - CPU: % used' if $extra > 0;
+	$j = scalar @rows;
+	my $throttled = throttled($ps_count,$count,$j);
+	@data = (
+	{$num++ . "#Memory MB/% used - Command - pid$cpu_mem - top" => "$count$throttled",},
+	);
+	@processes = (@processes,@data);
+	my $i = 1;
+	foreach (@rows){
+		$num = 1;
+		my ($cmd,$starter);
+		$j = scalar @processes;
+		my @row = split /\s+/, $_;
+		$row[5] = ($row[5]) ? sprintf( "%.2f", $row[5]/1024 ) : 'N/A';
+		if (scalar @row > 11 && $row[11] =~ /^\//){
+			$row[11] =~ s/^.*\///;
+			$cmd = $row[11];
+			$row[10] =~ s/^.*\///;
+			$starter = $row[10];
+			$row[10] = "$row[11] started by $row[10]"
+		}
+		else {
+			$row[10] =~ s/^.*\///;
+			$cmd = $row[10];
+		}
+		$mem = sprintf( "%.2f", $row[5]/1024 ) . ' MB';
+		if ($extra > 0){
+			$mem .= " (" . $row[3] . "%)"; 
+		}
+		@data = (
+		{
+		$num++ . "#" . $i++ => '',
+		$num++ . "#mem" => $mem,
+		$num++ . "#command" => $cmd,
+		},
+		);
+		@processes = (@processes,@data);
+		if ($starter) {
+			$processes[$j]{$num++ . "#started by"} = $starter;
+		}
+		$processes[$j]{$num++ . "#pid"} = $row[1];
+		if ($extra > 0){
+			$cpu = $row[3] . '%';
+			$processes[$j]{$num++ . "#cpu"} = $cpu;
+		}
+		#print Data::Dumper::Dumper \@processes, "i: $i; j: $j ";
+	}
+	eval $end if $b_log;
+}
+sub throttled {
+	my ($ps_count,$count,$j) = @_;
+	my $throttled = '';
+	if ($count > $j){
+		$throttled = " (only $j processes)";
+	}
+	elsif ($count < $ps_count){
+		$throttled = " (throttled from $ps_count)";
+	}
+	return $throttled;
+}
 }
 
 ## Get RepoData
@@ -5214,7 +5338,10 @@ sub repo_builder {
 	@content = grep {/$search/i && !/^\s*$/} main::reader($file);
 	@content = data_cleaner(@content);
 	if ($split){
-		@content = map { my @inner = split (/$split/, $_);$inner[$count]} @content;
+		@content = map { 
+		my @inner = split (/$split/, $_);
+		$inner[$count];
+		} @content;
 	}
 	@content = url_cleaner(@content);
 	@content = ($missing) if ! @content;
@@ -5246,7 +5373,7 @@ sub file_path {
 	$working = "$dir/file-repo-$working.txt";
 	return $working;
 }
-};1;
+}
 
 # # check? /var/run/nologin for bsds?
 sub get_runlevel_data {
@@ -6026,7 +6153,7 @@ sub generate_process_data {
 	my $num = 0;
 	my (%data);
 	my $data_name = $prefix++ . '#Processes';
-	my @processes = get_process_data();
+	my @processes = ProcessData::get();
 	if (@processes){
 		%data = ($data_name => \@processes,);
 	}

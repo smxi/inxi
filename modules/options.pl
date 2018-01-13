@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: options.pl
-## Version: 2.0
-## Date 2018-01-10
+## Version: 2.1
+## Date 2018-01-12
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
 
@@ -183,7 +183,9 @@ sub get_options{
 	't|processes:s' => sub {
 		my ($opt,$arg) = @_;
 		$show{'short'} = 0;
-		if ( $arg =~ /^([cm]+)([1-9]|1[0-9]|20)?$/ ){
+		my $num = $arg;
+		$num =~ s/^[cm]+// if $num;
+		if ( $arg =~ /^([cm]+)([0-9]+)?$/ && (!$num || $num =~ /^\d+/) ){
 			$show{'process'} = 1;
 			if ($arg =~ /c/){
 				$show{'ps-cpu'} = 1;
@@ -191,9 +193,7 @@ sub get_options{
 			if ($arg =~ /m/){
 				$show{'ps-mem'} = 1;
 			}
-			if ($arg =~ /([0-9]+)/ ){
-				$ps_count = $1;
-			}
+			$ps_count = $num if $num;
 		}
 		else {
 			error_handler('bad-arg',$opt,$arg);
@@ -317,7 +317,7 @@ sub get_options{
 		elsif ($arg == 31) {$show{'host'} = 0}
 		elsif ($arg == 32) {$show{'host'} = 1}
 		elsif ($arg == 33) {$use{'dmidecode-force'}=1}
-		elsif ($arg == 34) {$dl{'no-ssl-opt'}=$dl{'no-ssl'}}
+		elsif ($arg == 34) {$dl{'no-ssl-opt'}=1}
 		elsif ($arg == 40) {
 			$dl{'tiny'} = 0;
 			$b_downloader = 1;}
@@ -351,9 +351,10 @@ sub get_options{
 		if ($arg =~ /^:?([0-9]+)?$/){
 			$display=$arg;
 			$display ||= ':0';
+			$display = ":$display" if $display !~ /^:/;
 			$b_display = 1;
 			$show{'display-data'} = 2;
-			$display_opt = "-display $arg";
+			$display_opt = "-display $display";
 		}
 		else {
 			error_handler('bad-arg', $opt, $arg);

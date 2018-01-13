@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: show_options.pl
-## Version: 2.3
-## Date 2018-01-11
+## Version: 2.4
+## Date 2018-01-12
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
 
@@ -157,7 +157,7 @@ sub show_options {
 	['1', '-S', '--system', "System information: host name, kernel, desktop environment 
 	(if in X), distro" ],
 	['1', '-t', '--processes', "Processes. Requires extra options: c^(cpu) m^(memory) cm^(cpu+memory). 
-	If followed by numbers 1-20, shows that number of processes for each type 
+	If followed by numbers 1-X, shows that number of processes for each type 
 	(default:^$ps_count; if in irc, max:^5): -t^cm10" ],
 	['1', '', '', "Make sure to have no space between letters and numbers 
 	(-t^cm10 - right, -t^cm^10 - wrong)." ],
@@ -371,6 +371,7 @@ sub show_options {
 	print_basic(@data); 
 	exit 1;
 }
+
 
 ### END MODULE CODE ##
 
