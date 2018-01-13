@@ -395,7 +395,7 @@ sub get_os_release {
 	eval $end if $b_log;
 	return $distro;
 }
-}
+};1;
 ### END MODULE CODE ##
 
 ### START TEST CODE ##

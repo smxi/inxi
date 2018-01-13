@@ -385,7 +385,8 @@ sub file_path {
 	$working = "$dir/file-repo-$working.txt";
 	return $working;
 }
-}
+};1;
+
 
 ### END MODULE CODE ##
 

@@ -485,8 +485,10 @@ sub get_xprop_de_data {
 		}
 		@data = main::program_values('xfdesktop');
 		$desktop[0] = $data[3];
+		@version_data = main::data_grabber('xfdesktop --version 2>/dev/null');
 		# out of x, this error goes to stderr, so it's an empty result
-		$desktop[1] = main::program_version('xfdesktop',$data[0],$data[1],$data[2],$data[5]);
+		$desktop[1] = main::awk(\@version_data,$data[0],$data[1],'\s+');
+		#$desktop[1] = main::program_version('xfdesktop',$data[0],$data[1],$data[2],$data[5]);
 		if ( !$desktop[1] ){
 			@data = main::program_values("xfce${version}-panel");
 			# print Data::Dumper::Dumper \@data;
@@ -499,7 +501,8 @@ sub get_xprop_de_data {
 		$desktop[1] ||= 4;
 		if ($extra > 0){
 			@data = main::program_values('xfdesktop-toolkit');
-			$desktop[3] = main::program_version('xfdesktop',$data[0],$data[1],$data[2],$data[5]);
+			#$desktop[3] = main::program_version('xfdesktop',$data[0],$data[1],$data[2],$data[5]);
+			$desktop[3] = main::awk(\@version_data,$data[0],$data[1],'\s+');
 			$desktop[2] = $data[3];
 		}
 		
@@ -736,7 +739,7 @@ sub set_xprop {
 	eval $end if $b_log;
 }
 
-}
+};1;
 
 sub get_display_manager {
 	eval $start if $b_log;
