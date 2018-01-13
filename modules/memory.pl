@@ -179,45 +179,37 @@ sub get_memory_data_bsd {
 	eval $start if $b_log;
 	my $memory = 'BSD-dev';
 	my $total = 0;
-	my $free = 0;
-	my (@data,$b_avg);
+	my $avg = 0;
+	my (@data,$b_free);
 	
 	if (my $program = check_program('vmstat')){
 		# see above, it's the last line
 		my $row = (grabber('vmstat -H 2>/dev/null'))[-1];
 		if ( $row ){
 			@data = split /\s+/, $row;
-			# dragonfly can have 0 fre, but they may fix that so make test dynamic
-			if ($data[4] != 0){
-				$free = sprintf ('%.1f',$data[4]/1024);
+			# dragonfly can have 0 avg, but they may fix that so make test dynamic
+			if ($data[3] != 0){
+				$avg = sprintf ('%.1f',$data[3]/1024);
 			}
-			elsif ($data[5] != 0){
-				$b_avg = 1;
-				$free = sprintf ('%.1f',$data[5]/1024);
+			elsif ($data[4] != 0){
+				$b_free = 1;
+				$avg = sprintf ('%.1f',$data[4]/1024);
 			}
 		}
 	}
 	## code to get total goes here:
-	
-	if ($free && !$total){
-		my $type = ($b_avg)? 'free':'avg' ;
-		$memory = "$free MB $type (total N/A)";
+	my $type = ($b_free) ? ' free':'' ;
+	if ($avg && !$total){
+		$memory = "$avg MB$type / (total N/A)";
 	}
-	elsif ($free && $total) {
-		my $used = $total - $free if !$b_avg;
+	elsif ($avg && $total) {
+		my $used = (!$b_free) ? $avg : $total - $avg;
 		my $percent = ($used && $total) ? sprintf(" (%.1f%%)", ($used/$total)*100) : '';
-		if ($used){
-			$memory = "$used MB/$total MB" . $percent;
-		}
-		else {
-			$memory = "$free MB avg/$total MB";
-		}
-		
+		$memory = "$used MB$type/$total MB" . $percent;
 	}
 	eval $end if $b_log;
 	return $memory;
 }
-
 
 ### END MODULE CODE ##
 
