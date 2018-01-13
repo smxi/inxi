@@ -321,17 +321,15 @@ sub mem_processes {
 sub process_starter {
 	my ($count, $row10, $row11) = @_;
 	my (@return);
+	# note: [migration/0] would clear with a simple basename
 	if ($count > 11 && $row11 =~ /^\//){
-		$row11 =~ s/^[^\[].*\///;
-		$row11 =~ s/\[|\]|\(|\)/~/g;
+		$row11 =~ s/^\/.*\///;
 		$return[0] = $row11;
-		$row10 =~ s/^[^\[].*\///;
-		$row10 =~ s/\[|\]|\(|\)/~/g;
+		$row10 =~ s/^\/.*\///;
 		$return[1] = $row10;
 	}
 	else {
-		$row10 =~ s/^[^\[].*\///;
-		$row10 =~ s/\[|\]|\(|\)/~/g;
+		$row10 =~ s/^\/.*\///;
 		$return[0] = $row10;
 		$return[1] = '';
 	}
