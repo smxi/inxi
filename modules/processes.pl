@@ -236,35 +236,23 @@ sub cpu_processes {
 	my $i = 1;
 	foreach (@rows){
 		$num = 1;
-		my ($cmd,$starter);
 		$j = scalar @processes;
 		my @row = split /\s+/, $_;
-		$row[5] = ($row[5]) ? sprintf( "%.2f", $row[5]/1024 ) : 'N/A';
-		if (scalar @row > 11 && $row[11] =~ /^\//){
-			$row[11] =~ s/^.*\///;
-			$cmd = $row[11];
-			$row[10] =~ s/^.*\///;
-			$starter = $row[10];
-			$row[10] = "$row[11] started by $row[10]"
-		}
-		else {
-			$row[10] =~ s/^.*\///;
-			$cmd = $row[10];
-		}
+		my @command = process_starter(scalar @row, $row[10],$row[11]);
 		@data = (
 		{
 		$num++ . "#" . $i++ => '',
 		$num++ . "#cpu" => $row[2] . '%',
-		$num++ . "#command" => $cmd,
+		$num++ . "#command" => $command[0],
 		},
 		);
 		@processes = (@processes,@data);
-		if ($starter) {
-			$processes[$j]{$num++ . "#started by"} = $starter;
+		if ($command[1]) {
+			$processes[$j]{$num++ . "#started by"} = $command[1];
 		}
 		$processes[$j]{$num++ . "#pid"} = $row[1];
 		if ($extra > 0){
-			$mem = sprintf( "%.2f", $row[5]/1024 ) . ' MB';
+			$mem = (defined $row[5]) ? sprintf( "%.2f", $row[5]/1024 ) . 'MB' : 'N/A';
 			$mem .= ' (' . $row[3] . '%)';
 			$processes[$j]{$num++ . "#mem"} = $mem;
 		}
@@ -302,21 +290,10 @@ sub mem_processes {
 	my $i = 1;
 	foreach (@rows){
 		$num = 1;
-		my ($cmd,$starter);
 		$j = scalar @processes;
 		my @row = split /\s+/, $_;
 		$row[5] = ($row[5]) ? sprintf( "%.2f", $row[5]/1024 ) : 'N/A';
-		if (scalar @row > 11 && $row[11] =~ /^\//){
-			$row[11] =~ s/^.*\///;
-			$cmd = $row[11];
-			$row[10] =~ s/^.*\///;
-			$starter = $row[10];
-			$row[10] = "$row[11] started by $row[10]"
-		}
-		else {
-			$row[10] =~ s/^.*\///;
-			$cmd = $row[10];
-		}
+		my @command = process_starter(scalar @row, $row[10],$row[11]);
 		$mem = sprintf( "%.3f", $row[5]/1024 ) . ' MB';
 		if ($extra > 0){
 			$mem .= " (" . $row[2] . "%)"; 
@@ -325,12 +302,12 @@ sub mem_processes {
 		{
 		$num++ . "#" . $i++ => '',
 		$num++ . "#mem" => $mem,
-		$num++ . "#command" => $cmd,
+		$num++ . "#command" => $command[0],
 		},
 		);
 		@processes = (@processes,@data);
-		if ($starter) {
-			$processes[$j]{$num++ . "#started by"} = $starter;
+		if ($command[1]) {
+			$processes[$j]{$num++ . "#started by"} = $command[1];
 		}
 		$processes[$j]{$num++ . "#pid"} = $row[1];
 		if ($extra > 0){
@@ -340,6 +317,25 @@ sub mem_processes {
 		#print Data::Dumper::Dumper \@processes, "i: $i; j: $j ";
 	}
 	eval $end if $b_log;
+}
+sub process_starter {
+	my ($count, $row10, $row11) = @_;
+	my (@return);
+	if ($count > 11 && $row11 =~ /^\//){
+		$row11 =~ s/^[^\[].*\///;
+		$row11 =~ s/\[|\]|\(|\)/~/g;
+		$return[0] = $row11;
+		$row10 =~ s/^[^\[].*\///;
+		$row10 =~ s/\[|\]|\(|\)/~/g;
+		$return[1] = $row10;
+	}
+	else {
+		$row10 =~ s/^[^\[].*\///;
+		$row10 =~ s/\[|\]|\(|\)/~/g;
+		$return[0] = $row10;
+		$return[1] = '';
+	}
+	return @return;
 }
 sub throttled {
 	my ($ps_count,$count,$j) = @_;
@@ -353,7 +349,6 @@ sub throttled {
 	return $throttled;
 }
 }
-
 
 ### END MODULE CODE ##
 
