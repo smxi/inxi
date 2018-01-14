@@ -39,8 +39,8 @@ use Time::HiRes qw(gettimeofday tv_interval);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-01-13';
-my $self_patch='143-p';
+my $self_date='2018-01-14';
+my $self_patch='144-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -75,8 +75,7 @@ my $dl_timeout = 4;
 my $language = '';
 my $os = '';
 my $ps_count = 5;
-my @paths = ('/sbin','/bin','/usr/sbin','/usr/bin','/usr/X11R6/bin',
-'/usr/local/sbin','/usr/local/bin','/opt/local/bin');
+my @paths = qw(/sbin /bin /usr/sbin /usr/bin /usr/X11R6/bin /usr/local/sbin /usr/local/bin);
 $ENV{'PATH'} = join(':',@paths);
 my $sensors_cpu_nu = 0;
 
@@ -1821,7 +1820,7 @@ sub sys_ls {
 
 sub sys_traverse_data {
 	print "Parsing /sys files...\n";
-	no warnings 'File::Find';
+	# no warnings 'File::Find';
 	File::Find::find( \&wanted, "/sys");
 	process_data();
 }
@@ -2239,16 +2238,20 @@ sub get_piece {
 }
 
 # arg: 1 - command to turn into an array; 2 - optional: splitter
+# 3 - optionsl, strip and clean data
 # similar to reader() except this creates an array of data 
 # by lines from the command arg
 sub grabber {
 	eval $start if $b_log;
-	my ($cmd,$split) = @_;
+	my ($cmd,$split,$strip) = @_;
 	$split ||= "\n";
-	my @result = split /$split/, qx($cmd);
-	@result = map {$_ =~ s/^\s+|\s+$//g; $_} @result if @result;
+	my @rows = split /$split/, qx($cmd);
+	if ($strip && @rows){
+		@rows = grep {/^\s*[^#]/} @rows;
+		@rows = map {s/^\s+|\s+$//g; $_} @rows if @rows;
+	}
 	eval $end if $b_log;
-	return @result;
+	return @rows;
 }
 
 # returns array of:
@@ -2405,12 +2408,17 @@ sub program_version {
 # print program_version('bash', 'bash', 4) . "\n";
 
 # arg: 1 - full file path, returns array of file lines.
+# 2 - optionsl, strip and clean data
 # note: chomp has to chomp the entire action, not just <$fh>
 sub reader {
 	eval $start if $b_log;
-	my ($file) = @_;
+	my ($file,$strip) = @_;
 	open( my $fh, '<', $file ) or error_handler('open', $file, $!);
 	chomp(my @rows = <$fh>);
+	if ($strip && @rows){
+		@rows = grep {/^\s*[^#]/} @rows;
+		@rows = map {s/^\s+|\s+$//g; $_} @rows if @rows;
+	}
 	eval $end if $b_log;
 	return @rows;
 }
@@ -3450,10 +3458,10 @@ sub get_client_version {
 	# for this file to be user edited, doing some extra checks here.
 	elsif ($client{'name'} eq 'hexchat') {
 		if ( -f '~/.config/hexchat/hexchat.conf' ){
-			@data = main::reader('~/.config/hexchat/hexchat.conf');
+			@data = main::reader('~/.config/hexchat/hexchat.conf','strip');
 		}
 		elsif ( -f '~/.config/hexchat/xchat.conf' ){
-			@data = main::reader('~/.config/hexchat/xchat.conf');
+			@data = main::reader('~/.config/hexchat/xchat.conf','strip');
 		}
 		$client{'version'} = main::awk(\@data,'version',2,'\s*=\s*');
 		$client{'name-print'} = 'HexChat';
@@ -3591,7 +3599,6 @@ sub check_modern_konvi {
 	# main::log_data("name: $client{'name'} :: qdb: $client{'qdbus'} :: version: $client{'version'} :: konvi: $client{'konvi'} :: PPID: $ppid") if $b_log;
 	# sabayon uses /usr/share/apps/konversation as path
 	if ( -d '/usr/share/kde4/apps/konversation' || -d '/usr/share/apps/konversation' ){
-		@temp = main::grabber('ps -A');
 		$pid = main::awk(\@ps_aux,'konversation',2,'\s+');
 		main::log_data("pid: $pid") if $b_log;
 		$konvi = readlink ("/proc/$pid/exe");
@@ -3670,11 +3677,12 @@ sub set_konvi_data {
 #### -------------------------------------------------------------------
 
 sub clean_characters {
-	my (@data) = @_;
+	my ($data) = @_;
 	# newline, pipe, brackets, + sign, with space, then clear doubled
 	# spaces and then strip out trailing/leading spaces.
-	@data = map {s/\n|\|\+|\[\s\]|\s\s+/ /g; s/^\s+|\s+$//g; $_} @data;
-	return @data;
+	$data =~ s/\n|\|\+|\[\s\]|\s\s+/ /g if $data; 
+	$data =~ s/^\s+|\s+$//g if $data;
+	return $data;
 }
 
 # not used, but keeping logic for now
@@ -4526,9 +4534,12 @@ sub set_info_data {
 sub set_xprop {
 	eval $start if $b_log;
 	if (my $program = main::check_program('xprop')){
-		@xprop = grep {/^\S/} main::grabber("xprop -root $display_opt 2>/dev/null");
-		$_=lc for @xprop;
-		$b_xprop = 1 if scalar @xprop > 5;
+		@xprop = main::grabber("xprop -root $display_opt 2>/dev/null");
+		if (@xprop){
+			@xprop = grep {/^\S/} @xprop;
+			$_=lc for @xprop;
+			$b_xprop = 1 if scalar @xprop > 5;
+		}
 	}
 	eval $end if $b_log;
 }
@@ -4596,9 +4607,10 @@ sub get_bsd_os {
 	if ($bsd_type eq 'darwin'){
 		my $file = '/System/Library/CoreServices/SystemVersion.plist';
 		if (-f $file){
-			my @data = grep {/(ProductName|ProductVersion)/} main::reader($file);
-			@data = grep {/<string>/} @data;
-			@data = map {s/<[\/]?string>//g; } @data;
+			my @data = main::reader($file);
+			@data = grep {/(ProductName|ProductVersion)/} @data if @data;
+			@data = grep {/<string>/} @data if @data;
+			@data = map {s/<[\/]?string>//g; } @data if @data;
 			$distro = join (' ', @data);
 		}
 	}
@@ -4667,8 +4679,9 @@ sub get_linux_distro {
 	
 	# first test for the legacy antiX distro id file
 	if ( -f '/etc/antiX'){
-		@working = main::clean_characters( grep { /antix.*\.iso/} main::reader('/etc/antiX') );
-		$distro = $working[0];
+		@working = main::reader('/etc/antiX');
+		$distro = main::awk(\@working,'antix.*\.iso') if @working;
+		$distro = main::clean_characters($distro) if $distro;
 	}
 	# this handles case where only one release/version file was found, and it's lsb-release. 
 	# This would never apply for ubuntu or debian, which will filter down to the following 
@@ -4715,7 +4728,7 @@ sub get_linux_distro {
 		else {
 			# debian issue can end with weird escapes like \n \l
 			@working = main::reader($issue);
-			$distro = (map {s/\\[a-z]|,|\*|\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} @working)[0];
+			$distro = (map {s/\\[a-z]|,|\*|\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} @working)[0] if @working;
 			# this handles an arch bug where /etc/arch-release is empty and /etc/issue 
 			# is corrupted only older arch installs that have not been updated should 
 			# have this fallback required, new ones use os-release
@@ -4760,7 +4773,8 @@ sub get_linux_distro {
 sub get_lsb_release {
 	eval $start if $b_log;
 	my ($distro,$id,$release,$codename,$description,) = ('','','','','');
-	my @content = map {s/,|\*|\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} main::reader('/etc/lsb-release');
+	my @content = main::reader('/etc/lsb-release');
+	@content = map {s/,|\*|\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} @content if @content;
 	foreach (@content){
 		my @working = split /\s*=\s*/, $_;
 		if ($working[0] eq 'DISTRIB_ID' && $working[1]){
@@ -4798,7 +4812,8 @@ sub get_os_release {
 	eval $start if $b_log;
 	my ($pretty_name,$name,$version_name,$version_id,
 	$distro_name,$distro) = ('','','','','','');
-	my @content = map {s/\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} main::reader('/etc/os-release');
+	my @content = main::reader('/etc/os-release');
+	@content = map {s/\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} @content if @content;
 	foreach (@content){
 		my @working = split /\s*=\s*/, $_;
 		if ($working[0] eq 'PRETTY_NAME' && $working[1]){
@@ -4975,7 +4990,7 @@ sub get_memory_data_bsd {
 	
 	if (my $program = check_program('vmstat')){
 		# see above, it's the last line
-		my $row = (grabber('vmstat -H 2>/dev/null'))[-1];
+		my $row = (grabber('vmstat -H 2>/dev/null','\n','strip'))[-1];
 		if ( $row ){
 			@data = split /\s+/, $row;
 			# dragonfly can have 0 avg, but they may fix that so make test dynamic
@@ -5203,12 +5218,12 @@ sub get_repos_linux {
 	}
 	# pacman: Arch and derived
 	if (-f $pacman){
-		@repo_files = grep {/^\s*Include/i} main::reader($pacman);
+		@repo_files =  main::reader($pacman,'strip');
+		@repo_files = grep {/^\s*Include/i} @repo_files if @repo_files;
 		@repo_files = map {
-			$_ =~ s/^\s+|\s+$//g; 
 			my @working = split( /\s+=\s+/, $_); 
 			$working[1];
-		} @repo_files;
+		} @repo_files if @repo_files;
 		@repo_files = sort(@repo_files);
 		@repo_files = main::uniq(@repo_files);
 		foreach (sort @repo_files){
@@ -5232,7 +5247,7 @@ sub get_repos_linux {
 		}
 		if (-f $slackpkg_plus){
 			push @dbg_files, $slackpkg_plus if $debugger_dir;
-			@data = grep { /^\s*[^#]/ } main::reader($slackpkg_plus);
+			@data =  main::reader($slackpkg_plus,'strip');
 			my (@repoplus_list,$active_repos);
 			foreach my $row (@data){
 				@data2 = split /\s*=\s*/, $row;
@@ -5297,9 +5312,9 @@ sub get_repos_bsd {
 					push @dbg_files, $_ if $debugger_dir;
 					# these will be result sets separated by an empty line
 					# first dump all lines that start with #
-					@content = grep { /^\s*[^#]/ } main::reader($_);
+					@content =  main::reader($_,'strip');
 					# then do some clean up on the lines
-					@content = map { $_ =~ s/^\s+|{|}|,|\*|\s+$//g; } main::reader($_);
+					@content = map { $_ =~ s/{|}|,|\*//g; } @content if @content;
 					# get all rows not starting with a # and starting with a non space character
 					my $url = '';
 					foreach (@content){
@@ -5371,7 +5386,8 @@ sub repo_builder {
 	$key = $keys{$type};
 
 	push @dbg_files, $file if $debugger_dir;
-	@content = grep {/$search/i && !/^\s*$/} main::reader($file);
+	@content =  main::reader($file);
+	@content = grep {/$search/i && !/^\s*$/} @content if @content;
 	@content = data_cleaner(@content);
 	if ($split){
 		@content = map { 
