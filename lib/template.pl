@@ -25,6 +25,7 @@ my $b_irc = 1;
 my $bsd_type = '';
 my $b_display = 1;
 my $b_root = 0;
+my $b_arm = 0;
 my $b_dmi = 0;
 my $b_pci = 0;
 my $b_log;
