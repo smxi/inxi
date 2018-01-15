@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: compiler.pl
-## Version: 1.2
-## Date 2018-01-10
+## Version: 1.3
+## Date 2018-01-14
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
 

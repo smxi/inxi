@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: repos.pl
-## Version: 1.2
-## Date 2018-01-10
+## Version: 1.3
+## Date 2018-01-14
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2018 Harald Hope
 
@@ -64,24 +64,11 @@ sub check_program {
 	(grep { return "$_/$_[0]" if -e "$_/$_[0]"} @paths)[0];
 }
 
-# arg: 1 - command to turn into an array; 2 - optional: splitter
-# similar to reader() except this creates an array of data 
-# by lines from the command arg
-sub grabber {
-	eval $start if $b_log;
-	my ($cmd,$split) = @_;
-	$split ||= "\n";
-	my @result = split /$split/, qx($cmd);
-	eval $end if $b_log;
-	return @result;
-}
-
 sub error_handler {
 	my ($err, $message, $alt1) = @_;
 	print "$err: $message err: $alt1\n";
 	exit;
 }
-
 
 # args: 0 - the string to get piece of
 # 2 - the position in string, starting at 1 for 0 index.
@@ -99,17 +86,46 @@ sub get_piece {
 	}
 }
 
+# arg: 1 - command to turn into an array; 2 - optional: splitter
+# 3 - optionsl, strip and clean data
+# similar to reader() except this creates an array of data 
+# by lines from the command arg
+sub grabber {
+	eval $start if $b_log;
+	my ($cmd,$split,$strip) = @_;
+	$split ||= "\n";
+	my @rows = split /$split/, qx($cmd);
+	if ($strip && @rows){
+		@rows = grep {/^\s*[^#]/} @rows;
+		@rows = map {s/^\s+|\s+$//g; $_} @rows if @rows;
+	}
+	eval $end if $b_log;
+	return @rows;
+}
 sub log_data {}
 
 # arg: 1 - full file path, returns array of file lines.
+# 2 - optionsl, strip and clean data
 # note: chomp has to chomp the entire action, not just <$fh>
 sub reader {
 	eval $start if $b_log;
-	my ($file) = @_;
+	my ($file,$strip) = @_;
 	open( my $fh, '<', $file ) or error_handler('open', $file, $!);
 	chomp(my @rows = <$fh>);
+	if ($strip && @rows){
+		@rows = grep {/^\s*[^#]/} @rows;
+		@rows = map {s/^\s+|\s+$//g; $_} @rows if @rows;
+	}
 	eval $end if $b_log;
 	return @rows;
+}
+
+# args: 1 - the file to create if not exists
+sub toucher {
+	my ($file ) = @_;
+	if ( ! -e $file ){
+		open( my $fh, '>', $file ) or error_handler('create', $file, $!);
+	}
 }
 # calling it trimmer to avoid conflicts with existing trim stuff
 # arg: 1 - string to be right left trimmed. Also slices off \n so no chomp needed
@@ -125,6 +141,24 @@ sub trimmer {
 sub uniq {
 	my %seen;
 	grep !$seen{$_}++, @_;
+}
+
+# arg: 1 file full  path to write to; 2 - arrayof data to write. 
+# note: turning off strict refs so we can pass it a scalar or an array reference.
+sub writer {
+	my ($path, $ref_content) = @_;
+	my ($content);
+	no strict 'refs';
+	# print Dumper $ref_content, "\n";
+	if (ref $ref_content eq 'ARRAY'){
+		$content = join "\n", @$ref_content or die "failed with error $!";
+	}
+	else {
+		$content = scalar $ref_content;
+	}
+	open(my $fh, '>', $path) or error_handler('open',"$path", "$!");
+	print $fh $content;
+	close $fh;
 }
 
 ### START CODE REQUIRED BY THIS MODULE ##
@@ -182,12 +216,12 @@ sub get_repos_linux {
 	}
 	# pacman: Arch and derived
 	if (-f $pacman){
-		@repo_files = grep {/^\s*Include/i} main::reader($pacman);
+		@repo_files =  main::reader($pacman,'strip');
+		@repo_files = grep {/^\s*Include/i} @repo_files if @repo_files;
 		@repo_files = map {
-			$_ =~ s/^\s+|\s+$//g; 
 			my @working = split( /\s+=\s+/, $_); 
 			$working[1];
-		} @repo_files;
+		} @repo_files if @repo_files;
 		@repo_files = sort(@repo_files);
 		@repo_files = main::uniq(@repo_files);
 		foreach (sort @repo_files){
@@ -211,7 +245,7 @@ sub get_repos_linux {
 		}
 		if (-f $slackpkg_plus){
 			push @dbg_files, $slackpkg_plus if $debugger_dir;
-			@data = grep { /^\s*[^#]/ } main::reader($slackpkg_plus);
+			@data =  main::reader($slackpkg_plus,'strip');
 			my (@repoplus_list,$active_repos);
 			foreach my $row (@data){
 				@data2 = split /\s*=\s*/, $row;
@@ -276,9 +310,9 @@ sub get_repos_bsd {
 					push @dbg_files, $_ if $debugger_dir;
 					# these will be result sets separated by an empty line
 					# first dump all lines that start with #
-					@content = grep { /^\s*[^#]/ } main::reader($_);
+					@content =  main::reader($_,'strip');
 					# then do some clean up on the lines
-					@content = map { $_ =~ s/^\s+|{|}|,|\*|\s+$//g; } main::reader($_);
+					@content = map { $_ =~ s/{|}|,|\*//g; } @content if @content;
 					# get all rows not starting with a # and starting with a non space character
 					my $url = '';
 					foreach (@content){
@@ -350,10 +384,14 @@ sub repo_builder {
 	$key = $keys{$type};
 
 	push @dbg_files, $file if $debugger_dir;
-	@content = grep {/$search/i && !/^\s*$/} main::reader($file);
+	@content =  main::reader($file);
+	@content = grep {/$search/i && !/^\s*$/} @content if @content;
 	@content = data_cleaner(@content);
 	if ($split){
-		@content = map { my @inner = split (/$split/, $_);$inner[$count]} @content;
+		@content = map { 
+		my @inner = split (/$split/, $_);
+		$inner[$count];
+		} @content;
 	}
 	@content = url_cleaner(@content);
 	@content = ($missing) if ! @content;
@@ -385,7 +423,7 @@ sub file_path {
 	$working = "$dir/file-repo-$working.txt";
 	return $working;
 }
-};1;
+}
 
 
 ### END MODULE CODE ##

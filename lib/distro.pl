@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: distro.pl
-## Version: 1.3
-## Date 2018-01-12
+## Version: 1.4
+## Date 2018-01-14
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2018 Harald Hope
 
@@ -64,24 +64,11 @@ sub check_program {
 	(grep { return "$_/$_[0]" if -e "$_/$_[0]"} @paths)[0];
 }
 
-# arg: 1 - command to turn into an array; 2 - optional: splitter
-# similar to reader() except this creates an array of data 
-# by lines from the command arg
-sub grabber {
-	eval $start if $b_log;
-	my ($cmd,$split) = @_;
-	$split ||= "\n";
-	my @result = split /$split/, qx($cmd);
-	eval $end if $b_log;
-	return @result;
-}
-
 sub error_handler {
 	my ($err, $message, $alt1) = @_;
 	print "$err: $message err: $alt1\n";
 	exit;
 }
-
 
 # args: 0 - the string to get piece of
 # 2 - the position in string, starting at 1 for 0 index.
@@ -99,17 +86,46 @@ sub get_piece {
 	}
 }
 
+# arg: 1 - command to turn into an array; 2 - optional: splitter
+# 3 - optionsl, strip and clean data
+# similar to reader() except this creates an array of data 
+# by lines from the command arg
+sub grabber {
+	eval $start if $b_log;
+	my ($cmd,$split,$strip) = @_;
+	$split ||= "\n";
+	my @rows = split /$split/, qx($cmd);
+	if ($strip && @rows){
+		@rows = grep {/^\s*[^#]/} @rows;
+		@rows = map {s/^\s+|\s+$//g; $_} @rows if @rows;
+	}
+	eval $end if $b_log;
+	return @rows;
+}
 sub log_data {}
 
 # arg: 1 - full file path, returns array of file lines.
+# 2 - optionsl, strip and clean data
 # note: chomp has to chomp the entire action, not just <$fh>
 sub reader {
 	eval $start if $b_log;
-	my ($file) = @_;
+	my ($file,$strip) = @_;
 	open( my $fh, '<', $file ) or error_handler('open', $file, $!);
 	chomp(my @rows = <$fh>);
+	if ($strip && @rows){
+		@rows = grep {/^\s*[^#]/} @rows;
+		@rows = map {s/^\s+|\s+$//g; $_} @rows if @rows;
+	}
 	eval $end if $b_log;
 	return @rows;
+}
+
+# args: 1 - the file to create if not exists
+sub toucher {
+	my ($file ) = @_;
+	if ( ! -e $file ){
+		open( my $fh, '>', $file ) or error_handler('create', $file, $!);
+	}
 }
 # calling it trimmer to avoid conflicts with existing trim stuff
 # arg: 1 - string to be right left trimmed. Also slices off \n so no chomp needed
@@ -127,14 +143,33 @@ sub uniq {
 	grep !$seen{$_}++, @_;
 }
 
+# arg: 1 file full  path to write to; 2 - arrayof data to write. 
+# note: turning off strict refs so we can pass it a scalar or an array reference.
+sub writer {
+	my ($path, $ref_content) = @_;
+	my ($content);
+	no strict 'refs';
+	# print Dumper $ref_content, "\n";
+	if (ref $ref_content eq 'ARRAY'){
+		$content = join "\n", @$ref_content or die "failed with error $!";
+	}
+	else {
+		$content = scalar $ref_content;
+	}
+	open(my $fh, '>', $path) or error_handler('open',"$path", "$!");
+	print $fh $content;
+	close $fh;
+}
+
 ### START CODE REQUIRED BY THIS MODULE ##
 
 sub clean_characters {
-	my (@data) = @_;
+	my ($data) = @_;
 	# newline, pipe, brackets, + sign, with space, then clear doubled
 	# spaces and then strip out trailing/leading spaces.
-	@data = map {s/\n|\|\+|\[\s\]|\s\s+/ /g; s/^\s+|\s+$//g; $_} @data;
-	return @data;
+	$data =~ s/\n|\|\+|\[\s\]|\s\s+/ /g if $data; 
+	$data =~ s/^\s+|\s+$//g if $data;
+	return $data;
 }
 
 ### END CODE REQUIRED BY THIS MODULE ##
@@ -160,9 +195,10 @@ sub get_bsd_os {
 	if ($bsd_type eq 'darwin'){
 		my $file = '/System/Library/CoreServices/SystemVersion.plist';
 		if (-f $file){
-			my @data = grep {/(ProductName|ProductVersion)/} main::reader($file);
-			@data = grep {/<string>/} @data;
-			@data = map {s/<[\/]?string>//g; } @data;
+			my @data = main::reader($file);
+			@data = grep {/(ProductName|ProductVersion)/} @data if @data;
+			@data = grep {/<string>/} @data if @data;
+			@data = map {s/<[\/]?string>//g; } @data if @data;
 			$distro = join (' ', @data);
 		}
 	}
@@ -188,7 +224,7 @@ sub get_linux_distro {
 	SuSE-release);
 	my $primary_s = join "|", @primary;
 	my $exclude_s = 'debian_version|devuan_version|ubuntu_version';
-	my $lsb_good_s = 'mandrake-release|mandriva-release|mandrakelinux-release';
+	my $lsb_good_s = 'mandrake-release|mandriva-release|mandrakelinux-release|manjaro-release';
 	my $os_release_good_s = 'arch-release|SuSE-release';
 	# note: always exceptions, so wild card after release/version: 
 	# /etc/lsb-release-crunchbang
@@ -231,8 +267,9 @@ sub get_linux_distro {
 	
 	# first test for the legacy antiX distro id file
 	if ( -f '/etc/antiX'){
-		@working = main::clean_characters( grep { /antix.*\.iso/} main::reader('/etc/antiX') );
-		$distro = $working[0];
+		@working = main::reader('/etc/antiX');
+		$distro = main::awk(\@working,'antix.*\.iso') if @working;
+		$distro = main::clean_characters($distro) if $distro;
 	}
 	# this handles case where only one release/version file was found, and it's lsb-release. 
 	# This would never apply for ubuntu or debian, which will filter down to the following 
@@ -279,7 +316,7 @@ sub get_linux_distro {
 		else {
 			# debian issue can end with weird escapes like \n \l
 			@working = main::reader($issue);
-			$distro = (map {s/\\[a-z]|,|\*|\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} @working)[0];
+			$distro = (map {s/\\[a-z]|,|\*|\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} @working)[0] if @working;
 			# this handles an arch bug where /etc/arch-release is empty and /etc/issue 
 			# is corrupted only older arch installs that have not been updated should 
 			# have this fallback required, new ones use os-release
@@ -324,7 +361,8 @@ sub get_linux_distro {
 sub get_lsb_release {
 	eval $start if $b_log;
 	my ($distro,$id,$release,$codename,$description,) = ('','','','','');
-	my @content = map {s/,|\*|\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} main::reader('/etc/lsb-release');
+	my @content = main::reader('/etc/lsb-release');
+	@content = map {s/,|\*|\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} @content if @content;
 	foreach (@content){
 		my @working = split /\s*=\s*/, $_;
 		if ($working[0] eq 'DISTRIB_ID' && $working[1]){
@@ -362,7 +400,8 @@ sub get_os_release {
 	eval $start if $b_log;
 	my ($pretty_name,$name,$version_name,$version_id,
 	$distro_name,$distro) = ('','','','','','');
-	my @content = map {s/\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} main::reader('/etc/os-release');
+	my @content = main::reader('/etc/os-release');
+	@content = map {s/\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} @content if @content;
 	foreach (@content){
 		my @working = split /\s*=\s*/, $_;
 		if ($working[0] eq 'PRETTY_NAME' && $working[1]){
@@ -395,7 +434,7 @@ sub get_os_release {
 	eval $end if $b_log;
 	return $distro;
 }
-};1;
+}
 ### END MODULE CODE ##
 
 ### START TEST CODE ##

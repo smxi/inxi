@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: desktop.pl
-## Version: 1.5
-## Date 2018-01-12
+## Version: 1.6
+## Date 2018-01-14
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2018 Harald Hope
 
@@ -59,6 +59,7 @@ sub awk {
 	eval $end if $b_log;
 	return $result;
 }
+
 # arg: 1 - string to strip start/end space/\n from
 # note: a few nano seconds are saved by using raw $_[0] for program
 sub check_program {
@@ -88,29 +89,45 @@ sub get_piece {
 }
 
 # arg: 1 - command to turn into an array; 2 - optional: splitter
+# 3 - optionsl, strip and clean data
 # similar to reader() except this creates an array of data 
 # by lines from the command arg
 sub grabber {
 	eval $start if $b_log;
-	my ($cmd,$split) = @_;
+	my ($cmd,$split,$strip) = @_;
 	$split ||= "\n";
-	my @result = split /$split/, qx($cmd);
-	@result = map { s/^\s+|\s+$//g; $_} @result if @result;
+	my @rows = split /$split/, qx($cmd);
+	if ($strip && @rows){
+		@rows = grep {/^\s*[^#]/} @rows;
+		@rows = map {s/^\s+|\s+$//g; $_} @rows if @rows;
+	}
 	eval $end if $b_log;
-	return @result;
+	return @rows;
 }
-
 sub log_data {}
 
 # arg: 1 - full file path, returns array of file lines.
+# 2 - optionsl, strip and clean data
 # note: chomp has to chomp the entire action, not just <$fh>
 sub reader {
 	eval $start if $b_log;
-	my ($file) = @_;
+	my ($file,$strip) = @_;
 	open( my $fh, '<', $file ) or error_handler('open', $file, $!);
 	chomp(my @rows = <$fh>);
+	if ($strip && @rows){
+		@rows = grep {/^\s*[^#]/} @rows;
+		@rows = map {s/^\s+|\s+$//g; $_} @rows if @rows;
+	}
 	eval $end if $b_log;
 	return @rows;
+}
+
+# args: 1 - the file to create if not exists
+sub toucher {
+	my ($file ) = @_;
+	if ( ! -e $file ){
+		open( my $fh, '>', $file ) or error_handler('create', $file, $!);
+	}
 }
 # calling it trimmer to avoid conflicts with existing trim stuff
 # arg: 1 - string to be right left trimmed. Also slices off \n so no chomp needed
@@ -126,6 +143,24 @@ sub trimmer {
 sub uniq {
 	my %seen;
 	grep !$seen{$_}++, @_;
+}
+
+# arg: 1 file full  path to write to; 2 - arrayof data to write. 
+# note: turning off strict refs so we can pass it a scalar or an array reference.
+sub writer {
+	my ($path, $ref_content) = @_;
+	my ($content);
+	no strict 'refs';
+	# print Dumper $ref_content, "\n";
+	if (ref $ref_content eq 'ARRAY'){
+		$content = join "\n", @$ref_content or die "failed with error $!";
+	}
+	else {
+		$content = scalar $ref_content;
+	}
+	open(my $fh, '>', $path) or error_handler('open',"$path", "$!");
+	print $fh $content;
+	close $fh;
 }
 
 ### START CODE REQUIRED BY THIS MODULE ##
@@ -474,10 +509,10 @@ sub get_xprop_de_data {
 	# String: "This is xfdesktop version 4.2.12"
 	# alternate: xfce4-about --version > xfce4-about 4.10.0 (Xfce 4.10)
 	if (main::awk(\@xprop,'xfce' )){
-		if (main::awk(\@xprop, '\"xfce4\"'){
+		if (main::awk(\@xprop, '\"xfce4\"')){
 			$version = '4';
 		}
-		elsif (main::awk(\@xprop, '\"xfce5\"'){
+		elsif (main::awk(\@xprop, '\"xfce5\"')){
 			$version = '5';
 		}
 		else {
@@ -732,14 +767,17 @@ sub set_info_data {
 sub set_xprop {
 	eval $start if $b_log;
 	if (my $program = main::check_program('xprop')){
-		@xprop = grep {/^\S/} main::grabber("xprop -root $display_opt 2>/dev/null");
-		$_=lc for @xprop;
-		$b_xprop = 1 if scalar @xprop > 5;
+		@xprop = main::grabber("xprop -root $display_opt 2>/dev/null");
+		if (@xprop){
+			@xprop = grep {/^\S/} @xprop;
+			$_=lc for @xprop;
+			$b_xprop = 1 if scalar @xprop > 5;
+		}
 	}
 	eval $end if $b_log;
 }
 
-};1;
+}
 
 sub get_display_manager {
 	eval $start if $b_log;

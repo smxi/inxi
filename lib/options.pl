@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: options.pl
-## Version: 2.1
-## Date 2018-01-12
+## Version: 2.2
+## Date 2018-01-15
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
 
@@ -25,6 +25,8 @@ my $b_irc = 1;
 my $bsd_type = '';
 my $b_display = 1;
 my $b_root = 0;
+my $b_dmi = 0;
+my $b_pci = 0;
 my $b_log;
 my $extra = 2;
 my @paths = ('/sbin','/bin','/usr/sbin','/usr/bin','/usr/X11R6/bin','/usr/local/sbin','/usr/local/bin');
@@ -436,6 +438,12 @@ sub get_options{
 	show_version() if $b_version;
 	show_options($help_type) if $help_type;
 	update_me( $self_download, $download_id ) if $b_updater;
+	if ( $show{'memory'} || ( ( $bsd_type || $use{'dmidecode-force'} ) && ($show{'machine'} || $show{'battery'}) ) ){
+		$b_dmi = 1;
+	}
+	if ($show{'audio'} || $show{'graphic'} || $show{'network'} ){
+		$b_pci = 1;
+	}
 } 
 
 ### END MODULE CODE ##

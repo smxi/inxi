@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: weather.pl
-## Version: 1.0
-## Date 2018-01-13
+## Version: 1.1
+## Date 2018-01-14
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2018 Harald Hope
 
@@ -64,7 +64,6 @@ sub check_program {
 	(grep { return "$_/$_[0]" if -e "$_/$_[0]"} @paths)[0];
 }
 
-
 sub error_handler {
 	my ($err, $message, $alt1) = @_;
 	print "$err: $message err: $alt1\n";
@@ -88,26 +87,35 @@ sub get_piece {
 }
 
 # arg: 1 - command to turn into an array; 2 - optional: splitter
+# 3 - optionsl, strip and clean data
 # similar to reader() except this creates an array of data 
 # by lines from the command arg
 sub grabber {
 	eval $start if $b_log;
-	my ($cmd,$split) = @_;
+	my ($cmd,$split,$strip) = @_;
 	$split ||= "\n";
-	my @result = split /$split/, qx($cmd);
-	@result = map { s/^\s+|\s+$//g; $_} @result if @result;
+	my @rows = split /$split/, qx($cmd);
+	if ($strip && @rows){
+		@rows = grep {/^\s*[^#]/} @rows;
+		@rows = map {s/^\s+|\s+$//g; $_} @rows if @rows;
+	}
 	eval $end if $b_log;
-	return @result;
+	return @rows;
 }
 sub log_data {}
 
 # arg: 1 - full file path, returns array of file lines.
+# 2 - optionsl, strip and clean data
 # note: chomp has to chomp the entire action, not just <$fh>
 sub reader {
 	eval $start if $b_log;
-	my ($file) = @_;
+	my ($file,$strip) = @_;
 	open( my $fh, '<', $file ) or error_handler('open', $file, $!);
 	chomp(my @rows = <$fh>);
+	if ($strip && @rows){
+		@rows = grep {/^\s*[^#]/} @rows;
+		@rows = map {s/^\s+|\s+$//g; $_} @rows if @rows;
+	}
 	eval $end if $b_log;
 	return @rows;
 }

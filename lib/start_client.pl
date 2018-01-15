@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 ## File: start_client.pl
-## Version: 2.0
-## Date 2018-01-12
+## Version: 2.1
+## Date 2018-01-14
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2017-18 Harald Hope
 
@@ -80,7 +80,160 @@ sub check_program {
 	(grep { return "$_/$_[0]" if -e "$_/$_[0]"} @paths)[0];
 }
 
+sub error_handler {
+	my ($err, $message, $alt1) = @_;
+	print "$err: $message err: $alt1\n";
+	exit;
+}
+
+# args: 0 - the string to get piece of
+# 2 - the position in string, starting at 1 for 0 index.
+# 3 - the separator, default is ' '
+sub get_piece {
+	eval $start if $b_log;
+	my ($string, $num, $sep) = @_;
+	$num--;
+	$sep ||= '\s+';
+	$string =~ s/^\s+|\s+$//;
+	my @temp = split /$sep/, $string;
+	eval $end if $b_log;
+	if ( exists $temp[$num] ){
+		return $temp[$num];
+	}
+}
+
+# arg: 1 - command to turn into an array; 2 - optional: splitter
+# 3 - optionsl, strip and clean data
+# similar to reader() except this creates an array of data 
+# by lines from the command arg
+sub grabber {
+	eval $start if $b_log;
+	my ($cmd,$split,$strip) = @_;
+	$split ||= "\n";
+	my @rows = split /$split/, qx($cmd);
+	if ($strip && @rows){
+		@rows = grep {/^\s*[^#]/} @rows;
+		@rows = map {s/^\s+|\s+$//g; $_} @rows if @rows;
+	}
+	eval $end if $b_log;
+	return @rows;
+}
 sub log_data {}
+
+# arg: 1 - full file path, returns array of file lines.
+# 2 - optionsl, strip and clean data
+# note: chomp has to chomp the entire action, not just <$fh>
+sub reader {
+	eval $start if $b_log;
+	my ($file,$strip) = @_;
+	open( my $fh, '<', $file ) or error_handler('open', $file, $!);
+	chomp(my @rows = <$fh>);
+	if ($strip && @rows){
+		@rows = grep {/^\s*[^#]/} @rows;
+		@rows = map {s/^\s+|\s+$//g; $_} @rows if @rows;
+	}
+	eval $end if $b_log;
+	return @rows;
+}
+
+# args: 1 - the file to create if not exists
+sub toucher {
+	my ($file ) = @_;
+	if ( ! -e $file ){
+		open( my $fh, '>', $file ) or error_handler('create', $file, $!);
+	}
+}
+# calling it trimmer to avoid conflicts with existing trim stuff
+# arg: 1 - string to be right left trimmed. Also slices off \n so no chomp needed
+# this thing is super fast, no need to log its times etc, 0.0001 seconds or less
+sub trimmer {
+	#eval $start if $b_log;
+	my ($str) = @_;
+	$str =~ s/^\s+|\s+$|\n$//g; 
+	#eval $end if $b_log;
+	return $str;
+}
+
+sub uniq {
+	my %seen;
+	grep !$seen{$_}++, @_;
+}
+
+# arg: 1 file full  path to write to; 2 - arrayof data to write. 
+# note: turning off strict refs so we can pass it a scalar or an array reference.
+sub writer {
+	my ($path, $ref_content) = @_;
+	my ($content);
+	no strict 'refs';
+	# print Dumper $ref_content, "\n";
+	if (ref $ref_content eq 'ARRAY'){
+		$content = join "\n", @$ref_content or die "failed with error $!";
+	}
+	else {
+		$content = scalar $ref_content;
+	}
+	open(my $fh, '>', $path) or error_handler('open',"$path", "$!");
+	print $fh $content;
+	close $fh;
+}
+
+### END DEFAULT CODE ##
+
+### START CODE REQUIRED BY THIS MODULE ##
+
+my @ps_cmd;
+
+sub set_ps_aux {
+	eval $start if $b_log;
+	@ps_aux = split "\n",qx(ps aux);;
+	shift @ps_aux; # get rid of header row
+	$_=lc for @ps_aux; # this is a super fast way to set to lower
+	# this is for testing for the presence of the command
+	@ps_cmd = map {
+		my @split = split /\s+/, $_;
+		# slice out 10th to last elements of ps aux rows
+		my $final = $#split;
+		# some stuff has a lot of data, chrome for example
+		$final = ($final > 12) ? 12 : $final;
+		@split = @split[10 .. $final ];
+		join " ", @split;
+	} @ps_aux;
+	eval $end if $b_log;
+}
+sub get_shell_data {
+	eval $start if $b_log;
+	my ($ppid) = @_;
+	my $shell = qx(ps -p $ppid -o comm= 2>/dev/null);
+	chomp($shell);
+	if ($shell){
+		# when run in debugger subshell, would return sh as shell,
+		# and parent as perl, that is, pinxi itself, which is actually right.
+		if ($shell eq 'sh' && $shell ne $ENV{'SHELL'}){
+			$shell = $ENV{'SHELL'};
+			$shell =~ s/^.*\///;
+		}
+		# sh because -v/--version doesn't work on it, ksh because
+		# it takes too much work to handle all the variants
+		if ( $shell ne 'sh' && $shell ne 'ksh' ) {
+			@app = main::program_values(lc($shell));
+			if ($app[0]){
+				$client{'version'} = main::program_version($shell,$app[0],$app[1],$app[2]);
+			}
+			# guess that it's two and --version
+			else {
+				$client{'version'} = main::program_version($shell,2,'');
+			}
+			$client{'version'} =~ s/(\(.*|-release|-version)//;
+		}
+		$client{'name'} = lc($shell);
+		$client{'name-print'} = $shell;
+	}
+	else {
+		$client{'name'} = 'shell';
+		$client{'name-print'} = 'Unknown Shell';
+	}
+	eval $end if $b_log;
+}
 
 # args: 1 - desktop/app command for --version; 2 - search string; 
 # 3 - space print number; 4 - [optional] version arg: -v, version, etc
@@ -183,75 +336,6 @@ sub program_values {
 	#my $debug = main::Dumper \@client_data;
 	# main::log_data("Client Data: " . main::Dumper \@client_data);
 	return @client_data;
-}
-
-# calling it trimmer to avoid conflicts with existing trim stuff
-# arg: 1 - string to be right left trimmed. Also slices off \n so no chomp needed
-# this thing is super fast, no need to log its times etc, 0.0001 seconds or less
-sub trimmer {
-	#eval $start if $b_log;
-	my ($str) = @_;
-	$str =~ s/^\s+|\s+$|\n$//g; 
-	#eval $end if $b_log;
-	return $str;
-}
-# arg: 1 - command to turn into an array; 2 - optional: splitter
-# similar to reader() except this creates an array of data 
-# by lines from the command arg
-sub grabber {
-	my ($command,$splitter) = @_;
-	$splitter ||= "\n";
-	return split /$splitter/, qx($command);
-}
-# arg: 1 - full file path, returns array of file lines.
-# note: chomp has to chomp the entire action, not just <$fh>
-sub reader {
-	eval $start if $b_log;
-	my ($file) = @_;
-	open( my $fh, '<', $file ) or error_handler('open', $file, $!);
-	chomp(my @rows = <$fh>);
-	eval $end if $b_log;
-	return @rows;
-}
-
-### END DEFAULT CODE ##
-
-### START CODE REQUIRED BY THIS MODULE ##
-
-my @ps_cmd;
-
-sub set_ps_aux {
-	eval $start if $b_log;
-	@ps_aux = split "\n",qx(ps aux);;
-	shift @ps_aux; # get rid of header row
-	$_=lc for @ps_aux; # this is a super fast way to set to lower
-	# this is for testing for the presence of the command
-	@ps_cmd = map {
-		my @split = split /\s+/, $_;
-		# slice out 10th to last elements of ps aux rows
-		my $final = $#split;
-		# some stuff has a lot of data, chrome for example
-		$final = ($final > 12) ? 12 : $final;
-		@split = @split[10 .. $final ];
-		join " ", @split;
-	} @ps_aux;
-	eval $end if $b_log;
-}
-sub get_shell_data {
-	my $ppid = shift;
-	my $string = qx(ps -p $ppid -o comm= 2>/dev/null);
-	chomp($string);
-	if ($string){
-		@app = main::program_values(lc($string));
-		$client{'version'} = main::program_version($string,$app[0],$app[1],$app[2]);
-		$client{'version'} =~ s/(\(.*|-release|-version)//;
-		$client{'name'} = lc($string);
-		$client{'name-print'} = $string;
-	}
-	else {
-		$client{'name'} = 'shell';
-		$client{'name-print'} = 'Unknown Shell';
-	}
 }
 
 ### START MODULE CODE ##
@@ -376,10 +460,10 @@ sub get_client_version {
 	# for this file to be user edited, doing some extra checks here.
 	elsif ($client{'name'} eq 'hexchat') {
 		if ( -f '~/.config/hexchat/hexchat.conf' ){
-			@data = main::reader('~/.config/hexchat/hexchat.conf');
+			@data = main::reader('~/.config/hexchat/hexchat.conf','strip');
 		}
 		elsif ( -f '~/.config/hexchat/xchat.conf' ){
-			@data = main::reader('~/.config/hexchat/xchat.conf');
+			@data = main::reader('~/.config/hexchat/xchat.conf','strip');
 		}
 		$client{'version'} = main::awk(\@data,'version',2,'\s*=\s*');
 		$client{'name-print'} = 'HexChat';
@@ -517,7 +601,6 @@ sub check_modern_konvi {
 	# main::log_data("name: $client{'name'} :: qdb: $client{'qdbus'} :: version: $client{'version'} :: konvi: $client{'konvi'} :: PPID: $ppid") if $b_log;
 	# sabayon uses /usr/share/apps/konversation as path
 	if ( -d '/usr/share/kde4/apps/konversation' || -d '/usr/share/apps/konversation' ){
-		@temp = main::grabber('ps -A');
 		$pid = main::awk(\@ps_aux,'konversation',2,'\s+');
 		main::log_data("pid: $pid") if $b_log;
 		$konvi = readlink ("/proc/$pid/exe");
@@ -587,13 +670,14 @@ sub set_konvi_data {
 }
 }
 
+
 ### END MODULE CODE ##
 
 ### START TEST CODE ##
 
 my $type = 'st';
 my $t0 = [gettimeofday];
-foreach (0 .. 300){
+foreach (0 .. 1){
 	if ($type eq 'ob') {
 # 		my $ob_start = StartClient->new();
 # 		$ob_start->get_client_data();

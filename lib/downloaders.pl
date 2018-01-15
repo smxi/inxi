@@ -11,7 +11,33 @@ use 5.008;
 use Data::Dumper qw(Dumper); # print_r
 
 ### START DEFAULT CODE ##
+my $self_name='pinxi';
+my $self_version='2.9.00';
+my $self_date='2018-01-07';
+my $self_patch='086-p';
 
+my (@app);
+my (%files,%system_files);
+my $start = '';
+my $end = '';
+my $b_irc = 1;
+my $bsd_type = '';
+my $b_display = 1;
+my $b_root = 0;
+my $b_log;
+my $extra = 2;
+my @paths = qw(/sbin /bin /usr/sbin /usr/bin /usr/X11R6/bin /usr/local/sbin /usr/local/bin);
+
+
+# arg: 1 - string to strip start/end space/\n from
+# note: a few nano seconds are saved by using raw $_[0] for program
+sub check_program {
+	(grep { return "$_/$_[0]" if -e "$_/$_[0]"} @paths)[0];
+}
+
+### END DEFAULT CODE ##
+
+### START CODE REQUIRED BY THIS MODULE ##
 my %dl = (
 'curl' => 'true',
 'fetch' => 'true',
@@ -25,19 +51,7 @@ eval "use HTTP::Tiny"; # if not found, return has error messages etc
 if ( $@ ) {
 	$dl{'tiny'} = '';
 }
-# arg: 1 - string to strip start/end space/\n from
-# note: a few nano seconds are saved by using raw $_[0] for program
-sub check_program {
-	(grep { return "$_/$_[0]" if -e "$_/$_[0]"} @paths)[0];
-}
-
-my $start = '';
-my $end = '';
-
-### END DEFAULT CODE ##
-
-### START CODE REQUIRED BY THIS MODULE ##
-
+my $dl_timeout = 4;
 
 ### START MODULE CODE ##
 

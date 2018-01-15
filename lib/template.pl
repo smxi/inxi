@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: template.pl
-## Version: 1.1
-## Date 2018-01-10
+## Version: 1.2
+## Date 2018-01-14
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2018 Harald Hope
 
@@ -25,9 +25,11 @@ my $b_irc = 1;
 my $bsd_type = '';
 my $b_display = 1;
 my $b_root = 0;
+my $b_dmi = 0;
+my $b_pci = 0;
 my $b_log;
 my $extra = 2;
-my @paths = ('/sbin','/bin','/usr/sbin','/usr/bin','/usr/X11R6/bin','/usr/local/sbin','/usr/local/bin');
+my @paths = qw(/sbin /bin /usr/sbin /usr/bin /usr/X11R6/bin /usr/local/sbin /usr/local/bin);
 
 # Duplicates the functionality of awk to allow for one liner
 # type data parsing. note: -1 corresponds to awk NF
@@ -65,6 +67,7 @@ sub check_program {
 }
 
 
+
 sub error_handler {
 	my ($err, $message, $alt1) = @_;
 	print "$err: $message err: $alt1\n";
@@ -88,26 +91,35 @@ sub get_piece {
 }
 
 # arg: 1 - command to turn into an array; 2 - optional: splitter
+# 3 - optionsl, strip and clean data
 # similar to reader() except this creates an array of data 
 # by lines from the command arg
 sub grabber {
 	eval $start if $b_log;
-	my ($cmd,$split) = @_;
+	my ($cmd,$split,$strip) = @_;
 	$split ||= "\n";
-	my @result = split /$split/, qx($cmd);
-	@result = map { s/^\s+|\s+$//g; $_} @result if @result;
+	my @rows = split /$split/, qx($cmd);
+	if ($strip && @rows){
+		@rows = grep {/^\s*[^#]/} @rows;
+		@rows = map {s/^\s+|\s+$//g; $_} @rows if @rows;
+	}
 	eval $end if $b_log;
-	return @result;
+	return @rows;
 }
 sub log_data {}
 
 # arg: 1 - full file path, returns array of file lines.
+# 2 - optionsl, strip and clean data
 # note: chomp has to chomp the entire action, not just <$fh>
 sub reader {
 	eval $start if $b_log;
-	my ($file) = @_;
+	my ($file,$strip) = @_;
 	open( my $fh, '<', $file ) or error_handler('open', $file, $!);
 	chomp(my @rows = <$fh>);
+	if ($strip && @rows){
+		@rows = grep {/^\s*[^#]/} @rows;
+		@rows = map {s/^\s+|\s+$//g; $_} @rows if @rows;
+	}
 	eval $end if $b_log;
 	return @rows;
 }
