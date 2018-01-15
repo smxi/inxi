@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-14';
-my $self_patch='145-p';
+my $self_patch='146-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -58,7 +58,7 @@ my ( %alerts, %client, %colors, %dl, %files, %rows, %system_files, %use );
 
 ## arrays
 # ps_aux is full output, ps_cmd is only the last 10 to last
-my (@app,@ps_aux,@ps_cmd);
+my (@app,@pci,@ps_aux,@ps_cmd);
 my @test = (0,0,0,0,0);
 
 #my $opt_parser = Getopt::Long::Parser->new;
@@ -3578,6 +3578,15 @@ sub clean_characters {
 	return $data;
 }
 
+
+sub cleaner {
+	my ($item) = @_;
+	$item =~ s/chipset|components|computing|computer|corporation|communications|electronics|electrical|electric|gmbh|group|incorporation|industrial|international|nee|revision|semiconductor|software|technologies|technology|ltd\.|<ltd>|inc\.|<inc>|intl\.|co\.|<co>|corp\.|<corp>|\(tm\)|\(r\)|®|\(rev ..\)//gi;
+	$item =~ s/,|\*/ /g;
+	$item =~ s/\s\s+/ /g;
+	return $item;
+}
+
 # not used, but keeping logic for now
 sub increment_starters {
 	my ($key,$indexes) = @_;
@@ -3948,6 +3957,64 @@ sub show_version {
 #### GET DATA
 #### -------------------------------------------------------------------
 
+## Get AudioData 
+{
+package AudioData;
+
+sub get {
+	eval $start if $b_log;
+	my (@audio,@rows);
+	@rows = card_data();
+	@audio = (@audio,@rows);
+	eval $end if $b_log;
+	return @audio;
+}
+# 'firewire',
+# '0c00',
+# '03:08',
+# '0',
+# 'VIA VT6306/7/8 [Fire II(M)] IEEE 1394 OHCI Controller',
+# '1106:3044',
+# '46',
+# 'e800',
+# 'firewire_ohci',
+# 'firewire_ohci'
+
+sub card_data {
+	eval $start if $b_log;
+	my (@rows,@data);
+	my ($j) = (0);
+	foreach (@pci){
+		my $num = 1;
+		my @row = @$_;
+		if ($row[0] eq 'audio'){
+			$j = scalar @rows;
+			@data = (
+			{
+			$num++ . "#Card" => $row[4],
+			$num++ . "#driver" => $row[8],
+			},
+			);
+			@rows = (@rows,@data);
+			if ($extra > 1){
+				#$rows[$j]{$num++ . "#v"} = main::get_module_version($row[8]);
+			}
+			if ($extra > 0){
+				$rows[$j]{$num++ . "#bus ID"} = "$row[2].$row[3]";
+			}
+			if ($extra > 1){
+				$rows[$j]{$num++ . "#chip ID"} = $row[5];
+			}
+		}
+		#print "$row[0]\n";
+	}
+	#my $ref = $pci[-1];
+	#print $$ref[0],"\n";
+	eval $end if $b_log;
+	return @rows;
+}
+}
+
 sub get_compiler_version {
 	eval $start if $b_log;
 	my (@compiler);
@@ -4169,10 +4236,10 @@ sub get_xprop_de_data {
 	# String: "This is xfdesktop version 4.2.12"
 	# alternate: xfce4-about --version > xfce4-about 4.10.0 (Xfce 4.10)
 	if (main::awk(\@xprop,'xfce' )){
-		if (main::awk(\@xprop, '\"xfce4\"')){
+		if (main::awk(\@xprop, 'xfce4')){
 			$version = '4';
 		}
-		elsif (main::awk(\@xprop, '\"xfce5\"')){
+		elsif (main::awk(\@xprop, 'xfce5')){
 			$version = '5';
 		}
 		else {
@@ -4741,6 +4808,68 @@ sub get_os_release {
 }
 }
 
+## Get GraphicData 
+{
+package GraphicData;
+
+sub get {
+	eval $start if $b_log;
+	my (@graphic,@rows);
+	@rows = card_data();
+	@graphic = (@graphic,@rows);
+	eval $end if $b_log;
+	return @graphic;
+}
+# 'firewire',
+# '0c00',
+# '03:08',
+# '0',
+# 'VIA VT6306/7/8 [Fire II(M)] IEEE 1394 OHCI Controller',
+# '1106:3044',
+# '46',
+# 'e800',
+# 'firewire_ohci',
+# 'firewire_ohci'
+# not using 3D controller yet, needs research: |3D controller |display controller
+# note: this is strange, but all of these can be either a separate or the same
+# card. However, by comparing bus id, say: 00:02.0 we can determine that the
+# cards are  either the same or different. We want only the .0 version as a valid
+# card. .1 would be for example: Display Adapter with bus id x:xx.1, not the right one
+sub card_data {
+	eval $start if $b_log;
+	my (@rows,@data);
+	my ($j) = (0);
+	foreach (@pci){
+		my $num = 1;
+		my @row = @$_;
+		#print "$row[0] $row[3]\n";
+		if ($row[3] == 0 && ( $row[0] eq 'vga' || $row[0] eq 'display' || $row[0] eq '3d' ) ){
+			#print "$row[0] $row[3]\n";
+			$j = scalar @rows;
+			@data = (
+			{
+			$num++ . "#Card" => $row[4],
+			$num++ . "#driver" => $row[8],
+			$num++ . "#v" => main::get_module_version($row[8]),
+			},
+			);
+			@rows = (@rows,@data);
+			if ($extra > 0){
+				$rows[$j]{$num++ . "#bus ID"} = "$row[2].$row[3]";
+			}
+			if ($extra > 1){
+				$rows[$j]{$num++ . "#chip ID"} = $row[5];
+			}
+		}
+		#print "$row[0]\n";
+	}
+	#my $ref = $pci[-1];
+	#print $$ref[0],"\n";
+	eval $end if $b_log;
+	return @rows;
+}
+}
+
 sub get_init_data {
 	eval $start if $b_log;
 	my $runlevel = get_runlevel_data();
@@ -4908,6 +5037,65 @@ sub get_memory_data_bsd {
 	}
 	eval $end if $b_log;
 	return $memory;
+}
+
+## Get NetworkData 
+{
+package NetworkData;
+
+sub get {
+	eval $start if $b_log;
+	my (@network,@rows);
+	@rows = card_data();
+	@network = (@network,@rows);
+	eval $end if $b_log;
+	return @network;
+}
+# 'firewire',
+# '0c00',
+# '03:08',
+# '0',
+# 'VIA VT6306/7/8 [Fire II(M)] IEEE 1394 OHCI Controller',
+# '1106:3044',
+# '46',
+# 'e800',
+# 'firewire_ohci',
+# 'firewire_ohci'
+sub card_data {
+	eval $start if $b_log;
+	my (@rows,@data);
+	my ($j) = (0);
+	foreach (@pci){
+		my $num = 1;
+		my @row = @$_;
+		#print "$row[0] $row[3]\n";
+		if ($row[0] eq 'network' || $row[0] eq 'ethernet' ){
+			#print "$row[0] $row[3]\n";
+			$j = scalar @rows;
+			@data = (
+			{
+			$num++ . "#Card" => $row[4],
+			$num++ . "#driver" => $row[8],
+			},
+			);
+			@rows = (@rows,@data);
+			
+			if ($extra > 0){
+				$rows[$j]{$num++ . "#v"} = main::get_module_version($row[8]);
+				$rows[$j]{$num++ . "#port"} = "$row[7]";
+				$rows[$j]{$num++ . "#bus ID"} = "$row[2].$row[3]";
+			}
+			if ($extra > 1){
+				$rows[$j]{$num++ . "#chip ID"} = $row[5];
+			}
+		}
+		#print "$row[0]\n";
+	}
+	#my $ref = $pci[-1];
+	#print $$ref[0],"\n";
+	eval $end if $b_log;
+	return @rows;
+}
 }
 
 ## Get ProcessData 
@@ -5369,6 +5557,92 @@ sub get_runlevel_default {
 #### -------------------------------------------------------------------
 #### SPECIAL DATA HANDLERS - INITIALIZE DATA VALUES
 #### -------------------------------------------------------------------
+sub pci_cleaner {
+	my ($string) = @_;
+	$string =~ s/\[[^\]]+\]$|compatible\scontroller|device|controller|multimedia|\([^)]+\)//g;
+	return $string;
+}
+
+sub set_pci_data {
+	eval $start if $b_log;
+	if ( $show{'audio'} || $show{'graphic'} || $show{'network'} ){
+		if (!$bsd_type){
+			if ($alerts{'lspci'}{'action'} eq 'use' ){
+				set_lspci_data();
+			}
+		}
+		else {
+			if ($alerts{'pciconf'}{'action'} eq 'use'){
+				set_pciconf_data();
+			}
+		}
+	}
+	eval $end if $b_log;
+}
+
+sub set_lspci_data {
+	eval $start if $b_log;
+	my ($busid,$busid_nu,$port,$driver,$modules,$device,$device_id,$rev,
+	$type,$type_id,@temp);
+	# my @pcis = grabber('lspci -nnv','\n','strip');
+	my @pcis = split /\n/, qx(lspci -nnv);
+	#print scalar @pcis;
+	@pcis = map {$_ =~ s/^\s+//; $_} @pcis;
+	foreach (@pcis){
+		#print "$_\n";
+		if ($device){
+			if ($_ =~ /^\s*$/) {
+				@temp = ($type,$type_id,$busid,$busid_nu,$device,$device_id,$rev,$port,$driver,$modules);
+				@pci = (@pci,[@temp]);
+				$device = '';
+				#print "$busid $device_id r:$rev p: $port\n$type\n$device\n";
+			}
+			elsif ($_ =~ /^I\/O\sports/){
+				$port = (split /\s+/,$_)[3];
+				#print "p:$port\n";
+			}
+			elsif ($_ =~ /^Kernel\sdriver\sin\suse/){
+				$driver = (split /:\s*/,$_)[1];
+			}
+			elsif ($_ =~ /^Kernel\smodules/i){
+				$modules = (split /:\s*/,$_)[1];
+			}
+		}
+		elsif ($_ =~ /^([0-9]{2}:[0-9]{2})[.:]([0-9]+)\s(.*)\s\[([0-9a-f]{4}:[0-9a-f]{4})\](\s\(rev\s([^\)]+)\))?/){
+			$busid = $1;
+			$busid_nu = $2;
+			my @working = split /:\s+/, $3;
+			$device = $working[1];
+			$type = $working[0];
+			$device_id = $4;
+			$rev = ($6)?$6 : '';
+			$device = cleaner($device);
+			$working[0] =~ /\[([^\]]+)\]$/;
+			$type_id = $1;
+			$type = pci_cleaner($type);
+			$type =~ s/\s+$//;
+			$type = lc($type);
+			$port = '';
+			$driver = '';
+			$modules = '';
+		}
+	}
+	if ($device && $busid){
+		@temp = ($type,$type_id,$busid,$busid_nu,$device,$device_id,$rev,$port,$driver,$modules);
+		@pci = (@pci,[@temp]);
+		$device = '';
+	}
+	if ($test[2]){
+		print Dumper \@pci;
+	}
+	eval $end if $b_log;
+}
+
+sub set_pciconf_data {
+	eval $start if $b_log;
+	
+	eval $end if $b_log;
+}
 
 sub set_ps_aux {
 	eval $start if $b_log;
@@ -5464,6 +5738,18 @@ sub get_kernel_bits {
 	$bits ||= 'N/A';
 	eval $end if $b_log;
 	return $bits;
+}
+sub get_module_version {
+	eval $start if $b_log;
+	my ($module) = @_;
+	my ($version);
+	if (my $path = check_program('modinfo')){
+		my @data = grabber("$path $module");
+		$version = awk(\@data,'^version',2,':\s+');
+	}
+	$version ||= '';
+	eval $end if $b_log;
+	return $version;
 }
 sub get_self_version {
 	eval $start if $b_log;
@@ -5605,6 +5891,7 @@ sub assign_data {
 sub generate_data {
 	eval $start if $b_log;
 	my (%row);
+	set_pci_data();
 	set_ps_aux() if ! @ps_aux;
 	if ($test[3]){
 		%row = generate_test_data();
@@ -5811,19 +6098,12 @@ sub generate_test_data {
 
 sub generate_audio_data {
 	eval $start if $b_log;
-	my $num = 0;
-	my (%row,$ref,$index,$val1);
+	my (%data);
 	my $data_name = $prefix++ . '#Audio';
-	
-	my %data = (
-	$data_name => [
-		{
-		$num++ . '#Status' => 'under development',
-		},
-	],
-	);
-	$index = scalar(@{ $data{$data_name} } ) - 1;
-	
+	my @audio = AudioData::get();
+	if (@audio){
+		%data = ($data_name => \@audio,);
+	}
 	eval $end if $b_log;
 	return %data;
 }
@@ -5898,19 +6178,13 @@ sub generate_disk_data {
 
 sub generate_graphic_data {
 	eval $start if $b_log;
-	my $num = 0;
+	my (%data);
 	my (%row,$ref,$index,$val1);
 	my $data_name = $prefix++ . '#Graphics';
-	
-	my %data = (
-	$data_name => [
-		{
-		$num++ . '#Status' => 'under development',
-		},
-	],
-	);
-	$index = scalar(@{ $data{$data_name} } ) - 1;
-	
+	my @graphic = GraphicData::get();
+	if (@graphic){
+		%data = ($data_name => \@graphic,);
+	}
 	eval $end if $b_log;
 	return %data;
 }
@@ -6060,18 +6334,15 @@ sub generate_memory_data {
 
 sub generate_network_data {
 	eval $start if $b_log;
-	my $num = 0;
+	my (%data);
 	my (%row,$ref,$index,$val1);
 	my $data_name = $prefix++ . '#Network';
-	
-	my %data = (
-	$data_name => [
-		{
-		$num++ . '#Status' => 'under development',
-		},
-	],
-	);
-	$index = scalar(@{ $data{$data_name} } ) - 1;
+	my @network = NetworkData::get();
+	if (@network){
+		%data = ($data_name => \@network,);
+	}
+	eval $end if $b_log;
+	return %data;
 	
 	eval $end if $b_log;
 	return %data;
