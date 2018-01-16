@@ -247,7 +247,7 @@ sub run_debugger {
 	
 	print "Starting $self_name debugging data collector...\n";
 	create_debug_directory();
-	print "Note: for dmidecode data you must be root.\n" if $b_root;
+	print "Note: for dmidecode data you must be root.\n" if !$b_root;
 	print $line3;
 	if (!$b_debug){
 		audio_data();
