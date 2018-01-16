@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 ## File: distro.pl
-## Version: 1.4
-## Date 2018-01-14
+## Version: 1.5
+## Date 2018-01-15
 ## License: GNU GPL v3 or greater
 ## Copyright (C) 2018 Harald Hope
 
@@ -230,14 +230,14 @@ sub get_linux_distro {
 	# /etc/lsb-release-crunchbang
 	# wait to handle since crunchbang file is one of the few in the world that 
 	# uses this method
-	my @distro_files = </etc/*[-_]{[rR]elease,[vV]ersion}*>;
+	my @distro_files = glob('/etc/*[-_]{[rR]elease,[vV]ersion}*');
 	my $distro_files_s = join "|", @distro_files;
 	my $lsb_release = '/etc/lsb-release';
 	my $b_lsb = ( -f $lsb_release ) ? 1 : 0;
 	my $issue = '/etc/issue';
 	my $os_release = '/etc/os-release';
 	my $b_os_release = ( -f $os_release ) ? 1 : 0;
-	main::log_data( "distro files: " . join "; ",@distro_files);
+	main::log_data( "distro files: " . join "; ",@distro_files) if $b_log;
 	if ( $#distro_files == 1 ){
 		$distro_file = $distro_files[0];
 	}
@@ -262,7 +262,7 @@ sub get_linux_distro {
 				last;
 			}
 		}
-		main::log_data("distro_file: $distro_file");
+		main::log_data("distro_file: $distro_file") if $b_log;
 	}
 	
 	# first test for the legacy antiX distro id file
