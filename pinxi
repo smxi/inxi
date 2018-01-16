@@ -58,7 +58,7 @@ my ( %alerts, %client, %colors, %dl, %files, %rows, %system_files, %use );
 
 ## arrays
 # ps_aux is full output, ps_cmd is only the last 10 to last
-my (@app,@pci,@ps_aux,@ps_cmd);
+my (@app,@dmi,@pci,@ps_aux,@ps_cmd);
 my @test = (0,0,0,0,0);
 
 #my $opt_parser = Getopt::Long::Parser->new;
@@ -5227,6 +5227,7 @@ sub cpu_processes {
 		my @a = split(/\s+/,$a); 
 		my @b = split(/\s+/,$b); 
 		$b[2] <=> $a[2] } @ps_aux;
+	# if there's a count limit, for irc, etc, only use that much of the data
 	@rows = splice @rows,0,$count;
 	$cpu_mem = ' - Memory: MB / % used' if $extra > 0;
 	$j = scalar @rows;
@@ -5659,6 +5660,76 @@ sub get_runlevel_default {
 #### -------------------------------------------------------------------
 #### SPECIAL DATA HANDLERS - INITIALIZE DATA VALUES
 #### -------------------------------------------------------------------
+# note, all actual tests have already been run in check_tools so if we
+# got here, we're good. 
+sub set_dmi_data {
+	eval $start if $b_log;
+	if ($alerts{'dmidecode'}{'action'} eq 'use' ){
+		set_dmidecode_data();
+	}
+	eval $end if $b_log;
+}
+
+sub set_dmidecode_data {
+	eval $start if $b_log;
+	my (@data,@working,$type,$handle);
+	if ( $test[4] ){
+		my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmidecode/pci-freebsd-8.2-2";
+		open my $fh, '<', $file or die "can't open $file: $!";
+		chomp(@data = <$fh>);
+	}
+	else {
+		my $content = qx(dmidecode 2>/dev/null);
+		@data = split /\n/, $content;
+	}
+	# we don't need the opener lines of dmidecode output
+	# but we do want to preserve the indentation. Empty lines
+	# won't matter, they will be skipped, so no need to handle them.
+	# some dmidecodes do not use empty line separators
+	splice @data, 0, 5 if @data;
+	my $j = 0;
+	foreach (@data){
+		if (/^Handle\s(0x[0-9A-Fa-f]+).*DMI\stype\s([0-9]+),.*/){
+			$j = scalar @dmi;
+			$handle = hex($1);
+			$type = $2;
+			# we don't need 32, system boot, or 127, end of table
+			if (@working){
+				if ($working[0] != 32 && $working[0] != 127){
+					$dmi[$j] = (
+					[@working],
+					);
+				}
+			}
+			@working = ();
+			push @working, $type;
+			push @working, $handle;
+		}
+		elsif (/^[^\s]/){
+			$_ = lc($_);
+			$_ =~ s/\s(information)//;
+			push @working, $_;
+		}
+		elsif (/^\t/){
+			$_ =~ s/^\t\t/~/;
+			$_ =~ s/^\t|\s+$//g;
+			push @working, $_;
+		}
+	}
+	if (@working && $working[0] != 32 && $working[0] != 127){
+		$j = scalar @dmi;
+		$dmi[$j] = (
+		[@working],
+		);
+	}
+	# last by not least, sort it by dmi type, now we don't have to worry
+	# about random dmi type ordering in the data, which happens
+	#@dmi = sort { $a->[0] <=> $b->[0] } @dmi;
+	if ($test[2]){
+		print Dumper \@dmi;
+	}
+	eval $end if $b_log;
+}
 
 sub set_pci_data {
 	eval $start if $b_log;
@@ -6070,7 +6141,7 @@ sub assign_data {
 
 sub generate_data {
 	eval $start if $b_log;
-	my (%row,$b_pci_check);
+	my (%row,$b_pci_check,$b_dmi_check);
 	set_ps_aux() if ! @ps_aux;
 	if ($test[3]){
 		%row = generate_test_data();
@@ -6087,10 +6158,14 @@ sub generate_data {
 			assign_data(%row);
 		}
 		if ( $show{'machine'} ){
+			set_dmi_data() if $b_dmi && !$b_dmi_check; 
+			$b_dmi_check = 1;
 			%row = generate_machine_data();
 			assign_data(%row);
 		}
 		if ( $show{'battery'} ){
+			set_dmi_data() if $b_dmi && !$b_dmi_check; 
+			$b_dmi_check = 1;
 			%row = generate_battery_data();
 			assign_data(%row);
 		}
@@ -6099,6 +6174,8 @@ sub generate_data {
 			assign_data(%row);
 		}
 		if ( $show{'memory'} ){
+			set_dmi_data() if $b_dmi && !$b_dmi_check; 
+			$b_dmi_check = 1;
 			%row = generate_memory_data();
 			assign_data(%row);
 		}
