@@ -39,8 +39,8 @@ use Time::HiRes qw(gettimeofday tv_interval);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-01-15';
-my $self_patch='152-p';
+my $self_date='2018-01-16';
+my $self_patch='153-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -174,7 +174,7 @@ sub check_tools {
 	my ($action,$program,$message,@data,%commands,%hash);
 	if ( $b_dmi ){
 		$action = 'use';
-		if ($program = check_program('dmidecode')) {
+	if ($program = check_program('dmidecode')) {
 			my $result = system("$program -t chassis >/dev/null 2>&1");
 			if (!$result){
 				if ($b_root) {
@@ -229,24 +229,18 @@ sub check_tools {
 	if ($b_pci || $b_sysctl){
 		if (!$bsd_type){
 			if ($b_pci ){
-				%hash = (
-				'lspci' => '-n',
-				);
+				%hash = ('lspci' => '-n',);
 				%commands = (%commands,%hash);
 			}
 		}
 		else {
 			if ($b_pci ){
-				%hash = (
-				'pciconf' => '-l',
-				);
+				%hash = ('pciconf' => '-l',);
 				%commands = (%commands,%hash);
 			}
 			
 			if ($b_sysctl ){
-				%hash = (
-				'sysctl' => 'kernel.osrelease',
-				);
+				%hash = ('sysctl' => 'kernel.osrelease',);
 				%commands = (%commands,%hash);
 			}
 		}
@@ -273,16 +267,18 @@ sub check_tools {
 	}
 	%commands = ();
 	if ( $show{'sensor'} ){
-		%commands = (
-		'sensors' => 'linux',
-		);
+		%commands = ('sensors' => 'linux',);
+	}
+	if ( $show{'usb'} ){
+		%hash = ('lsusb' => 'linux',);
+		%commands = (%commands,%hash);
 	}
 	foreach ( keys %commands ){
 		$action = 'use';
 		$message = 'Present and working';
 		if ($commands{$_} eq 'linux' && $os ne 'linux'){
 			$message = "No BSD support. No comparable $_ tool available.";
-			$action = 'missing';
+			$action = 'platform';
 		}
 		elsif (!check_program($_)){
 			$message = "Required tool $_ not installed. Check --recommends";
@@ -292,6 +288,7 @@ sub check_tools {
 		$_ => {
 		'action' => $action,
 		'missing' => $message,
+		'platform' => $message,
 		},
 		);
 		%alerts = (%alerts, %hash);
@@ -752,6 +749,7 @@ sub get_config_item {
 	# print Dumper (keys %size) . "\n";
 }
 
+## SelectColors
 {
 package SelectColors;
 
@@ -1126,7 +1124,7 @@ sub set_debugger {
 	}
 }
 
-# SystemDebugger
+## SystemDebugger
 {
 package SystemDebugger;
 
@@ -1830,7 +1828,6 @@ sub upload_file {
 }
 }
 
-
 #### -------------------------------------------------------------------
 #### DOWNLOADER
 #### -------------------------------------------------------------------
@@ -2057,7 +2054,7 @@ sub error_handler {
 #### RECOMMENDS
 #### -------------------------------------------------------------------
 
-# CheckRecommends
+## CheckRecommends
 {
 package CheckRecommends;
 sub run {
@@ -2560,7 +2557,6 @@ sub set_version_data {
 	close $fh;
 }
 
-
 ########################################################################
 #### OPTIONS HANDLER
 ########################################################################
@@ -2679,6 +2675,9 @@ sub get_options{
 	's|sensors' => sub {
 		$show{'short'} = 0;
 		$show{'sensor'} = 1; },
+	'slots' => sub {
+		$show{'short'} = 0;
+		$show{'slot'} = 1; },
 	'S|system' => sub {
 		$show{'short'} = 0;
 		$show{'system'} = 1; },
@@ -2938,7 +2937,8 @@ sub get_options{
 	show_version() if $b_version;
 	show_options($help_type) if $help_type;
 	update_me( $self_download, $download_id ) if $b_updater;
-	if ( $show{'memory'} || ( ( $bsd_type || $use{'dmidecode-force'} ) && ($show{'machine'} || $show{'battery'}) ) ){
+	if ( $show{'memory'} || $show{'slots'} || 
+	     ( ( $bsd_type || $use{'dmidecode-force'} ) && ($show{'machine'} || $show{'battery'}) ) ){
 		$b_dmi = 1;
 	}
 	if ($show{'audio'} || $show{'graphic'} || $show{'network'} ){
@@ -4026,11 +4026,11 @@ package AudioData;
 
 sub get {
 	eval $start if $b_log;
-	my (@audio,@rows);
-	@rows = card_data();
-	@audio = (@audio,@rows);
+	my (@data,@rows);
+	@data = card_data();
+	@rows = (@rows,@data);
 	eval $end if $b_log;
-	return @audio;
+	return @rows;
 }
 
 sub card_data {
@@ -4883,11 +4883,11 @@ package GraphicData;
 
 sub get {
 	eval $start if $b_log;
-	my (@graphic,@rows);
-	@rows = card_data();
-	@graphic = (@graphic,@rows);
+	my (@data,@rows);
+	@data = card_data();
+	@rows = (@rows,@data);
 	eval $end if $b_log;
-	return @graphic;
+	return @rows;
 }
 # 0 type
 # 1 type_id
@@ -5130,11 +5130,11 @@ package NetworkData;
 
 sub get {
 	eval $start if $b_log;
-	my (@network,@rows);
-	@rows = card_data();
-	@network = (@network,@rows);
+	my (@data,@rows);
+	@data = card_data();
+	@rows = (@rows,@data);
 	eval $end if $b_log;
-	return @network;
+	return @rows;
 }
 # 1 type_id
 # 2 bus_id
@@ -5356,34 +5356,43 @@ sub throttled {
 ## Get RepoData
 {
 package RepoData;
-my $num = 0;
-my (@content,@data,@data2,@data3,@repos,@repo_files,@dbg_files,$working,$debugger_dir);
+
+# easier to keep these package global, but undef after done
+my (@dbg_files,$debugger_dir);
 
 sub get {
+	eval $start if $b_log;
 	my ($debugger_dir) = @_;
+	my (@data,@rows);
+	my $num = 0;
 	if ($bsd_type){
-		get_repos_bsd();
+		@rows = get_repos_bsd();
 	}
 	else {
-		get_repos_linux();
+		@rows = get_repos_linux();
 	}
 	if ($debugger_dir){
-		return @dbg_files;
+		@rows = @dbg_files;
+		undef @dbg_files;
+		undef $debugger_dir;
 	}
 	else {
-		if (!@repos){
+		if (!@rows){
 			my $pm = (!$bsd_type) ? 'package manager': 'OS type';
 			@data = (
 			{$num++ . '#Alert' => "No repo data detected. Does $self_name support your $pm?"},
 			);
-			@repos = (@data);
+			@rows = (@data);
 		}
-		return @repos;
 	}
+	eval $end if $b_log;
+	return @rows;
 }
 
 sub get_repos_linux {
 	eval $start if $b_log;
+	my (@content,@data,@data2,@files,@rows);
+	my $num = 0;
 	my $apk = '/etc/apk/repositories';
 	my $apt = '/etc/apt/sources.list';
 	my $pacman = '/etc/pacman.conf';
@@ -5393,26 +5402,28 @@ sub get_repos_linux {
 	# apt - debian, buntus, also sometimes some yum/rpm repos may create 
 	# apt repos here as well
 	if (-f $apt || -d "$apt.d"){
-		@repo_files = </etc/apt/sources.list.d/*.list>;
-		push @repo_files, $apt;
-		main::log_data('apt repo files: ' . join('; ', @repo_files) ) if $b_log;
-		foreach ( sort @repo_files){
-			repo_builder($_,'apt','^\s*deb') if -r $_;
+		@files = </etc/apt/sources.list.d/*.list>;
+		push @files, $apt;
+		main::log_data('apt repo files: ' . join('; ', @files) ) if $b_log;
+		foreach ( sort @files){
+			@data = repo_builder($_,'apt','^\s*deb') if -r $_;
+			@rows = (@rows,@data);
 		}
 	}
 	# pacman: Arch and derived
 	if (-f $pacman){
-		@repo_files =  main::reader($pacman,'strip');
-		@repo_files = grep {/^\s*Include/i} @repo_files if @repo_files;
-		@repo_files = map {
+		@files =  main::reader($pacman,'strip');
+		@files = grep {/^\s*Include/i} @files if @files;
+		@files = map {
 			my @working = split( /\s+=\s+/, $_); 
 			$working[1];
-		} @repo_files if @repo_files;
-		@repo_files = sort(@repo_files);
-		@repo_files = main::uniq(@repo_files);
-		foreach (sort @repo_files){
+		} @files if @files;
+		@files = sort(@files);
+		@files = main::uniq(@files);
+		foreach (sort @files){
 			if (-f $_){
-				repo_builder($_,'pacman','^[[:space:]]*Server','\s*=\s*',1);
+				@data = repo_builder($_,'pacman','^[[:space:]]*Server','\s*=\s*',1);
+				@rows = (@rows,@data);
 			}
 			else {
 				push @dbg_files, $_ if $debugger_dir;
@@ -5420,14 +5431,15 @@ sub get_repos_linux {
 				{$num++ . "#File listed in" => $pacman},
 				[("$_ does not seem to exist.")],
 				);
-				@repos = (@repos,@data);
+				@rows = (@rows,@data);
 			}
 		}
 	}
 	# slackware
 	elsif (-f $slackpkg || -f $slackpkg_plus){
 		if (-f $slackpkg){
-			repo_builder($slackpkg,'slackpkg','^[[:space:]]*#*');
+			@data = repo_builder($slackpkg,'slackpkg','^[[:space:]]*#*');
+			@rows = (@rows,@data);
 		}
 		if (-f $slackpkg_plus){
 			push @dbg_files, $slackpkg_plus if $debugger_dir;
@@ -5459,19 +5471,23 @@ sub get_repos_linux {
 			[@content],
 			);
 			@data = url_cleaner(@data);
-			@repos = (@repos,@data);
+			@rows = (@rows,@data);
 			@content = ();
 		}
 	}
 	# Alpine linux
 	elsif (-f $apk){
-		repo_builder($apk,'apk','^\s*[^#]+');
+		@data = repo_builder($apk,'apk','^\s*[^#]+');
+		@rows = (@rows,@data);
 	}
 	# print Dumper \@repos;
 	eval $end if $b_log;
+	return @rows;
 }
 sub get_repos_bsd {
 	eval $start if $b_log;
+	my (@content,@data,@data2,@data3,@files,@rows);
+	my $num = 0;
 	my $bsd_pkg = '/usr/local/etc/pkg/repos/';
 	my $freebsd = '/etc/freebsd-update.conf';
 	my $freebsd_pkg = '/etc/pkg/FreeBSD.conf';
@@ -5480,19 +5496,22 @@ sub get_repos_bsd {
 	my $portsnap =  '/etc/portsnap.conf';
 	if ( -f $portsnap || -f $freebsd || -d $bsd_pkg){
 		if ( -f $portsnap ) {
-			repo_builder($portsnap,'portsnap','^\s*SERVERNAME','\s*=\s*',1);
+			@data = repo_builder($portsnap,'portsnap','^\s*SERVERNAME','\s*=\s*',1);
+			@rows = (@rows,@data);
 		}
 		if ( -f $freebsd ){
-			repo_builder($freebsd,'freebsd','^\s*ServerName','\s+',1);
+			@data = repo_builder($freebsd,'freebsd','^\s*ServerName','\s+',1);
+			@rows = (@rows,@data);
 		}
 		if ( -f $freebsd_pkg ){
-			repo_builder($freebsd_pkg,'freebsd-pkg','^\s*url',':\s+',1);
+			@data = repo_builder($freebsd_pkg,'freebsd-pkg','^\s*url',':\s+',1);
+			@rows = (@rows,@data);
 		}
 		if ( -d $bsd_pkg){
-			@repo_files = </usr/local/etc/pkg/repos/*.conf>;
-			if (@repo_files){
+			@files = </usr/local/etc/pkg/repos/*.conf>;
+			if (@files){
 				my ($url);
-				foreach (@repo_files){
+				foreach (@files){
 					push @dbg_files, $_ if $debugger_dir;
 					# these will be result sets separated by an empty line
 					# first dump all lines that start with #
@@ -5521,25 +5540,29 @@ sub get_repos_bsd {
 					{$num++ . "#BSD pkg enabled servers" => $_},
 					[@data3],
 					);
-					@repos = (@repos,@data);
+					@rows = (@rows,@data);
 					@data3 = ();
 				}
 			}
 		}
 	}
 	elsif (-f $openbsd) {
-		repo_builder($openbsd,'openbsd','^installpath','\s*=\s*',1);
+		@data = repo_builder($openbsd,'openbsd','^installpath','\s*=\s*',1);
+		@rows = (@rows,@data);
 	}
 	elsif (-f $netbsd){
 		# not an empty row, and not a row starting with #
-		repo_builder($netbsd,'netbsd','^\s*[^#]+$');
+		@data = repo_builder($netbsd,'netbsd','^\s*[^#]+$');
+		@rows = (@rows,@data);
 	}
-	
 	eval $start if $b_log;
+	return @rows;
 }
 sub repo_builder {
+	eval $start if $b_log;
 	my ($file,$type,$search,$split,$count) = @_;
-	my ($missing,$key);
+	my (@content,@data,$missing,$key);
+	my $num = 0;
 	my %unfound = (
 	'apk' => 'No repos found in this file',
 	'apt' => 'No repos found in this file',
@@ -5585,8 +5608,8 @@ sub repo_builder {
 	{$num++ . "#$key" => $file},
 	[@content],
 	);
-	@repos = (@repos,@data);
-	@content = ();
+	eval $end if $b_log;
+	return @data;
 }
 sub data_cleaner {
 	my (@content) = @_;
@@ -5655,6 +5678,40 @@ sub get_runlevel_default {
 	}
 	eval $end if $b_log;
 	return $default;
+}
+
+## Get SensorData
+{
+package SensorData;
+
+sub get {
+	eval $start if $b_log;
+	my (@rows,$key1,$val1);
+	my $num = 0;
+	my $ref = $alerts{'sensors'};
+	if ( $$ref{'action'} ne 'use'){
+		$key1 = $$ref{'action'};
+		$val1 = $$ref{$key1};
+		$key1 = ucfirst($key1);
+	}
+	else {
+		$key1 = 'Status';
+		$val1 = 'under development';
+	}
+	my @data = ({$num++ . "#$key1" => $val1,});
+	return @data;
+	eval $end if $b_log;
+	
+}
+sub sensor_data {
+	eval $start if $b_log;
+	my (@rows);
+	my $num = 0;
+	
+	eval $end if $b_log;
+	return @rows;
+}
+
 }
 
 #### -------------------------------------------------------------------
@@ -6182,13 +6239,15 @@ sub generate_data {
 		if ( $show{'graphic'} ){
 			set_pci_data() if !$b_pci_check; 
 			$b_pci_check = 1;
-			%row = generate_graphic_data();
+			#%row = generate_graphic_data();
+			%row = generate_generic_data('Graphics','graphic');
 			assign_data(%row);
 		}
 		if ( $show{'audio'} ){
 			set_pci_data() if !$b_pci_check; 
 			$b_pci_check = 1;
-			%row = generate_audio_data();
+			# %row = generate_audio_data();
+			%row = generate_generic_data('Audio','audio');
 			assign_data(%row);
 		}
 		if ( $show{'network'} ){
@@ -6214,15 +6273,18 @@ sub generate_data {
 			assign_data(%row);
 		}
 		if ( $show{'sensor'} ){
-			%row = generate_sensor_data();
+			#%row = generate_sensor_data();
+			%row = generate_generic_data('Sensors','sensor');
 			assign_data(%row);
 		}
 		if ( $show{'repo'} ){
-			%row = generate_repo_data();
+			#%row = generate_repo_data();
+			%row = generate_generic_data('Repos','repo');
 			assign_data(%row);
 		}
 		if ( $show{'process'} ){
-			%row = generate_process_data();
+			#%row = generate_process_data();
+			%row = generate_generic_data('Processes','process');
 			assign_data(%row);
 		}
 		if ( $show{'weather'} ){
@@ -6243,8 +6305,27 @@ sub generate_data {
 }
 
 #### -------------------------------------------------------------------
-#### SHORT AND DEBUG
+#### GENERIC, SHORT, DEBUG
 #### -------------------------------------------------------------------
+
+sub generate_generic_data {
+	my ($key,$sub) = @_;
+	my %subs = (
+	'audio' => \&AudioData::get,
+	'graphic' => \&GraphicData::get,
+	'network' => \&NetworkData::get,
+	'repo' => \&RepoData::get,
+	'sensor' => \&SensorData::get,
+	);
+	my (%data);
+	my $data_name = $prefix++ . "#$key";
+	my @rows = $subs{$sub}->();
+	if (@rows){
+		%data = ($data_name => \@rows,);
+	}
+	eval $end if $b_log;
+	return %data;
+}
 
 sub generate_short_data {
 	eval $start if $b_log;
@@ -6362,9 +6443,9 @@ sub generate_audio_data {
 	eval $start if $b_log;
 	my (%data);
 	my $data_name = $prefix++ . '#Audio';
-	my @audio = AudioData::get();
-	if (@audio){
-		%data = ($data_name => \@audio,);
+	my @rows = AudioData::get();
+	if (@rows){
+		%data = ($data_name => \@rows,);
 	}
 	eval $end if $b_log;
 	return %data;
@@ -6440,12 +6521,11 @@ sub generate_disk_data {
 
 sub generate_graphic_data {
 	eval $start if $b_log;
-	my (%data);
-	my (%row,$ref,$index,$val1);
+	my (%data,);
 	my $data_name = $prefix++ . '#Graphics';
-	my @graphic = GraphicData::get();
-	if (@graphic){
-		%data = ($data_name => \@graphic,);
+	my @rows = GraphicData::get();
+	if (@rows){
+		%data = ($data_name => \@rows,);
 	}
 	eval $end if $b_log;
 	return %data;
@@ -6599,9 +6679,9 @@ sub generate_network_data {
 	my (%data);
 	my (%row,$ref,$index,$val1);
 	my $data_name = $prefix++ . '#Network';
-	my @network = NetworkData::get();
-	if (@network){
-		%data = ($data_name => \@network,);
+	my @rows = NetworkData::get();
+	if (@rows){
+		%data = ($data_name => \@rows,);
 	}
 	eval $end if $b_log;
 	return %data;
@@ -6662,12 +6742,11 @@ sub generate_raid_data {
 
 sub generate_repo_data {
 	eval $start if $b_log;
-	my $num = 0;
 	my (%data);
 	my $data_name = $prefix++ . '#Repos';
-	my @repos = RepoData::get();
-	if (@repos){
-		%data = ($data_name => \@repos,);
+	my @rows = RepoData::get();
+	if (@rows){
+		%data = ($data_name => \@rows,);
 	}
 	eval $end if $b_log;
 	return %data;
@@ -6675,29 +6754,19 @@ sub generate_repo_data {
 
 sub generate_sensor_data {
 	eval $start if $b_log;
-	my $num = 0;
-	my (%row,$ref,$index,$key1,$val1);
+	my (%data);
 	my $data_name = $prefix++ . '#Sensors';
-	
-	$ref = $alerts{'sensors'};
-	if ( $$ref{'action'} ne 'use'){
-		$key1 = $$ref{'action'};
-		$val1 = $$ref{$key1};
-		$key1 = ucfirst($key1);
+	my @rows = SensorData::get();
+	if (@rows){
+		%data = ($data_name => \@rows,);
 	}
-	else {
-		$key1 = 'Status';
-		$val1 = 'under development';
-	}
-	my %data = (
-	$data_name => [
-		{
-		$num++ . "#$key1" => $val1,
-		},
-	],
-	);
-	$index = scalar(@{ $data{$data_name} } ) - 1;
-	
+	eval $end if $b_log;
+	return %data;
+}
+
+sub generate_slot_data {
+	eval $start if $b_log;
+	my (%data);
 	eval $end if $b_log;
 	return %data;
 }
