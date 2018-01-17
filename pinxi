@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-17';
-my $self_patch='163-p';
+my $self_patch='164-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -4435,6 +4435,8 @@ sub get {
 	else {
 		@data = card_data();
 		@rows = (@rows,@data);
+		@data = usb_data();
+		@rows = (@rows,@data);
 	}
 	eval $end if $b_log;
 	return @rows;
@@ -4498,6 +4500,91 @@ sub card_data {
 	#print $$ref[0],"\n";
 	eval $end if $b_log;
 	return @rows;
+}
+sub usb_data {
+	eval $start if $b_log;
+	my (@rows,@data,$vendor,$product);
+	my ($j,$num) = (0,1);
+	return if !@usb;
+	foreach my $ref (@usb){
+		my @row = @$ref;
+		$product = '';
+		# a device will always be the second or > device on the bus
+		if ($row[1] > 1){
+			if ($usb_level == 1){
+				$product = main::cleaner($row[3]);
+			}
+			else {
+				foreach my $line (@row){
+					my @working = split /:/, $line;
+					if ($working[0] eq 'idVendor'){
+						$vendor = main::cleaner($working[2]) if $working[2];
+					}
+					if ($working[0] eq 'idProduct'){
+						$product = main::cleaner($working[2]) if $working[2];
+					}
+					if ($vendor && $product){
+						$product = ($product =~ /$vendor/) ? $product: "$vendor $product" ;
+						last;
+					}
+				}
+			}
+			if ($product && network_device($product)){
+				@data = ({
+				$num++ . "#Card" => $product,
+				$num++ . "#driver" => 'USB network',
+				},);
+				@rows = (@rows,@data);
+				if ($extra > 0){
+					$rows[$j]{$num++ . "#bus ID"} = "$row[0]:$row[1]";
+				}
+				if ($extra > 1){
+					$rows[$j]{$num++ . "#chip ID"} = $row[2];
+				}
+				$j = scalar @rows;
+			}
+		}
+	}
+	eval $end if $b_log;
+	return @rows;
+}
+### USB networking search string data, because some brands can have other products than
+### wifi/nic cards, they need further identifiers, with wildcards.
+### putting the most common and likely first, then the less common, then some specifics
+
+# Wi-Fi.*Adapter Wireless.*Adapter Ethernet.*Adapter WLAN.*Adapter 
+# Network.*Adapter 802\.11 Atheros Atmel D-Link.*Adapter D-Link.*Wireless Linksys 
+# Netgea Ralink Realtek.*Network Realtek.*Wireless Realtek.*WLAN Belkin.*Wireless 
+# Belkin.*WLAN Belkin.*Network Actiontec.*Wireless Actiontec.*Network AirLink.*Wireless 
+# Asus.*Network Asus.*Wireless Buffalo.*Wireless Davicom DWA-.*RangeBooster DWA-.*Wireless 
+# ENUWI-.*Wireless LG.*Wi-Fi Rosewill.*Wireless RNX-.*Wireless Samsung.*LinkStick 
+# Samsung.*Wireless Sony.*Wireless TEW-.*Wireless TP-Link.*Wireless 
+# WG[0-9][0-9][0-9].*Wireless WNA[0-9][0-9][0-9] WNDA[0-9][0-9][0-9] 
+# Zonet.*ZEW.*Wireless
+sub network_device {
+	eval $start if $b_log;
+	my ($device) = @_;
+	my ($b_network);
+	# belkin=050d; d-link=07d1; netgear=0846; ralink=148f; realtek=0bda; 
+	# Atmel makes other stuff
+	my @tests = qw(Wi-Fi.*Adapter Ethernet WLAN Network 802\.11 
+	Wireless.*Adapter 54\sMbps Network Atheros D-Link.*Adapter 
+	D-Link.*Wireless Linksys Netgea Ralink Realtek.*Network Realtek.*Wireless
+	Belkin.*Wireless Actiontec.*Wireless AirLink.*Wireless Asus.*Wireless 
+	Buffalo.*Wireless Davicom DWA-.*RangeBooster DWA-.*Wireless
+	ENUWI-.*Wireless LG.*Wi-Fi Rosewill.*Wireless RNX-.*Wireless Samsung.*LinkStick 
+	Samsung.*Wireless Sony.*Wireless TEW-.*Wireless TP-Link.*Wireless 
+	WG[0-9][0-9][0-9].*Wireless WNA[0-9][0-9][0-9] WNDA[0-9][0-9][0-9] 
+	Zonet.*ZEW.*Wireless 050d:935b 0bda:8189 0bda:8197
+	);
+	foreach (@tests){
+		if ($device =~ /$_/i ){
+			$b_network = 1;
+			last;
+		}
+	}
+	eval $end if $b_log;
+	return $b_network;
 }
 }
 
@@ -5236,7 +5323,7 @@ sub usb_data {
 		$j = scalar @rows;
 		$bus_id = "$id[0]:$id[1]";
 		$chip_id = $id[2];
-		
+		my $b_hub = 0;
 		# it's a hub
 		if ($id[1] == 1){
 			foreach my $line (@id){
@@ -5254,7 +5341,6 @@ sub usb_data {
 			$num++ . "#type" => $protocol,
 			},);
 			@rows = (@rows,@data);
-			
 			if ($extra > 1){
 				$rows[$j]{$num++ . "#chip ID"} = $chip_id;
 			}
@@ -5266,6 +5352,9 @@ sub usb_data {
 				@row = split /:/, $line;
 				if ($row[0] eq 'bcdUSB'){
 					$speed  = $row[1]
+				}
+				elsif ($row[0] eq 'bDeviceClass' && $row[1] == 9){
+					$b_hub = 1;
 				}
 				elsif ($row[0] eq 'idVendor'){
 					$vendor  = main::cleaner($row[2]);
@@ -5281,22 +5370,38 @@ sub usb_data {
 					$protocol = $row[2];
 				}
 			}
-			if ($vendor && $product){
-				if ($product !~ /$vendor/){
-					$product = "$vendor $product";
+			if ( $b_hub ){
+				if ($vendor && $product){
+					$protocol = "$vendor $product";
 				}
+				elsif (!$product && $protocol){
+					$protocol = "$vendor $protocol";
+				}
+				@data = ({
+				$num++ . "#Hub" => $bus_id,
+				$num++ . "#usb" => $speed,
+				$num++ . "#type" => $protocol,
+				},);
+				@rows = (@rows,@data);
 			}
-			elsif (!$product){
-				$product = $vendor;
+			else {
+				if ($vendor && $product){
+					if ($product !~ /$vendor/){
+						$product = "$vendor $product";
+					}
+				}
+				elsif (!$product){
+					$product = $vendor;
+				}
+				# bInterfaceProtocol:0 but $row[2] undefined
+				$class ||= $protocol;
+				$rows[$j]{$num++ . "#Device"} = $product;
+				$rows[$j]{$num++ . "#bus ID"} = $bus_id;
+				if ($extra > 0){
+					$rows[$j]{$num++ . "#usb"} = $speed;
+				}
+				$rows[$j]{$num++ . "#type"} = $class;
 			}
-			# bInterfaceProtocol:0 but $row[2] undefined
-			$class ||= $protocol;
-			$rows[$j]{$num++ . "#Device"} = $product;
-			$rows[$j]{$num++ . "#bus ID"} = $bus_id;
-			if ($extra > 0){
-				$rows[$j]{$num++ . "#usb"} = $speed;
-			}
-			$rows[$j]{$num++ . "#type"} = $class;
 			if ($extra > 1){
 				$rows[$j]{$num++ . "#chip ID"} = $chip_id;
 			}
@@ -6617,7 +6722,7 @@ sub set_dmidecode_data {
 	# about random dmi type ordering in the data, which happens. Also sort 
 	# by handle, as secondary sort.
 	@dmi = sort { $a->[0] <=> $b->[0] || $a->[1] <=> $b->[1] } @dmi;
-	if ($test[2]){
+	if ($test[4]){
 		print Dumper \@dmi;
 	}
 	eval $end if $b_log;
@@ -6707,7 +6812,7 @@ sub set_lspci_data {
 		@pci = (@pci,[@temp]);
 		$device = '';
 	}
-	if ($test[2]){
+	if ($test[3]){
 		print Dumper \@pci;
 	}
 	eval $end if $b_log;
@@ -6716,15 +6821,11 @@ sub set_pciconf_data {
 	eval $start if $b_log;
 	my ($busid,$busid_nu,$port,$driver,$driver_nu,$modules,$device,$vendor,$vendor_id,$chip_id,$rev,
 	$type,$type_id,@data,@temp,@working);
-	if ( $test[4] ){
-		my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/pciconf/pci-freebsd-8.2-2";
-		open my $fh, '<', $file or die "can't open $file: $!";
-		chomp(@data = <$fh>);
-	}
-	else {
-		my $content = qx(pciconf -lv 2>/dev/null);
-		@data = split /\n/, $content;
-	}
+# 	my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/pciconf/pci-freebsd-8.2-2";
+# 	open my $fh, '<', $file or die "can't open $file: $!";
+# 	chomp(@data = <$fh>);
+	my $content = qx(pciconf -lv 2>/dev/null);
+	@data = split /\n/, $content;
 	foreach (@data){
 		if ($_ =~ /^[^@]+\@pci/){
 			push @working, '';
@@ -6824,8 +6925,16 @@ sub set_usb_data {
 }
 sub set_lsusb_data_short {
 	eval $start if $b_log;
-	my $content = qx(lsusb 2>/dev/null);
-	my @data = split /\n/, $content;
+	my (@data);
+	my $b_live = 1;
+	if ($b_live){
+		my $content = qx(lsusb 2>/dev/null);
+		@data = split /\n/, $content;
+	}
+	else {
+		open my $fh, '<', "$ENV{'HOME'}/bin/scripts/inxi/data/lsusb/mdmarmer-lsusb.txt" or die $!;
+		chomp(@data = <$fh>);
+	}
 	foreach (@data){
 		my @working = split /\s+/, $_;
 		$working[3] =~ s/:$//;
@@ -6849,8 +6958,15 @@ sub set_lsusb_data_long {
 	eval $start if $b_log;
 	my (@data,@working,$bus_id,$device_id,$id,$b_skip);
 	my $j = 0;
-	my $content = qx(lsusb -v 2>/dev/null);
-	@data = split /\n/, $content;
+	my $b_live = 1;
+	if ($b_live){
+		my $content = qx(lsusb -v 2>/dev/null);
+		@data = split /\n/, $content;
+	}
+	else {
+		open my $fh, '<', "$ENV{'HOME'}/bin/scripts/inxi/data/lsusb/mdmarmer-lsusb-v.txt" or die $!;
+		chomp(@data = <$fh>);
+	}
 	foreach (@data){
 		# we won't need all the lsusb data, so set it to skip
 		# after the last item we might want
