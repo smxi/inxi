@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-16';
-my $self_patch='157-p';
+my $self_patch='159-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -58,7 +58,7 @@ my ( %alerts, %client, %colors, %dl, %files, %rows, %system_files, %use );
 
 ## arrays
 # ps_aux is full output, ps_cmd is only the last 10 to last
-my (@app,@dmi,@pci,@ps_aux,@ps_cmd);
+my (@app,@dmi,@pci,@ps_aux,@ps_cmd,@usb);
 my @test = (0,0,0,0,0);
 
 #my $opt_parser = Getopt::Long::Parser->new;
@@ -268,7 +268,7 @@ sub check_tools {
 	if ( $show{'sensor'} ){
 		%commands = ('sensors' => 'linux',);
 	}
-	if ( $show{'usb'} ){
+	if ( $b_usb ){
 		%hash = ('lsusb' => 'linux',);
 		%commands = (%commands,%hash);
 	}
@@ -2946,7 +2946,7 @@ sub get_options{
 	if ($show{'audio'} || $show{'graphic'} || $show{'network'} ){
 		$b_pci = 1;
 	}
-	if ($show{'usb'} ){
+	if ($show{'usb'} || $show{'audio'} ){
 		$b_usb = 1;
 	}
 } 
@@ -4044,6 +4044,20 @@ sub get {
 	else {
 		@data = card_data();
 		@rows = (@rows,@data);
+		@data = usb_data();
+		@rows = (@rows,@data);
+		if (!@rows){
+			my $key = 'Message';
+			@data = ({
+			$num++ . "#$key" => main::row_defaults($key,'PCI Card'),
+			},);
+			@rows = (@rows,@data);
+		}
+		else {
+			@data = sound_server_data();
+			@rows = (@rows,@data);
+		}
+		
 	}
 	eval $end if $b_log;
 	return @rows;
@@ -4060,16 +4074,15 @@ sub card_data {
 			$j = scalar @rows;
 			my $driver = $row[9];
 			$driver ||= 'N/A';
-			@data = (
-			{
+			@data = ({
 			$num++ . "#Card" => $row[4],
 			$num++ . "#driver" => $driver,
-			},
-			);
+			},);
 			@rows = (@rows,@data);
 			if ($extra > 1){
 				if ($row[9] ){
 					my $version = main::get_module_version($row[9]);
+					
 					if ($version){
 						$rows[$j]{$num++ . "#v"} = main::get_module_version($row[9]);
 					}
@@ -4084,17 +4097,91 @@ sub card_data {
 		}
 		#print "$row[0]\n";
 	}
-	if (!@rows){
-		my $key = 'Message';
-		@data = ({
-		$num++ . "#$key" => main::row_defaults($key,'PCI Card'),
-		},);
-		@rows = (@rows,@data);
-	}
 	#my $ref = $pci[-1];
 	#print $$ref[0],"\n";
 	eval $end if $b_log;
 	return @rows;
+}
+sub usb_data {
+	eval $start if $b_log;
+	return if !@usb;
+	my (@rows,@data,@ids,$vendor,$product);
+	my ($j,$num) = (0,1);
+	
+	if (-d '/proc/asound') {
+		# note: this will double the data, but it's easier this way.
+		# inxi tested for -L in the /proc/asound files, and used only those.
+		my @files = glob('/proc/asound/*/usbid');
+		foreach (@files){
+			my $id = (main::reader($_))[0];
+			push @ids, $id if ($id && ! grep {/$id/} @ids);
+		}
+		foreach my $id (@ids){
+			$j = scalar @rows;
+			foreach my $ref (@usb){
+				my @row = @$ref;
+				if ($row[2] eq $id){
+					foreach my $line (@row){
+						my @working = split /:/, $line;
+						if ($working[0] eq 'idVendor'){
+							$vendor = main::cleaner($working[2]);
+						}
+						if ($working[0] eq 'idProduct'){
+							$product = main::cleaner($working[2]);
+						}
+						if ($vendor && $product){
+							$product = ($product =~ /$vendor/) ? $product: "$vendor $product" ;
+							last;
+						}
+					}
+					@data = ({
+					$num++ . "#Card" => $product,
+					$num++ . "#driver" => 'USB Audio',
+					},);
+					@rows = (@rows,@data);
+					if ($extra > 0){
+						$rows[$j]{$num++ . "#bus ID"} = $row[1];
+					}
+					if ($extra > 1){
+						$rows[$j]{$num++ . "#chip ID"} = $row[2];
+					}
+				}
+			}
+		}
+	}
+	eval $end if $b_log;
+	return @rows;
+}
+sub sound_server_data {
+	eval $start if $b_log;
+	my (@data,$server,$version);
+	my $num = 0;
+	if (my $file = main::system_files('asound-version') ){
+		my $content = (main::reader($file))[0];
+		# some alsa strings have the build date in (...)
+		# remove trailing . and remove possible second line if compiled by user
+# 		foreach (@content){
+# 			if (!/compile/i){
+				#$_ =~ s/Advanced Linux Sound Architecture/ALSA/;
+				$version = (split /\s+/, $content)[-1];
+				$version =~ s/\.$//; # trim off period
+				$server = 'ALSA';
+# 			}
+# 		}
+	}
+	elsif (my $program = main::check_program('oss')){
+		$server = 'OSS';
+		$version = main::program_version('oss','\S',2);
+		$version ||= 'N/A';
+	}
+	if ($server){
+		@data = ({
+		$num++ . "#Sound Server" => $server,
+		$num++ . "#v" => $version,
+		},);
+	}
+	eval $end if $b_log;
+	return @data;
 }
 }
 
@@ -5007,8 +5094,8 @@ sub slot_data {
 		my @ref = @$_;
 		if ($ref[0] == 9){
 			my ($designation,$id,$length,$type,$usage) = ('','','','','');
-			shift @ref; # skip first type row
-			shift @ref; 
+			# skip first two row, we don't need that data
+			splice @ref, 0, 2 if @ref;
 			my $j = scalar @rows;
 			foreach my $item (@ref){
 				if ($item !~ /^~/){ # skip the indented rows
@@ -5146,268 +5233,6 @@ sub weather_data {
 	eval $end if $b_log;
 	return @rows;
 }
-}
-
-#### -------------------------------------------------------------------
-#### INITIALIZE DATA VALUES
-#### -------------------------------------------------------------------
-# note, all actual tests have already been run in check_tools so if we
-# got here, we're good. 
-sub set_dmi_data {
-	eval $start if $b_log;
-	if ($alerts{'dmidecode'}{'action'} eq 'use' ){
-		set_dmidecode_data();
-	}
-	eval $end if $b_log;
-}
-
-sub set_dmidecode_data {
-	eval $start if $b_log;
-	my (@data,@working,$type,$handle);
-	if ( $test[4] ){
-		my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmidecode/pci-freebsd-8.2-2";
-		open my $fh, '<', $file or die "can't open $file: $!";
-		chomp(@data = <$fh>);
-	}
-	else {
-		my $content = qx(dmidecode 2>/dev/null);
-		@data = split /\n/, $content;
-	}
-	# we don't need the opener lines of dmidecode output
-	# but we do want to preserve the indentation. Empty lines
-	# won't matter, they will be skipped, so no need to handle them.
-	# some dmidecodes do not use empty line separators
-	splice @data, 0, 5 if @data;
-	my $j = 0;
-	foreach (@data){
-		if (/^Handle\s(0x[0-9A-Fa-f]+).*DMI\stype\s([0-9]+),.*/){
-			$j = scalar @dmi;
-			$handle = hex($1);
-			$type = $2;
-			# we don't need 32, system boot, or 127, end of table
-			if (@working){
-				if ($working[0] != 32 && $working[0] != 127){
-					$dmi[$j] = (
-					[@working],
-					);
-				}
-			}
-			@working = ();
-			push @working, $type;
-			push @working, $handle;
-		}
-		elsif (/^[^\s]/){
-			$_ = lc($_);
-			$_ =~ s/\s(information)//;
-			push @working, $_;
-		}
-		elsif (/^\t/){
-			$_ =~ s/^\t\t/~/;
-			$_ =~ s/^\t|\s+$//g;
-			push @working, $_;
-		}
-	}
-	if (@working && $working[0] != 32 && $working[0] != 127){
-		$j = scalar @dmi;
-		$dmi[$j] = (
-		[@working],
-		);
-	}
-	# last by not least, sort it by dmi type, now we don't have to worry
-	# about random dmi type ordering in the data, which happens
-	#@dmi = sort { $a->[0] <=> $b->[0] } @dmi;
-	if ($test[2]){
-		print Dumper \@dmi;
-	}
-	eval $end if $b_log;
-}
-
-sub set_pci_data {
-	eval $start if $b_log;
-	if ( $b_pci ){
-		if (!$bsd_type){
-			if ($alerts{'lspci'}{'action'} eq 'use' ){
-				set_lspci_data();
-			}
-		}
-		else {
-			#if (1 == 1){
-			if ($alerts{'pciconf'}{'action'} eq 'use'){
-				set_pciconf_data();
-			}
-		}
-	}
-	eval $end if $b_log;
-}
-# 0 type
-# 1 type_id
-# 2 bus_id
-# 3 sub_id
-# 4 device
-# 5 vendor_id
-# 6 chip_id
-# 7 rev
-# 8 port
-# 9 driver
-# 10 modules
-# 11 driver_nu [bsd, like: em0 - driver em; nu 0. Used to match IF in -n
-sub set_lspci_data {
-	eval $start if $b_log;
-	my ($busid,$busid_nu,$port,$driver,$modules,$device,$vendor_id,$chip_id,$rev,
-	$type,$type_id,@temp);
-	# my @pcis = grabber('lspci -nnv','\n','strip');
-	my @pcis = split /\n/, qx(lspci -nnv);
-	#print scalar @pcis;
-	@pcis = map {$_ =~ s/^\s+//; $_} @pcis;
-	foreach (@pcis){
-		#print "$_\n";
-		if ($device){
-			if ($_ =~ /^\s*$/) {
-				@temp = ($type,$type_id,$busid,$busid_nu,$device,$vendor_id,$chip_id,
-				$rev,$port,$driver,$modules);
-				@pci = (@pci,[@temp]);
-				$device = '';
-				#print "$busid $device_id r:$rev p: $port\n$type\n$device\n";
-			}
-			elsif ($_ =~ /^I\/O\sports/){
-				$port = (split /\s+/,$_)[3];
-				#print "p:$port\n";
-			}
-			elsif ($_ =~ /^Kernel\sdriver\sin\suse/){
-				$driver = (split /:\s*/,$_)[1];
-			}
-			elsif ($_ =~ /^Kernel\smodules/i){
-				$modules = (split /:\s*/,$_)[1];
-			}
-			
-		}
-		elsif ($_ =~ /^([0-9]{2}:[0-9]{2})[.:]([0-9]+)\s(.*)\s\[([0-9a-f]{4}):([0-9a-f]{4})\](\s\(rev\s([^\)]+)\))?/){
-			$busid = $1;
-			$busid_nu = $2;
-			my @working = split /:\s+/, $3;
-			$device = $working[1];
-			$type = $working[0];
-			$vendor_id = $4;
-			$chip_id = $5;
-			$rev = ($7)?$7 : '';
-			$device = cleaner($device);
-			$working[0] =~ /\[([^\]]+)\]$/;
-			$type_id = $1;
-			$type = lc($type);
-			$type = pci_cleaner($type);
-			$type =~ s/\s+$//;
-			$port = '';
-			$driver = '';
-			$modules = '';
-		}
-	}
-	if ($device && $busid){
-		@temp = ($type,$type_id,$busid,$busid_nu,$device,$vendor_id,$chip_id,$rev,$port,$driver,$modules);
-		@pci = (@pci,[@temp]);
-		$device = '';
-	}
-	if ($test[2]){
-		print Dumper \@pci;
-	}
-	eval $end if $b_log;
-}
-sub set_pciconf_data {
-	eval $start if $b_log;
-	my ($busid,$busid_nu,$port,$driver,$driver_nu,$modules,$device,$vendor,$vendor_id,$chip_id,$rev,
-	$type,$type_id,@data,@temp,@working);
-	if ( $test[4] ){
-		my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/pciconf/pci-freebsd-8.2-2";
-		open my $fh, '<', $file or die "can't open $file: $!";
-		chomp(@data = <$fh>);
-	}
-	else {
-		my $content = qx(pciconf -lv 2>/dev/null);
-		@data = split /\n/, $content;
-	}
-	foreach (@data){
-		if ($_ =~ /^[^@]+\@pci/){
-			push @working, '';
-		}
-		$_ =~ s/^\s+//;
-		push @working, $_;
-	}
-	foreach (@working){
-		if ($driver){
-			if ($_ =~ /^\s*$/) {
-				$vendor = cleaner($vendor);
-				$device = cleaner($device);
-				if ($vendor && $device){
-					if ($vendor !~ /$device/i){
-						$device = "$vendor $device";
-					}
-				}
-				elsif (!$device){
-					$device = $vendor;
-				}
-				@temp = ($type,$type_id,$busid,$busid_nu,$device,$vendor_id,$chip_id,
-				$rev,$port,$driver,$modules,$driver_nu);
-				@pci = (@pci,[@temp]);
-				$driver = '';
-				#print "$busid $device_id r:$rev p: $port\n$type\n$device\n";
-			}
-			elsif ($_ =~ /^vendor/){
-				$vendor = (split /\s+=\s+/,$_)[1];
-				#print "p:$port\n";
-			}
-			elsif ($_ =~ /^device/){
-				$device = (split /\s+=\s+/,$_)[1];
-			}
-			elsif ($_ =~ /^class/i){
-				$type = (split /\s+=\s+/,$_)[1];
-			}
-			
-		}
-		elsif (/^([^@]+)\@pci([0-9]{1,3}:[0-9]{1,3}:[0-9]{1,3}):([0-9]{1,3}).*class=([^\s]+)\scard=([^\s]+)\schip=([^\s]+)\srev=([^\s]+)/){
-			$driver = $1;
-			$busid = $2;
-			$busid_nu = $3;
-			$type_id = $4;
-			$vendor_id = $5;
-			$chip_id = $6;
-			$rev = $7;
-			$vendor = '';
-			$device = '';
-			$type = '';
-			$driver =~ /(^[a-z]+)([0-9]+$)/;
-			$driver = $1;
-			$driver_nu = $2;
-		}
-	}
-	if ($driver && $busid){
-		$vendor = cleaner($vendor);
-		$device = cleaner($device);
-		$device = ( $vendor && $device !~ /$vendor/) ? "$vendor $device" : $device;
-		@temp = ($type,$type_id,$busid,$busid_nu,$device,$vendor_id,$chip_id,$rev,$port,$driver,$modules,$driver_nu);
-		@pci = (@pci,[@temp]);
-		$device = '';
-	}
-	if ($test[2]){
-		print Dumper \@pci;
-	}
-	eval $end if $b_log;
-}
-
-sub set_ps_aux {
-	eval $start if $b_log;
-	@ps_aux = split "\n",qx(ps aux);;
-	shift @ps_aux; # get rid of header row
-	$_=lc for @ps_aux; # this is a super fast way to set to lower
-	# this is for testing for the presence of the command
-	@ps_cmd = map {
-		my @split = split /\s+/, $_;
-		# slice out 10th to last elements of ps aux rows
-		my $final = $#split;
-		# some stuff has a lot of data, chrome for example
-		$final = ($final > 12) ? 12 : $final;
-		@split = @split[10 .. $final ];
-		join " ", @split;
-	} @ps_aux;
-	eval $end if $b_log;
 }
 
 #### -------------------------------------------------------------------
@@ -6620,6 +6445,329 @@ sub get_uptime {
 	return $uptime;
 }
 
+#### -------------------------------------------------------------------
+#### INITIALIZE DATA VALUES
+#### -------------------------------------------------------------------
+# note, all actual tests have already been run in check_tools so if we
+# got here, we're good. 
+sub set_dmi_data {
+	eval $start if $b_log;
+	if ($alerts{'dmidecode'}{'action'} eq 'use' ){
+		set_dmidecode_data();
+	}
+	eval $end if $b_log;
+}
+
+sub set_dmidecode_data {
+	eval $start if $b_log;
+	my (@data,@working,$type,$handle);
+	if ( $test[4] ){
+		my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmidecode/pci-freebsd-8.2-2";
+		open my $fh, '<', $file or die "can't open $file: $!";
+		chomp(@data = <$fh>);
+	}
+	else {
+		my $content = qx(dmidecode 2>/dev/null);
+		@data = split /\n/, $content;
+	}
+	# we don't need the opener lines of dmidecode output
+	# but we do want to preserve the indentation. Empty lines
+	# won't matter, they will be skipped, so no need to handle them.
+	# some dmidecodes do not use empty line separators
+	splice @data, 0, 5 if @data;
+	my $j = 0;
+	foreach (@data){
+		if (/^Handle\s(0x[0-9A-Fa-f]+).*DMI\stype\s([0-9]+),.*/){
+			$j = scalar @dmi;
+			$handle = hex($1);
+			$type = $2;
+			# we don't need 32, system boot, or 127, end of table
+			if (@working){
+				if ($working[0] != 32 && $working[0] != 127){
+					$dmi[$j] = (
+					[@working],
+					);
+				}
+			}
+			@working = ($type,$handle);
+		}
+		elsif (/^[^\s]/){
+			$_ = lc($_);
+			$_ =~ s/\s(information)//;
+			push @working, $_;
+		}
+		elsif (/^\t/){
+			$_ =~ s/^\t\t/~/;
+			$_ =~ s/^\t|\s+$//g;
+			push @working, $_;
+		}
+	}
+	if (@working && $working[0] != 32 && $working[0] != 127){
+		$j = scalar @dmi;
+		$dmi[$j] = (
+		[@working],
+		);
+	}
+	# last by not least, sort it by dmi type, now we don't have to worry
+	# about random dmi type ordering in the data, which happens. Maybe also sort 
+	# by handle, as secondary?
+	@dmi = sort { $a->[0] <=> $b->[0] } @dmi;
+	if ($test[2]){
+		print Dumper \@dmi;
+	}
+	eval $end if $b_log;
+}
+
+sub set_pci_data {
+	eval $start if $b_log;
+	if ( $b_pci ){
+		if (!$bsd_type){
+			if ($alerts{'lspci'}{'action'} eq 'use' ){
+				set_lspci_data();
+			}
+		}
+		else {
+			#if (1 == 1){
+			if ($alerts{'pciconf'}{'action'} eq 'use'){
+				set_pciconf_data();
+			}
+		}
+	}
+	eval $end if $b_log;
+}
+# 0 type
+# 1 type_id
+# 2 bus_id
+# 3 sub_id
+# 4 device
+# 5 vendor_id
+# 6 chip_id
+# 7 rev
+# 8 port
+# 9 driver
+# 10 modules
+# 11 driver_nu [bsd, like: em0 - driver em; nu 0. Used to match IF in -n
+sub set_lspci_data {
+	eval $start if $b_log;
+	my ($busid,$busid_nu,$port,$driver,$modules,$device,$vendor_id,$chip_id,$rev,
+	$type,$type_id,@temp);
+	# my @pcis = grabber('lspci -nnv','\n','strip');
+	my @pcis = split /\n/, qx(lspci -nnv);
+	#print scalar @pcis;
+	@pcis = map {$_ =~ s/^\s+//; $_} @pcis;
+	foreach (@pcis){
+		#print "$_\n";
+		if ($device){
+			if ($_ =~ /^\s*$/) {
+				@temp = ($type,$type_id,$busid,$busid_nu,$device,$vendor_id,$chip_id,
+				$rev,$port,$driver,$modules);
+				@pci = (@pci,[@temp]);
+				$device = '';
+				#print "$busid $device_id r:$rev p: $port\n$type\n$device\n";
+			}
+			elsif ($_ =~ /^I\/O\sports/){
+				$port = (split /\s+/,$_)[3];
+				#print "p:$port\n";
+			}
+			elsif ($_ =~ /^Kernel\sdriver\sin\suse/){
+				$driver = (split /:\s*/,$_)[1];
+			}
+			elsif ($_ =~ /^Kernel\smodules/i){
+				$modules = (split /:\s*/,$_)[1];
+			}
+			
+		}
+		elsif ($_ =~ /^([0-9]{2}:[0-9]{2})[.:]([0-9]+)\s(.*)\s\[([0-9a-f]{4}):([0-9a-f]{4})\](\s\(rev\s([^\)]+)\))?/){
+			$busid = $1;
+			$busid_nu = $2;
+			my @working = split /:\s+/, $3;
+			$device = $working[1];
+			$type = $working[0];
+			$vendor_id = $4;
+			$chip_id = $5;
+			$rev = ($7)?$7 : '';
+			$device = cleaner($device);
+			$working[0] =~ /\[([^\]]+)\]$/;
+			$type_id = $1;
+			$type = lc($type);
+			$type = pci_cleaner($type);
+			$type =~ s/\s+$//;
+			$port = '';
+			$driver = '';
+			$modules = '';
+		}
+	}
+	if ($device && $busid){
+		@temp = ($type,$type_id,$busid,$busid_nu,$device,$vendor_id,$chip_id,$rev,$port,$driver,$modules);
+		@pci = (@pci,[@temp]);
+		$device = '';
+	}
+	if ($test[2]){
+		print Dumper \@pci;
+	}
+	eval $end if $b_log;
+}
+sub set_pciconf_data {
+	eval $start if $b_log;
+	my ($busid,$busid_nu,$port,$driver,$driver_nu,$modules,$device,$vendor,$vendor_id,$chip_id,$rev,
+	$type,$type_id,@data,@temp,@working);
+	if ( $test[4] ){
+		my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/pciconf/pci-freebsd-8.2-2";
+		open my $fh, '<', $file or die "can't open $file: $!";
+		chomp(@data = <$fh>);
+	}
+	else {
+		my $content = qx(pciconf -lv 2>/dev/null);
+		@data = split /\n/, $content;
+	}
+	foreach (@data){
+		if ($_ =~ /^[^@]+\@pci/){
+			push @working, '';
+		}
+		$_ =~ s/^\s+//;
+		push @working, $_;
+	}
+	foreach (@working){
+		if ($driver){
+			if ($_ =~ /^\s*$/) {
+				$vendor = cleaner($vendor);
+				$device = cleaner($device);
+				if ($vendor && $device){
+					if ($vendor !~ /$device/i){
+						$device = "$vendor $device";
+					}
+				}
+				elsif (!$device){
+					$device = $vendor;
+				}
+				@temp = ($type,$type_id,$busid,$busid_nu,$device,$vendor_id,$chip_id,
+				$rev,$port,$driver,$modules,$driver_nu);
+				@pci = (@pci,[@temp]);
+				$driver = '';
+				#print "$busid $device_id r:$rev p: $port\n$type\n$device\n";
+			}
+			elsif ($_ =~ /^vendor/){
+				$vendor = (split /\s+=\s+/,$_)[1];
+				#print "p:$port\n";
+			}
+			elsif ($_ =~ /^device/){
+				$device = (split /\s+=\s+/,$_)[1];
+			}
+			elsif ($_ =~ /^class/i){
+				$type = (split /\s+=\s+/,$_)[1];
+			}
+			
+		}
+		elsif (/^([^@]+)\@pci([0-9]{1,3}:[0-9]{1,3}:[0-9]{1,3}):([0-9]{1,3}).*class=([^\s]+)\scard=([^\s]+)\schip=([^\s]+)\srev=([^\s]+)/){
+			$driver = $1;
+			$busid = $2;
+			$busid_nu = $3;
+			$type_id = $4;
+			$vendor_id = $5;
+			$chip_id = $6;
+			$rev = $7;
+			$vendor = '';
+			$device = '';
+			$type = '';
+			$driver =~ /(^[a-z]+)([0-9]+$)/;
+			$driver = $1;
+			$driver_nu = $2;
+		}
+	}
+	if ($driver && $busid){
+		$vendor = cleaner($vendor);
+		$device = cleaner($device);
+		$device = ( $vendor && $device !~ /$vendor/) ? "$vendor $device" : $device;
+		@temp = ($type,$type_id,$busid,$busid_nu,$device,$vendor_id,$chip_id,$rev,$port,$driver,$modules,$driver_nu);
+		@pci = (@pci,[@temp]);
+		$device = '';
+	}
+	if ($test[2]){
+		print Dumper \@pci;
+	}
+	eval $end if $b_log;
+}
+sub set_ps_aux {
+	eval $start if $b_log;
+	@ps_aux = split "\n",qx(ps aux);;
+	shift @ps_aux; # get rid of header row
+	$_=lc for @ps_aux; # this is a super fast way to set to lower
+	# this is for testing for the presence of the command
+	@ps_cmd = map {
+		my @split = split /\s+/, $_;
+		# slice out 10th to last elements of ps aux rows
+		my $final = $#split;
+		# some stuff has a lot of data, chrome for example
+		$final = ($final > 12) ? 12 : $final;
+		@split = @split[10 .. $final ];
+		join " ", @split;
+	} @ps_aux;
+	eval $end if $b_log;
+}
+sub set_usb_data {
+	eval $start if $b_log;
+	if ($alerts{'lsusb'}{'action'} eq 'use' ){
+		set_lsusb_data();
+	}
+	eval $end if $b_log;
+}
+sub set_lsusb_data {
+	eval $start if $b_log;
+	my (@data,@working,$bus_id,$device_id,$id);
+	my $j = 0;
+	my $content = qx(lsusb -v 2>/dev/null);
+	@data = split /\n/, $content;
+	foreach (@data){
+		if ($bus_id && /^\s\s/){
+			next if /^\s*$/; # expensive second call: || /UNAVAIL/
+			if ($_ =~ /^\s+([\S]+)\sDescriptor:/){
+				$_ = "Descriptor_$1";
+			}
+			else {
+				$_ =~ s/^\s\s//;
+				$_ =~ s/^[\s]+/~/g;
+				$_ =~ s/[\s]+$//g;
+				$_ =~ s/\sType/_Type/g;
+				$_ =~ s/^([\S]+)[\s]+(.*)//;
+				$_ = "$1:$2";
+				#$_ = cleaner($_);
+				if (/([\S]+):([0-9]+|0x[0-9a-f]+)\s(.*)/){
+					$_ = "$1:$2:$3"
+				}
+			}
+			push @working, $_;
+		}
+		elsif (/^Bus\s([0-9]+)\sDevice\s([0-9]+):\sID\s(([0-9a-f]{4}):([0-9a-f]{4})).*/){
+			$j = scalar @usb;
+			$bus_id = int($1);
+			$device_id = int($2);
+			$id = $3;
+			# we don't need 32, system boot, or 127, end of table
+			if (@working){
+				if ($working[0] != 32 && $working[0] != 127){
+					$usb[$j] = (
+					[@working],
+					);
+				}
+			}
+			@working = ($bus_id,$device_id,$id);
+		}
+	}
+	if (@working){
+		$j = scalar @usb;
+		$usb[$j] = (
+		[@working],
+		);
+	}
+	# last by not least, sort it by dmi type, now we don't have to worry
+	# about random dmi type ordering in the data, which happens
+	@usb = sort { $a->[0] <=> $b->[0] || $a->[1] <=> $b->[1] } @usb;
+	if ($test[2]){
+		print Dumper \@usb;
+	}
+	eval $end if $b_log;
+}
+
 ########################################################################
 #### GENERATE LINES
 ########################################################################
@@ -6641,7 +6789,7 @@ sub assign_data {
 
 sub generate_lines {
 	eval $start if $b_log;
-	my (%row,$b_pci_check,$b_dmi_check);
+	my (%row,$b_pci_check,$b_dmi_check,$b_usb_check);
 	set_ps_aux() if ! @ps_aux;
 	if ($test[3]){
 		%row = generate_test_data();
@@ -6694,6 +6842,10 @@ sub generate_lines {
 		}
 		if ( $show{'audio'} ){
 			set_pci_data() if !$b_pci_check; 
+			if (!$bsd_type && !$b_usb_check){
+				set_usb_data();
+				$b_usb_check = 1;
+			}
 			$b_pci_check = 1;
 			%row = line_handler('Audio','audio');
 			assign_data(%row);
@@ -6721,8 +6873,10 @@ sub generate_lines {
 			assign_data(%row);
 		}
 		if ( $show{'usb'} ){
+			set_usb_data() if !$b_usb_check;
 			%row = line_handler('USB','usb');
 			assign_data(%row);
+			$b_usb_check = 1;
 		}
 		if ( $show{'sensor'} ){
 			%row = line_handler('Sensors','sensor');
