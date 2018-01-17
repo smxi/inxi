@@ -65,16 +65,13 @@ my @test = (0,0,0,0,0);
 
 ## Booleans
 my ($b_arm,$b_console_irc,$b_display,$b_dmi,$b_dmidecode_force,$b_irc,$b_log,
-$b_log_colors,$b_log_full,$b_pci,$b_root,$b_running_in_display,$b_sysctl);
-my ($b_update,$b_usb,$b_weather) = (1,1);
+$b_log_colors,$b_log_full,$b_pci,$b_root,$b_running_in_display,$b_sysctl,
+$b_usb_check);
+my ($b_update,$b_weather) = (1,1);
 
 ## System
-my $bsd_type = '';
-my $cpu_sleep = 0.3;
-my $dl_timeout = 4;
-my $language = '';
-my $os = '';
-my $ps_count = 5;
+my ($bsd_type,$language,$os) = ('','','');
+my ($cpu_sleep,$dl_timeout,$ps_count,$usb_level) = (0.3,4,5,0);
 my @paths = qw(/sbin /bin /usr/sbin /usr/bin /usr/X11R6/bin /usr/local/sbin /usr/local/bin);
 $ENV{'PATH'} = 'sbin:/bin:/usr/sbin:/usr/bin:/usr/X11R6/bin:/usr/local/sbin:/usr/local/bin';
 my $sensors_cpu_nu = 0;
@@ -268,7 +265,7 @@ sub check_tools {
 	if ( $show{'sensor'} ){
 		%commands = ('sensors' => 'linux',);
 	}
-	if ( $b_usb ){
+	if ( $usb_level ){
 		%hash = ('lsusb' => 'linux',);
 		%commands = (%commands,%hash);
 	}
@@ -2946,8 +2943,8 @@ sub get_options{
 	if ($show{'audio'} || $show{'graphic'} || $show{'network'} ){
 		$b_pci = 1;
 	}
-	if ($show{'usb'} || $show{'audio'} ){
-		$b_usb = 1;
+	if ($show{'usb'} || $show{'audio'}  || $show{'network'} ){
+		$usb_level = ($show{'usb'}) ? 2 : 1;
 	}
 } 
 
@@ -4103,10 +4100,8 @@ sub card_data {
 }
 sub usb_data {
 	eval $start if $b_log;
-	return if !@usb;
 	my (@rows,@data,@ids,$vendor,$product);
 	my ($j,$num) = (0,1);
-	
 	if (-d '/proc/asound') {
 		# note: this will double the data, but it's easier this way.
 		# inxi tested for -L in the /proc/asound files, and used only those.
@@ -4115,23 +4110,36 @@ sub usb_data {
 			my $id = (main::reader($_))[0];
 			push @ids, $id if ($id && ! grep {/$id/} @ids);
 		}
+		# lsusb is a very expensive operation
+		if (@ids){
+			if (!$bsd_type && !$b_usb_check){
+				main::set_usb_data();
+				$b_usb_check = 1;
+			}
+		}
+		return if !@usb;
 		foreach my $id (@ids){
 			$j = scalar @rows;
 			foreach my $ref (@usb){
 				my @row = @$ref;
 				# a device will always be the second or > device on the bus
 				if ($row[1] > 1 && $row[2] eq $id){
-					foreach my $line (@row){
-						my @working = split /:/, $line;
-						if ($working[0] eq 'idVendor'){
-							$vendor = main::cleaner($working[2]) if $working[2];
-						}
-						if ($working[0] eq 'idProduct'){
-							$product = main::cleaner($working[2]) if $working[2];
-						}
-						if ($vendor && $product){
-							$product = ($product =~ /$vendor/) ? $product: "$vendor $product" ;
-							last;
+					if ($usb_level == 1){
+						$product = main::cleaner($row[3]);
+					}
+					else {
+						foreach my $line (@row){
+							my @working = split /:/, $line;
+							if ($working[0] eq 'idVendor'){
+								$vendor = main::cleaner($working[2]) if $working[2];
+							}
+							if ($working[0] eq 'idProduct'){
+								$product = main::cleaner($working[2]) if $working[2];
+							}
+							if ($vendor && $product){
+								$product = ($product =~ /$vendor/) ? $product: "$vendor $product" ;
+								last;
+							}
 						}
 					}
 					@data = ({
@@ -6804,11 +6812,40 @@ sub set_ps_aux {
 sub set_usb_data {
 	eval $start if $b_log;
 	if ($alerts{'lsusb'}{'action'} eq 'use' ){
-		set_lsusb_data();
+		#$usb_level = 2;
+		if ($usb_level == 2){
+			set_lsusb_data_long();
+		}
+		else {
+			set_lsusb_data_short();
+		}
 	}
 	eval $end if $b_log;
 }
-sub set_lsusb_data {
+sub set_lsusb_data_short {
+	eval $start if $b_log;
+	my $content = qx(lsusb 2>/dev/null);
+	my @data = split /\n/, $content;
+	foreach (@data){
+		my @working = split /\s+/, $_;
+		$working[3] =~ s/:$//;
+		my $id = int($working[3]);
+		if ($id > 1){
+			my $bus = int($working[1]);
+			my $chip = $working[5];
+			my @temp = @working[6..$#working];
+			my $name = join ' ', @temp;
+			if ($name !~ /hub/i){
+				@usb = (@usb,[$bus,$id,$chip,$name]);
+			}
+		}
+	}
+	if ($test[2]){
+		print Dumper \@usb;
+	}
+	eval $end if $b_log;
+}
+sub set_lsusb_data_long {
 	eval $start if $b_log;
 	my (@data,@working,$bus_id,$device_id,$id,$b_skip);
 	my $j = 0;
@@ -6892,7 +6929,7 @@ sub assign_data {
 
 sub generate_lines {
 	eval $start if $b_log;
-	my (%row,$b_pci_check,$b_dmi_check,$b_usb_check);
+	my (%row,$b_pci_check,$b_dmi_check);
 	set_ps_aux() if ! @ps_aux;
 	if ($test[3]){
 		%row = generate_test_data();
@@ -6945,17 +6982,15 @@ sub generate_lines {
 		}
 		if ( $show{'audio'} ){
 			set_pci_data() if !$b_pci_check; 
-			if (!$bsd_type && !$b_usb_check){
-				set_usb_data();
-				$b_usb_check = 1;
-			}
 			$b_pci_check = 1;
 			%row = line_handler('Audio','audio');
 			assign_data(%row);
 		}
 		if ( $show{'network'} ){
+			set_usb_data() if !$b_usb_check;
 			set_pci_data() if !$b_pci_check; 
 			$b_pci_check = 1;
+			$b_usb_check = 1;
 			%row = line_handler('Network','network');
 			assign_data(%row);
 		}
