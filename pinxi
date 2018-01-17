@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-16';
-my $self_patch='159-p';
+my $self_patch='160-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -3622,6 +3622,7 @@ sub clean_characters {
 
 sub cleaner {
 	my ($item) = @_;
+	return if !$item;
 	$item =~ s/chipset|components|computing|computer|corporation|communications|electronics|electrical|electric|gmbh|group|incorporation|industrial|international|nee|revision|semiconductor|software|technologies|technology|ltd\.|<ltd>|inc\.|<inc>|intl\.|co\.|<co>|corp\.|<corp>|\(tm\)|\(r\)|®|\(rev ..\)|\'|\"|\sinc\s*$//gi;
 	$item =~ s/,|\*/ /g;
 	$item =~ s/\s\s+/ /g;
@@ -4057,7 +4058,6 @@ sub get {
 			@data = sound_server_data();
 			@rows = (@rows,@data);
 		}
-		
 	}
 	eval $end if $b_log;
 	return @rows;
@@ -4125,10 +4125,10 @@ sub usb_data {
 					foreach my $line (@row){
 						my @working = split /:/, $line;
 						if ($working[0] eq 'idVendor'){
-							$vendor = main::cleaner($working[2]);
+							$vendor = main::cleaner($working[2]) if $working[2];
 						}
 						if ($working[0] eq 'idProduct'){
-							$product = main::cleaner($working[2]);
+							$product = main::cleaner($working[2]) if $working[2];
 						}
 						if ($vendor && $product){
 							$product = ($product =~ /$vendor/) ? $product: "$vendor $product" ;
@@ -4306,6 +4306,13 @@ sub get {
 	else {
 		@data = card_data();
 		@rows = (@rows,@data);
+		if (!@rows){
+			my $key = 'Message';
+			@data = ({
+			$num++ . "#$key" => main::row_defaults($key,'PCI Card'),
+			},);
+			@rows = (@rows,@data);
+		}
 	}
 	eval $end if $b_log;
 	return @rows;
@@ -4360,13 +4367,7 @@ sub card_data {
 		}
 		#print "$row[0]\n";
 	}
-	if (!@rows){
-		my $key = 'Message';
-		@data = ({
-		$num++ . "#$key" => main::row_defaults($key,'PCI Card'),
-		},);
-		@rows = (@rows,@data);
-	}
+	
 	#my $ref = $pci[-1];
 	#print $$ref[0],"\n";
 	eval $end if $b_log;
@@ -5184,28 +5185,111 @@ package UsbData;
 
 sub get {
 	eval $start if $b_log;
-	my (@rows,$key1,$val1);
+	my (@data,@rows,$key1,$val1);
 	my $num = 0;
 	my $ref = $alerts{'lsusb'};
 	if ( $$ref{'action'} ne 'use'){
 		$key1 = $$ref{'action'};
 		$val1 = $$ref{$key1};
 		$key1 = ucfirst($key1);
+		@rows = ({$num++ . "#$key1" => $val1,});
 	}
 	else {
-		$key1 = 'Status';
-		$val1 = 'under development';
+		@rows = usb_data();
+		#$key1 = 'Status';
+		#$val1 = 'under development';
+		if (!@rows){
+			my $key = 'Message';
+			@data = ({
+			$num++ . "#$key" => main::row_defaults($key,'USB'),
+			},);
+			@rows = (@rows,@data);
+		}
 	}
-	my @data = ({$num++ . "#$key1" => $val1,});
-	return @data;
+	return @rows;
 	eval $end if $b_log;
 }
 sub usb_data {
 	eval $start if $b_log;
-	my (@rows);
+	return if ! @usb;
+	my (@data,@row,@rows,$bus_id,$chip_id,$speed,$protocol,$class,$vendor,$product);
 	my $num = 0;
-	
-	
+	my $j = 0;
+	# note: the data has been presorted in set_lsusb_data by:
+	# bus id then device id, so we don't need to worry about the order
+	foreach my $ref (@usb){
+		my @id = @$ref;
+		$j = scalar @rows;
+		$bus_id = "$id[0]:$id[1]";
+		$chip_id = $id[2];
+		
+		# it's a hub
+		if ($id[1] == 1){
+			foreach my $line (@id){
+				@row = split /:/, $line;
+				if ($row[0] eq 'bcdUSB'){
+					$speed  = $row[1]
+				}
+				elsif ($row[0] eq '~bInterfaceProtocol'){
+					$protocol = $row[2];
+				}
+			}
+			@data = ({
+			$num++ . "#Hub" => $bus_id,
+			$num++ . "#usb" => $speed,
+			$num++ . "#type" => $protocol,
+			},);
+			@rows = (@rows,@data);
+			
+			if ($extra > 1){
+				$rows[$j]{$num++ . "#chip ID"} = $chip_id;
+			}
+		}
+		# it's a device
+		else {
+			($class,$product,$protocol,$vendor,$speed) = ('','','','','');
+			foreach my $line (@id){
+				@row = split /:/, $line;
+				if ($row[0] eq 'bcdUSB'){
+					$speed  = $row[1]
+				}
+				elsif ($row[0] eq 'idVendor'){
+					$vendor  = main::cleaner($row[2]);
+				}
+				elsif ($row[0] eq 'idProduct'){
+					$product = main::cleaner($row[2]) if $row[2];
+				}
+				# we want hubs to cascade to last item
+				elsif ($row[0] eq '~bInterfaceClass' && $row[1] != 9){
+					$class = main::cleaner($row[2]) if $row[2];
+				}
+				elsif ($row[0] eq '~bInterfaceProtocol'){
+					$protocol = $row[2];
+				}
+			}
+			if ($vendor && $product){
+				if ($product !~ /$vendor/){
+					$product = "$vendor $product";
+				}
+			}
+			elsif (!$product){
+				$product = $vendor;
+			}
+			# bInterfaceProtocol:0 but $row[2] undefined
+			$class ||= $protocol;
+			$rows[$j]{$num++ . "#Device"} = $product;
+			$rows[$j]{$num++ . "#Bus ID"} = $bus_id;
+			if ($extra > 0){
+				$rows[$j]{$num++ . "#usb"} = $speed;
+			}
+			$rows[$j]{$num++ . "#type"} = $class;
+			if ($extra > 1){
+				$rows[$j]{$num++ . "#chip ID"} = $chip_id;
+			}
+		}
+		
+	}
+	#print Data::Dumper::Dumper \@rows;
 	eval $end if $b_log;
 	return @rows;
 }
@@ -6714,12 +6798,14 @@ sub set_usb_data {
 }
 sub set_lsusb_data {
 	eval $start if $b_log;
-	my (@data,@working,$bus_id,$device_id,$id);
+	my (@data,@working,$bus_id,$device_id,$id,$b_skip);
 	my $j = 0;
 	my $content = qx(lsusb -v 2>/dev/null);
 	@data = split /\n/, $content;
 	foreach (@data){
-		if ($bus_id && /^\s\s/){
+		# we won't need all the lsusb data, so set it to skip
+		# after the last item we might want
+		if (!$b_skip && $bus_id && /^\s\s/){
 			next if /^\s*$/; # expensive second call: || /UNAVAIL/
 			if ($_ =~ /^\s+([\S]+)\sDescriptor:/){
 				$_ = "Descriptor_$1";
@@ -6731,10 +6817,13 @@ sub set_lsusb_data {
 				$_ =~ s/\sType/_Type/g;
 				$_ =~ s/^([\S]+)[\s]+(.*)//;
 				$_ = "$1:$2";
+				$b_skip = 1 if $1 eq '~bInterfaceProtocol';
 				#$_ = cleaner($_);
 				if (/([\S]+):([0-9]+|0x[0-9a-f]+)\s(.*)/){
-					$_ = "$1:$2:$3"
+					$_ = "$1:$2:$3";
+					$b_skip = 1 if $1 eq '~bInterfaceProtocol';
 				}
+				#print "$1\n";
 			}
 			push @working, $_;
 		}
@@ -6743,6 +6832,7 @@ sub set_lsusb_data {
 			$bus_id = int($1);
 			$device_id = int($2);
 			$id = $3;
+			$b_skip = 0;
 			# we don't need 32, system boot, or 127, end of table
 			if (@working){
 				if ($working[0] != 32 && $working[0] != 127){
@@ -6762,7 +6852,7 @@ sub set_lsusb_data {
 	}
 	# last by not least, sort it by dmi type, now we don't have to worry
 	# about random dmi type ordering in the data, which happens
-	@usb = sort { $a->[1] <=> $b->[1] || $a->[0] <=> $b->[0] } @usb;
+	@usb = sort { $a->[0] <=> $b->[0] || $a->[1] <=> $b->[1] } @usb;
 	if ($test[2]){
 		print Dumper \@usb;
 	}
@@ -6875,7 +6965,7 @@ sub generate_lines {
 		}
 		if ( $show{'usb'} ){
 			set_usb_data() if !$b_usb_check;
-			%row = line_handler('USB','usb');
+			%row = line_handler('USB Info','usb');
 			assign_data(%row);
 			$b_usb_check = 1;
 		}
