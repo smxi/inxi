@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-17';
-my $self_patch='170-p';
+my $self_patch='171-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -58,7 +58,7 @@ my ( %alerts, %client, %colors, %dl, %files, %rows, %system_files, %use );
 
 ## arrays
 # ps_aux is full output, ps_cmd is only the last 10 to last
-my (@app,@dmi,@ifs,@pci,@ps_aux,@ps_cmd,@usb);
+my (@app,@dmi,@ifs,@ifs_bsd,@pci,@ps_aux,@ps_cmd,@usb);
 my @test = (0,0,0,0,0);
 
 #my $opt_parser = Getopt::Long::Parser->new;
@@ -4503,7 +4503,12 @@ sub card_data {
 				$rows[$j]{$num++ . "#chip ID"} = $chip_id;
 			}
 			if ($show{'network-advanced'}){
-				@data = advanced_data_sys($row[5],$row[6],'std');
+				if (!$bsd_type){
+					@data = advanced_data_sys($row[5],$row[6],'std');
+				}
+				else {
+					@data = advanced_data_bsd("$row[9]$row[11]",'std');
+				}
 				@rows = (@rows,@data);
 			}
 		}
@@ -4576,6 +4581,58 @@ sub advanced_data_sys {
 	eval $end if $b_log;
 	return @rows;
 }
+sub advanced_data_bsd {
+	eval $start if $b_log;
+	return if ! @ifs_bsd;
+	my ($if) = @_;
+	my (@data,@row,@rows,$working_if);
+	my ($state,$speed,$duplex,$mac);
+	my $num = 0;
+	my $j = 0;
+	foreach my $ref (@ifs_bsd){
+		if (ref $ref ne 'ARRAY'){
+			$working_if = $ref;
+			# print "$working_if\n";
+			next;
+		} 
+ 		else {
+			@data = @$ref;
+ 		}
+		if ($working_if eq $if){
+			foreach my $ref2 (@data){
+				$j = scalar @rows;
+				my @data2 = @$ref2;
+				# ($state,$speed,$duplex,$mac)
+				$duplex = $data2[0];
+				$duplex ||= 'N/A';
+				$mac = $data2[3];
+				if ($mac && $show{'filter'}){
+					$mac = $filter_string;
+				}
+				$mac ||= 'N/A';
+				$speed = $data2[1];
+				$speed ||= 'N/A';
+				$state = $data2[0];
+				$state ||= 'N/A';
+				#print "$speed \n";
+				@rows = ({
+				$num++ . "#IF" => $if,
+				$num++ . "#state" => $state,
+				$num++ . "#speed" => $speed,
+				$num++ . "#duplex" => $duplex,
+				$num++ . "#mac" => $mac,
+				},);
+				last;
+			}
+		}
+	}
+	if ($show{'ip'}){
+		@row = if_ip($if);
+		@rows = (@rows,@row);
+	}
+	eval $end if $b_log;
+	return @rows;
+}
 ## values:
 # 0 - ipv 
 # 1 - ip 
@@ -4629,7 +4686,8 @@ sub if_ip {
 				}
 				@rows = (@rows,@row);
 				if ($extra > 1 && $data2[2]){
-					$rows[$j]{$num++ . "#broadcast"} = $data2[2];
+					$broadcast = ( $show{'filter'} ) ? $filter_string : $data2[2];
+					$rows[$j]{$num++ . "#broadcast"} = $broadcast;
 				}
 			}
 		}
@@ -6967,7 +7025,8 @@ sub set_ifconfig {
 	my $program = check_program('ifconfig'); # not in user path, sbin
 	my @data = grabber("$program 2>/dev/null",'\n','strip');
 	#my @data = reader("$ENV{'HOME'}/bin/scripts/inxi/data/if/vps-ifconfig-1.txt",'') or die $!;
-	my ($b_skip,$broadcast,$if,$ip,@ips,$scope,$scope_if,$type,@temp,@temp2);
+	my ($b_skip,$broadcast,$if,@ips_bsd,$ip,@ips,$scope,$scope_if,$type,@temp,@temp2);
+	my ($duplex,$mac,$media,$speed,$state); # bsd IF data
 	foreach (@data){
 		if (/^[\S]/i){
 			#print "$_\n";
@@ -6977,10 +7036,14 @@ sub set_ifconfig {
 				@ifs = (@ifs,@temp);
 				@ips = ();
 			}
+			if ($mac){
+				@temp = ($if,[($state,$speed,$duplex,$mac)]);
+				@ifs_bsd = (@ifs_bsd,@temp);
+				($state,$speed,$duplex,$mac) = ('','','','');
+			}
 			$if = (split /\s+/,$_)[0];
 			@temp = split /:/, $if;
 			$if = $temp[0];
-			
 			$scope_if = $temp[1];
 			if ($if eq 'lo'){
 				$b_skip = 1;
@@ -7007,6 +7070,18 @@ sub set_ifconfig {
 			}
 			@temp = ($type,$ip,$broadcast,$scope,$scope_if);
 			@ips = (@ips,[@temp]);
+			if ($bsd_type){
+				if (/^media.*\(([^)]+).*<([^>]+)>/){
+					$duplex = $2;
+					$speed = $1;
+				}
+				elsif (/^ether/){
+					$mac = (split /\s+/, $_)[1];
+				}
+				elsif (/^status/){
+					$state = (split /\s+/, $_)[1];
+				}
+			}
 			#print Dumper \@ips;
 		}
 	}
@@ -7014,8 +7089,13 @@ sub set_ifconfig {
 		@temp = ($if,[@ips]);
 		@ifs = (@ifs,@temp);
 	}
-	
+	if ($mac){
+		@temp = ($if,[($state,$speed,$duplex,$mac)]);
+		@ifs_bsd = (@ifs_bsd,@temp);
+		($state,$speed,$duplex,$mac) = ('','','','');
+	}
 	print Dumper \@ifs if $test[4];
+	print Dumper \@ifs_bsd if $test[4];
 	eval $end if $b_log;
 }
 
