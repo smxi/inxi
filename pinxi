@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-17';
-my $self_patch='171-p';
+my $self_patch='172-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -4446,10 +4446,10 @@ sub get {
 		@rows = (@rows,@data);
 	}
 	if ($show{'ip'}){
-		if ($bsd_type){
-			@data = if_ip('all');
-			@rows = (@rows,@data);
-		}
+# 		if ($bsd_type){
+# 			@data = if_ip('all');
+# 			@rows = (@rows,@data);
+# 		}
 		@data = wan_ip();
 		@rows = (@rows,@data);
 	}
@@ -4504,10 +4504,10 @@ sub card_data {
 			}
 			if ($show{'network-advanced'}){
 				if (!$bsd_type){
-					@data = advanced_data_sys($row[5],$row[6],'std');
+					@data = advanced_data_sys($row[5],$row[6]);
 				}
 				else {
-					@data = advanced_data_bsd("$row[9]$row[11]",'std');
+					@data = advanced_data_bsd("$row[9]$row[11]");
 				}
 				@rows = (@rows,@data);
 			}
@@ -4529,9 +4529,9 @@ sub card_data {
 sub advanced_data_sys {
 	eval $start if $b_log;
 	return if ! -d '/sys/class/net';
-	my ($vendor,$chip,$if,$type) = @_;
+	my ($vendor,$chip) = @_;
 	my $num = 0;
-	my (@row,@rows);
+	my (@row,@rows,$if);
 	my @paths = glob('/sys/class/net/*');
 	@paths = grep {!/\/lo$/} @paths;
 	#print join '; ', @paths, "\n";
@@ -4588,7 +4588,6 @@ sub advanced_data_bsd {
 	my (@data,@row,@rows,$working_if);
 	my ($state,$speed,$duplex,$mac);
 	my $num = 0;
-	my $j = 0;
 	foreach my $ref (@ifs_bsd){
 		if (ref $ref ne 'ARRAY'){
 			$working_if = $ref;
@@ -4599,20 +4598,18 @@ sub advanced_data_bsd {
 			@data = @$ref;
  		}
 		if ($working_if eq $if){
-			foreach my $ref2 (@data){
-				$j = scalar @rows;
-				my @data2 = @$ref2;
+			foreach my $line (@data){
 				# ($state,$speed,$duplex,$mac)
-				$duplex = $data2[0];
+				$duplex = $data[0];
 				$duplex ||= 'N/A';
-				$mac = $data2[3];
+				$mac = $data[3];
 				if ($mac && $show{'filter'}){
 					$mac = $filter_string;
 				}
 				$mac ||= 'N/A';
-				$speed = $data2[1];
+				$speed = $data[1];
 				$speed ||= 'N/A';
-				$state = $data2[0];
+				$state = $data[0];
 				$state ||= 'N/A';
 				#print "$speed \n";
 				@rows = ({
@@ -4622,14 +4619,14 @@ sub advanced_data_bsd {
 				$num++ . "#duplex" => $duplex,
 				$num++ . "#mac" => $mac,
 				},);
-				last;
 			}
 		}
+		if ($show{'ip'}){
+			@row = if_ip($if);
+			@rows = (@rows,@row);
+		}
 	}
-	if ($show{'ip'}){
-		@row = if_ip($if);
-		@rows = (@rows,@row);
-	}
+	
 	eval $end if $b_log;
 	return @rows;
 }
@@ -4645,6 +4642,7 @@ sub if_ip {
 	my (@data,@row,@rows,$working_if);
 	my $num = 0;
 	my $j = 0;
+	my $limit = 24;
 	foreach my $ref (@ifs){
 		if (ref $ref ne 'ARRAY'){
 			$working_if = $ref;
@@ -4658,6 +4656,7 @@ sub if_ip {
 			#shift @data;
 			foreach my $ref2 (@data){
 				$j = scalar @rows;
+				last if $j > $limit;
 				my @data2 = @$ref2;
 				#print "$data2[0] $data2[1]\n";
 				my ($ipv,$ip,$broadcast,$scope,$scope_id);
@@ -7023,10 +7022,10 @@ sub set_ip_addr {
 sub set_ifconfig {
 	eval $start if $b_log;
 	my $program = check_program('ifconfig'); # not in user path, sbin
-	my @data = grabber("$program 2>/dev/null",'\n','strip');
+	my @data = grabber("$program 2>/dev/null",'\n','');
 	#my @data = reader("$ENV{'HOME'}/bin/scripts/inxi/data/if/vps-ifconfig-1.txt",'') or die $!;
 	my ($b_skip,$broadcast,$if,@ips_bsd,$ip,@ips,$scope,$scope_if,$type,@temp,@temp2);
-	my ($duplex,$mac,$media,$speed,$state); # bsd IF data
+	my ($state,$speed,$duplex,$mac);
 	foreach (@data){
 		if (/^[\S]/i){
 			#print "$_\n";
@@ -7044,8 +7043,9 @@ sub set_ifconfig {
 			$if = (split /\s+/,$_)[0];
 			@temp = split /:/, $if;
 			$if = $temp[0];
+			
 			$scope_if = $temp[1];
-			if ($if eq 'lo'){
+			if ($if =~ /^lo/){
 				$b_skip = 1;
 				$if = '';
 				$scope_if = '';
@@ -7053,27 +7053,30 @@ sub set_ifconfig {
 			}
 			$b_skip = 0;
 		}
-		elsif (!$b_skip && /^\s+inet/){
+		elsif (!$b_skip && ( /^\s+inet/ || ($bsd_type && /^\s+(ether|media|status)/) )){
 			#print "$_\n";
 			$_ =~ s/^\s+//;
-			$_ =~ s/addr:\s/addr:/;
-			@temp = split /\s+/, $_;
-			($broadcast,$ip,$scope,$scope_if,$type) = ('','','','','');
-			$ip = $temp[1];
-			$ip =~ s/addr://;
-			$type = ($temp[0] eq 'inet') ? 4 : 6 ;
-			if (/(Bcast:|broadcast\s)([\S]+)/){
-				$broadcast = $2;
+			if (!/^(ether|media|status)/){
+				$_ =~ s/addr:\s/addr:/;
+				@temp = split /\s+/, $_;
+				($broadcast,$ip,$scope,$scope_if,$type) = ('','','','','');
+				$ip = $temp[1];
+				$ip =~ s/addr://;
+				$type = ($temp[0] eq 'inet') ? 4 : 6 ;
+				if (/(Bcast:|broadcast\s)([\S]+)/){
+					$broadcast = $2;
+				}
+				if (/(scopeid\s[^<]+<|Scope:)([^>]+)[>]?/){
+					$scope = $2;
+				}
+				@temp = ($type,$ip,$broadcast,$scope,$scope_if);
+				@ips = (@ips,[@temp]);
 			}
-			if (/(scopeid\s[^<]+<|Scope:)([^>]+)[>]?/){
-				$scope = $2;
-			}
-			@temp = ($type,$ip,$broadcast,$scope,$scope_if);
-			@ips = (@ips,[@temp]);
-			if ($bsd_type){
+			elsif ($bsd_type){
 				if (/^media.*\(([^)]+).*<([^>]+)>/){
 					$duplex = $2;
 					$speed = $1;
+					$speed =~ s/\s+$//;
 				}
 				elsif (/^ether/){
 					$mac = (split /\s+/, $_)[1];
