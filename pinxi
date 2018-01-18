@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-17';
-my $self_patch='168-p';
+my $self_patch='169-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -4446,6 +4446,10 @@ sub get {
 		@rows = (@rows,@data);
 	}
 	if ($show{'ip'}){
+		if ($bsd_type){
+			@data = if_ip('all');
+			@rows = (@rows,@data);
+		}
 		@data = wan_ip();
 		@rows = (@rows,@data);
 	}
@@ -4581,13 +4585,20 @@ sub advanced_data_sys {
 sub if_ip {
 	eval $start if $b_log;
 	my ($if) = @_;
-	my (@row,@rows);
+	my (@data,@row,@rows,$working_if);
 	my $num = 0;
 	my $j = 0;
 	foreach my $ref (@ifs){
-		my @data = @$ref;
-		if ($data[0] eq $if){
-			shift @data;
+		if (ref $ref ne 'ARRAY'){
+			$working_if = $ref;
+			# print "$working_if\n";
+			next;
+		} 
+ 		else {
+			@data = @$ref;
+ 		}
+		if ($working_if eq $if || $if eq 'all'){
+			#shift @data;
 			foreach my $ref2 (@data){
 				$j = scalar @rows;
 				my @data2 = @$ref2;
@@ -4601,11 +4612,21 @@ sub if_ip {
 					$ip = $filter_string;
 				}
 				$scope = ($data2[3])? $data2[3]: 'N/A';
-				@row  = ({
-				$num++ . "#IPv" => $ipv,
-				$num++ . "#IP" => $ip,
-				$num++ . "#scope" => $scope,
-				},);
+				if ($if ne 'all'){
+					@row  = ({
+					$num++ . "#IPv" => $ipv,
+					$num++ . "#IP" => $ip,
+					$num++ . "#scope" => $scope,
+					},);
+				}
+				else {
+					@row  = ({
+					$num++ . "#IF" => $if,
+					$num++ . "#IPv" => $ipv,
+					$num++ . "#IP" => $ip,
+					$num++ . "#scope" => $scope,
+					},);
+				}
 				@rows = (@rows,@row);
 				if ($extra > 1 && $data2[2]){
 					$rows[$j]{$num++ . "#broadcast"} = $data2[2];
@@ -4613,7 +4634,6 @@ sub if_ip {
 			}
 		}
 	}
-	
 	eval $end if $b_log;
 	return @rows;
 }
@@ -6895,19 +6915,22 @@ sub set_ip_addr {
 	eval $start if $b_log;
 	my $program = check_program('ip');
 	my @data = grabber("$program addr 2>/dev/null",'\n','strip');
+	#my @data = reader("$ENV{'HOME'}/bin/scripts/inxi/data/if/vps-ipaddr-1.txt",'strip') or die $!;
 	my ($b_skip,$broadcast,$if,$ip,@ips,$scope,$scope_if,$type,@temp,@temp2);
 	foreach (@data){
 		if (/^[0-9]/){
 			#print "$_\n";
 			if (@ips){
-			#print "here\n";
+			#print "$if\n";
 				@temp = ($if,[@ips]);
-				@ips = (@ifs,@temp);
+				@ifs = (@ifs,@temp);
+				@ips = ();
 			}
 			@temp = split /:\s+/,$_;
 			$if = $temp[1];
 			if ($if eq 'lo'){
 				$b_skip = 1;
+				$if = '';
 				next;
 			}
 			$b_skip = 0;
@@ -6931,8 +6954,10 @@ sub set_ip_addr {
 			#print Dumper \@ips;
 		}
 	}
+	#print Dumper \@ips if $test[4];
 	if (@ips){
-		@ifs = (@ifs,[$if,@ips]);
+		@temp = ($if,[@ips]);
+		@ifs = (@ifs,@temp);
 	}
 	print Dumper \@ifs if $test[4];
 	eval $end if $b_log;
@@ -6941,18 +6966,22 @@ sub set_ifconfig {
 	eval $start if $b_log;
 	my $program = check_program('ifconfig'); # not in user path, sbin
 	my @data = grabber("$program 2>/dev/null",'\n','strip');
+	#my @data = reader("$ENV{'HOME'}/bin/scripts/inxi/data/if/vps-ifconfig-1.txt",'') or die $!;
 	my ($b_skip,$broadcast,$if,$ip,@ips,$scope,$scope_if,$type,@temp,@temp2);
 	foreach (@data){
-		if (/^[a-z0-9]+/){
-			print "$_\n";
+		if (/^[\S]/i){
+			#print "$_\n";
 			if (@ips){
-			print "here\n";
-				@temp = ($if,@ips);
-				@ips = (@ifs,@temp);
+			#print "here\n";
+				@temp = ($if,[@ips]);
+				@ifs = (@ifs,@temp);
+				@ips = ();
 			}
-			@temp = split /\s+/,$_;
+			$if = (split /\s+/,$_)[0];
+			@temp = split /:/, $if;
 			$if = $temp[0];
-			$scope_if = (split /:/, $if)[1];
+			
+			$scope_if = $temp[1];
 			if ($if eq 'lo'){
 				$b_skip = 1;
 				$if = '';
@@ -6960,13 +6989,15 @@ sub set_ifconfig {
 				next;
 			}
 			$b_skip = 0;
-			@temp = ();
 		}
-		elsif (!$b_skip && /^inet/){
-			print "$_\n";
+		elsif (!$b_skip && /^\s+inet/){
+			#print "$_\n";
+			$_ =~ s/^\s+//;
+			$_ =~ s/addr:\s/addr:/;
 			@temp = split /\s+/, $_;
 			($broadcast,$ip,$scope,$scope_if,$type) = ('','','','','');
 			$ip = $temp[1];
+			$ip =~ s/addr://;
 			$type = ($temp[0] eq 'inet') ? 4 : 6 ;
 			if (/(Bcast:|broadcast\s)([\S]+)/){
 				$broadcast = $2;
@@ -6975,12 +7006,13 @@ sub set_ifconfig {
 				$scope = $2;
 			}
 			@temp = ($type,$ip,$broadcast,$scope,$scope_if);
-			@ips = (@ips,@temp);
+			@ips = (@ips,[@temp]);
 			#print Dumper \@ips;
 		}
 	}
 	if (@ips){
-		@ifs = (@ifs,[$if,@ips]);
+		@temp = ($if,[@ips]);
+		@ifs = (@ifs,@temp);
 	}
 	
 	print Dumper \@ifs if $test[4];
