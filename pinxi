@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-17';
-my $self_patch='167-p';
+my $self_patch='168-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -58,7 +58,7 @@ my ( %alerts, %client, %colors, %dl, %files, %rows, %system_files, %use );
 
 ## arrays
 # ps_aux is full output, ps_cmd is only the last 10 to last
-my (@app,@dmi,@pci,@ps_aux,@ps_cmd,@usb);
+my (@app,@dmi,@ifs,@pci,@ps_aux,@ps_cmd,@usb);
 my @test = (0,0,0,0,0);
 
 #my $opt_parser = Getopt::Long::Parser->new;
@@ -267,6 +267,13 @@ sub check_tools {
 	}
 	if ( $usb_level ){
 		%hash = ('lsusb' => 'linux',);
+		%commands = (%commands,%hash);
+	}
+	if ($show{'ip'}){
+		%hash = (
+		'ip' => 'linux',
+		'ifconfig' => 'all',
+		);
 		%commands = (%commands,%hash);
 	}
 	foreach ( keys %commands ){
@@ -4513,15 +4520,15 @@ sub card_data {
 sub advanced_data_sys {
 	eval $start if $b_log;
 	return if ! -d '/sys/class/net';
-	my ($vendor,$chip,$type) = @_;
+	my ($vendor,$chip,$if,$type) = @_;
 	my $num = 0;
-	my (@row);
+	my (@row,@rows);
 	my @paths = glob('/sys/class/net/*');
 	@paths = grep {!/\/lo$/} @paths;
 	#print join '; ', @paths, "\n";
 	foreach (@paths){
 		my $path = "$_/device/vendor";
-		my ($data1,$data2,$duplex,$if,$mac,$speed,$state);
+		my ($data1,$data2,$duplex,$mac,$speed,$state);
 		$data1 = (main::reader($path))[0] if -e $path;
 		$data1 =~ s/^0x//;
 		$path = "$_/device/device";
@@ -4548,7 +4555,7 @@ sub advanced_data_sys {
 			
 			$state ||= 'N/A';
 			#print "$speed \n";
-			@row = ({
+			@rows = ({
 			$num++ . "#IF" => $if,
 			$num++ . "#state" => $state,
 			$num++ . "#speed" => $speed,
@@ -4558,8 +4565,57 @@ sub advanced_data_sys {
 			last;
 		}
 	}
+	if ($show{'ip'}){
+		@row = if_ip($if);
+		@rows = (@rows,@row);
+	}
 	eval $end if $b_log;
-	return @row;
+	return @rows;
+}
+## values:
+# 0 - ipv 
+# 1 - ip 
+# 2 - broadcast, if found 
+# 3 - scope, if found 
+# 4 - scope if, if different from if
+sub if_ip {
+	eval $start if $b_log;
+	my ($if) = @_;
+	my (@row,@rows);
+	my $num = 0;
+	my $j = 0;
+	foreach my $ref (@ifs){
+		my @data = @$ref;
+		if ($data[0] eq $if){
+			shift @data;
+			foreach my $ref2 (@data){
+				$j = scalar @rows;
+				my @data2 = @$ref2;
+				#print "$data2[0] $data2[1]\n";
+				my ($ipv,$ip,$broadcast,$scope,$scope_id);
+				$ipv = ($data2[0])? $data2[0]: 'N/A';
+				if (!$show{'filter'} && $data2[1]){
+					$ip = ($data2[1])? $data2[1]: 'N/A';
+				}
+				else {
+					$ip = $filter_string;
+				}
+				$scope = ($data2[3])? $data2[3]: 'N/A';
+				@row  = ({
+				$num++ . "#IPv" => $ipv,
+				$num++ . "#IP" => $ip,
+				$num++ . "#scope" => $scope,
+				},);
+				@rows = (@rows,@row);
+				if ($extra > 1 && $data2[2]){
+					$rows[$j]{$num++ . "#broadcast"} = $data2[2];
+				}
+			}
+		}
+	}
+	
+	eval $end if $b_log;
+	return @rows;
 }
 # get ip using downloader to stdout. This is a clean, text only IP output url,
 # single line only, ending in the ip address. May have to modify this in the future
@@ -4570,17 +4626,6 @@ sub advanced_data_sys {
 # the fall backs will still work. 
 # note: consistently slower than domain based: 
 # dig +short +time=1 +tries=1 myip.opendns.com. A @208.67.222.222
-sub if_ip_data {
-	eval $start if $b_log;
-	my (@data,$ip);
-	my $num = 0;
-
-	@data = ({
-	$num++ . "#WAN IP" => $ip,
-	},);
-	eval $end if $b_log;
-	return @data;
-}
 sub wan_ip {
 	eval $start if $b_log;
 	my (@data,$ip);
@@ -4606,6 +4651,7 @@ sub wan_ip {
 	eval $end if $b_log;
 	return @data;
 }
+
 sub usb_data {
 	eval $start if $b_log;
 	my (@rows,@data,$vendor,$product);
@@ -6831,9 +6877,113 @@ sub set_dmidecode_data {
 	# about random dmi type ordering in the data, which happens. Also sort 
 	# by handle, as secondary sort.
 	@dmi = sort { $a->[0] <=> $b->[0] || $a->[1] <=> $b->[1] } @dmi;
-	if ($test[4]){
-		print Dumper \@dmi;
+	print Dumper \@dmi if $test[4];
+	eval $end if $b_log;
+}
+
+sub set_ip_data {
+	eval $start if $b_log;
+	if ($alerts{'ip'}{'action'} eq 'use' ){
+		set_ip_addr();
 	}
+	elsif ($alerts{'ifconfig'}{'action'} eq 'use'){
+		set_ifconfig();
+	}
+	eval $end if $b_log;
+}
+sub set_ip_addr {
+	eval $start if $b_log;
+	my $program = check_program('ip');
+	my @data = grabber("$program addr 2>/dev/null",'\n','strip');
+	my ($b_skip,$broadcast,$if,$ip,@ips,$scope,$scope_if,$type,@temp,@temp2);
+	foreach (@data){
+		if (/^[0-9]/){
+			#print "$_\n";
+			if (@ips){
+			#print "here\n";
+				@temp = ($if,[@ips]);
+				@ips = (@ifs,@temp);
+			}
+			@temp = split /:\s+/,$_;
+			$if = $temp[1];
+			if ($if eq 'lo'){
+				$b_skip = 1;
+				next;
+			}
+			$b_skip = 0;
+			@temp = ();
+		}
+		elsif (!$b_skip && /^inet/){
+			#print "$_\n";
+			@temp = split /\s+/, $_;
+			($broadcast,$ip,$scope,$scope_if,$type) = ('','','','','');
+			$ip = $temp[1];
+			$type = ($temp[0] eq 'inet') ? 4 : 6 ;
+			if ($temp[2] eq 'brd'){
+				$broadcast = $temp[3];
+			}
+			if (/scope\s([^\s]+)(\s([^\s]+))?/){
+				$scope = $1;
+				$scope_if = $3;
+			}
+			@temp = ($type,$ip,$broadcast,$scope,$scope_if);
+			@ips = (@ips,[@temp]);
+			#print Dumper \@ips;
+		}
+	}
+	if (@ips){
+		@ifs = (@ifs,[$if,@ips]);
+	}
+	print Dumper \@ifs if $test[4];
+	eval $end if $b_log;
+}
+sub set_ifconfig {
+	eval $start if $b_log;
+	my $program = check_program('ifconfig'); # not in user path, sbin
+	my @data = grabber("$program 2>/dev/null",'\n','strip');
+	my ($b_skip,$broadcast,$if,$ip,@ips,$scope,$scope_if,$type,@temp,@temp2);
+	foreach (@data){
+		if (/^[a-z0-9]+/){
+			print "$_\n";
+			if (@ips){
+			print "here\n";
+				@temp = ($if,@ips);
+				@ips = (@ifs,@temp);
+			}
+			@temp = split /\s+/,$_;
+			$if = $temp[0];
+			$scope_if = (split /:/, $if)[1];
+			if ($if eq 'lo'){
+				$b_skip = 1;
+				$if = '';
+				$scope_if = '';
+				next;
+			}
+			$b_skip = 0;
+			@temp = ();
+		}
+		elsif (!$b_skip && /^inet/){
+			print "$_\n";
+			@temp = split /\s+/, $_;
+			($broadcast,$ip,$scope,$scope_if,$type) = ('','','','','');
+			$ip = $temp[1];
+			$type = ($temp[0] eq 'inet') ? 4 : 6 ;
+			if (/(Bcast:|broadcast\s)([\S]+)/){
+				$broadcast = $2;
+			}
+			if (/(scopeid\s[^<]+<|Scope:)([^>]+)[>]?/){
+				$scope = $2;
+			}
+			@temp = ($type,$ip,$broadcast,$scope,$scope_if);
+			@ips = (@ips,@temp);
+			#print Dumper \@ips;
+		}
+	}
+	if (@ips){
+		@ifs = (@ifs,[$if,@ips]);
+	}
+	
+	print Dumper \@ifs if $test[4];
 	eval $end if $b_log;
 }
 
@@ -6921,9 +7071,7 @@ sub set_lspci_data {
 		@pci = (@pci,[@temp]);
 		$device = '';
 	}
-	if ($test[3]){
-		print Dumper \@pci;
-	}
+	print Dumper \@pci if $test[3];
 	eval $end if $b_log;
 }
 sub set_pciconf_data {
@@ -6997,9 +7145,7 @@ sub set_pciconf_data {
 		@pci = (@pci,[@temp]);
 		$device = '';
 	}
-	if ($test[2]){
-		print Dumper \@pci;
-	}
+	print Dumper \@pci if $test[2];
 	eval $end if $b_log;
 }
 sub set_ps_aux {
@@ -7058,9 +7204,7 @@ sub set_lsusb_data_short {
 			}
 		}
 	}
-	if ($test[2]){
-		print Dumper \@usb;
-	}
+	print Dumper \@usb if $test[2];
 	eval $end if $b_log;
 }
 sub set_lsusb_data_long {
@@ -7127,9 +7271,7 @@ sub set_lsusb_data_long {
 	# last by not least, sort it by dmi type, now we don't have to worry
 	# about random dmi type ordering in the data, which happens
 	@usb = sort { $a->[0] <=> $b->[0] || $a->[1] <=> $b->[1] } @usb;
-	if ($test[2]){
-		print Dumper \@usb;
-	}
+	print Dumper \@usb if $test[2];
 	eval $end if $b_log;
 }
 
@@ -7214,6 +7356,7 @@ sub generate_lines {
 		if ( $show{'network'} ){
 			set_usb_data() if !$b_usb_check;
 			set_pci_data() if !$b_pci_check; 
+			set_ip_data() if $show{'ip'};
 			$b_pci_check = 1;
 			$b_usb_check = 1;
 			%row = line_handler('Network','network');
