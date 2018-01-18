@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-18';
-my $self_patch='179-p';
+my $self_patch='180-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -71,7 +71,7 @@ my ($b_update,$b_weather) = (1,1);
 
 ## System
 my ($bsd_type,$language,$os) = ('','','');
-my ($cpu_sleep,$dl_timeout,$ps_count,$usb_level) = (0.3,4,5,0);
+my ($cpu_sleep,$dl_timeout,$limit,$ps_count,$usb_level) = (0.3,4,10,5,0);
 my @paths = qw(/sbin /bin /usr/sbin /usr/bin /usr/X11R6/bin /usr/local/sbin /usr/local/bin);
 $ENV{'PATH'} = 'sbin:/bin:/usr/sbin:/usr/bin:/usr/X11R6/bin:/usr/local/sbin:/usr/local/bin';
 my $sensors_cpu_nu = 0;
@@ -728,6 +728,7 @@ sub get_config_item {
 	}}
 	elsif ($key eq 'FILTER_STRING') {$filter_string = $val}
 	elsif ($key eq 'LANGUAGE') {$language = $val}
+	elsif ($key eq 'LIMIT') {$limit = $val}
 	elsif ($key eq 'OUTPUT_TYPE') {$output_type = $val if $val =~ /^csv|json|screen|xml/}
 	elsif ($key eq 'PS_COUNT') {$ps_count = $val }
 	elsif ($key eq 'SENSORS_CPU_NO') {$sensors_cpu_nu = $val}
@@ -2645,6 +2646,14 @@ sub get_options{
 		$show{'short'} = 0;
 		$show{'label'} = 1;
 		$show{'partition'} = 1; },
+	'limit:i' => sub {
+		my ($opt,$arg) = @_;
+		if ($arg != 0){
+			$limit = $arg;
+		}
+		else {
+			error_handler('bad-arg',$opt,$arg);
+		} },
 	'm|memory' => sub {
 		$show{'short'} = 0;
 		$show{'ram'} = 1; },
@@ -2678,6 +2687,14 @@ sub get_options{
 	's|sensors|sensor' => sub {
 		$show{'short'} = 0;
 		$show{'sensor'} = 1; },
+	'sleep:i' => sub {
+		my ($opt,$arg) = @_;
+		if ($arg >= 0){
+			$cpu_sleep = $arg;
+		}
+		else {
+			error_handler('bad-arg',$opt,$arg);
+		} },
 	'slots|slot' => sub {
 		$show{'short'} = 0;
 		$show{'slot'} = 1; },
@@ -2815,12 +2832,7 @@ sub get_options{
 	## Start non data options
 	'alt:i' => sub { 
 		my ($opt,$arg) = @_;
-		if ($arg == 1) {$test[1] = 1}
-		elsif ($arg == 2) {$test[2] = 1}
-		elsif ($arg == 3) {$test[3] = 1}
-		elsif ($arg == 4) {$test[4] = 1}
-		elsif ($arg == 5) {$test[5] = 1}
-		elsif ($arg == 30) {$b_irc = 0}
+		if ($arg == 30) {$b_irc = 0}
 		elsif ($arg == 31) {$show{'host'} = 0}
 		elsif ($arg == 32) {$show{'host'} = 1}
 		elsif ($arg == 33) {$b_dmidecode_force=1}
@@ -2842,6 +2854,12 @@ sub get_options{
 			$dl{'fetch'} = 0;
 			$dl{'wget'} = 0;
 			$b_downloader = 1;}
+		else {
+			error_handler('bad-arg', $opt, $arg);
+		}},
+	'dbg:i' => sub { 
+		my ($opt,$arg) = @_;
+		if ($arg > 0) {$test[$arg] = 1}
 		else {
 			error_handler('bad-arg', $opt, $arg);
 		}},
@@ -3055,6 +3073,7 @@ sub show_options {
 	['1', '-s', '--sensors', "Sensors output (if sensors installed/configured): mobo/cpu/gpu temp; 
 	detected fan speeds. Gpu temp only for Fglrx/Nvidia drivers. Nvidia shows 
 	screen number for > 1 screens." ],
+	['1', '', '--slots', "Show PCI slots, type, speed, status." ],
 	['1', '-S', '--system', "System information: host name, kernel, desktop environment 
 	(if in X), distro" ],
 	['1', '-t', '--processes', "Processes. Requires extra options: c^(cpu) m^(memory) cm^(cpu+memory). 
@@ -3062,6 +3081,7 @@ sub show_options {
 	(default:^$ps_count; if in irc, max:^5): -t^cm10" ],
 	['1', '', '', "Make sure to have no space between letters and numbers 
 	(-t^cm10 - right, -t^cm^10 - wrong)." ],
+	['1', '', '--usb', "Show data, Hubs and Devices attached." ],
 	['1', '-u', '--uuid', "$partition_string_u UUIDs. Default: short $partition_string -P. 
 	For full -p output, use: -pu (or -plu)." ],
 	['1', '-v', '--verbosity', "Script verbosity levels. Verbosity level number is required. 
@@ -3110,7 +3130,7 @@ sub show_options {
 	['2', '-G', '', "Direct rendering status for Graphics (in X)." ],
 	['2', '-G', '', "(for single gpu, nvidia driver) screen number gpu is running on." ],
 	['2', '-i', '', "For IPv6, show additional IP v6 scope addresses: Global, Site, 
-	Temporary, Unknown." ],
+	Temporary, Unknown. See --limit for large counts of IP addresses." ],
 	['2', '-I', '', "System GCC, default. With -xx, also show other installed 
 	GCC versions. If running in console, not in IRC client, shows shell 
 	version number, if detected. Init/RC Type and runlevel (if available)." ],
@@ -3213,7 +3233,7 @@ sub show_options {
 	then exits." ],
 	[0, '', '', "$line" ],
 	[0, '', '', "Debugging Options:" ],
-	
+	['1', '', '--dbg', "Switches on specific debuggers. Refer to inxi-values.txt documentation for active switches." ],
 	['1', '', '--debug', "Triggers debugging modes." ],
 	['2', '1-3', '', "On screen $self_name debugger output" ],
 	['2', '10', '', "Basic $self_name logging." ],
@@ -3656,8 +3676,9 @@ sub row_defaults {
 	my ($type,$id) = @_;
 	my %unfound = (
 	'ARM' => "ARM systems do not support $id data type",
+	'IP' => "No $id data found. Connected to the web? SSL issues?",
 	'Message' => "No $id data found for this option",
-	'IP' => "No $id data found. Are you connected to the network?",
+	'output-limit' => "Output throttled. IPs: $id; Limit: $limit; Override: --limit [1-x;-1 all]",
 	);
 	return $unfound{$type};
 }
@@ -4654,7 +4675,6 @@ sub if_ip {
 	my (@data,@row,@rows,$working_if);
 	my $num = 0;
 	my $j = 0;
-	my $limit = 24;
 	foreach my $ref (@ifs){
 		if (ref $ref ne 'ARRAY'){
 			$working_if = $ref;
@@ -4668,7 +4688,13 @@ sub if_ip {
 			#shift @data;
 			foreach my $ref2 (@data){
 				$j = scalar @rows;
-				last if $j > $limit;
+				if ($limit > 0 && $j == $limit){
+					@row  = ({
+					$num++ . "#Message" => main::row_defaults('output-limit',scalar @data),
+					},);
+					@rows = (@rows,@row);
+					last;
+				}
 				my @data2 = @$ref2;
 				#print "$data2[0] $data2[1]\n";
 				my ($ipv,$ip,$broadcast,$scope,$scope_id);
@@ -4683,9 +4709,18 @@ sub if_ip {
 				
 				if ($if ne 'all'){
 					if (defined $data2[4] && $working_if ne $data2[4]){
+						# scope global temporary deprecated dynamic 
+						# scope global dynamic 
+						# scope global temporary deprecated dynamic 
+						# scope site temporary deprecated dynamic 
+						# scope global eth0
+						# scope link
+						# scope site dynamic 
+						# scope link 
+						my $key = ($data2[4] =~ /deprecated|dynamic|temporary/ ) ? 'type':'virtual' ;
 						@row  = ({
 						$num++ . "#IP v$ipv" => $ip,
-						$num++ . "#virtual" => $data2[4],
+						$num++ . "#$key" => $data2[4],
 						$num++ . "#scope" => $scope,
 						},);
 					}
@@ -5467,7 +5502,7 @@ sub slot_data {
 				}
 			}
 			if ($type){
-				$id ||= 'N/A';
+				$id = 'N/A' if ($id eq '' );
 				if ($type eq 'Other' && $designation){
 					$type = $designation;
 				}
@@ -5807,7 +5842,7 @@ sub get_kde_data {
 		if (!$desktop[1]){
 			$desktop[1] = $kde_session_version;
 		}
-		print Data::Dumper::Dumper \@version_data;
+		# print Data::Dumper::Dumper \@version_data;
 		if ($extra > 0 && @version_data){
 			$desktop[2] = 'Qt';
 			$desktop[3] = main::awk(\@version_data,'^Qt:', 2,'\s+');
@@ -6569,7 +6604,7 @@ sub get_init_data {
 		elsif ( -f '/etc/inittab' ){
 			$init = 'SysVinit';
 			if (check_program('strings')){
-				@data = data_dumper('strings /sbin/init');
+				@data = grabber('strings /sbin/init');
 				$init_version = awk(\@data,'version\s+[0-9]');
 				$init_version = get_piece($init_version,2) if $init_version;
 			}
@@ -6917,15 +6952,11 @@ sub set_dmi_data {
 sub set_dmidecode_data {
 	eval $start if $b_log;
 	my (@data,@working,$type,$handle);
-	if ( $test[4] ){
-		my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmidecode/pci-freebsd-8.2-2";
-		open my $fh, '<', $file or die "can't open $file: $!";
-		chomp(@data = <$fh>);
-	}
-	else {
-		my $content = qx(dmidecode 2>/dev/null);
-		@data = split /\n/, $content;
-	}
+	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmidecode/pci-freebsd-8.2-2";
+	#open my $fh, '<', $file or die "can't open $file: $!";
+	#chomp(@data = <$fh>);
+	my $content = qx(dmidecode 2>/dev/null);
+	@data = split /\n/, $content;
 	# we don't need the opener lines of dmidecode output
 	# but we do want to preserve the indentation. Empty lines
 	# won't matter, they will be skipped, so no need to handle them.
@@ -6974,7 +7005,7 @@ sub set_dmidecode_data {
 	# about random dmi type ordering in the data, which happens. Also sort 
 	# by handle, as secondary sort.
 	@dmi = sort { $a->[0] <=> $b->[0] || $a->[1] <=> $b->[1] } @dmi;
-	print Dumper \@dmi if $test[4];
+	print Dumper \@dmi if $test[2];
 	eval $end if $b_log;
 }
 
@@ -6991,8 +7022,8 @@ sub set_ip_data {
 sub set_ip_addr {
 	eval $start if $b_log;
 	my $program = check_program('ip');
-	my @data = grabber("$program addr 2>/dev/null",'\n','strip');
-	#my @data = reader("$ENV{'HOME'}/bin/scripts/inxi/data/if/vps-ipaddr-1.txt",'strip') or die $!;
+	#my @data = grabber("$program addr 2>/dev/null",'\n','strip');
+	my @data = reader("$ENV{'HOME'}/bin/scripts/inxi/data/if/scope-ipaddr-1.txt",'strip') or die $!;
 	my ($b_skip,$broadcast,$if,$ip,@ips,$scope,$virtual_if,$type,@temp,@temp2);
 	foreach (@data){
 		if (/^[0-9]/){
@@ -7022,7 +7053,7 @@ sub set_ip_addr {
 			if ($temp[2] eq 'brd'){
 				$broadcast = $temp[3];
 			}
-			if (/scope\s([^\s]+)(\s([^\s]+))?/){
+			if (/scope\s([^\s]+)(\s(.+))?/){
 				$scope = $1;
 				$virtual_if = $3;
 			}
@@ -7036,7 +7067,7 @@ sub set_ip_addr {
 		@temp = ($if,[@ips]);
 		@ifs = (@ifs,@temp);
 	}
-	print Dumper \@ifs if $test[4];
+	print Dumper \@ifs if $test[3];
 	eval $end if $b_log;
 }
 sub set_ifconfig {
@@ -7116,8 +7147,8 @@ sub set_ifconfig {
 		@ifs_bsd = (@ifs_bsd,@temp);
 		($state,$speed,$duplex,$mac) = ('','','','');
 	}
-	print Dumper \@ifs if $test[4];
-	print Dumper \@ifs_bsd if $test[4];
+	print Dumper \@ifs if $test[3];
+	print Dumper \@ifs_bsd if $test[3];
 	eval $end if $b_log;
 }
 
@@ -7205,7 +7236,7 @@ sub set_lspci_data {
 		@pci = (@pci,[@temp]);
 		$device = '';
 	}
-	print Dumper \@pci if $test[3];
+	print Dumper \@pci if $test[4];
 	eval $end if $b_log;
 }
 # em0@pci0:6:0:0:	class=0x020000 card=0x10d315d9 chip=0x10d38086 rev=0x00 hdr=0x00
@@ -7285,7 +7316,7 @@ sub set_pciconf_data {
 		@pci = (@pci,[@temp]);
 		$device = '';
 	}
-	print Dumper \@pci if $test[2];
+	print Dumper \@pci if $test[4];
 	eval $end if $b_log;
 }
 sub set_ps_aux {
@@ -7303,6 +7334,7 @@ sub set_ps_aux {
 		@split = @split[10 .. $final ];
 		join " ", @split;
 	} @ps_aux;
+	print Dumper \@pci if $test[5];
 	eval $end if $b_log;
 }
 sub set_usb_data {
@@ -7344,7 +7376,7 @@ sub set_lsusb_data_short {
 			}
 		}
 	}
-	print Dumper \@usb if $test[2];
+	print Dumper \@usb if $test[6];
 	eval $end if $b_log;
 }
 sub set_lsusb_data_long {
@@ -7411,7 +7443,7 @@ sub set_lsusb_data_long {
 	# last by not least, sort it by dmi type, now we don't have to worry
 	# about random dmi type ordering in the data, which happens
 	@usb = sort { $a->[0] <=> $b->[0] || $a->[1] <=> $b->[1] } @usb;
-	print Dumper \@usb if $test[2];
+	print Dumper \@usb if $test[6];
 	eval $end if $b_log;
 }
 
