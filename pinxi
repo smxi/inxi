@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-17';
-my $self_patch='165-p';
+my $self_patch='166-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -3299,7 +3299,7 @@ sub get_client_data {
 		main::get_shell_data($ppid);
 	}
 	else {
-		$show{'filter-output'} = (!$show{'filter-override'}) ? 1 : 0;
+		$show{'filter'} = (!$show{'filter-override'}) ? 1 : 0;
 		get_client_name();
 		if ($client{'konvi'} == 1 || $client{'konvi'} == 3){
 			set_konvi_data();
@@ -4463,6 +4463,7 @@ sub card_data {
 			#print "$row[0] $row[3]\n";
 			$j = scalar @rows;
 			my $driver = $row[9];
+			my $chip_id = "$row[5]:$row[6]";
 			$driver ||= 'N/A';
 			@data = (
 			{
@@ -4480,10 +4481,14 @@ sub card_data {
 				}
 				$row[8] ||= 'N/A';
 				$rows[$j]{$num++ . "#port"} = $row[8];
-				$rows[$j]{$num++ . "#bus ID"} = "$row[2].$row[3]";
+				$rows[$j]{$num++ . "#bus ID"} = $chip_id;
 			}
 			if ($extra > 1){
-				$rows[$j]{$num++ . "#chip ID"} = "$row[5]:$row[6]";
+				$rows[$j]{$num++ . "#chip ID"} = $chip_id;
+			}
+			if ($show{'network-advanced'}){
+				@data = advanced_data_sys($row[5],$row[6],'std');
+				@rows = (@rows,@data);
 			}
 		}
 		#print "$row[0]\n";
@@ -4499,6 +4504,67 @@ sub card_data {
 	#print $$ref[0],"\n";
 	eval $end if $b_log;
 	return @rows;
+}
+sub advanced_data_sys {
+	eval $start if $b_log;
+	return if ! -d '/sys/class/net';
+	my ($vendor,$chip,$type) = @_;
+	my $num = 0;
+	my (@row);
+	my @paths = glob('/sys/class/net/*');
+	@paths = grep {!/\/lo$/} @paths;
+	#print join '; ', @paths, "\n";
+	foreach (@paths){
+		my $path = "$_/device/vendor";
+		my ($data1,$data2,$duplex,$if,$mac,$speed,$state);
+		$data1 = (main::reader($path))[0] if -e $path;
+		$data1 =~ s/^0x//;
+		$path = "$_/device/device";
+		$data2 = (main::reader($path))[0] if -e $path;
+		$data2 =~ s/^0x//;
+		#print "$data1 $data2\n";
+		if ($data1 && $data2 && $data1 eq $vendor && $data2 eq $chip) {
+			$if = $_;
+			$if =~ s/^\/.+\///;
+			$path = "$_/duplex";
+			$duplex = (main::reader($path))[0] if -e $path;
+			$duplex ||= 'N/A';
+			$path = "$_/address";
+			$mac = (main::reader($path))[0] if -e $path;
+			if ($mac && $show{'filter'}){
+				$mac = $filter_string;
+			}
+			$mac ||= 'N/A';
+			$path = "$_/speed";
+			$speed = (main::reader($path))[0] if -e $path;
+			$speed ||= 'N/A';
+			$path = "$_/operstate";
+			$state = (main::reader($path))[0] if -e $path;
+			
+			$state ||= 'N/A';
+			#print "$speed \n";
+			@row = ({
+			$num++ . "#IF" => $if,
+			$num++ . "#state" => $state,
+			$num++ . "#speed" => $speed,
+			$num++ . "#duplex" => $duplex,
+			$num++ . "#mac" => $mac,
+			},);
+			last;
+		}
+	}
+	eval $end if $b_log;
+	return @row;
+}
+sub if_ip_data {
+	eval $start if $b_log;
+	
+	eval $end if $b_log;
+}
+sub wan_ip {
+	eval $start if $b_log;
+	
+	eval $end if $b_log;
 }
 sub usb_data {
 	eval $start if $b_log;
@@ -4541,6 +4607,10 @@ sub usb_data {
 					$rows[$j]{$num++ . "#chip ID"} = $row[2];
 				}
 				$j = scalar @rows;
+				if ($show{'network-advanced'}){
+					@data = advanced_data_sys($row[5],$row[6],'usb');
+					@rows = (@rows,@data);
+				}
 			}
 		}
 	}
