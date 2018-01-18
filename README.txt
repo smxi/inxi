@@ -111,11 +111,11 @@ Note that my current development goals are, roughly in this order:
    Status: DONE
 
 3. Complete debugger data collector. 
-   Status: Basically DONE
+   Status: DONE
 
 4. Complete recommends output. This will wait for longer down the
    road when I actually know what the recommends are.
-   Status: not started
+   Status: NOT STARTED
    
 5. Complete option handler. 
    Status: DONE.
