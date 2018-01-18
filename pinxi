@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-18';
-my $self_patch='182-p';
+my $self_patch='183-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -265,9 +265,14 @@ sub check_tools {
 	if ( $show{'sensor'} ){
 		%commands = ('sensors' => 'linux',);
 	}
+	# note: lsusb ships in FreeBSD ports sysutils/usbutils
 	if ( $usb_level ){
-		%hash = ('lsusb' => 'linux',);
+		%hash = ('lsusb' => 'all',);
 		%commands = (%commands,%hash);
+		if ($bsd_type){
+			%hash = ('usbdevs' => 'bsd',);
+			%commands = (%commands,%hash);
+		}
 	}
 	if ($show{'ip'} || ($bsd_type && $show{'network-advanced'})){
 		%hash = (
@@ -5617,6 +5622,7 @@ sub usb_data {
 		# it's a hub
 		if ($id[1] == 1){
 			foreach my $line (@id){
+				#print "$line\n";
 				@row = split /:/, $line;
 				if ($row[0] eq 'bcdUSB'){
 					$speed  = $row[1]
@@ -5625,6 +5631,7 @@ sub usb_data {
 					$protocol = $row[2];
 				}
 			}
+			#print "pt0:$protocol\n";
 			@data = ({
 			$num++ . "#Hub" => $bus_id,
 			$num++ . "#usb" => $speed,
@@ -5664,9 +5671,10 @@ sub usb_data {
 				if ($vendor && $product){
 					$protocol = "$vendor $product";
 				}
-				elsif (!$product && $protocol){
+				elsif (!$product && $protocol && $vendor){
 					$protocol = "$vendor $protocol";
 				}
+				#print "pt2:$protocol\n";
 				@data = ({
 				$num++ . "#Hub" => $bus_id,
 				$num++ . "#usb" => $speed,
@@ -5680,11 +5688,19 @@ sub usb_data {
 						$product = "$vendor $product";
 					}
 				}
+				elsif (!$product && !$vendor && $protocol){
+					$product = $protocol;
+				}
 				elsif (!$product){
 					$product = $vendor;
 				}
 				# bInterfaceProtocol:0 but $row[2] undefined
-				$class ||= $protocol;
+				#print "pt3:$class:$product\n";
+				if ($class && $class ne $protocol){
+					$class = $protocol;
+				}
+				$class ||= 'N/A';
+				#print "pt3:$class:$product\n";
 				$rows[$j]{$num++ . "#Device"} = $product;
 				$rows[$j]{$num++ . "#bus ID"} = $bus_id;
 				if ($extra > 0){
@@ -5695,6 +5711,7 @@ sub usb_data {
 			if ($extra > 1){
 				$rows[$j]{$num++ . "#chip ID"} = $chip_id;
 			}
+			
 		}
 		
 	}
@@ -7346,7 +7363,7 @@ sub set_ps_aux {
 }
 sub set_usb_data {
 	eval $start if $b_log;
-	if ($alerts{'lsusb'}{'action'} eq 'use' ){
+	if ($alerts{'lsusb'}{'action'} ne 'use' ){
 		#$usb_level = 2;
 		if ($usb_level == 2){
 			set_lsusb_data_long();
@@ -7355,6 +7372,85 @@ sub set_usb_data {
 			set_lsusb_data_short();
 		}
 	}
+	else {#if ($alerts{'usbdevs'}{'action'} ne 'use'){
+		set_usbdevs_data();
+	}
+	eval $end if $b_log;
+}
+# Controller /dev/usb2:
+# addr 1: full speed, self powered, config 1, UHCI root hub(0x0000), Intel(0x8086), rev 1.00
+#  port 1 addr 2: full speed, power 98 mA, config 1, USB Receiver(0xc52b), Logitech(0x046d), rev 12.01
+#  port 2 powered
+sub set_usbdevs_data {
+	eval $start if $b_log;
+	my (@data,@working,$class,$bus_id,$addr_id,$id,$speed,$protocol);
+	my $b_live = 0;
+	my $j = 0;
+	my $ports = 0;
+	if ($b_live){
+		my $program = check_program('sbdevhs');
+		my $content = qx($program -v 2>/dev/null);
+		@data = split /\n/, $content;
+	}
+	else {
+		open my $fh, '<', "$ENV{'HOME'}/bin/scripts/inxi/data/lsusb/bsd-usbdevs-v-1.txt" or die $!;
+		chomp(@data = <$fh>);
+	}
+	foreach (@data){
+		if (/^Controller\s\/dev\/usb([0-9]+)/){
+			$j = scalar @usb;
+			$ports = 0;
+			$bus_id = $1;
+# 			if (@working){
+# 				$usb[$j] = (
+# 				[@working],
+# 				);
+# 			}
+			@working = ();
+		}
+		elsif (/^addr\s([0-9]+):\s([^,]+),[^,]+,[^,]+,\s?([^,]+)\(0x([0-9a-f]{4})\),\s?([^,]+)\s?\(0x([0-9a-f]{4})\)/){
+			$j = scalar @usb;
+			$addr_id = $1;
+			$speed = "bcdUSB:$2";
+			$id = "$4:$6";
+			$protocol="~bInterfaceProtocol:0:$5 $3";
+			#print "p1:$protocol\n";
+			$class='bDeviceClass:9:Hub';
+			@working = ($bus_id,$addr_id,$id,$speed,$class,$protocol);
+			if (@working){
+				$usb[$j] = (
+				[@working],
+				);
+			}
+			@working = ();
+		}
+		elsif (/^\s+port\s([0-9]+)\saddr\s([0-9]+):\s([^,]+),[^,]+,[^,]+,\s?([^,]+)\(0x([0-9a-f]{4})\),\s?([^,]+)\s?\(0x([0-9a-f]{4})\)/){
+			$j = scalar @usb;
+			$addr_id = "$2";
+			$speed = "bcdUSB:$3";
+			$id = "$5:$7";
+			$protocol="~bInterfaceProtocol:0:$6 $4";
+			#print "p2:$protocol\n";
+			$ports++;
+			@working = ($bus_id,$addr_id,$id,$speed,$protocol);
+			if (@working){
+				$usb[$j] = (
+				[@working],
+				);
+			}
+			@working = ();
+		}
+		elsif (/^\s+port\s([0-9]+)\spowered/){
+			$ports++;
+		}
+	}
+	if (@working){
+		$j = scalar @usb;
+		$usb[$j] = (
+		[@working],
+		);
+	}
+	print Dumper \@usb if $test[6];
 	eval $end if $b_log;
 }
 sub set_lsusb_data_short {
