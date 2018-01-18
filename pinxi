@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-18';
-my $self_patch='180-p';
+my $self_patch='181-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -7024,7 +7024,7 @@ sub set_ip_addr {
 	my $program = check_program('ip');
 	my @data = grabber("$program addr 2>/dev/null",'\n','strip');
 	#my @data = reader("$ENV{'HOME'}/bin/scripts/inxi/data/if/scope-ipaddr-1.txt",'strip') or die $!;
-	my ($b_skip,$broadcast,$if,$ip,@ips,$scope,$virtual_if,$type,@temp,@temp2);
+	my ($b_skip,$broadcast,$if,$ip,@ips,$scope,$if_id,$type,@temp,@temp2);
 	foreach (@data){
 		if (/^[0-9]/){
 			#print "$_\n";
@@ -7047,7 +7047,7 @@ sub set_ip_addr {
 		elsif (!$b_skip && /^inet/){
 			#print "$_\n";
 			@temp = split /\s+/, $_;
-			($broadcast,$ip,$scope,$virtual_if,$type) = ('','','','','');
+			($broadcast,$ip,$scope,$if_id,$type) = ('','','','','');
 			$ip = $temp[1];
 			$type = ($temp[0] eq 'inet') ? 4 : 6 ;
 			if ($temp[2] eq 'brd'){
@@ -7055,9 +7055,9 @@ sub set_ip_addr {
 			}
 			if (/scope\s([^\s]+)(\s(.+))?/){
 				$scope = $1;
-				$virtual_if = $3;
+				$if_id = $3;
 			}
-			@temp = ($type,$ip,$broadcast,$scope,$virtual_if);
+			@temp = ($type,$ip,$broadcast,$scope,$if_id);
 			@ips = (@ips,[@temp]);
 			#print Dumper \@ips;
 		}
@@ -7075,7 +7075,7 @@ sub set_ifconfig {
 	my $program = check_program('ifconfig'); # not in user path, sbin
 	my @data = grabber("$program 2>/dev/null",'\n','');
 	#my @data = reader("$ENV{'HOME'}/bin/scripts/inxi/data/if/vps-ifconfig-1.txt",'') or die $!;
-	my ($b_skip,$broadcast,$if,@ips_bsd,$ip,@ips,$scope,$virtual_if,$type,@temp,@temp2);
+	my ($b_skip,$broadcast,$if,@ips_bsd,$ip,@ips,$scope,$if_id,$type,@temp,@temp2);
 	my ($state,$speed,$duplex,$mac);
 	foreach (@data){
 		if (/^[\S]/i){
@@ -7089,52 +7089,56 @@ sub set_ifconfig {
 			if ($mac){
 				@temp = ($if,[($state,$speed,$duplex,$mac)]);
 				@ifs_bsd = (@ifs_bsd,@temp);
-				($state,$speed,$duplex,$mac,$virtual_if) = ('','','','','');
+				($state,$speed,$duplex,$mac,$if_id) = ('','','','','');
 			}
 			$if = (split /\s+/,$_)[0];
 			$if =~ s/:$//; # em0: flags=8843
-			$virtual_if = $if;
+			$if_id = $if;
 			$if = (split /:/, $if)[0] if $if;
 			if ($if =~ /^lo/){
 				$b_skip = 1;
 				$if = '';
-				$virtual_if = '';
+				$if_id = '';
 				next;
 			}
 			$b_skip = 0;
 		}
-		elsif (!$b_skip && ( /^\s+inet/ || ($bsd_type && /^\s+(ether|media|status)/) )){
+		elsif (!$b_skip && $bsd_type && /^\s+(ether|media|status)/){
+			$_ =~ s/^\s+//;
+			if (/^media.*\(([^)]+).*<([^>]+)>/){
+				$duplex = $2;
+				$speed = $1;
+				$speed =~ s/\s+$//;
+			}
+			elsif (/^ether/){
+				$mac = (split /\s+/, $_)[1];
+			}
+			elsif (/^status/){
+				$state = (split /\s+/, $_)[1];
+			}
+		}
+		elsif (!$b_skip && /^\s+inet/){
 			#print "$_\n";
 			$_ =~ s/^\s+//;
-			if (!/^(ether|media|status)/){
-				$_ =~ s/addr:\s/addr:/;
-				@temp = split /\s+/, $_;
-				($broadcast,$ip,$scope,$type) = ('','','','');
-				$ip = $temp[1];
-				$ip =~ s/addr://;
-				$type = ($temp[0] eq 'inet') ? 4 : 6 ;
-				if (/(Bcast:|broadcast\s)([\S]+)/){
-					$broadcast = $2;
-				}
-				if (/(scopeid\s[^<]+<|Scope:)([^>]+)[>]?/){
-					$scope = $2;
-				}
-				@temp = ($type,$ip,$broadcast,$scope,$virtual_if);
-				@ips = (@ips,[@temp]);
+			$_ =~ s/addr:\s/addr:/;
+			@temp = split /\s+/, $_;
+			($broadcast,$ip,$scope,$type) = ('','','','');
+			$ip = $temp[1];
+			# fe80::225:90ff:fe13:77ce%em0
+			$ip =~ s/^addr:|(%[\S]+)//;
+			if ($1 && $1 ne $if_id){
+				$if_id = $1;
 			}
-			elsif ($bsd_type){
-				if (/^media.*\(([^)]+).*<([^>]+)>/){
-					$duplex = $2;
-					$speed = $1;
-					$speed =~ s/\s+$//;
-				}
-				elsif (/^ether/){
-					$mac = (split /\s+/, $_)[1];
-				}
-				elsif (/^status/){
-					$state = (split /\s+/, $_)[1];
-				}
+			$type = ($temp[0] eq 'inet') ? 4 : 6 ;
+			if (/(Bcast:|broadcast\s)([\S]+)/){
+				$broadcast = $2;
 			}
+			if (/(scopeid\s[^<]+<|Scope:|scopeid\s)([^>]+)[>]?/){
+				$scope = $2;
+			}
+			$scope = 'link' if $ip =~ /^fe80/;
+			@temp = ($type,$ip,$broadcast,$scope,$if_id);
+			@ips = (@ips,[@temp]);
 			#print Dumper \@ips;
 		}
 	}
