@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-18';
-my $self_patch='185-p';
+my $self_patch='186-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -3681,6 +3681,7 @@ sub row_defaults {
 	'ARM' => "ARM systems do not support $id data type",
 	'IP' => "No $id data found. Connected to the web? SSL issues?",
 	'Message' => "No $id data found.",
+	'machine-data' => "No /sys/ machine data: try newer kernel, or install dmidecode.",
 	'output-limit' => "Output throttled. IPs: $id; Limit: $limit; Override: --limit [1-x;-1 all]",
 	);
 	return $unfound{$type};
@@ -4420,32 +4421,276 @@ package MachineData;
 
 sub get {
 	eval $start if $b_log;
-	my (@rows,$key1,$val1);
+	my (@data,@rows,$key1,$val1);
 	my $num = 0;
-	if ($bsd_type || $b_dmidecode_force){
+	if (-d '/sys/class/dmi/id/') {
+		@data = machine_data_sys();
+	}
+	elsif ($bsd_type || $b_dmidecode_force){
 		my $ref = $alerts{'dmidecode'};
 		if ( $$ref{'action'} ne 'use'){
 			$key1 = $$ref{'action'};
 			$val1 = $$ref{$key1};
 			$key1 = ucfirst($key1);
 		}
+		else {
+			@data = machine_data_dmi();
+		}
 	}
-	if (!$key1) {
-		$key1 = 'Status';
-		$val1 = 'under development';
+	else {
+		$key1 = 'Message';
+		$val1 = main::row_defaults('machine-data');
+		
 	}
-	my @data = ({$num++ . "#$key1" => $val1,});
+	if ($key1) {
+		@data = ({$num++ . "#$key1" => $val1,});
+	}
+	
 	return @data;
 	eval $end if $b_log;
 	
 }
-sub machine_data {
+
+sub machine_data_sys {
 	eval $start if $b_log;
-	my (@rows);
-	my $num = 0;
-	
+	my (%data,@rows,$path,);
+	my $firmware = 'BIOS';
+	my $sys_dir = '/sys/class/dmi/id/';
+	my @sys_files = qw(sys_vendor product_name product_version product_serial product_uuid 
+	board_vendor board_name board_version board_serial 
+	bios_vendor bios_version bios_date);
+	if ($extra > 1){
+		my @more = qw(chassis_vendor chassis_type chassis_version chassis_serial);
+		@sys_files = (@sys_files,@more);
+	}
+	if ( -d '/sys/firmware/efi'){
+		$firmware = 'UEFI';
+	}
+	elsif ( glob('/sys/firmware/acpi/tables/UEFI*') ){
+		$firmware = 'UEFI [Legacy]';
+	}
+	$data{'firmware'} = $firmware;
+	foreach (@sys_files){
+		$path = "$sys_dir$_";
+		if (-r $path){
+			$data{$_} = (main::reader($path))[0];
+			$data{$_} = ($data{$_}) ? cleaner($data{$_}) : '';
+		}
+		else {
+			$data{$_} = '';
+		}
+	}
+	foreach (keys %data){
+		#print "$_: $data{$_}\n";
+	}
+
+	@rows = create_output(\%data);
 	eval $end if $b_log;
 	return @rows;
+}
+# bios_date: 09/07/2010
+# bios_vendor: American Megatrends Inc.
+# bios_version: P1.70
+# board_name: A770DE+
+# board_serial: 
+# board_vendor: ASRock
+# board_version: 
+# chassis_serial: 
+# chassis_type: 3
+# chassis_vendor: 
+# chassis_version: 
+# firmware: 
+# product_name: 
+# product_serial: 
+# product_uuid: 
+# product_version: 
+# sys_vendor: 
+
+sub machine_data_dmi {
+	eval $start if $b_log;
+	my (%data,@rows);
+	return if ! @dmi;
+	my $firmware = 'BIOS';
+	my $num = 0;
+	foreach (@dmi){
+		$num = 1;
+		my @ref = @$_;
+		if ($ref[0] == 9){
+			# skip first two row, we don't need that data
+			splice @ref, 0, 2 if @ref;
+			my $j = scalar @rows;
+			foreach my $item (@ref){
+				if ($item !~ /^~/){ # skip the indented rows
+					my @value = split /:\s+/, $item;
+	
+				}
+			}
+		}
+	}
+	if (!@rows){
+		my $key = 'Message';
+		my @data2 = ({
+		$num++ . "#$key" => main::row_defaults('machine-data','System Board'),
+		},);
+		@rows = (@rows,@data2);
+	}
+	else {
+		$data{'firmware'} = $firmware;
+		@rows = create_output(\%data);
+	}
+	eval $end if $b_log;
+	return @rows;
+}
+## keys for machine data are:
+# 0-sys_vendor 1-product_name 2-product_version 3-product_serial 4-product_uuid 
+# 5-board_vendor 6-board_name 7-board_version 8-board_serial 
+# 9-bios_vendor 10-bios_version 11-bios_date
+## with extra data: 
+# 12-chassis_vendor 13-chassis_type 14-chassis_version 15-chassis_serial
+## unused: 16-firmware_revision  17-firmware_romsize 18 - firmware type
+sub create_output {
+	eval $start if $b_log;
+	my ($ref) = @_;
+	my (%data,@row,@rows);
+	%data = %$ref;
+	my $firmware = 'BIOS';
+	my $num = 0;
+	my $j = 0;
+	my ($b_chassis,$b_skip_chassis,$b_skip_system);
+	my ($bios_date,$bios_rom,$bios_vendor,$bios_version,$chassis_serial,
+	$chassis_type,$chassis_vendor,$chassis_version,$firmware_revision,
+	$firmware_romsize,$mobo_model,$mobo_serial,$mobo_vendor,$mobo_version,
+	$product_name,$product_serial,$product_version,$system_vendor);
+	my $device = get_device();
+# 	foreach my $key (keys %data){
+# 		print "$key: $data{$key}\n";
+# 	}
+	# found a case of battery existing but having nothing in it on desktop mobo
+	# not all laptops show the first. /proc/acpi/battery is deprecated.
+	if (!$data{'sys_vendor'}){
+		$b_skip_system = 1;
+	}
+	elsif ( !glob('/proc/acpi/battery/*') && !glob('/sys/class/power_supply/*') ){
+		# ibm / ibm can be true; dell / quantum is false, so in other words, only do this
+		# in case where the vendor is the same and the version is the same and not null, 
+		# otherwise the version information is going to be different in all cases I think
+		if ( ($data{'sys_vendor'} && $data{'sys_vendor'} eq $data{'board_vendor'} ) &&
+			( ($data{'product_version'} && $data{'product_version'} eq $data{'board_version'} ) ||
+			(!$data{'product_version'} && $data{'product_name'} eq $data{'board_name'} ) ) ){
+			$b_skip_system = 1;
+		}
+	}
+	if ($data{'firmware'}){
+		$firmware = $data{'firmware'};
+	}
+	$mobo_vendor = ($data{'board_vendor'}) ?$data{'board_vendor'} : 'N/A';
+	$mobo_model = ($data{'board_name'}) ? $data{'board_name'}: 'N/A';
+	$mobo_version = ($data{'board_version'})?$data{'board_version'} : '';
+	if ($data{'board_serial'}){
+		$mobo_serial = ($show{'filter'}) ? $data{'board_serial'} : $filter_string;
+	}
+	else {
+		$mobo_serial = 'N/A';
+	}
+	$bios_vendor = ($data{'bios_vendor'}) ?$data{'bios_vendor'} : 'N/A';
+	if ($data{'bios_version'}){
+		$bios_version = $data{'bios_version'};
+		if ($data{'firmware_revision'}){
+			$firmware_revision = $data{'firmware_revision'};
+		}
+	}
+	if ($data{'bios_date'}){
+		$bios_date = $data{'bios_date'};
+	}
+	if ($extra > 1 && $data{'firmware_romsize'}){
+		$bios_rom = $data{'firmware_romsize'};
+	}
+	$j = scalar @rows;
+	@row = ({
+	$num++ . "#Device" => 'temp',
+	},);
+	@rows = (@rows,@row);
+	if (!$b_skip_system){
+		print "here\n";
+		# this has already been tested for above so we know it's not null
+		$system_vendor = $data{'sys_vendor'};
+		$product_name = ($data{'product_name'})?$data{'product_name'}:'N/A';
+		$product_version = ($data{'product_name'})?$data{'product_version'}:'';
+		if ($data{'product_serial'}){
+			$product_serial = ($show{'filter'}) ? $data{'product_serial'} : $filter_string;
+		}
+		else {
+			$product_serial = 'N/A';
+		}
+		$rows[$j]{$num++ . $num++ . "#System"} = $system_vendor;
+		$rows[$j]{$num++ . $num++ . "#product"} = $product_name;
+		$rows[$j]{$num++ . $num++ . "#serial"} = $product_serial;
+		# no point in showing chassis if system isn't there, it's very unlikely that 
+		# would be correct
+		if ($extra > 1){
+			if ($data{'chassis_vendor'} &&  $data{'chassis_version'} eq $data{'board_version'}){
+				$b_skip_chassis = 1;
+			}
+			if (!$b_skip_chassis && $data{'chassis_vendor'} ){
+				if ($data{'chassis_vendor'} ne $data{'sys_vendor'} ){
+					$chassis_vendor = $data{'chassis_vendor'};
+				}
+				if ($data{'chassis_type'} ){
+					$chassis_type = $data{'chassis_type'};
+				}
+				if ($data{'chassis_version'}){
+					$chassis_version = $data{'chassis_version'}
+				}
+				if ($data{'chassis_serial'}){
+					$chassis_serial = ($show{'filter'}) ? $data{'chassis_serial'} : $filter_string;
+				}
+				else {
+					$chassis_serial = 'N/A';
+				}
+				$rows[$j]{$num++ . "#Chassis"} = $chassis_vendor;
+				if ($chassis_type){
+					$rows[$j]{$num++ . "#type"} = $chassis_type;
+				}
+				if ($chassis_version){
+					$rows[$j]{$num++ . "#v"} = $chassis_version;
+				}
+				$rows[$j]{$num++ . "#serial"} = $chassis_serial;
+			}
+		}
+		$j++;
+	}
+	$rows[$j]{$num++ . "#Mobo"} = $mobo_vendor;
+	$rows[$j]{$num++ . "#model"} = $mobo_model;
+	if ($mobo_version){
+		$rows[$j]{$num++ . "#v"} = $mobo_version;
+	}
+	$rows[$j]{$num++ . "#serial"} = $mobo_serial;
+	$rows[$j]{$num++ . "#$firmware"} = $bios_vendor;
+	$rows[$j]{$num++ . "#v"} = $bios_version;
+	$rows[$j]{$num++ . "#date"} = $bios_date;
+	if ($bios_rom){
+		$rows[$j]{$num++ . "#rom size"} = $bios_rom;
+	}
+	eval $end if $b_log;
+	return @rows;
+}
+sub get_device {
+	eval $start if $b_log;
+	my $device = '';
+	
+	eval $end if $b_log;
+	return $device;
+}
+sub cleaner {
+	my ($string) = @_;
+	#my @filters = ('Base Board .*','^Chassis .*','.*O\.E\.M\..*','.*OEM.*',
+	#'^System .*','^Not .*','.*unknow.*','.*N\/A.*','Default string','','none',
+	#'^To be filled.*');
+	$string =~ s/^Base Board .*|^Chassis .*|.*O\.E\.M\..*|.*OEM.*|^Not .*|^System .*|.*unknow.*|.*N\/A.*|Default string|none|^To be filled.*//;
+	$string =~ s/^\s+|\bbios\b|\bacpi\b|\s+$//g;
+	$string =~ s/http:\/\/www.abit.com.tw\//Abit/;
+	$string =~ s/\s\s+/ /g;
+	return $string;
 }
 }
 
