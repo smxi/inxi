@@ -2,8 +2,8 @@
 README for development branch of inxi Perl version: pinxi
 ====================================================================
 FILE:    README.txt
-VERSION: 1.5
-DATE:    2018-01-08
+VERSION: 1.6
+DATE:    2018-01-18
 
 NOTE: While the real program name will never change, for the sake
 of clarity, I will refer to the inxi-Perl dev branch inxi as pinxi, 
@@ -135,13 +135,28 @@ Note that my current development goals are, roughly in this order:
 9. Start on get data and print lines, which is about 2/3 the program.
    
    Status of Lines:
-     Short: Started (missing cpu/speed, and memory for BSD)
-     System: Started
-     Machine: Started
+     Short: 
+     Started (missing cpu/speed, hard drive, and half of memory for BSD)
+     
+     Full:
+     System: DONE (except BSD compiler)
+     Machine: Started 
      Battery: Started
      Memory: Started
-     Sensors: Started
-     Info: DONE (except BSD memory)
+     PCI Slots: DONE: NEW!
+     CPU: Started 
+     Graphics: Half Done 
+     Audio: DONE 
+     Network: DONE - with new features!
+     Drives: Started - stub
+     Partition: Started  - stub
+     RAID: Started - stub 
+     Unmounted: Started - stub 
+     USB Info: DONE: NEW!
+     Sensors: Started - stub 
+     Repos: Half Done, missing some distros and package tools
+     Processes: DONE - Improved significantly
+     Info: DONE (only half of BSD memory)
    
 10. Look into adding support for language hashes, that would replace 
     the hack key values in the print arrays with the alternate language 
