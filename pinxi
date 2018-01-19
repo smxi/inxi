@@ -58,7 +58,7 @@ my ( %alerts, %client, %colors, %dl, %files, %rows, %system_files, %use );
 
 ## arrays
 # ps_aux is full output, ps_cmd is only the last 10 to last
-my (@app,@dmi,@ifs,@ifs_bsd,@pci,@ps_aux,@ps_cmd,@usb);
+my (@app,@dmesg_boot,@dmi,@ifs,@ifs_bsd,@pci,@ps_aux,@ps_cmd,@sysctl,@usb);
 my @test = (0,0,0,0,0);
 
 #my $opt_parser = Getopt::Long::Parser->new;
@@ -4456,6 +4456,7 @@ sub machine_data_sys {
 	my (%data,@rows,$path,);
 	my $firmware = 'BIOS';
 	my $sys_dir = '/sys/class/dmi/id/';
+	my ($device,$chassis_id);
 	my @sys_files = qw(sys_vendor product_name product_version product_serial product_uuid 
 	board_vendor board_name board_version board_serial 
 	bios_vendor bios_version bios_date);
@@ -4469,7 +4470,15 @@ sub machine_data_sys {
 	elsif ( glob('/sys/firmware/acpi/tables/UEFI*') ){
 		$firmware = 'UEFI [Legacy]';
 	}
+	if ( -e '/sys/class/dmi/id/chassis_type' ){
+		$chassis_id = (main::reader('/sys/class/dmi/id/chassis_type'))[0];
+	}
+	elsif ( -e '/sys/devices/virtual/dmi/id/chassis_type' ){
+		$chassis_id = (main::reader('/sys/devices/virtual/dmi/id/chassis_type'))[0];
+	}
+	$device = get_device_sys($chassis_id) if $chassis_id;
 	$data{'firmware'} = $firmware;
+	$data{'device'} = $device;
 	foreach (@sys_files){
 		$path = "$sys_dir$_";
 		if (-r $path){
@@ -4511,6 +4520,7 @@ sub machine_data_dmi {
 	my (%data,@rows);
 	return if ! @dmi;
 	my $firmware = 'BIOS';
+	my $device = get_device_dmi();
 	my $num = 0;
 	foreach (@dmi){
 		$num = 1;
@@ -4536,6 +4546,7 @@ sub machine_data_dmi {
 	}
 	else {
 		$data{'firmware'} = $firmware;
+		$data{'device'} = $device;
 		@rows = create_output(\%data);
 	}
 	eval $end if $b_log;
@@ -4561,7 +4572,6 @@ sub create_output {
 	$chassis_type,$chassis_vendor,$chassis_version,$firmware_revision,
 	$firmware_romsize,$mobo_model,$mobo_serial,$mobo_vendor,$mobo_version,
 	$product_name,$product_serial,$product_version,$system_vendor);
-	my $device = get_device();
 # 	foreach my $key (keys %data){
 # 		print "$key: $data{$key}\n";
 # 	}
@@ -4580,9 +4590,11 @@ sub create_output {
 			$b_skip_system = 1;
 		}
 	}
+	$data{'device'} ||= 'N/A';
+	
 	$j = scalar @rows;
 	@row = ({
-	$num++ . "#Device" => 'temp',
+	$num++ . "#Device" => $data{'device'},
 	},);
 	@rows = (@rows,@row);
 	if (!$b_skip_system){
@@ -4675,12 +4687,162 @@ sub create_output {
 	eval $end if $b_log;
 	return @rows;
 }
-sub get_device {
+
+sub get_device_sys {
 	eval $start if $b_log;
-	my $device = '';
-	
+	my ($chasis_id) = @_;
+	my ($device);
+	if ($chasis_id == 1){
+		$device = get_device_vm();
+	}
+	# src: http://www.dmtf.org/sites/default/files/standards/documents/DSP0134_2.7.0.pdf
+	# https://www.404techsupport.com/2012/03/pizza-box-lunch-box-and-other-pc-case-form-factors-identified-by-wmi/
+	else {
+		my @chassis;
+		$chassis[2] = 'unknown';
+		# note: 13 is all-in-one which we take as a mac type system
+		$chassis[3] = 'desktop';
+		$chassis[4] = 'desktop';
+		$chassis[6] = 'desktop';
+		$chassis[7] = 'desktop';
+		$chassis[13] = 'desktop';
+		$chassis[15] = 'desktop';
+		$chassis[24] = 'desktop';
+		# 5 - pizza box was a 1 U desktop enclosure, but some old laptops also id this way
+		$chassis[5] = 'pizza-box';
+		$chassis[9] = 'laptop';
+		# note: lenovo T420 shows as 10, notebook,  but it's not a notebook
+		$chassis[10] = 'laptop';
+		$chassis[16] = 'laptop';
+		$chassis[14] = 'notebook';
+		$chassis[8] = 'portable';
+		$chassis[11] = 'portable';
+		$chassis[17] = 'server';
+		$chassis[23] = 'server';
+		$chassis[25] = 'server';
+		$chassis[27] = 'blade';
+		$chassis[25] = 'blade';
+		$chassis[29] = 'blade';
+		$chassis[12] = 'docking-station';
+		$chassis[18] = 'expansion-chassis';
+		$chassis[19] = 'sub-chassis';
+		$chassis[20] = 'bus-expansion';
+		$chassis[21] = 'peripheral';
+		$chassis[22] = 'RAID';
+		$chassis[26] = 'compact-PCI';
+		$device = $chassis[$chasis_id];
+	}
 	eval $end if $b_log;
 	return $device;
+}
+# dmi types:
+# 0 bios; 1 system info; 2 board|base board info; 3 chassis info; 
+sub get_device_dmi {
+	eval $start if $b_log;
+	my ($device,$chassis_id);
+	
+	
+	$device = get_device_vm() if ($chassis_id && $chassis_id == 1);
+	eval $end if $b_log;
+	return $device;
+}
+sub get_device_vm {
+	eval $start if $b_log;
+	my $vm;
+	if (my $program = main::check_program('systemd-detect-virt')){
+		my $vm_test = (main::grabber("$program 2>/dev/null"))[0];
+		$vm = $vm_test if ( $vm_test && $vm_test ne 'nonn');
+	}
+	# some simple to detect linux vm id's
+	if (!$vm || $vm eq 'bochs' ) {
+		if (-e '/proc/vz'){
+			$vm = 'openvz';
+		}
+		elsif (-e '/proc/xen'){
+			$vm = 'xen';
+		}
+		elsif (-e '/dev/vzfs'){
+			$vm = 'virtuozzo';
+		}
+		elsif (my $program = main::check_program('lsmod')){
+			my @vm_data = main::grabber("$program 2>/dev/null");
+			if (@vm_data){
+				if (grep {/kqemu/i} @vm_data){
+					$vm = 'kqemu';
+				}
+				if (grep {/kvm/i} @vm_data){
+					$vm = 'kvm';
+				}
+				if (grep {/qemu/i} @vm_data){
+					$vm = 'qemu';
+				}
+			}
+		}
+	}
+	# this will catch many Linux systems and some BSDs
+	if (!$vm || $vm eq 'bochs' ) {
+		my @vm_data = (@pci,@sysctl,@dmesg_boot);
+		if (-e '/dev/disk/by-id'){
+			my @dev = glob('/dev/disk/by-id/*');
+			@vm_data = (@vm_data,@dev);
+		}
+		if ( grep {/innotek|vbox|virtualbox/i} @vm_data){
+			$vm = 'virtualbox';
+		}
+		elsif (grep {/vmware/i} @vm_data){
+			$vm = 'vmware';
+		}
+		elsif (grep {/Virtual HD/i} @vm_data){
+			$vm = 'hyper-v';
+		}
+		if (!$vm && (my $file = main::system_files('cpuinfo'))){
+			my @info = main::reader($file);
+			$vm = 'virtual-machine' if grep {/^flags.*hypervisor/} @info;
+		}
+		if (!$vm && -e '/dev/vda' || -e '/dev/vdb' || -e '/dev/xvda' || -e '/dev/xvdb' ){
+			$vm = 'virtual-machine';
+		}
+	}
+	# this may catch some BSD and fringe Linux cases
+	if (@dmi){
+		my $manufacturer = '';
+		my $product_name = '';
+		my @working;
+		foreach my $ref (@dmi){
+			my @type = @$ref;
+			if ($type[1] == 1){
+				#Data::Dumper::Dumper \@type;
+				foreach (@type){
+					@working = split /:\s+/, $_;
+					$manufacturer = $working[1] if $working[0] eq 'Manufacturer';
+					$product_name = $working[1] if $working[0] eq 'Product Name';
+				}
+				last;
+			}
+		}
+		if ($product_name && $product_name eq 'VMware'){
+			$vm = 'vmware';
+		}
+		elsif ($product_name && $product_name eq 'VirtualBox'){
+			$vm = 'virtualbox';
+		}
+		elsif ($product_name && $product_name eq 'KVM'){
+			$vm = 'kvm';
+		}
+		elsif ($product_name && $product_name eq 'Bochs'){
+			$vm = 'qemu';
+		}
+		elsif ($manufacturer && $manufacturer eq 'Xen'){
+			$vm = 'xen';
+		}
+		## old test, but expensive, let's fine a better way:
+		# this wont' work of course, just the idea
+		#if ( grep {/hypervisor/i} @dmi){
+		#	$vm = 'virtual-machine';
+		#}
+	}
+	eval $end if $b_log;
+	return $vm;
 }
 sub machine_cleaner {
 	my ($string) = @_;
@@ -5365,6 +5527,8 @@ sub get {
 		$key1 = 'Status';
 		$val1 = 'under development';
 	}
+	
+	
 	my @data = ({$num++ . "#$key1" => $val1,});
 	return @data;
 	eval $end if $b_log;
