@@ -156,6 +156,7 @@ Note that my current development goals are, roughly in this order:
      Sensors: Started - stub 
      Repos: Half Done, missing some distros and package tools
      Processes: DONE - Improved significantly
+     Weather: Started - stub
      Info: DONE (only half of BSD memory)
    
 10. Look into adding support for language hashes, that would replace 
