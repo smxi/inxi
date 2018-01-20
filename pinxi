@@ -39,8 +39,8 @@ use Time::HiRes qw(gettimeofday tv_interval);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-01-18';
-my $self_patch='188-p';
+my $self_date='2018-01-19';
+my $self_patch='191-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -1108,14 +1108,11 @@ sub set_debugger {
 		$end = '';
 		$start = '';
 		if ( $debug >= 20 ){
-			if ( $b_irc ){
-				error_handler('not-in-irc', 'debug data generator');
-			}
-			my $ob_sys = SystemDebugger->new('full');
+			error_handler('not-in-irc', 'debug data generator') if $b_irc;
+			my $option = ( $debug > 21 ) ? 'main-full' : 'main';
+			my $ob_sys = SystemDebugger->new($option);
 			$ob_sys->run_debugger();
-			if ( $debug > 20 ){
-				$ob_sys->upload_file($ftp_alt);
-			}
+			$ob_sys->upload_file($ftp_alt) if $debug > 20;
 			exit 0;
 		}
 	}
@@ -1147,7 +1144,7 @@ package SystemDebugger;
 #use File::Copy;
 #use POSIX qw(strftime);
 
-my $type = 'full';
+my $option = 'main';
 my $upload = '';
 my $data_dir = '';
 my $debug_dir = '';
@@ -1159,10 +1156,10 @@ my $b_delete_dir = 1;
 # args: 2 - upload
 sub new {
 	my $class = shift;
-	($type) = @_;
+	($option) = @_;
 	my $self = {};
 	# print "$f\n";
-	# print "$type\n";
+	# print "$option\n";
 	return bless $self, $class;
 }
 
@@ -1669,7 +1666,8 @@ sub write_data {
 sub run_self {
 	print "Creating $self_name output file now. This can take a few seconds...\n";
 	print "Starting $self_name from: $self_path\n";
-	my $cmd = "$self_path/$self_name -FRfrploudmxxx -c 0 --debug 10 -y 120 > $data_dir/$self_name-FRfrploudmxxxy120.txt 2>&1";
+	my $i = ($option eq 'main-full')? ' -i' : '';
+	my $cmd = "$self_path/$self_name -FRfrploudmxxx$i -c 0 --debug 10 -y 120 > $data_dir/$self_name-FRfrploudmxxxy120.txt 2>&1";
 	system($cmd);
 	copy($log_file, "$data_dir") or main::error_handler('copy-failed', "$log_file", "$!");
 }
@@ -1690,12 +1688,13 @@ sub sys_tree {
 			system($cmd);
 		}
 	}
-	else {
+	# for now, we want all of these as well for better debugging
+	#else {
 		sys_ls(1);
 		sys_ls(2);
 		sys_ls(3);
 		sys_ls(4);
-	}
+	#}
 }
 sub sys_ls {
 	my ( $depth) = @_;
@@ -3638,6 +3637,18 @@ sub set_konvi_data {
 #### FILTERS AND TOOLS
 #### -------------------------------------------------------------------
 
+sub apply_filter {
+	my ($string) = @_;
+	if ($string){
+		$string = ( $show{'filter'} ) ? $filter_string : $string;
+	}
+	else {
+		$string = 'N/A';
+	}
+	return $string;
+}
+
+
 sub clean_characters {
 	my ($data) = @_;
 	# newline, pipe, brackets, + sign, with space, then clear doubled
@@ -4423,10 +4434,7 @@ sub get {
 	eval $start if $b_log;
 	my (@data,@rows,$key1,$val1);
 	my $num = 0;
-	if (-d '/sys/class/dmi/id/') {
-		@data = machine_data_sys();
-	}
-	elsif ($bsd_type || $b_dmidecode_force){
+	if ($bsd_type || $b_dmidecode_force){
 		my $ref = $alerts{'dmidecode'};
 		if ( $$ref{'action'} ne 'use'){
 			$key1 = $$ref{'action'};
@@ -4436,6 +4444,9 @@ sub get {
 		else {
 			@data = machine_data_dmi();
 		}
+	}
+	elsif (-d '/sys/class/dmi/id/') {
+		@data = machine_data_sys();
 	}
 	else {
 		$key1 = 'Message';
@@ -4453,53 +4464,67 @@ sub get {
 
 sub machine_data_sys {
 	eval $start if $b_log;
-	my (%data,@rows,$path,);
-	my $firmware = 'BIOS';
+	my (%data,$path,$vm);
 	my $sys_dir = '/sys/class/dmi/id/';
-	my ($device,$chassis_id);
-	my @sys_files = qw(sys_vendor product_name product_version product_serial product_uuid 
-	board_vendor board_name board_version board_serial 
-	bios_vendor bios_version bios_date);
+	my $sys_dir_alt = '/sys/devices/virtual/dmi/id/';
+	my @sys_files = qw(bios_vendor bios_version bios_date 
+	board_name board_serial board_vendor board_version chassis_type 
+	product_name product_serial product_uuid product_version sys_vendor
+	);
 	if ($extra > 1){
-		my @more = qw(chassis_vendor chassis_type chassis_version chassis_serial);
-		@sys_files = (@sys_files,@more);
+		splice @sys_files, 0, 0, qw( chassis_serial chassis_vendor chassis_version);
+	}
+	$data{'firmware'} = 'BIOS';
+	# print Data::Dumper::Dumper \@sys_files;
+	if (!-d $sys_dir ){
+		if ( -d $sys_dir_alt){
+			$sys_dir = $sys_dir_alt;
+		}
+		else {
+			return 0;
+		}
 	}
 	if ( -d '/sys/firmware/efi'){
-		$firmware = 'UEFI';
+		$data{'firmware'} = 'UEFI';
 	}
 	elsif ( glob('/sys/firmware/acpi/tables/UEFI*') ){
-		$firmware = 'UEFI [Legacy]';
+		$data{'firmware'} = 'UEFI [Legacy]';
 	}
-	if ( -e '/sys/class/dmi/id/chassis_type' ){
-		$chassis_id = (main::reader('/sys/class/dmi/id/chassis_type'))[0];
-	}
-	elsif ( -e '/sys/devices/virtual/dmi/id/chassis_type' ){
-		$chassis_id = (main::reader('/sys/devices/virtual/dmi/id/chassis_type'))[0];
-	}
-	$device = get_device_sys($chassis_id) if $chassis_id;
-	$data{'firmware'} = $firmware;
-	$data{'device'} = $device;
 	foreach (@sys_files){
 		$path = "$sys_dir$_";
 		if (-r $path){
 			$data{$_} = (main::reader($path))[0];
-			$data{$_} = ($data{$_}) ? machine_cleaner($data{$_}) : '';
+			$data{$_} = ($data{$_}) ? m_cleaner($data{$_}) : '';
 		}
 		else {
 			$data{$_} = '';
 		}
 	}
-	foreach (keys %data){
-		#print "$_: $data{$_}\n";
+	if ($data{'chassis_type'}){
+		if ( $data{'chassis_type'} == 1){
+			$vm = check_vm_basic($data{'sys_vendor'},$data{'product_name'});
+			$data{'device'} = get_device_vm() if (!$vm || $vm eq 'bosh');
+			$data{'device'} = $vm if $vm && $vm eq 'bosh'; # last fallback
+			$data{'device'} ||= 'other-vm?';
+		}
+		else {
+			$data{'device'} = get_device_sys($data{'chassis_type'});
+		}
 	}
-
-	@rows = create_output(\%data);
+# 	print "sys:\n";
+# 	foreach (keys %data){
+# 		print "$_: $data{$_}\n";
+# 	}
+	my @rows = create_output(\%data);
 	eval $end if $b_log;
 	return @rows;
 }
+
 # bios_date: 09/07/2010
+# bios_romsize: dmi only
 # bios_vendor: American Megatrends Inc.
 # bios_version: P1.70
+# bios_rev: 8.14:  dmi only
 # board_name: A770DE+
 # board_serial: 
 # board_vendor: ASRock
@@ -4513,42 +4538,107 @@ sub machine_data_sys {
 # product_serial: 
 # product_uuid: 
 # product_version: 
-# sys_vendor: 
-
+# sys_uuid: dmi only
+# sys_vendor:
 sub machine_data_dmi {
 	eval $start if $b_log;
-	my (%data,@rows);
+	my (%data,$vm);
 	return if ! @dmi;
-	my $firmware = 'BIOS';
-	my $device = get_device_dmi();
-	my $num = 0;
+	$data{'firmware'} = 'BIOS';
+	# dmi types:
+	# 0 bios; 1 system info; 2 board|base board info; 3 chassis info; 
+	# 4 processor info, use to check for hypervisor
 	foreach (@dmi){
-		$num = 1;
 		my @ref = @$_;
-		if ($ref[0] == 9){
-			# skip first two row, we don't need that data
-			splice @ref, 0, 2 if @ref;
-			my $j = scalar @rows;
+		# bios/firmware
+		if ($ref[1] == 0){
+			# skip first three row, we don't need that data
+			splice @ref, 0, 3 if @ref;
 			foreach my $item (@ref){
 				if ($item !~ /^~/){ # skip the indented rows
 					my @value = split /:\s+/, $item;
-	
+					if ($value[0] eq 'Release Date') {$data{'bios_date'} = m_cleaner($value[1]) }
+					elsif ($value[0] eq 'Vendor') {$data{'bios_vendor'} = m_cleaner($value[1]) }
+					elsif ($value[0] eq 'Version') {$data{'bios_version'} = m_cleaner($value[1]) }
+					elsif ($value[0] eq 'ROM Size') {$data{'bios_romsize'} = m_cleaner($value[1]) }
+					elsif ($value[0] eq 'BIOS Revision') {$data{'bios_rev'} = m_cleaner($value[1]) }
+					elsif ($value[0] =~ /^UEFI is supported/) {$data{'firmware'} = 'UEFI';}
 				}
 			}
+			next;
+		}
+		# system information
+		if ($ref[1] == 1){
+			# skip first three row, we don't need that data
+			splice @ref, 0, 3 if @ref;
+			foreach my $item (@ref){
+				if ($item !~ /^~/){ # skip the indented rows
+					my @value = split /:\s+/, $item;
+					if ($value[0] eq 'Product Name') {$data{'product_name'} = m_cleaner($value[1]) }
+					elsif ($value[0] eq 'Serial Number') {$data{'product_serial'} = m_cleaner($value[1]) }
+					elsif ($value[0] eq 'Manufacturer') {$data{'sys_vendor'} = m_cleaner($value[1]) }
+					elsif ($value[0] eq 'Manufacturer') {$data{'sys_vendor'} = m_cleaner($value[1]) }
+					elsif ($value[0] eq 'UUID') {$data{'sys_uuid'} = m_cleaner($value[1]) }
+				}
+			}
+			next;
+		}
+		# baseboard information
+		if ($ref[1] == 2){
+			# skip first three row, we don't need that data
+			splice @ref, 0, 3 if @ref;
+			foreach my $item (@ref){
+				if ($item !~ /^~/){ # skip the indented rows
+					my @value = split /:\s+/, $item;
+					if ($value[0] eq 'Product Name') {$data{'board_name'} = m_cleaner($value[1]) }
+					elsif ($value[0] eq 'Serial Number') {$data{'board_serial'} = m_cleaner($value[1]) }
+					elsif ($value[0] eq 'Manufacturer') {$data{'board_vendor'} = m_cleaner($value[1]) }
+				}
+			}
+			next;
+		}
+		# chassis information
+		if ($ref[1] == 3){
+			# skip first three row, we don't need that data
+			splice @ref, 0, 3 if @ref;
+			foreach my $item (@ref){
+				if ($item !~ /^~/){ # skip the indented rows
+					my @value = split /:\s+/, $item;
+					if ($value[0] eq 'Serial Number') {$data{'chassis_serial'} = m_cleaner($value[1]) }
+					elsif ($value[0] eq 'Type') {$data{'chassis_type'} = m_cleaner($value[1]) }
+					elsif ($value[0] eq 'Manufacturer') {$data{'chassis_vendor'} = m_cleaner($value[1]) }
+					elsif ($value[0] eq 'Version') {$data{'chassis_version'} = m_cleaner($value[1]) }
+				}
+			}
+			if ( $data{'chassis_type'} && $data{'chassis_type'} ne 'Other' ){
+				$data{'device'} = $data{'chassis_type'};
+			}
+			next;
+		}
+		# this may catch some BSD and fringe Linux cases
+		# processor information: check for hypervisor
+		if ($ref[1] == 4){
+			# skip first three row, we don't need that data
+			splice @ref, 0, 3 if @ref;
+			if (!$data{'device'}){
+				if (grep {/hypervisor/i} @ref){
+					$data{'device'} = 'virtual-machine';
+				}
+			}
+			last;
 		}
 	}
-	if (!@rows){
-		my $key = 'Message';
-		my @data2 = ({
-		$num++ . "#$key" => main::row_defaults('machine-data','System Board'),
-		},);
-		@rows = (@rows,@data2);
+	if (!$data{'device'}){
+		$vm = check_vm_basic($data{'sys_vendor'},$data{'product_name'});
+		$data{'device'} = get_device_vm() if (!$vm || $vm eq 'bosh');
+		$data{'device'} = $vm if $vm && $vm eq 'bosh'; # last fallback
+		$data{'device'} ||= 'other-vm?';
 	}
-	else {
-		$data{'firmware'} = $firmware;
-		$data{'device'} = $device;
-		@rows = create_output(\%data);
-	}
+# 	print "dmi:\n";
+# 	foreach (keys %data){
+# 		print "$_: $data{$_}\n";
+# 	}
+	my @rows = create_output(\%data);
 	eval $end if $b_log;
 	return @rows;
 }
@@ -4558,7 +4648,7 @@ sub machine_data_dmi {
 # 9-bios_vendor 10-bios_version 11-bios_date
 ## with extra data: 
 # 12-chassis_vendor 13-chassis_type 14-chassis_version 15-chassis_serial
-## unused: 16-firmware_revision  17-firmware_romsize 18 - firmware type
+## unused: 16-bios_rev  17-bios_romsize 18 - firmware type
 sub create_output {
 	eval $start if $b_log;
 	my ($ref) = @_;
@@ -4568,10 +4658,9 @@ sub create_output {
 	my $num = 0;
 	my $j = 0;
 	my ($b_chassis,$b_skip_chassis,$b_skip_system);
-	my ($bios_date,$bios_rom,$bios_vendor,$bios_version,$chassis_serial,
-	$chassis_type,$chassis_vendor,$chassis_version,$firmware_revision,
-	$firmware_romsize,$mobo_model,$mobo_serial,$mobo_vendor,$mobo_version,
-	$product_name,$product_serial,$product_version,$system_vendor);
+	my ($bios_date,$bios_rev,$bios_romsize,$bios_vendor,$bios_version,$chassis_serial,
+	$chassis_type,$chassis_vendor,$chassis_version, $mobo_model,$mobo_serial,$mobo_vendor,
+	$mobo_version,$product_name,$product_serial,$product_version,$system_vendor);
 # 	foreach my $key (keys %data){
 # 		print "$key: $data{$key}\n";
 # 	}
@@ -4591,10 +4680,9 @@ sub create_output {
 		}
 	}
 	$data{'device'} ||= 'N/A';
-	
 	$j = scalar @rows;
 	@row = ({
-	$num++ . "#Device" => $data{'device'},
+	$num++ . "#Device" => ucfirst($data{'device'}),
 	},);
 	@rows = (@rows,@row);
 	if (!$b_skip_system){
@@ -4602,12 +4690,7 @@ sub create_output {
 		$system_vendor = main::cleaner($data{'sys_vendor'});
 		$product_name = ($data{'product_name'})?$data{'product_name'}:'N/A';
 		$product_version = ($data{'product_name'})?$data{'product_version'}:'';
-		if ($data{'product_serial'}){
-			$product_serial = ($show{'filter'}) ? $data{'product_serial'} : $filter_string;
-		}
-		else {
-			$product_serial = 'N/A';
-		}
+		$product_serial = main::apply_filter($data{'product_serial'});
 		$rows[$j]{$num++ . "#System"} = $system_vendor;
 		$rows[$j]{$num++ . "#product"} = $product_name;
 		$rows[$j]{$num++ . "#serial"} = $product_serial;
@@ -4627,12 +4710,7 @@ sub create_output {
 				if ($data{'chassis_version'}){
 					$chassis_version = $data{'chassis_version'}
 				}
-				if ($data{'chassis_serial'}){
-					$chassis_serial = ($show{'filter'}) ? $data{'chassis_serial'} : $filter_string;
-				}
-				else {
-					$chassis_serial = 'N/A';
-				}
+				$chassis_serial = main::apply_filter($data{'chassis_serial'});
 				$chassis_vendor ||= '';
 				$chassis_type ||= '';
 				$rows[$j]{$num++ . "#Chassis"} = $chassis_vendor;
@@ -4652,25 +4730,21 @@ sub create_output {
 	}
 	$mobo_vendor = ($data{'board_vendor'}) ? main::cleaner($data{'board_vendor'}) : 'N/A';
 	$mobo_model = ($data{'board_name'}) ? $data{'board_name'}: 'N/A';
-	$mobo_version = ($data{'board_version'})?$data{'board_version'} : '';
-	if ($data{'board_serial'}){
-		$mobo_serial = ($show{'filter'}) ? $data{'board_serial'} : $filter_string;
-	}
-	else {
-		$mobo_serial = 'N/A';
-	}
-	$bios_vendor = ($data{'bios_vendor'}) ?main::cleaner($data{'bios_vendor'}) : 'N/A';
+	$mobo_version = ($data{'board_version'})? $data{'board_version'} : '';
+	$mobo_serial = main::apply_filter($data{'board_serial'});
+	$bios_vendor = ($data{'bios_vendor'}) ? main::cleaner($data{'bios_vendor'}) : 'N/A';
 	if ($data{'bios_version'}){
 		$bios_version = $data{'bios_version'};
-		if ($data{'firmware_revision'}){
-			$firmware_revision = $data{'firmware_revision'};
+		if ($data{'bios_rev'}){
+			$bios_rev = $data{'bios_rev'};
 		}
+		$bios_version ||= 'N/A';
 	}
 	if ($data{'bios_date'}){
 		$bios_date = $data{'bios_date'};
 	}
-	if ($extra > 1 && $data{'firmware_romsize'}){
-		$bios_rom = $data{'firmware_romsize'};
+	if ($extra > 1 && $data{'bios_romsize'}){
+		$bios_romsize = $data{'bios_romsize'};
 	}
 	$rows[$j]{$num++ . "#Mobo"} = $mobo_vendor;
 	$rows[$j]{$num++ . "#model"} = $mobo_model;
@@ -4680,9 +4754,12 @@ sub create_output {
 	$rows[$j]{$num++ . "#serial"} = $mobo_serial;
 	$rows[$j]{$num++ . "#$firmware"} = $bios_vendor;
 	$rows[$j]{$num++ . "#v"} = $bios_version;
+	if ($bios_rev){
+		$rows[$j]{$num++ . "#rev"} = $bios_rev;
+	}
 	$rows[$j]{$num++ . "#date"} = $bios_date;
-	if ($bios_rom){
-		$rows[$j]{$num++ . "#rom size"} = $bios_rom;
+	if ($bios_romsize){
+		$rows[$j]{$num++ . "#rom size"} = $bios_romsize;
 	}
 	eval $end if $b_log;
 	return @rows;
@@ -4692,95 +4769,87 @@ sub get_device_sys {
 	eval $start if $b_log;
 	my ($chasis_id) = @_;
 	my ($device);
-	if ($chasis_id == 1){
-		$device = get_device_vm();
-	}
-	# src: http://www.dmtf.org/sites/default/files/standards/documents/DSP0134_2.7.0.pdf
-	# https://www.404techsupport.com/2012/03/pizza-box-lunch-box-and-other-pc-case-form-factors-identified-by-wmi/
-	else {
-		my @chassis;
-		$chassis[2] = 'unknown';
-		# note: 13 is all-in-one which we take as a mac type system
-		$chassis[3] = 'desktop';
-		$chassis[4] = 'desktop';
-		$chassis[6] = 'desktop';
-		$chassis[7] = 'desktop';
-		$chassis[13] = 'desktop';
-		$chassis[15] = 'desktop';
-		$chassis[24] = 'desktop';
-		# 5 - pizza box was a 1 U desktop enclosure, but some old laptops also id this way
-		$chassis[5] = 'pizza-box';
-		$chassis[9] = 'laptop';
-		# note: lenovo T420 shows as 10, notebook,  but it's not a notebook
-		$chassis[10] = 'laptop';
-		$chassis[16] = 'laptop';
-		$chassis[14] = 'notebook';
-		$chassis[8] = 'portable';
-		$chassis[11] = 'portable';
-		$chassis[17] = 'server';
-		$chassis[23] = 'server';
-		$chassis[25] = 'server';
-		$chassis[27] = 'blade';
-		$chassis[25] = 'blade';
-		$chassis[29] = 'blade';
-		$chassis[12] = 'docking-station';
-		$chassis[18] = 'expansion-chassis';
-		$chassis[19] = 'sub-chassis';
-		$chassis[20] = 'bus-expansion';
-		$chassis[21] = 'peripheral';
-		$chassis[22] = 'RAID';
-		$chassis[26] = 'compact-PCI';
-		$device = $chassis[$chasis_id];
-	}
+	my @chassis;
+	$chassis[2] = 'unknown';
+	# note: 13 is all-in-one which we take as a mac type system
+	$chassis[3] = 'desktop';
+	$chassis[4] = 'desktop';
+	$chassis[6] = 'desktop';
+	$chassis[7] = 'desktop';
+	$chassis[13] = 'desktop';
+	$chassis[15] = 'desktop';
+	$chassis[24] = 'desktop';
+	# 5 - pizza box was a 1 U desktop enclosure, but some old laptops also id this way
+	$chassis[5] = 'pizza-box';
+	$chassis[9] = 'laptop';
+	# note: lenovo T420 shows as 10, notebook,  but it's not a notebook
+	$chassis[10] = 'laptop';
+	$chassis[16] = 'laptop';
+	$chassis[14] = 'notebook';
+	$chassis[8] = 'portable';
+	$chassis[11] = 'portable';
+	$chassis[17] = 'server';
+	$chassis[23] = 'server';
+	$chassis[25] = 'server';
+	$chassis[27] = 'blade';
+	$chassis[25] = 'blade';
+	$chassis[29] = 'blade';
+	$chassis[12] = 'docking-station';
+	$chassis[18] = 'expansion-chassis';
+	$chassis[19] = 'sub-chassis';
+	$chassis[20] = 'bus-expansion';
+	$chassis[21] = 'peripheral';
+	$chassis[22] = 'RAID';
+	$chassis[26] = 'compact-PCI';
+	$device = $chassis[$chasis_id];
 	eval $end if $b_log;
 	return $device;
 }
-# dmi types:
-# 0 bios; 1 system info; 2 board|base board info; 3 chassis info; 
-sub get_device_dmi {
+
+sub check_vm_basic {
 	eval $start if $b_log;
-	my ($device,$chassis_id);
-	
-	
-	$device = get_device_vm() if ($chassis_id && $chassis_id == 1);
+	my ($manufacturer,$product_name) = @_;
+	my ($vm);
+	if ($product_name){
+		if ($product_name eq 'VMware'){
+			$vm = 'vmware';
+		}
+		elsif ($product_name eq 'VirtualBox'){
+			$vm = 'virtualbox';
+		}
+		elsif ($product_name eq 'KVM'){
+			$vm = 'kvm';
+		}
+		elsif ($product_name eq 'Bochs'){
+			$vm = 'qemu';
+		}
+	}
+	if (!$vm && $manufacturer && $manufacturer eq 'Xen'){
+		$vm = 'xen';
+	}
+	if ( !$vm && (my $program = main::check_program('systemd-detect-virt'))){
+		my $vm_test = (main::grabber("$program 2>/dev/null"))[0];
+		$vm = $vm_test if ( $vm_test && $vm_test ne 'none');
+	}
+	return $vm;
 	eval $end if $b_log;
-	return $device;
 }
 sub get_device_vm {
 	eval $start if $b_log;
 	my $vm;
-	if (my $program = main::check_program('systemd-detect-virt')){
-		my $vm_test = (main::grabber("$program 2>/dev/null"))[0];
-		$vm = $vm_test if ( $vm_test && $vm_test ne 'nonn');
-	}
-	# some simple to detect linux vm id's
-	if (!$vm || $vm eq 'bochs' ) {
-		if (-e '/proc/vz'){
-			$vm = 'openvz';
-		}
-		elsif (-e '/proc/xen'){
-			$vm = 'xen';
-		}
-		elsif (-e '/dev/vzfs'){
-			$vm = 'virtuozzo';
-		}
-		elsif (my $program = main::check_program('lsmod')){
-			my @vm_data = main::grabber("$program 2>/dev/null");
-			if (@vm_data){
-				if (grep {/kqemu/i} @vm_data){
-					$vm = 'kqemu';
-				}
-				if (grep {/kvm/i} @vm_data){
-					$vm = 'kvm';
-				}
-				if (grep {/qemu/i} @vm_data){
-					$vm = 'qemu';
-				}
-			}
+	if (-e '/proc/vz'){$vm = 'openvz'}
+	elsif (-e '/proc/xen'){$vm = 'xen'}
+	elsif (-e '/dev/vzfs'){$vm = 'virtuozzo'}
+	elsif (my $program = main::check_program('lsmod')){
+		my @vm_data = main::grabber("$program 2>/dev/null");
+		if (@vm_data){
+			if (grep {/kqemu/i} @vm_data){$vm = 'kqemu'}
+			if (grep {/kvm/i} @vm_data){$vm = 'kvm'}
+			if (grep {/qemu/i} @vm_data){$vm = 'qemu'}
 		}
 	}
 	# this will catch many Linux systems and some BSDs
-	if (!$vm || $vm eq 'bochs' ) {
+	if (!$vm ) {
 		my @vm_data = (@pci,@sysctl,@dmesg_boot);
 		if (-e '/dev/disk/by-id'){
 			my @dev = glob('/dev/disk/by-id/*');
@@ -4803,48 +4872,11 @@ sub get_device_vm {
 			$vm = 'virtual-machine';
 		}
 	}
-	# this may catch some BSD and fringe Linux cases
-	if (@dmi){
-		my $manufacturer = '';
-		my $product_name = '';
-		my @working;
-		foreach my $ref (@dmi){
-			my @type = @$ref;
-			if ($type[1] == 1){
-				#Data::Dumper::Dumper \@type;
-				foreach (@type){
-					@working = split /:\s+/, $_;
-					$manufacturer = $working[1] if $working[0] eq 'Manufacturer';
-					$product_name = $working[1] if $working[0] eq 'Product Name';
-				}
-				last;
-			}
-		}
-		if ($product_name && $product_name eq 'VMware'){
-			$vm = 'vmware';
-		}
-		elsif ($product_name && $product_name eq 'VirtualBox'){
-			$vm = 'virtualbox';
-		}
-		elsif ($product_name && $product_name eq 'KVM'){
-			$vm = 'kvm';
-		}
-		elsif ($product_name && $product_name eq 'Bochs'){
-			$vm = 'qemu';
-		}
-		elsif ($manufacturer && $manufacturer eq 'Xen'){
-			$vm = 'xen';
-		}
-		## old test, but expensive, let's fine a better way:
-		# this wont' work of course, just the idea
-		#if ( grep {/hypervisor/i} @dmi){
-		#	$vm = 'virtual-machine';
-		#}
-	}
 	eval $end if $b_log;
 	return $vm;
 }
-sub machine_cleaner {
+
+sub m_cleaner {
 	my ($string) = @_;
 	#my @filters = ('Base Board .*','^Chassis .*','.*O\.E\.M\..*','.*OEM.*',
 	#'^System .*','^Not .*','.*unknow.*','.*N\/A.*','Default string','','none',
@@ -4997,16 +5029,12 @@ sub advanced_data_sys {
 			$duplex ||= 'N/A';
 			$path = "$_/address";
 			$mac = (main::reader($path))[0] if -e $path;
-			if ($mac && $show{'filter'}){
-				$mac = $filter_string;
-			}
-			$mac ||= 'N/A';
+			$mac = main::apply_filter($mac);
 			$path = "$_/speed";
 			$speed = (main::reader($path))[0] if -e $path;
 			$speed ||= 'N/A';
 			$path = "$_/operstate";
 			$state = (main::reader($path))[0] if -e $path;
-			
 			$state ||= 'N/A';
 			#print "$speed \n";
 			@rows = ({
@@ -5047,11 +5075,7 @@ sub advanced_data_bsd {
 				# ($state,$speed,$duplex,$mac)
 				$duplex = $data[0];
 				$duplex ||= 'N/A';
-				$mac = $data[3];
-				if ($mac && $show{'filter'}){
-					$mac = $filter_string;
-				}
-				$mac ||= 'N/A';
+				$mac = main::apply_filter($data[3]);
 				$speed = $data[1];
 				$speed ||= 'N/A';
 				$state = $data[0];
@@ -5070,9 +5094,7 @@ sub advanced_data_bsd {
 				@rows = (@rows,@row);
 			}
 		}
-		
 	}
-	
 	eval $end if $b_log;
 	return @rows;
 }
@@ -5114,14 +5136,8 @@ sub if_ip {
 				#print "$data2[0] $data2[1]\n";
 				my ($ipv,$ip,$broadcast,$scope,$scope_id);
 				$ipv = ($data2[0])? $data2[0]: 'N/A';
-				if (!$show{'filter'} && $data2[1]){
-					$ip = ($data2[1])? $data2[1]: 'N/A';
-				}
-				else {
-					$ip = $filter_string;
-				}
+				$ip = main::apply_filter($data2[1]);
 				$scope = ($data2[3])? $data2[3]: 'N/A';
-				
 				if ($if ne 'all'){
 					if (defined $data2[4] && $working_if ne $data2[4]){
 						# scope global temporary deprecated dynamic 
@@ -5155,7 +5171,7 @@ sub if_ip {
 				}
 				@rows = (@rows,@row);
 				if ($extra > 1 && $data2[2]){
-					$broadcast = ( $show{'filter'} ) ? $filter_string : $data2[2];
+					$broadcast = main::apply_filter($data2[2]);
 					$rows[$j]{$num++ . "#broadcast"} = $broadcast;
 				}
 			}
@@ -7016,11 +7032,10 @@ sub get_init_data {
 			$init_version = program_version($program,'^systemd','2','--version');
 		}
 	}
-	else {
-		# /sbin/init --version == init (upstart 1.12.1)
-		if ($comm =~ /upstart/){
+	elsif ($comm) {
+		# output: /sbin/init --version:  init (upstart 1.1)
+		if ($init_version = program_version('init', 'upstart', '3','--version')){
 			$init = 'Upstart';
-			$init_version = program_version('init', 'upstart', '3','--version');
 		}
 		# epoch version == Epoch Init System 1.0.1 "Sage"
 		elsif ($comm =~ /epoch/){
