@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-19';
-my $self_patch='194-p';
+my $self_patch='195-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -4942,7 +4942,7 @@ sub get {
 # 11 driver nu (bsds)
 sub card_data {
 	eval $start if $b_log;
-	my (@rows,@data,%holder);
+	my ($b_wifi,@rows,@data,%holder);
 	my ($j,$num) = (0,1);
 	foreach (@pci){
 		$num = 1;
@@ -4960,6 +4960,8 @@ sub card_data {
 			else {
 				$holder{$chip_id}++; 
 			}
+			# first check if it's a known wifi id'ed card, if so, no print of duplex/speed
+			$b_wifi = ($row[4] =~ /wireless|wifi|wi-fi|wlan|802\.11|centrino/i) ? 1 : 0;
 			$driver ||= 'N/A';
 			@data = (
 			{
@@ -4984,10 +4986,10 @@ sub card_data {
 			}
 			if ($show{'network-advanced'}){
 				if (!$bsd_type){
-					@data = advanced_data_sys($row[5],$row[6],$holder{$chip_id});
+					@data = advanced_data_sys($row[5],$row[6],$holder{$chip_id},$b_wifi);
 				}
 				else {
-					@data = advanced_data_bsd("$row[9]$row[11]");
+					@data = advanced_data_bsd("$row[9]$row[11]",$b_wifi);
 				}
 				@rows = (@rows,@data);
 			}
@@ -5009,7 +5011,7 @@ sub card_data {
 sub advanced_data_sys {
 	eval $start if $b_log;
 	return if ! -d '/sys/class/net';
-	my ($vendor,$chip,$count) = @_;
+	my ($vendor,$chip,$count,$b_wifi) = @_;
 	my $num = 0;
 	my (@row,@rows,$if);
 	my @paths = glob('/sys/class/net/*');
@@ -5030,6 +5032,7 @@ sub advanced_data_sys {
 		$data2 = ($data2 eq '0001' && $chip eq '1000') ? '1000' : $data2;
 		#print "d1:$data1 v:$vendor d2:$data2 c:$chip\n";
 		if ($data1 && $data2 && $data1 eq $vendor && $data2 eq $chip) {
+			my $j = scalar @rows;
 			$if = $_;
 			$if =~ s/^\/.+\///;
 			$path = "$_/duplex";
@@ -5048,10 +5051,17 @@ sub advanced_data_sys {
 			@rows = ({
 			$num++ . "#IF" => $if,
 			$num++ . "#state" => $state,
-			$num++ . "#speed" => $speed,
-			$num++ . "#duplex" => $duplex,
-			$num++ . "#mac" => $mac,
 			},);
+			# no print out for wifi since it doesn't have duplex/speed data available
+			# note that some cards show 'unknown' for state, so only testing explicitly
+			# for 'down' string in that to skip showing speed/duplex
+			if (!$b_wifi && $state ne 'down'){
+				# make sure the value is strictly numeric before appending Mbps
+				$speed = ($speed =~ /^[0-9]+$/) ? "$speed Mbps" : $speed;
+				$rows[$j]{$num++ .  "#speed"} = $speed;
+				$rows[$j]{$num++ . "#duplex"} = $duplex;
+			}
+			$rows[$j]{$num++ . "#mac"} = $mac;
 			last;
 		}
 	}
@@ -5065,7 +5075,7 @@ sub advanced_data_sys {
 sub advanced_data_bsd {
 	eval $start if $b_log;
 	return if ! @ifs_bsd;
-	my ($if) = @_;
+	my ($if,$b_wifi) = @_;
 	my (@data,@row,@rows,$working_if);
 	my ($state,$speed,$duplex,$mac);
 	my $num = 0;
@@ -5080,6 +5090,7 @@ sub advanced_data_bsd {
  		}
 		if ($working_if eq $if){
 			foreach my $line (@data){
+				my $j = scalar @rows;
 				# ($state,$speed,$duplex,$mac)
 				$duplex = $data[2];
 				$duplex ||= 'N/A';
@@ -5092,10 +5103,17 @@ sub advanced_data_bsd {
 				@rows = ({
 				$num++ . "#IF" => $if,
 				$num++ . "#state" => $state,
-				$num++ . "#speed" => $speed,
-				$num++ . "#duplex" => $duplex,
-				$num++ . "#mac" => $mac,
 				},);
+				# no print out for wifi since it doesn't have duplex/speed data available
+				# note that some cards show 'unknown' for state, so only testing explicitly
+				# for 'down' string in that to skip showing speed/duplex
+				if (!$b_wifi && $state ne 'down'){
+					# make sure the value is strictly numeric before appending Mbps
+					$speed = ($speed =~ /^[0-9]+$/) ? "$speed Mbps" : $speed;
+					$rows[$j]{$num++ .  "#speed"} = $speed;
+					$rows[$j]{$num++ . "#duplex"} = $duplex;
+				}
+				$rows[$j]{$num++ . "#mac"} = $mac;
 			}
 			if ($show{'ip'}){
 				@row = if_ip($if);
