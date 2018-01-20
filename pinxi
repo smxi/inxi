@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-20';
-my $self_patch='197-p';
+my $self_patch='198-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -4280,21 +4280,21 @@ package CpuData;
 
 sub get {
 	eval $start if $b_log;
-	my (@rows,$single,$key1,$val1);
+	my ($type) = @_;
+	my (@data,@rows,$single,$key1,$val1);
 	my $num = 0;
-# 	my $ref = $alerts{'sensors'};
-# 	if ( $$ref{'action'} ne 'use'){
-# 		$key1 = $$ref{'action'};
-# 		$val1 = $$ref{$key1};
-# 		$key1 = ucfirst($key1);
-# 	}
-# 	else {
+	if ($type eq 'short'){
+		@rows = data_short($type);
+	}
+	elsif ($type eq 'basic'){
+		
+	}
+	else {
 		$key1 = 'Status';
 		$val1 = 'under development';
-# 	}
-	my @data = ({$num++ . "#$key1" => $val1,});
-	
-	return @data;
+		@rows = ({$num++ . "#$key1" => $val1,});
+	}
+	return @rows;
 	eval $end if $b_log;
 }
 sub cpu_data {
@@ -4305,39 +4305,78 @@ sub cpu_data {
 	eval $end if $b_log;
 	return @rows;
 }
-sub get_speed_short {
+sub data_short {
 	eval $start if $b_log;
+	my ($type) = @_;
 	my (@short);
 	my $sys = '/sys/devices/system/cpu/cpufreq/policy0';
 	my $sleep = $cpu_sleep * 1000000;
 	Time::HiRes::usleep( $sleep );
 	# NOTE: : Permission denied, ie, this is not always readable
 	# /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_cur_freq
-	if (-d $sys){
-		$short[0] = (main::reader("$sys/scaling_cur_freq"))[0];
-		$short[1] = (main::reader("$sys/scaling_min_freq"))[0];
-		$short[2] = (main::reader("$sys/scaling_max_freq"))[0];
-		$short[0] = speed_cleaner($short[0]);
-		$short[1] = speed_cleaner($short[1]);
-		$short[2] = speed_cleaner($short[2]);
-	}
-	elsif (my $file = main::system_files('cpuinfo')){
+	if (my $file = main::system_files('cpuinfo')){
 		my @cpuinfo = main::reader($file);
-		foreach (@cpuinfo){
-			my @working = split /\s+:\s+/, $_;
-			if ($working[0] eq 'cpu MHz'){
-				$short[0] = speed_cleaner($working[1],'no-div');
-				$short[1] = 0;
-				$short[2] = 0;
-				last;
+		if (-d $sys){
+			$short[0] = (main::reader("$sys/scaling_cur_freq"))[0];
+			$short[1] = (main::reader("$sys/scaling_min_freq"))[0];
+			$short[2] = (main::reader("$sys/scaling_max_freq"))[0];
+			$short[0] = speed_cleaner($short[0]);
+			$short[1] = speed_cleaner($short[1]);
+			$short[2] = speed_cleaner($short[2]);
+		}
+		else {
+			foreach (@cpuinfo){
+				my @working = split /\s+:\s+/, $_;
+				if ($working[0] eq 'cpu MHz'){
+					$short[0] = speed_cleaner($working[1],'no-div');
+					$short[1] = 0;
+					$short[2] = 0;
+					last;
+				}
 			}
 		}
+		my @cpus = main::awk(\@cpuinfo,'^model name',2,'\s+:\s+');
+		$short[3] = main::cleaner(cpu_cleaner($cpus[0])) if @cpus;
 	}
 	elsif ($bsd_type ){
 	
 	}
+	if ($type eq 'short'){
+		@short = prep_short_data(@short);
+	}
 	eval $end if $b_log;
 	return @short;
+}
+sub prep_short_data {
+	eval $start if $b_log;
+	my (@short) = @_;
+	my ($cpu_key,$cpu,$speed_key,$speed) = ('CPU','N/A','speed','N/A');
+	if ($short[0] && $short[1] && $short[2] && $short[0] != $short[2] && $short[0] != $short[1]){
+		$speed_key = 'speed/min/max';
+		$speed = "$short[0]/$short[1]/$short[2] MHz";
+ 	}
+ 	if ($short[0] && $short[1] && $short[2] && $short[0] != $short[2]){
+		$speed_key = 'speed/max';
+		$speed = "$short[0]/$short[2] MHz";
+ 	}
+ 	elsif ($short[0] && $short[2] && $short[0] == $short[2]){
+		$speed_key = 'speed';
+		$speed = "$short[0] MHz (max)";
+ 	}
+ 	elsif ($short[0] && $short[1]){
+		$speed_key = 'speed/min';
+		$speed = "$short[0]/$short[1] MHz";
+ 	}
+ 	elsif ($short[0] && !$short[2]){
+		$speed_key = 'speed';
+		$speed = "$short[0] MHz";
+ 	}
+ 	if ($short[3]){
+		$cpu = $short[3];
+ 	}
+ 	my @result = ($cpu_key,$cpu,$speed_key,$speed);
+	eval $end if $b_log;
+	return @result;
 }
 # MHZ - cell cpus
 sub speed_cleaner {
@@ -4346,6 +4385,12 @@ sub speed_cleaner {
 	$speed =~ s/MHZ|\.[0]+$//g;
 	$speed = $speed/1000 if !$opt;
 	return $speed;
+}
+sub cpu_cleaner {
+	my ($cpu) = @_;
+	return if ! $cpu;
+	$cpu =~ s/@|cpu |cpu deca|([0-9]+|single|dual|triple|tri|quad|penta|hepta|hexa|octa|multi)[ -]core|ennea|genuine|multi|processor|single|triple|[0-9\.]+ *[MmGg][Hh][Zz]//ig;
+	return $cpu;
 }
 }
 
@@ -8273,7 +8318,6 @@ sub line_handler {
 sub generate_short_data {
 	eval $start if $b_log;
 	my $num = 0;
-	my ($speed,$speed_key) = ('N/A','speed');
 	my $kernel_os = ($bsd_type) ? 'OS' : 'Kernel';
 	my $client = $client{'name-print'};
 	my $client_shell = ($b_irc) ? 'Client' : 'Shell';
@@ -8284,34 +8328,15 @@ sub generate_short_data {
 	# usleep in nano seconds
 	#$cpu_sleep = 0.4;
 	
- 	my @cpu = CpuData::get_speed_short();
- 	if ($cpu[0] && $cpu[1] && $cpu[2] && $cpu[0] != $cpu[2] && $cpu[0] != $cpu[1]){
-		$speed_key = 'speed/min/max';
-		$speed = "$cpu[0]/$cpu[1]/$cpu[2] MHz";
- 	}
- 	if ($cpu[0] && $cpu[1] && $cpu[2] && $cpu[0] != $cpu[2]){
-		$speed_key = 'speed/max';
-		$speed = "$cpu[0]/$cpu[2] MHz";
- 	}
- 	elsif ($cpu[0] && $cpu[2] && $cpu[0] == $cpu[2]){
-		$speed_key = 'speed';
-		$speed = "$cpu[0] MHz (max)";
- 	}
- 	elsif ($cpu[0] && $cpu[1]){
-		$speed_key = 'speed/min';
-		$speed = "$cpu[0]/$cpu[1] MHz";
- 	}
- 	elsif ($cpu[0] && !$cpu[2]){
-		$speed_key = 'speed';
-		$speed = "$cpu[0] MHz";
- 	}
+ 	my @cpu = CpuData::get('short');
+ 	
  	#print join '; ', @cpu, " sleep: $cpu_sleep\n";
 	$memory ||= 'N/A';
 	my %row = (
 	$prefix . '#SHORT' => [
 		{
-		$num++ . '#CPU' => 'N/A',
-		$num++ . "#$speed_key" => $speed,
+		$num++ . "#$cpu[0]" => $cpu[1],
+		$num++ . "#$cpu[2]" => $cpu[3],
 		$num++ . '#' . $kernel_os => &get_kernel_data(),
 		$num++ . '#Up' => &get_uptime(),
 		$num++ . '#Mem' => $memory,
