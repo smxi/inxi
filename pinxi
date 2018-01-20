@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-19';
-my $self_patch='191-p';
+my $self_patch='192-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -2971,6 +2971,9 @@ sub get_options{
 	}
 	if ($show{'usb'} || $show{'audio'}  || $show{'network'} ){
 		$usb_level = ($show{'usb'}) ? 2 : 1;
+	}
+	if ($bsd_type && ($show{'short'} || $show{'cpu'} || $show{'machine'} || $show{'info'}) ){
+		$b_sysctl = 1;
 	}
 } 
 
@@ -7395,6 +7398,27 @@ sub get_uptime {
 #### -------------------------------------------------------------------
 #### INITIALIZE DATA VALUES
 #### -------------------------------------------------------------------
+
+sub set_dmesg_boot_data {
+	eval $start if $b_log;
+	if (my $file = system_files('dmesg-boot') ){
+		return if ! -r $file;
+		@dmesg_boot = reader($file);
+		# replace all indented items with ~ so we can id them easily while
+		# processing note that if user, may get error of read permissions
+		# for some weird reason, real mem and avail mem are use a '=' separator, 
+		# who knows why, the others are ':'
+		@dmesg_boot = map {
+		$_ =~ s/\s*=\s*|:\s*/:/;
+		$_ =~ s/\"//g;
+		$_ =~ s/^\s+/~/;
+		$_ =~ s/\s\s/ /g;
+		$_;
+		} @dmesg_boot;
+	}
+	log_data(@dmesg_boot) if $b_log;
+	eval $end if $b_log;
+}
 # note, all actual tests have already been run in check_tools so if we
 # got here, we're good. 
 sub set_dmi_data {
@@ -7797,6 +7821,20 @@ sub set_ps_aux {
 	print Dumper \@pci if $test[5];
 	eval $end if $b_log;
 }
+
+sub set_sysctl_data {
+	eval $start if $b_log;
+	return if $alerts{'sysctl'}{'action'} ne 'use';
+	# darwin sysctl has BOTH = and : separators, and repeats data. Why? 
+	my $program = check_program('sysctl');
+	@sysctl = grabber("$program -a 2>/dev/null");
+	@sysctl = map {
+	$_ =~ s/\s*=\s*|:\s+/:/;
+	$_ =~ s/\"//g;
+	$_;
+	} @sysctl if @sysctl;
+	eval $end if $b_log;
+}
 sub set_usb_data {
 	eval $start if $b_log;
 	if ($alerts{'lsusb'}{'action'} eq 'use' ){
@@ -8003,8 +8041,9 @@ sub assign_data {
 
 sub generate_lines {
 	eval $start if $b_log;
-	my (%row,$b_pci_check,$b_dmi_check);
+	my (%row,$b_pci_check,$b_dmesg_boot_check,$b_dmi_check);
 	set_ps_aux() if ! @ps_aux;
+	set_sysctl_data() if $b_sysctl;
 # 	if ($test[3]){
 # 		%row = generate_test_data();
 # 		assign_data(%row);
@@ -8020,8 +8059,14 @@ sub generate_lines {
 			assign_data(%row);
 		}
 		if ( $show{'machine'} ){
-			set_dmi_data() if $b_dmi && !$b_dmi_check; 
-			$b_dmi_check = 1;
+			if ($b_dmi && !$b_dmi_check ){
+				set_dmi_data() ; 
+				$b_dmi_check = 1;
+			}
+			if ($bsd_type && $b_dmesg_boot_check){
+				set_dmesg_boot_data();
+				$b_dmesg_boot_check = 1;
+			}
 			%row = line_handler('Machine','machine');
 			assign_data(%row);
 		}
@@ -8044,7 +8089,10 @@ sub generate_lines {
 			assign_data(%row);
 		}
 		if ( $show{'cpu'} ){
-			#%row = generate_cpu_data();
+			if ($bsd_type && $b_dmesg_boot_check){
+				set_dmesg_boot_data();
+				$b_dmesg_boot_check = 1;
+			}
 			%row = line_handler('CPU','cpu');
 			assign_data(%row);
 		}
@@ -8070,6 +8118,10 @@ sub generate_lines {
 			assign_data(%row);
 		}
 		if ( $show{'disk'} ){
+			if ($bsd_type && $b_dmesg_boot_check){
+				set_dmesg_boot_data();
+				$b_dmesg_boot_check = 1;
+			}
 			%row = line_handler('Drives','disk');
 			assign_data(%row);
 		}
