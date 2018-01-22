@@ -19,10 +19,10 @@ use warnings;
 # use diagnostics;
 use 5.008;
 
-# use Cwd; # qw(abs_path);
+use Cwd qw(abs_path); # qw(abs_path);#abs_path realpath getcwd
 # use Data::Dump qw(dump); # damn, not in core modules
 use Data::Dumper qw(Dumper); # print_r
-# use File::Basename;
+use File::Basename;
 use File::Find;
 # use Getopt::Long qw(GetOptionsFromArray); # :config no_ignore_case bundling_values
 use Getopt::Long qw(GetOptions);
@@ -39,8 +39,8 @@ use Time::HiRes qw(gettimeofday tv_interval);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-01-20';
-my $self_patch='199-p';
+my $self_date='2018-01-22';
+my $self_patch='200-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -1259,7 +1259,7 @@ sub audio_data {
 	['pactl', 'list'], # pulseaudio
 	);
 	run_commands(\@cmds,'audio');
-	@files = glob('/proc/asound/card*/codec*');
+	@files = main::globber('/proc/asound/card*/codec*');
 	if (@files){
 		my $asound = qx(head -n 1 /proc/asound/card*/codec* 2>&1);
 		$data{'proc-asound-codecs'} = $asound;
@@ -1289,7 +1289,7 @@ sub disk_data {
 	'/proc/sys/dev/cdrom/info',
 	);
 	if (-d '/proc/ide/'){
-		my @ides = glob('/proc/ide/*/*');
+		my @ides = main::globber('/proc/ide/*/*');
 		@files = (@files, @ides) if @ides;
 	}
 	else {
@@ -1350,7 +1350,7 @@ sub display_data {
 	}
 	print "Collecting Xorg log and xorg.conf files...\n";
 	if ( -d "/etc/X11/xorg.conf.d/" ){
-		@files = glob("/etc/X11/xorg.conf.d/*");
+		@files = main::globber("/etc/X11/xorg.conf.d/*");
 	}
 	else {
 		@files = ('/xorg-conf-d');
@@ -1466,14 +1466,14 @@ sub system_data {
 	'xdg-data-home' => $ENV{'XDG_DATA_HOME'},
 	'xdg-data-dirs' => $ENV{'XDG_DATA_DIRS'},
 	);
-	my @files = glob('/usr/bin/gcc*');
+	my @files = main::globber('/usr/bin/gcc*');
 	if (@files){
 		$data{'gcc-versions'} = join "\n",@files;
 	}
 	else {
 		$data{'gcc-versions'} = undef;
 	}
-	@files = </sys/*>;
+	@files = main::globber('/sys/*');
 	if (@files){
 		$data{'sys-tree-ls-1-basic'} = join "\n", @files;
 	}
@@ -1551,7 +1551,7 @@ sub system_files {
 	@files = RepoData::get($data_dir);
 	copy_files(\@files, 'repo');
 	# chdir "/etc";
-	@files = glob q("/etc/*[-_]{[rR]elease,[vV]ersion}");
+	@files = main::globber("/etc/*[-_]{[rR]elease,[vV]ersion}");
 	push (@files, '/etc/issue');
 	push (@files, '/etc/lsb-release');
 	push (@files, '/etc/os-release');
@@ -1564,7 +1564,7 @@ sub system_files {
 	'/proc/net/arp',
 	'/proc/version',
 	);
-	@files2=glob('/sys/class/power_supply/*/uevent');
+	@files2=main::globber('/sys/class/power_supply/*/uevent');
 	if (@files2){
 		@files = (@files,@files2);
 	}
@@ -2179,6 +2179,13 @@ sub grabber {
 	}
 	eval $end if $b_log;
 	return @rows;
+}
+
+sub globber {
+	eval $start if $b_log;
+	my @files = <$_[0]>;
+	eval $end if $b_log;
+	return @files;
 }
 
 # returns array of:
@@ -4314,7 +4321,8 @@ sub data_short {
 	# NOTE: : Permission denied, ie, this is not always readable
 	# /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_cur_freq
 	if (my $file = main::system_files('cpuinfo')){
-		my @cpuinfo = main::reader($file);
+		my @cpuinfo = data_cpuinfo($file);
+		#my @cpuinfo = main::reader($file);
 		if (-d $sys){
 			$short[0] = (main::reader("$sys/scaling_cur_freq"))[0];
 			$short[1] = (main::reader("$sys/scaling_min_freq"))[0];
@@ -4323,19 +4331,20 @@ sub data_short {
 			$short[1] = speed_cleaner($short[1]);
 			$short[2] = speed_cleaner($short[2]);
 		}
-		else {
-			foreach (@cpuinfo){
-				my @working = split /\s+:\s+/, $_;
-				if ($working[0] eq 'cpu MHz'){
-					$short[0] = speed_cleaner($working[1],'no-div');
-					$short[1] = 0;
-					$short[2] = 0;
-					last;
-				}
-			}
-		}
-		my @cpus = main::awk(\@cpuinfo,'^model name',2,'\s+:\s+');
-		$short[3] = main::cleaner(cpu_cleaner($cpus[0])) if @cpus;
+# 		else {
+# 			foreach (@cpuinfo){
+# 				my @working = split /\s+:\s+/, $_;
+# 				if ($working[0] eq 'cpu MHz'){
+# 					$short[0] = speed_cleaner($working[1],'no-div');
+# 					$short[1] = 0;
+# 					$short[2] = 0;
+# 					last;
+# 				}
+# 			}
+# 		}
+		#my @cpus = main::awk(\@cpuinfo,'^model name',2,'\s+:\s+');
+		$short[3] = $cpuinfo[0];
+		#$short[3] = main::cleaner(cpu_cleaner($cpus[0])) if @cpus;
 	}
 	elsif ($bsd_type ){
 	
@@ -4348,6 +4357,68 @@ sub data_short {
 	}
 	eval $end if $b_log;
 	return @short;
+}
+sub data_cpuinfo {
+	eval $start if $b_log;
+	my ($file)=  @_;
+	my (%cpu,@line,$b_arm,$b_first,$b_proc_int);
+	my @cpuinfo = main::reader($file);
+	$cpu{'count'} = 0;
+	# note, there con be a lot of processors, 32 core HT would have 64, for example.
+	foreach (@cpuinfo){
+		next if /^\s*$/;
+		@line = split /\s+:\s+/, $_;
+		$line[0] = lc($line[0]);
+		if ($line[0] eq 'processor'){
+			# this protects against double processor lines, one int, one string
+			if ($line[1] =~ /^\d+$/){
+				$b_proc_int = 1;
+				$b_first = 1;
+				$cpu{'count'}++;
+			}
+			else {
+				if (!$b_proc_int){
+					$cpu{'count'}++;
+				}
+				if (!$b_first ){
+					# note: alternate: 
+					# Processor	: AArch64 Processor rev 4 (aarch64)
+					# but no model name type
+					if ( $line[1] =~ /ARM|AArch/){
+						$b_arm = 1;
+						$cpu{'type'} = 'arm';
+					}
+					$cpu{'model'} = main::cleaner($line[1]);
+					$cpu{'model'} = cpu_cleaner($cpu{'model'});
+					
+				}
+				$b_first = 1;
+			}
+		}
+		elsif (!$cpu{'family'} && ($line[0] eq 'architecture' || $line[0] eq 'family' )){
+			$cpu{'family'} = uc(sprintf("%x", $line[1]));
+		}
+		elsif (!$cpu{'rev'} && ($line[0] eq 'stepping' || $line[0] eq 'cpu revision' )){
+			$cpu{'rev'} = $line[1];
+		}
+		# this is hex so uc for cpu arch id
+		elsif (!$cpu{'model_nu'} && $line[0] eq 'model'){
+			$cpu{'model_nu'} = uc(sprintf("%x", $line[1]));
+		}
+		elsif (!$cpu{'model_name'} && $line[0] eq 'model name'){
+			$cpu{'model_name'} = main::cleaner($line[1]);
+			$cpu{'model_name'} = cpu_cleaner($cpu{'model_name'});
+		}
+	}
+	$cpu{'arch'} = '';
+	if ($b_arm){
+	
+	}
+	## temp so there is some output:
+	my @data = ($cpu{'model_name'},);
+	
+	eval $end if $b_log;
+	return @data;
 }
 sub create_short_data {
 	my (@cpu) = @_;
@@ -4404,6 +4475,7 @@ sub cpu_cleaner {
 	my ($cpu) = @_;
 	return if ! $cpu;
 	$cpu =~ s/@|cpu |cpu deca|([0-9]+|single|dual|triple|tri|quad|penta|hepta|hexa|octa|multi)[ -]core|ennea|genuine|multi|processor|single|triple|[0-9\.]+ *[MmGg][Hh][Zz]//ig;
+	$cpu =~ s/\s\s+/ /g;
 	return $cpu;
 }
 }
@@ -5737,7 +5809,7 @@ sub get_repos_linux {
 	# apt - debian, buntus, also sometimes some yum/rpm repos may create 
 	# apt repos here as well
 	if (-f $apt || -d "$apt.d"){
-		@files = </etc/apt/sources.list.d/*.list>;
+		@files = main::globber('/etc/apt/sources.list.d/*.list');
 		push @files, $apt;
 		main::log_data('apt repo files: ' . join('; ', @files) ) if $b_log;
 		foreach ( sort @files){
@@ -5843,7 +5915,7 @@ sub get_repos_bsd {
 			@rows = (@rows,@data);
 		}
 		if ( -d $bsd_pkg){
-			@files = </usr/local/etc/pkg/repos/*.conf>;
+			@files = main::globber('/usr/local/etc/pkg/repos/*.conf');
 			if (@files){
 				my ($url);
 				foreach (@files){
