@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-22';
-my $self_patch='200-p';
+my $self_patch='201-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -4314,56 +4314,61 @@ sub cpu_data {
 sub data_short {
 	eval $start if $b_log;
 	my ($type) = @_;
-	my (@short);
+	my (%cpu,@data);
 	my $sys = '/sys/devices/system/cpu/cpufreq/policy0';
 	my $sleep = $cpu_sleep * 1000000;
 	Time::HiRes::usleep( $sleep );
 	# NOTE: : Permission denied, ie, this is not always readable
 	# /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_cur_freq
 	if (my $file = main::system_files('cpuinfo')){
-		my @cpuinfo = data_cpuinfo($file);
+		%cpu = data_cpuinfo($file,$type);
 		#my @cpuinfo = main::reader($file);
 		if (-d $sys){
-			$short[0] = (main::reader("$sys/scaling_cur_freq"))[0];
-			$short[1] = (main::reader("$sys/scaling_min_freq"))[0];
-			$short[2] = (main::reader("$sys/scaling_max_freq"))[0];
-			$short[0] = speed_cleaner($short[0]);
-			$short[1] = speed_cleaner($short[1]);
-			$short[2] = speed_cleaner($short[2]);
+			$cpu{'cur-freq'} = (main::reader("$sys/scaling_cur_freq"))[0];
+			$cpu{'cur-freq'} = speed_cleaner($cpu{'cur-freq'});
+			$cpu{'min-freq'} = (main::reader("$sys/scaling_min_freq"))[0];
+			$cpu{'min-freq'} = speed_cleaner($cpu{'min-freq'});
+			$cpu{'max-freq'} = (main::reader("$sys/scaling_max_freq"))[0];
+			$cpu{'max-freq'} = speed_cleaner($cpu{'max-freq'});
 		}
-# 		else {
-# 			foreach (@cpuinfo){
-# 				my @working = split /\s+:\s+/, $_;
-# 				if ($working[0] eq 'cpu MHz'){
-# 					$short[0] = speed_cleaner($working[1],'no-div');
-# 					$short[1] = 0;
-# 					$short[2] = 0;
-# 					last;
-# 				}
-# 			}
-# 		}
-		#my @cpus = main::awk(\@cpuinfo,'^model name',2,'\s+:\s+');
-		$short[3] = $cpuinfo[0];
-		#$short[3] = main::cleaner(cpu_cleaner($cpus[0])) if @cpus;
 	}
 	elsif ($bsd_type ){
 	
 	}
 	if ($type eq 'short' || $type eq 'basic'){
-		@short = prep_short_data(@short);
+		@data = prep_short_data(%cpu);
 	}
 	if ($type eq 'basic'){
-		@short = create_short_data(@short);
+		@data = create_short_data(@data);
 	}
 	eval $end if $b_log;
-	return @short;
+	return @data;
 }
 sub data_cpuinfo {
 	eval $start if $b_log;
-	my ($file)=  @_;
-	my (%cpu,@line,$b_arm,$b_first,$b_proc_int);
+	my ($file,$type)=  @_;
+	my ($arch, @cpu_ids,%cpu,@line,$b_arm,$b_first,$b_proc_int);
 	my @cpuinfo = main::reader($file);
-	$cpu{'count'} = 0;
+	my ($cache,$phys_id,$core_id) = (0,0);
+	# need to prime for arm cpus, which do not have physical/core ids usually
+	$cpu_ids[0] = (
+	{
+	'core-set' => {
+		'core-ids' => 0,
+		'speed' => 0,
+	},
+	},);
+	%cpu =  (
+	'arch' => '',
+	'cache' => 0, # store in KB
+	'cores' => 0,
+	'family' => '',
+	'flags' => '',
+	'model_id' => '',
+	'model_name' => '',
+	'processors' => 0,
+	'siblings' => 0,
+	);
 	# note, there con be a lot of processors, 32 core HT would have 64, for example.
 	foreach (@cpuinfo){
 		next if /^\s*$/;
@@ -4374,11 +4379,11 @@ sub data_cpuinfo {
 			if ($line[1] =~ /^\d+$/){
 				$b_proc_int = 1;
 				$b_first = 1;
-				$cpu{'count'}++;
+				$cpu{'processors'}++;
 			}
 			else {
 				if (!$b_proc_int){
-					$cpu{'count'}++;
+					$cpu{'processorss'}++;
 				}
 				if (!$b_first ){
 					# note: alternate: 
@@ -4388,80 +4393,256 @@ sub data_cpuinfo {
 						$b_arm = 1;
 						$cpu{'type'} = 'arm';
 					}
-					$cpu{'model'} = main::cleaner($line[1]);
-					$cpu{'model'} = cpu_cleaner($cpu{'model'});
-					
+					$cpu{'model_name'} = main::cleaner($line[1]);
+					$cpu{'model_name'} = cpu_cleaner($cpu{'model'});
 				}
 				$b_first = 1;
 			}
 		}
-		elsif (!$cpu{'family'} && ($line[0] eq 'architecture' || $line[0] eq 'family' )){
+		elsif (!$cpu{'family'} && ($line[0] eq 'architecture' || $line[0] eq 'cpu family' )){
 			$cpu{'family'} = uc(sprintf("%x", $line[1]));
 		}
 		elsif (!$cpu{'rev'} && ($line[0] eq 'stepping' || $line[0] eq 'cpu revision' )){
 			$cpu{'rev'} = $line[1];
 		}
 		# this is hex so uc for cpu arch id
-		elsif (!$cpu{'model_nu'} && $line[0] eq 'model'){
-			$cpu{'model_nu'} = uc(sprintf("%x", $line[1]));
+		elsif (!$cpu{'model_id'} && $line[0] eq 'model'){
+			$cpu{'model_id'} = uc(sprintf("%x", $line[1]));
 		}
-		elsif (!$cpu{'model_name'} && $line[0] eq 'model name'){
+		# cpu can show in arm
+		elsif (!$cpu{'model_name'} &&( $line[0] eq 'model name' || $line[0] eq 'cpu' )){
 			$cpu{'model_name'} = main::cleaner($line[1]);
 			$cpu{'model_name'} = cpu_cleaner($cpu{'model_name'});
 		}
+		if ( $type ne 'short' ){
+			if (!$cpu{'type'} && $line[0] eq 'vendor_id' ){
+				$line[1] = lc($line[1]);
+				if ( $line[1] =~ /intel/ ) {
+					$cpu{'type'} = "intel"
+				}
+				elsif ($line[1] =~ /amd/){
+					$cpu{'type'} = "amd"
+				}
+				# via
+				elsif ($line[1] =~ /centaur/){
+					$cpu{'type'} = "centaur"
+				}
+			}
+		}
+		## this is only for -C full cpu output
+		if ( $type eq 'full' ){
+			if ($line[0] eq 'cache size'){
+				if ($line[1] =~ /(\d+)\sKB$/){
+					$cpu{'cache'} += $1;
+				}
+				elsif ($line[1] =~ /(\d+)\sMB$/){
+					$cpu{'cache'} += ($1/1024);
+				}
+			}
+		}
 	}
-	$cpu{'arch'} = '';
 	if ($b_arm){
 	
 	}
+	
+	if ( $extra > 0 && $type ne 'short' ){
+		$cpu{'arch'} = cpu_arch($cpu{'type'},$cpu{'family'},$cpu{'model_id'});
+		#print "$cpu{'type'},$cpu{'family'},$cpu{'model_id'},$cpu{'arch'}\n";
+	}
+	#print Data::Dumper::Dumper \%cpu;
 	## temp so there is some output:
-	my @data = ($cpu{'model_name'},);
+	#my @data = ($cpu{'model_name'},$cpu{'arch'},);
 	
 	eval $end if $b_log;
-	return @data;
+	return %cpu;
 }
+
 sub create_short_data {
 	my (@cpu) = @_;
 	my @data;
 	my $num = 0;
-	@data = (
-	{
+	@data = ({
 	$num++ . "#$cpu[0]" => $cpu[1],
 	$num++ . "#$cpu[2]" => $cpu[3],
-	},
-	);
+	},);
+	if ($extra > 0){
+		$data[0]{$num++ . "#arch"} = $cpu[4];
+	}
 	return @data;
 }
 sub prep_short_data {
 	eval $start if $b_log;
-	my (@short) = @_;
+	my (%cpu) = @_;
 	my ($cpu_key,$cpu,$speed_key,$speed) = ('CPU','N/A','speed','N/A');
-	if ($short[0] && $short[1] && $short[2] && $short[0] != $short[2] && $short[0] != $short[1]){
+	if ($cpu{'cur-freq'} && $cpu{'min-freq'} && $cpu{'max-freq'} && 
+	   $cpu{'cur-freq'} != $cpu{'max-freq'} && $cpu{'cur-freq'} != $cpu{'min-freq'}){
 		$speed_key = 'speed/min/max';
-		$speed = "$short[0]/$short[1]/$short[2] MHz";
+		$speed = "$cpu{'cur-freq'}/$cpu{'min-freq'}/$cpu{'max-freq'} MHz";
  	}
- 	if ($short[0] && $short[1] && $short[2] && $short[0] != $short[2]){
+ 	elsif ($cpu{'cur-freq'} && $cpu{'min-freq'} && $cpu{'max-freq'} && 
+ 	   $cpu{'cur-freq'} != $cpu{'max-freq'}){
 		$speed_key = 'speed/max';
-		$speed = "$short[0]/$short[2] MHz";
+		$speed = "$cpu{'cur-freq'}/$cpu{'max-freq'} MHz";
  	}
- 	elsif ($short[0] && $short[2] && $short[0] == $short[2]){
+ 	elsif ($cpu{'cur-freq'} && $cpu{'max-freq'} && $cpu{'cur-freq'} == $cpu{'max-freq'}){
 		$speed_key = 'speed';
-		$speed = "$short[0] MHz (max)";
+		$speed = "$cpu{'cur-freq'} MHz (max)";
  	}
- 	elsif ($short[0] && $short[1]){
+ 	elsif ($cpu{'cur-freq'} && $cpu{'min-freq'}){
 		$speed_key = 'speed/min';
-		$speed = "$short[0]/$short[1] MHz";
+		$speed = "$cpu{'cur-freq'}/$cpu{'min-freq'} MHz";
  	}
- 	elsif ($short[0] && !$short[2]){
+ 	elsif ($cpu{'cur-freq'} && !$cpu{'max-freq'}){
 		$speed_key = 'speed';
-		$speed = "$short[0] MHz";
+		$speed = "$cpu{'cur-freq'} MHz";
  	}
- 	if ($short[3]){
-		$cpu = $short[3];
+ 	if ($cpu{'model_name'}){
+		$cpu = $cpu{'model_name'};
  	}
- 	my @result = ($cpu_key,$cpu,$speed_key,$speed);
+ 	my @result = (
+ 	$cpu_key,
+ 	$cpu,
+ 	$speed_key,
+ 	$speed,
+ 	);
+ 	if ($extra > 0){
+		$result[4] = $cpu{'arch'};
+ 	}
 	eval $end if $b_log;
 	return @result;
+}
+sub cpu_arch {
+	eval $start if $b_log;
+	my ($type,$family,$model) = @_;
+	my $arch = '';
+		# https://en.wikipedia.org/wiki/List_of_AMD_CPU_microarchitectures
+	if ( $type eq 'amd'){
+		if ($family eq '4'){
+			if ( $model =~ /^(3|7|8|9|A)$/ ) {$arch = 'Am486'}
+			elsif ( $model =~ /^(E|F)$/ ) {$arch = 'Am5x86'}
+		}
+		elsif ($family eq '5'){
+			if ( $model =~ /^(0|1|2|3)$/ ) {$arch = 'K5'}
+			elsif ( $model =~ /^(6|7)$/ ) {$arch = 'K6'}
+			elsif ( $model =~ /^(8)$/ ) {$arch = 'K6-2'}
+			elsif ( $model =~ /^(9|D)$/ ) {$arch = 'K6-3'}
+			elsif ( $model =~ /^(A)$/ ) {$arch = 'Geode'}
+			}
+		elsif ($family eq '6'){
+			if ( $model =~ /^(1|2)$/ ) {$arch = 'K7'}
+			elsif ( $model =~ /^(3|4)$/ ) {$arch = 'K7 Thunderbird'}
+			elsif ( $model =~ /^(6|7|8|A)$/ ) {$arch = 'K7 Palomino+'}
+			else {$arch = 'K7'}
+		}
+		elsif ($family eq 'F'){
+			if ( $model =~ /^(4|5|7|8|B|C|E|F|14|15|17|18|1B|1C|1F)$/ ) {$arch = 'K8'}
+			elsif ( $model =~ /^(21|23|24|25|27|28|2C|2F)$/ ) {$arch = 'K8 rev.E'}
+			elsif ( $model =~ /^(41|43|48|4B|4C|4F|5D|5F|68|6B|6C|6F|7C|7F|C1)$/ ) {$arch = 'K8 rev.F+'}
+			else {$arch = 'K8'}
+		}
+		elsif ($family eq '10'){
+			if ( $model =~ /^(2|4|5|6|8|9|A)$/ ) {$arch = 'K10'}
+			else {$arch = 'K10'}
+		}
+		elsif ($family eq '11'){
+			if ( $model =~ /^(3)$/ ) {$arch = 'Turion X2 Ultra'}
+		}
+		# might also need cache handling like 14/16
+		elsif ($family eq '12'){
+			if ( $model =~ /^(1)$/ ) {$arch = 'Fusion'}
+			else {$arch = 'Fusion'}
+		}
+		# SOC, apu
+		elsif ($family eq '14'){
+			if ( $model =~ /^(1|2)$/ ) {$arch = 'Bobcat'}
+			else {$arch = 'Bobcat'}
+		}
+		elsif ($family eq '15'){
+			if ( $model =~ /^(0|1|2|3|4|5|6|7|8|9|A|B|C|D|E|F)$/ ) {$arch = 'Bulldozer'}
+			elsif ( $model =~ /^(10|11|12|13|14|15|16|17|18|19|1A|1B|1C|1D|1E|1F)$/ ) {$arch = 'Piledriver'}
+			elsif ( $model =~ /^(30|31|32|33|34|35|36|37|38|39|3A|3B|3C|3D|3E|3F)$/ ) {$arch = 'Steamroller'}
+			elsif ( $model =~ /^(60|61|62|63|64|65|66|67|68|69|6A|6B|6C|6D|6E|6F|70|71|72|73|74|75|76|77|78|79|7A|7B|7C|7D|7E|7F)$/ ) {$arch = 'Excavator'}
+			else {$arch = 'Bulldozer'}
+		}
+		# SOC, apu
+		elsif ($family eq '16'){
+			if ( $model =~ /^(0|1|2|3|4|5|6|7|8|9|A|B|C|D|E|F)$/ ) {$arch = 'Jaguar'}
+			elsif ( $model =~ /^(30|31|32|33|34|35|36|37|38|39|3A|3B|3C|3D|3E|3F)$/ ) {$arch = 'Puma'}
+			else {$arch = 'Jaguar'}
+		}
+		elsif ($family eq '17'){
+			if ( $model =~ /^(1)$/ ) {$arch = 'Zen'}
+			else {$arch = 'Zen'}
+		}
+	}
+	elsif ( $type eq 'arm'){
+		if ($family ne ''){$arch="ARMv$family";}
+		else {$arch='ARM';}
+	}
+	# aka VIA
+	elsif ( $type eq 'centaur'){ 
+		if ($family eq '5'){
+			if ( $model =~ /^(4)$/ ) {$arch = 'WinChip C6'}
+			elsif ( $model =~ /^(8)$/ ) {$arch = 'WinChip 2'}
+			elsif ( $model =~ /^(9)$/ ) {$arch = 'WinChip 3'}
+		}
+		elsif ($family eq '6'){
+			if ( $model =~ /^(6)$/ ) {$arch = 'WinChip-based'}
+			elsif ( $model =~ /^(7|8)$/ ) {$arch = 'C3'}
+			elsif ( $model =~ /^(9)$/ ) {$arch = 'C3-2'}
+			elsif ( $model =~ /^(A|D)$/ ) {$arch = 'C7'}
+			elsif ( $model =~ /^(F)$/ ) {$arch = 'Isaiah'}
+		}
+	}
+	elsif ( $type eq 'intel'){
+		if ($family eq '4'){
+			if ( $model =~ /^(0|1|2|3|4|5|6|7|8|9)$/ ) {$arch = '486'}
+		}
+		elsif ($family eq '5'){
+			if ( $model =~ /^(1|2|3|7)$/ ) {$arch = 'P5'}
+			elsif ( $model =~ /^(4|8)$/ ) {$arch = 'P5'} # MMX
+			elsif ( $model =~ /^(9)$/ ) {$arch = 'Quark'}
+		}
+		elsif ($family eq '6'){
+			if ( $model =~ /^(1)$/ ) {$arch = 'P6 Pro'}
+			elsif ( $model =~ /^(3|5|6)$/ ) {$arch = 'P6 II'}
+			elsif ( $model =~ /^(7|8)$/ ) {$arch = 'P6 III'}
+			elsif ( $model =~ /^(9)$/ ) {$arch = 'Banias'} # pentium M
+			elsif ( $model =~ /^(15)$/ ) {$arch = 'Dothan Tolapai'} # pentium M system on chip
+			elsif ( $model =~ /^(D)$/ ) {$arch = 'Dothan'} # Pentium M
+			elsif ( $model =~ /^(E)$/ ) {$arch = 'Yonah'}
+			elsif ( $model =~ /^(F|16)$/ ) {$arch = 'Conroe'}
+			elsif ( $model =~ /^(17|1D)$/ ) {$arch = 'Penryn'}
+			elsif ( $model =~ /^(1A|1E|1F|2E|25|2C|2F)$/ ) {$arch = 'Nehalem'}
+			elsif ( $model =~ /^(1C|26)$/ ) {$arch = 'Bonnell'}
+			elsif ( $model =~ /^(27|35|36)$/ ) {$arch = 'Saltwell'}
+			elsif ( $model =~ /^(25|2C|2F)$/ ) {$arch = 'Westmere'}
+			elsif ( $model =~ /^(26|27)$/ ) {$arch = 'Bonnell'}
+			elsif ( $model =~ /^(2A|2D)$/ ) {$arch = 'Sandy Bridge'}
+			elsif ( $model =~ /^(37|4A|4D|5A)$/ ) {$arch = 'Silvermont'}
+			elsif ( $model =~ /^(3A|3E)$/ ) {$arch = 'Ivy Bridge'}
+			elsif ( $model =~ /^(3C|3F|45|46)$/ ) {$arch = 'Haswell'}
+			elsif ( $model =~ /^(3D|47|4F|56)$/ ) {$arch = 'Broadwell'}
+			elsif ( $model =~ /^(4E|55|9E)$/ ) {$arch = 'Skylake'}
+			elsif ( $model =~ /^(5E)$/ ) {$arch = 'Skylake-S'}
+			elsif ( $model =~ /^(4C|5D)$/ ) {$arch = 'Airmont'}
+			elsif ( $model =~ /^(8E|9E)$/ ) {$arch = 'Kaby Lake'}
+			elsif ( $model =~ /^(57)$/ ) {$arch = 'Knights Landing'}
+			elsif ( $model =~ /^(85)$/ ) {$arch = 'Knights Mill'}
+			# product codes: https://en.wikipedia.org/wiki/List_of_Intel_microprocessors
+			# coming: coffee lake; cannonlake; icelake; tigerlake
+		}
+		elsif ($family eq 'B'){
+			if ( $model =~ /^(1)$/ ) {$arch = 'Knights Corne'}
+		}
+		elsif ($family eq 'F'){
+			if ( $model =~ /^(0|1|2)$/ ) {$arch = 'Netburst Willamette'}
+			elsif ( $model =~ /^(3|4|6)$/ ) {$arch = 'Netburst Prescott'} # Nocona
+			else {$arch = 'Netburst'}
+		}
+	}
+	eval $end if $b_log;
+	return $arch;
 }
 # MHZ - cell cpus
 sub speed_cleaner {
