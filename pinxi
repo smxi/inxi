@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-23';
-my $self_patch='205-p';
+my $self_patch='206-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -5145,9 +5145,10 @@ sub machine_data_sys {
 	}
 	if ($data{'chassis_type'}){
 		if ( $data{'chassis_type'} == 1){
-			$vm = check_vm_basic($data{'sys_vendor'},$data{'product_name'});
-			$data{'device'} = get_device_vm() if (!$vm || $vm eq 'bosh');
-			$data{'device'} = $vm if $vm && $vm eq 'bosh'; # last fallback
+			#$vm = check_vm_basic($data{'sys_vendor'},$data{'product_name'});
+			$vm = get_device_vm($data{'sys_vendor'},$data{'product_name'});
+			#$data{'device'} = get_device_vm() if (!$vm || lc($vm) eq 'bosh');
+			$data{'device'} = $vm if $vm && lc($vm) eq 'bosh'; # last fallback
 			$data{'device'} ||= 'other-vm?';
 		}
 		else {
@@ -5272,9 +5273,10 @@ sub machine_data_dmi {
 		}
 	}
 	if (!$data{'device'}){
-		$vm = check_vm_basic($data{'sys_vendor'},$data{'product_name'});
-		$data{'device'} = get_device_vm() if (!$vm || $vm eq 'bosh');
-		$data{'device'} = $vm if $vm && $vm eq 'bosh'; # last fallback
+		#$vm = check_vm_basic($data{'sys_vendor'},$data{'product_name'});
+		$vm = get_device_vm($data{'sys_vendor'},$data{'product_name'});
+		#$data{'device'} = get_device_vm() if (!$vm || lc($vm) eq 'bosh');
+		$data{'device'} = $vm if $vm && lc($vm) eq 'bosh'; # last fallback
 		$data{'device'} ||= 'other-vm?';
 	}
 # 	print "dmi:\n";
@@ -5470,29 +5472,34 @@ sub check_vm_basic {
 	if (!$vm && $manufacturer && $manufacturer eq 'Xen'){
 		$vm = 'xen';
 	}
-	if ( !$vm && (my $program = main::check_program('systemd-detect-virt'))){
-		my $vm_test = (main::grabber("$program 2>/dev/null"))[0];
-		$vm = $vm_test if ( $vm_test && $vm_test ne 'none');
-	}
+	
 	return $vm;
 	eval $end if $b_log;
 }
 sub get_device_vm {
 	eval $start if $b_log;
+	my ($manufacturer,$product_name) = @_;
 	my $vm;
-	if (-e '/proc/vz'){$vm = 'openvz'}
-	elsif (-e '/proc/xen'){$vm = 'xen'}
-	elsif (-e '/dev/vzfs'){$vm = 'virtuozzo'}
-	elsif (my $program = main::check_program('lsmod')){
-		my @vm_data = main::grabber("$program 2>/dev/null");
-		if (@vm_data){
-			if (grep {/kqemu/i} @vm_data){$vm = 'kqemu'}
-			if (grep {/kvm/i} @vm_data){$vm = 'kvm'}
-			if (grep {/qemu/i} @vm_data){$vm = 'qemu'}
+	if ( my $program = main::check_program('systemd-detect-virt') ){
+		my $vm_test = (main::grabber("$program 2>/dev/null"))[0];
+		$vm = $vm_test if ( $vm_test && $vm_test ne 'none');
+	}
+	
+	if (!$vm || lc($vm) eq 'bosh') {
+		if (-e '/proc/vz'){$vm = 'openvz'}
+		elsif (-e '/proc/xen'){$vm = 'xen'}
+		elsif (-e '/dev/vzfs'){$vm = 'virtuozzo'}
+		elsif (my $program = main::check_program('lsmod')){
+			my @vm_data = main::grabber("$program 2>/dev/null");
+			if (@vm_data){
+				if (grep {/kqemu/i} @vm_data){$vm = 'kqemu'}
+				if (grep {/kvm/i} @vm_data){$vm = 'kvm'}
+				if (grep {/qemu/i} @vm_data){$vm = 'qemu'}
+			}
 		}
 	}
 	# this will catch many Linux systems and some BSDs
-	if (!$vm ) {
+	if (!$vm || lc($vm) eq 'bosh' ) {
 		my @vm_data = (@pci,@sysctl,@dmesg_boot);
 		if (-e '/dev/disk/by-id'){
 			my @dev = glob('/dev/disk/by-id/*');
@@ -5514,6 +5521,23 @@ sub get_device_vm {
 		if (!$vm && -e '/dev/vda' || -e '/dev/vdb' || -e '/dev/xvda' || -e '/dev/xvdb' ){
 			$vm = 'virtual-machine';
 		}
+	}
+	if (!$vm  && $product_name){
+		if ($product_name eq 'VMware'){
+			$vm = 'vmware';
+		}
+		elsif ($product_name eq 'VirtualBox'){
+			$vm = 'virtualbox';
+		}
+		elsif ($product_name eq 'KVM'){
+			$vm = 'kvm';
+		}
+		elsif ($product_name eq 'Bochs'){
+			$vm = 'qemu';
+		}
+	}
+	if (!$vm && $manufacturer && $manufacturer eq 'Xen'){
+		$vm = 'xen';
 	}
 	eval $end if $b_log;
 	return $vm;
