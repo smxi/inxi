@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-24';
-my $self_patch='211-p';
+my $self_patch='212-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -3701,6 +3701,7 @@ sub row_defaults {
 	$id ||= '';
 	my %unfound = (
 	'ARM' => "ARM systems do not support $id data type",
+	'dev' => 'Feature under development',
 	'IP' => "No $id data found. Connected to the web? SSL issues?",
 	'Message' => "No $id data found.",
 	'machine-data' => "No machine data: try newer kernel$id.",
@@ -4266,7 +4267,7 @@ sub get {
 	}
 	if (!$key1) {
 		$key1 = 'Status';
-		$val1 = 'under development';
+		$val1 = main::row_defaults('dev');
 	}
 	my @data = ({$num++ . "#$key1" => $val1,});
 	return @data;
@@ -4304,26 +4305,46 @@ sub get {
 sub create_full_data {
 	eval $start if $b_log;
 	my $num = 0;
-	my ($flag_key,@flags,%cpu,@data,@rows);
+	my ($b_flags,$flag_key,@flags,%cpu,@data,@rows);
 	my $sleep = $cpu_sleep * 1000000;
 	Time::HiRes::usleep( $sleep );
 	if (my $file = main::system_files('cpuinfo')){
 		%cpu = data_cpuinfo($file,'full');
 	}
 	elsif ($bsd_type ){
-		
+		my ($key1,$val1) = ('','');
+		if ( $alerts{'sysctl'} ){
+			if ( $alerts{'sysctl'}{'action'} eq 'use' ){
+				$key1 = 'Status';
+				$val1 = main::row_defaults('dev');
+			}
+			else {
+				$key1 = $alerts{'sysctl'}{'action'};
+				$val1 = $alerts{'sysctl'}{$alerts{'sysctl'}{'action'}}
+			}
+		}
+		else {
+			$key1 = 'Status';
+			$val1 = main::row_defaults('dev');
+		}
+		@data = ({$num++ . "#$key1" => $val1,});
+		return @data;
 	}
 	my %properties = cpu_properties(%cpu);
-	my $type = ($properties{'cpu-type'}) ? " (-$properties{'cpu-type'})": '';
+	my $type = ($properties{'cpu-type'}) ? $properties{'cpu-type'}: '';
 	my $ref = $cpu{'processors'};
 	my @processors = @$ref;
 	my @speeds = cpu_speeds(@processors);
 	
 	my $j = scalar @rows;
 	@data = ({
-	$num++ . "#$properties{'cpu-key'}" => $cpu{'model_name'} . $type,
+	$num++ . "#Layout" => $properties{'cpu-layout'},
+	$num++ . "#model" => $cpu{'model_name'},
 	},);
 	@rows = (@rows,@data);
+	if ($type){
+		$rows[$j]{$num++ . "#type"} = $type;
+	}
 	if ($extra > 0){
 		my $arch = $cpu{'arch'};
 		$arch ||= 'N/A';
@@ -4344,10 +4365,14 @@ sub create_full_data {
 			@flags = sort(@flags);
 			$flag = join ' ', @flags if @flags;
 		}
+		if ($b_arm && $flag eq 'N/A'){
+			$flag = 'use -f option to see features'
+		}
 		@data = ({
 		$num++ . "#$flag_key" => $flag,
 		},);
 		@rows = (@rows,@data);
+		$b_flags = 1;
 	}
 	if ($extra > 0 && !$bsd_type){
 		my $bogomips = ($cpu{'bogomips'}) ? int($cpu{'bogomips'}) : 'N/A';
@@ -4355,19 +4380,21 @@ sub create_full_data {
 	}
 	$j = scalar @rows;
 	my $core_key = (scalar @speeds > 1) ? 'Core speeds' : 'Core speed';
+	my $min_max = ($properties{'min-max'}) ? $properties{'min-max'}: 'N/A';
+	my $min_max_key = ($properties{'min-max-key'}) ? $properties{'min-max-key'}: 'min/max';
 	$j = scalar @rows;
-	@data = (
-	{
+	@data = ({
 	$num++ . "#$properties{'speed-key'}" => $properties{'speed'},
+	$num++ . "#$min_max_key" => $min_max,
 	$num++ . "#$core_key" => '',
-	},
-	);
+	},	);
 	@rows = (@rows,@data);
+	
 	my $i = 1;
 	foreach (@speeds){
 		$rows[$j]{$num++ . "#" . $i++} = $_;
 	}
-	if ($show{'cpu-flag'}){
+	if ($show{'cpu-flag'} && !$b_flags){
 		$flag_key = ($b_arm) ? 'CPU Features': 'CPU Flags';
 		@flags = split /\s+/, $cpu{'flags'} if $cpu{'flags'};
 		my $flag = 'N/A';
@@ -4386,6 +4413,7 @@ sub create_full_data {
 sub data_short {
 	eval $start if $b_log;
 	my ($type) = @_;
+	my $num = 0;
 	my (%cpu,@data,%speeds);
 	my $sys = '/sys/devices/system/cpu/cpufreq/policy0';
 	my $sleep = $cpu_sleep * 1000000;
@@ -4396,7 +4424,23 @@ sub data_short {
 		%cpu = data_cpuinfo($file,$type);
 	}
 	elsif ($bsd_type ){
-	
+		my ($key1,$val1) = ('','');
+		if ( $alerts{'sysctl'} ){
+			if ( $alerts{'sysctl'}{'action'} eq 'use' ){
+				$key1 = 'Status';
+				$val1 = main::row_defaults('dev');
+			}
+			else {
+				$key1 = $alerts{'sysctl'}{'action'};
+				$val1 = $alerts{'sysctl'}{$alerts{'sysctl'}{'action'}}
+			}
+		}
+		else {
+			$key1 = 'Status';
+			$val1 = main::row_defaults('dev');
+		}
+		@data = ({$num++ . "#$key1" => $val1,});
+		return @data;
 	}
 	# $cpu{'cur-freq'} = $cpu[0]{'core-id'}[0]{'speed'};
 	if ($type eq 'short' || $type eq 'basic'){
@@ -4408,37 +4452,58 @@ sub data_short {
 	eval $end if $b_log;
 	return @data;
 }
-
-sub cpu_speeds {
+sub create_short_data {
 	eval $start if $b_log;
-	my (@processors) = @_;
-	my (@speeds);
-	my @files = main::globber("/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq");
-	foreach (@files){
-		my $speed = (main::reader($_))[0];
-		if ($speed || $speed eq '0'){
-			$speed = sprintf "%.0f", $speed/1000;
-			push @speeds, $speed;
-		}
+	my (@cpu) = @_;
+	my @data;
+	my $num = 0;
+	@data = ({
+	$num++ . "#$cpu[0]" => $cpu[1],
+	$num++ . "#type" => $cpu[2],
+	$num++ . "#$cpu[3]" => $cpu[4],
+	},);
+	if ($cpu[6]){
+		$data[0]{$num++ . "#$cpu[5]"} = $cpu[6];
 	}
-	if (!@speeds){
-		foreach (@processors){
-			if ($_ || $_ eq '0'){
-				$_ = sprintf "%.0f", $_;
-				push @speeds, $_;
-			}
-		}
+	if ($extra > 0){
+		$data[0]{$num++ . "#arch"} = $cpu[4];
 	}
-	#print join '; ', @speeds, "\n";
 	eval $end if $b_log;
-	return @speeds;
+	return @data;
 }
+sub prep_short_data {
+	eval $start if $b_log;
+	my (%cpu) = @_;
+	my %properties = cpu_properties(%cpu);
+	my ($cpu,$speed_key,$speed,$type) = ('N/A','speed','N/A',0,'N/A');
+ 	if ($cpu{'model_name'}){
+		$type = $properties{'cpu-type'} if $properties{'cpu-type'};
+		$cpu = $cpu{'model_name'};
+ 	}
+ 	$speed_key = $properties{'speed-key'} if $properties{'speed-key'};
+ 	$speed = $properties{'speed'} if $properties{'speed'};
+ 	my @result = (
+ 	$properties{'cpu-layout'},
+ 	$cpu,
+ 	$type,
+ 	$speed_key,
+ 	$speed,
+ 	$properties{'min-max-key'},
+ 	$properties{'min-max'},
+ 	);
+ 	if ($extra > 0){
+		$result[4] = $cpu{'arch'};
+ 	}
+	eval $end if $b_log;
+	return @result;
+}
+
 sub data_cpuinfo {
 	eval $start if $b_log;
 	my ($file,$type)=  @_;
-	my ($arch,@arm,@ids,%cpu,%speeds,@line,$b_arm,$b_first,$b_proc_int);
+	my ($arch,@arm,@ids,%cpu,%speeds,@line,$b_first,$b_proc_int);
 	# $file = "$ENV{HOME}/bin/scripts/inxi/data/cpu/amd/16-core-32-mt-ryzen.txt";
-	#$file = "$ENV{HOME}/bin/scripts/inxi/data/cpu/arm/arm-4-4-speeds-1.txt";
+	$file = "$ENV{HOME}/bin/scripts/inxi/data/cpu/arm/arm-4-4-speeds-1.txt";
 	#$file = "$ENV{HOME}/bin/scripts/inxi/data/cpu/intel/core-2-i3.txt";
 	#my @cpuinfo = main::reader($file);
 	my $sys = '/sys/devices/system/cpu/cpufreq/policy0';
@@ -4597,6 +4662,7 @@ sub data_cpuinfo {
 				$die_holder = $line[1];
 			}
 			$ids[$phys_id][$die_id][$line[1]] = $speed;
+			$cpu{'dies'} = $die_id;
 		}
 		if (!$cpu{'type'} && $line[0] eq 'vendor_id' ){
 			$line[1] = lc($line[1]);
@@ -4621,14 +4687,14 @@ sub data_cpuinfo {
 					$cpu{'cache'} = ($1*1024);
 				}
 			}
-			elsif (!$cpu{'flags'} && ($line[0] eq 'flags' || $line[0] eq 'features' )){
+			if (!$cpu{'flags'} && ($line[0] eq 'flags' || $line[0] eq 'features' )){
 				$cpu{'flags'} = $line[1];
 			}
 		}
 		if ( $extra > 0 && $type eq 'full' ){
 			if ($line[0] eq 'bogomips'){
 				# new arm shows bad bogomip value, so don't use it
-				$cpu{'bogomips'} += $line[1] if $line[1] > 100;
+				$cpu{'bogomips'} += $line[1] if $line[1] > 50;
 			}
 		}
 	}
@@ -4672,12 +4738,14 @@ sub cpu_properties {
 	my $processors_count = scalar @processors;
 	#print Data::Dumper::Dumper \@processors;
 	# $cpu_cores is per physical cpu
-	my ($cpu_key,$cpu_type,$cache,$core_count,$cpu_cores,$die_count) = ('','',0,0,0,0);
+	my ($cpu_layout,$cpu_type,$min_max,$min_max_key,$cache,$core_count,
+	   $cpu_cores,$die_count) = ('','','','',0,0,0,0);
 	my @cores;
 	foreach my $die_ref ( @phys ){
 		my @dies = @$die_ref;
 		$core_count = 0;
 		$die_count = scalar @dies;
+		$cpu{'dies'} = $die_count;
 		foreach my $core_ref (@dies){
 			my @cores = @$core_ref;
 			$core_count += scalar @cores;
@@ -4713,34 +4781,36 @@ sub cpu_properties {
 	if ( $processors_count > 1 || ( $b_xeon && $cpu{'siblings'} > 0 ) ) {
 		# non-multicore MT
 		if ($processors_count == ($cpu_cores * 2)){
-			$cpu_type .= 'MT-'; 
+			$cpu_type .= 'MT'; 
 		}
 		elsif ($b_xeon && $cpu{'siblings'} > 1){
-			$cpu_type .= 'MT-'; 
+			$cpu_type .= 'MT'; 
 		}
 		elsif ($cpu{'siblings'} > 1 && ($cpu{'siblings'} == 2 * $cpu_cores )){
-			$cpu_type .= 'MT-'; 
+			$cpu_type .= 'MT'; 
 		}
 		# non-MT multi-core or MT multi-core
 		if ( ($processors_count == $cpu_cores ) || ($phyical_count < $cpu_cores)){
-			$cpu_type .= 'MCP-'; 
+			my $sep = ($cpu_type) ? ' ' : '' ;
+			$cpu_type .= $sep . 'MCP'; 
 		}
 		# >1 cpu sockets active: Symetric Multi Processing
 		if ($phyical_count > 1){
-			$cpu_type .= 'SMP-'; 
+			my $sep = ($cpu_type) ? ' ' : '' ;
+			$cpu_type .= $sep . 'SMP'; 
 		}
 	}
 	else {
-		$cpu_type = 'UP-';
+		$cpu_type = 'UP';
 	}
 	if ($phyical_count > 1){
-		$cpu_key = "$phyical_count ";
+		$cpu_layout = "$phyical_count ";
 	}
 	if (!$bsd_type){
-		if ($die_count > 1){
-			$cpu_key .= count_alpha($die_count) . ' Die ';
+		if ($cpu{'dies'} > 1){
+			$cpu_layout .= count_alpha($cpu{'dies'}) . ' Die ';
 		}
-		$cpu_key .= count_alpha($cpu_cores) . ' Core';
+		$cpu_layout .= count_alpha($cpu_cores) . ' Core';
 	}
 	else {
 	
@@ -4758,31 +4828,38 @@ sub cpu_properties {
 		$cache = $cpu{'cache'} * $phyical_count;
 	}
 	$cache = ($cache > 10000) ? sprintf("%.02f MB",$cache/1024) : "$cache KB";
-	if ($cpu{'cur-freq'} && $cpu{'min-freq'} && $cpu{'max-freq'} && 
-	   $cpu{'cur-freq'} != $cpu{'max-freq'} && $cpu{'cur-freq'} != $cpu{'min-freq'}){
-		$speed_key = (!$show{'cpu'}) ? 'speed/min/max' : 'Speed/min/max';
-		$speed = "$cpu{'cur-freq'}/$cpu{'min-freq'}/$cpu{'max-freq'} MHz";
+	if ($cpu{'cur-freq'} && $cpu{'min-freq'} && $cpu{'max-freq'} ){
+		$min_max = "$cpu{'min-freq'}/$cpu{'max-freq'} MHz";
+		$min_max_key = "min/max";
+		$speed_key = ($show{'short'} || $show{'cpu-basic'}) ? 'speed' : 'Speed';
+		$speed = "$cpu{'cur-freq'} MHz";
+		
  	}
- 	elsif ($cpu{'cur-freq'} && $cpu{'min-freq'} && $cpu{'max-freq'} && 
- 	   $cpu{'cur-freq'} != $cpu{'max-freq'}){
-		$speed_key = (!$show{'cpu'}) ? 'speed/max' : 'Speed/max';
-		$speed = "$cpu{'cur-freq'}/$cpu{'max-freq'} MHz";
+ 	elsif ($cpu{'cur-freq'} && $cpu{'max-freq'}){
+		$min_max = "$cpu{'max-freq'} MHz";
+		$min_max_key = "max";
+		$speed_key = ($show{'short'} || $show{'cpu-basic'}) ? 'speed' : 'Speed';
+		$speed = "$cpu{'cur-freq'} MHz";
  	}
- 	elsif ($cpu{'cur-freq'} && $cpu{'max-freq'} && $cpu{'cur-freq'} == $cpu{'max-freq'}){
-		$speed_key = (!$show{'cpu'}) ? 'speed' : 'Speed';
-		$speed = "$cpu{'cur-freq'} MHz (max)";
- 	}
+#  	elsif ($cpu{'cur-freq'} && $cpu{'max-freq'} && $cpu{'cur-freq'} == $cpu{'max-freq'}){
+# 		$speed_key = ($show{'short'} || $show{'cpu-basic'}) ? 'speed' : 'Speed';
+# 		$speed = "$cpu{'cur-freq'} MHz (max)";
+#  	}
  	elsif ($cpu{'cur-freq'} && $cpu{'min-freq'}){
-		$speed_key = (!$show{'cpu'}) ? 'speed/min' : 'Speed/min';
-		$speed = "$cpu{'cur-freq'}/$cpu{'min-freq'} MHz";
+		$min_max = "$cpu{'min-freq'} MHz";
+		$min_max_key = "min";
+		$speed_key = ($show{'short'} || $show{'cpu-basic'}) ? 'speed' : 'Speed';
+		$speed = "$cpu{'cur-freq'} MHz";
  	}
  	elsif ($cpu{'cur-freq'} && !$cpu{'max-freq'}){
-		$speed_key = (!$show{'cpu'}) ? 'speed' : 'Speed';
+		$speed_key = ($show{'short'} || $show{'cpu-basic'}) ? 'speed' : 'Speed';
 		$speed = "$cpu{'cur-freq'} MHz";
  	}
 	my %cpu_properties = (
-	'cpu-key' => $cpu_key,
+	'cpu-layout' => $cpu_layout,
 	'cpu-type' => $cpu_type,
+	'min-max-key' => $min_max_key,
+	'min-max' => $min_max,
 	'speed-key' => $speed_key,
 	'speed' => $speed,
 	'cache' => $cache,
@@ -4794,47 +4871,31 @@ sub cpu_properties {
 	#print 'phys: ' . $pc . ' dies: ' . $dc, "\n";
 	return %cpu_properties;
 }
-
-sub create_short_data {
+sub cpu_speeds {
 	eval $start if $b_log;
-	my (@cpu) = @_;
-	my @data;
-	my $num = 0;
-	@data = ({
-	$num++ . "#$cpu[0]" => $cpu[1],
-	$num++ . "#$cpu[2]" => $cpu[3],
-	},);
-	if ($extra > 0){
-		$data[0]{$num++ . "#arch"} = $cpu[4];
+	my (@processors) = @_;
+	my (@speeds);
+	my @files = main::globber("/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq");
+	foreach (@files){
+		my $speed = (main::reader($_))[0];
+		if ($speed || $speed eq '0'){
+			$speed = sprintf "%.0f", $speed/1000;
+			push @speeds, $speed;
+		}
 	}
+	if (!@speeds){
+		foreach (@processors){
+			if ($_ || $_ eq '0'){
+				$_ = sprintf "%.0f", $_;
+				push @speeds, $_;
+			}
+		}
+	}
+	#print join '; ', @speeds, "\n";
 	eval $end if $b_log;
-	return @data;
+	return @speeds;
 }
-sub prep_short_data {
-	eval $start if $b_log;
-	my (%cpu) = @_;
-	my %properties = cpu_properties(%cpu);
-	my ($cpu,$speed_key,$speed) = ('N/A','speed','N/A',0);
-	
- 	if ($cpu{'model_name'}){
-		my $type = '';
-		$type = " (-$properties{'cpu-type'})" if $properties{'cpu-type'};
-		$cpu = $cpu{'model_name'} . $type;
- 	}
- 	$speed_key = $properties{'speed-key'} if $properties{'speed-key'};
- 	$speed = $properties{'speed'} if $properties{'speed'};
- 	my @result = (
- 	$properties{'cpu-key'},
- 	$cpu,
- 	$speed_key,
- 	$speed,
- 	);
- 	if ($extra > 0){
-		$result[4] = $cpu{'arch'};
- 	}
-	eval $end if $b_log;
-	return @result;
-}
+
 sub cpu_arch {
 	eval $start if $b_log;
 	my ($type,$family,$model) = @_;
@@ -5012,7 +5073,7 @@ sub get {
 # 	}
 # 	else {
 		$key1 = 'Status';
-		$val1 = 'under development';
+		$val1 = main::row_defaults('dev');
 # 	}
 	my @data = ({$num++ . "#$key1" => $val1,});
 	return @data;
@@ -6029,7 +6090,7 @@ sub get {
 # 	}
 # 	else {
 		$key1 = 'Status';
-		$val1 = 'under development';
+		$val1 = main::row_defaults('dev');
 # 	}
 	my @data = ({$num++ . "#$key1" => $val1,});
 	return @data;
@@ -6215,7 +6276,7 @@ sub get {
 # 	}
 # 	else {
 		$key1 = 'Status';
-		$val1 = 'under development';
+		$val1 = main::row_defaults('dev');
 # 	}
 	my @data = ({$num++ . "#$key1" => $val1,});
 	return @data;
@@ -6248,9 +6309,8 @@ sub get {
 	}
 	else {
 		$key1 = 'Status';
-		$val1 = 'under development';
+		$val1 = main::row_defaults('dev');
 	}
-	
 	
 	my @data = ({$num++ . "#$key1" => $val1,});
 	return @data;
@@ -6564,7 +6624,7 @@ sub get {
 	}
 	else {
 		$key1 = 'Status';
-		$val1 = 'under development';
+		$val1 = main::row_defaults('dev');
 	}
 	my @data = ({$num++ . "#$key1" => $val1,});
 	return @data;
@@ -6691,7 +6751,7 @@ sub get {
 # 	}
 # 	else {
 		$key1 = 'Status';
-		$val1 = 'under development';
+		$val1 = main::row_defaults('dev');
 # 	}
 	my @data = ({$num++ . "#$key1" => $val1,});
 	return @data;
@@ -6869,7 +6929,7 @@ sub get {
 	my (@rows,$key1,$val1);
 	my $num = 0;
 	$key1 = 'Status';
-	$val1 = 'under development';
+	$val1 = main::row_defaults('dev');
 	my @data = ({$num++ . "#$key1" => $val1,});
 	return @data;
 	eval $end if $b_log;
@@ -8920,24 +8980,35 @@ sub generate_short_data {
 	}
 	my $memory = get_memory_data();
  	my @cpu = CpuData::get('short');
+ 	my $type = ($cpu[2]) ? " (-$cpu[2]-)" : '';
+ 	my ($speed,$speed_key) = ('','');
+ 	if ($cpu[6]){
+		$speed_key = "$cpu[3]/$cpu[5]";
+		$cpu[4] =~ s/ MHz//;
+		$speed = "$cpu[4]/$cpu[6]";
+ 	}
+ 	else {
+		$speed_key = $cpu[3];
+		$speed = $cpu[4];
+ 	}
  	#print join '; ', @cpu, " sleep: $cpu_sleep\n";
 	$memory ||= 'N/A';
-	my %row = (
-	$prefix . '#SHORT' => [
-		{
-		$num++ . "#$cpu[0]" => $cpu[1],
-		$num++ . "#$cpu[2]" => $cpu[3],
-		$num++ . '#' . $kernel_os => &get_kernel_data(),
-		$num++ . '#Up' => &get_uptime(),
-		$num++ . '#Mem' => $memory,
-		$num++ . '#HD' => 'N/A',
+	my @data = ({
+		$num++ . "#$cpu[0]" => $cpu[1] . $type,
+		$num++ . "#$speed_key" => $speed,
+		$num++ . "#$kernel_os" => &get_kernel_data(),
+		$num++ . "#Up" => &get_uptime(),
+		$num++ . "#Mem" => $memory,
+		$num++ . "#HD" => 'N/A',
 		# could make -1 for ps aux itself, -2 for ps aux and self
-		$num++ . '#Procs' => scalar @ps_aux, 
-		$num++ . '#' . $client_shell => $client,
-		$num++ . '#' . $self_name => &get_self_version(),
-		},
-	],
+		$num++ . "#Procs" => scalar @ps_aux,
+		$num++ . "#$client_shell" => $client,
+		$num++ . "#$self_name" => &get_self_version(),
+	},);
+	my %row = (
+	$prefix . '#SHORT' => [(@data),],
 	);
+
 	eval $end if $b_log;
 	return %row;
 }
