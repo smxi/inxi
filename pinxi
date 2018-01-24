@@ -39,8 +39,8 @@ use Time::HiRes qw(gettimeofday tv_interval);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-01-22';
-my $self_patch='201-p';
+my $self_date='2018-01-23';
+my $self_patch='202-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -4299,22 +4299,59 @@ sub get {
 		$key1 = 'Status';
 		$val1 = 'under development';
 		@rows = ({$num++ . "#$key1" => $val1,});
+		@rows = create_full_data();
 	}
 	return @rows;
 	eval $end if $b_log;
 }
-sub cpu_data {
+sub create_full_data {
 	eval $start if $b_log;
-	my (@rows);
 	my $num = 0;
+	my (%cpu,@data,@rows);
+	if (my $file = main::system_files('cpuinfo')){
+		%cpu = data_cpuinfo($file,'full');
+	}
+	elsif ($bsd_type ){
+		
+	}
+	my %properties = cpu_properties(%cpu);
+	my $type = ($properties{'cpu-type'}) ? " (-$properties{'cpu-type'})": '';
+	my $ref = $cpu{'processors'};
+	my @processors = @$ref;
+	my @speeds = cpu_speeds(@processors);
 	
+	my $j = scalar @rows;
+	@data = (
+	{
+	$num++ . "#$properties{'cpu-key'}" => $cpu{'model_name'} . $type,
+	$num++ . "#cache" => $properties{'cache'},
+	},
+	);
+	@rows = (@rows,@data);
+	if ($extra > 0){
+		my $arch = $cpu{'arch'};
+		$arch ||= 'N/A';
+		$rows[$j]{$num++ . "#arch"} = $arch;
+	}
+	$j = scalar @rows;
+	@data = (
+	{
+	$num++ . "#Clock speeds" => '',
+	$num++ . "#max" => 0,
+	},
+	);
+	@rows = (@rows,@data);
+	my $i = 1;
+	foreach (@speeds){
+		$rows[$j]{$num++ . "#" . $i++} = $_;
+	}
 	eval $end if $b_log;
 	return @rows;
 }
 sub data_short {
 	eval $start if $b_log;
 	my ($type) = @_;
-	my (%cpu,@data);
+	my (%cpu,@data,%speeds);
 	my $sys = '/sys/devices/system/cpu/cpufreq/policy0';
 	my $sleep = $cpu_sleep * 1000000;
 	Time::HiRes::usleep( $sleep );
@@ -4324,17 +4361,28 @@ sub data_short {
 		%cpu = data_cpuinfo($file,$type);
 		#my @cpuinfo = main::reader($file);
 		if (-d $sys){
-			$cpu{'cur-freq'} = (main::reader("$sys/scaling_cur_freq"))[0];
-			$cpu{'cur-freq'} = speed_cleaner($cpu{'cur-freq'});
-			$cpu{'min-freq'} = (main::reader("$sys/scaling_min_freq"))[0];
-			$cpu{'min-freq'} = speed_cleaner($cpu{'min-freq'});
-			$cpu{'max-freq'} = (main::reader("$sys/scaling_max_freq"))[0];
-			$cpu{'max-freq'} = speed_cleaner($cpu{'max-freq'});
+			$speeds{'cur-freq'} = (main::reader("$sys/scaling_cur_freq"))[0];
+			$speeds{'cur-freq'} = speed_cleaner($speeds{'cur-freq'},'khz');
+			$speeds{'min-freq'} = (main::reader("$sys/scaling_min_freq"))[0];
+			$speeds{'min-freq'} = speed_cleaner($speeds{'min-freq'},'khz');
+			$speeds{'max-freq'} = (main::reader("$sys/scaling_max_freq"))[0];
+			$speeds{'max-freq'} = speed_cleaner($speeds{'max-freq'},'khz');
+		}
+		if (!$speeds{'cur-freq'}){
+			$cpu{'cur-freq'} = $cpu{'processors'}[0];
+			$speeds{'min-freq'} = 0;
+			$speeds{'max-freq'} = 0;
+		}
+		else {
+			$cpu{'cur-freq'} = $speeds{'cur-freq'};
+			$cpu{'min-freq'} = $speeds{'min-freq'};
+			$cpu{'max-freq'} = $speeds{'max-freq'};
 		}
 	}
 	elsif ($bsd_type ){
 	
 	}
+	# $cpu{'cur-freq'} = $cpu[0]{'core-id'}[0]{'speed'};
 	if ($type eq 'short' || $type eq 'basic'){
 		@data = prep_short_data(%cpu);
 	}
@@ -4344,20 +4392,39 @@ sub data_short {
 	eval $end if $b_log;
 	return @data;
 }
+
+sub cpu_speeds {
+	eval $start if $b_log;
+	my (@processors) = @_;
+	my (@speeds);
+	my @files = main::globber('/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq');
+	foreach (@files){
+		my $speed = (main::reader($_))[0];
+		push @speeds, $speed if $speed;
+	}
+	if (!@speeds){
+		foreach (@processors){
+			push @speeds, $_ if $_;
+		}
+	}
+	#print join '; ', @speeds, "\n";
+	
+	eval $end if $b_log;
+	return @speeds;
+}
 sub data_cpuinfo {
 	eval $start if $b_log;
 	my ($file,$type)=  @_;
-	my ($arch, @cpu_ids,%cpu,@line,$b_arm,$b_first,$b_proc_int);
+	my ($arch, @ids,%cpu,@line,$b_arm,$b_first,$b_proc_int);
+	# $file = "$ENV{HOME}/bin/scripts/inxi/data/cpu/amd/16-core-32-mt-ryzen.txt";
+	#$file = "$ENV{HOME}/bin/scripts/inxi/data/cpu/arm/arm-4-4-speeds-1.txt";
+	#$file = "$ENV{HOME}/bin/scripts/inxi/data/cpu/intel/core-2-i3.txt";
 	my @cpuinfo = main::reader($file);
-	my ($cache,$phys_id,$core_id) = (0,0);
+	my ($cache,$die_holder,$die_id,$phys_holder,$phys_id,$proc_count,$speed) = (0,0,0,0,0,0,0);
 	# need to prime for arm cpus, which do not have physical/core ids usually
-	$cpu_ids[0] = (
-	{
-	'core-set' => {
-		'core-ids' => 0,
-		'speed' => 0,
-	},
-	},);
+	# level 0 is phys id, level 1 is die id, level 2 is core id
+	$ids[0] = ([(0)]);
+	$ids[0][0] = ([(0)]);
 	%cpu =  (
 	'arch' => '',
 	'cache' => 0, # store in KB
@@ -4366,24 +4433,27 @@ sub data_cpuinfo {
 	'flags' => '',
 	'model_id' => '',
 	'model_name' => '',
-	'processors' => 0,
+	'processors' => [],
 	'siblings' => 0,
+	'ids' => [],
 	);
 	# note, there con be a lot of processors, 32 core HT would have 64, for example.
 	foreach (@cpuinfo){
 		next if /^\s*$/;
-		@line = split /\s+:\s+/, $_;
+		@line = split /\s*:\s*/, $_;
 		$line[0] = lc($line[0]);
 		if ($line[0] eq 'processor'){
 			# this protects against double processor lines, one int, one string
 			if ($line[1] =~ /^\d+$/){
 				$b_proc_int = 1;
 				$b_first = 1;
-				$cpu{'processors'}++;
+				$cpu{'processors'}[$proc_count] = 0;
+				$proc_count++;
 			}
 			else {
 				if (!$b_proc_int){
-					$cpu{'processorss'}++;
+					$cpu{'processors'}[$proc_count] = 0;
+					$proc_count++;
 				}
 				if (!$b_first ){
 					# note: alternate: 
@@ -4399,65 +4469,229 @@ sub data_cpuinfo {
 				$b_first = 1;
 			}
 		}
-		elsif (!$cpu{'family'} && ($line[0] eq 'architecture' || $line[0] eq 'cpu family' )){
+		elsif (!$cpu{'family'} && 
+		       ($line[0] eq 'architecture' || $line[0] eq 'cpu family' || $line[0] eq 'cpu architecture' )){
 			$cpu{'family'} = uc(sprintf("%x", $line[1]));
 		}
 		elsif (!$cpu{'rev'} && ($line[0] eq 'stepping' || $line[0] eq 'cpu revision' )){
 			$cpu{'rev'} = $line[1];
 		}
 		# this is hex so uc for cpu arch id
-		elsif (!$cpu{'model_id'} && $line[0] eq 'model'){
+		elsif (!$cpu{'model_id'} && $line[0] eq 'model' ){
 			$cpu{'model_id'} = uc(sprintf("%x", $line[1]));
+		}
+		elsif (!$cpu{'model_id'} && $line[0] eq 'cpu variant' ){
+			$cpu{'model_id'} = uc($line[1]);
+			$cpu{'model_id'} =~ s/^0X//;
 		}
 		# cpu can show in arm
 		elsif (!$cpu{'model_name'} &&( $line[0] eq 'model name' || $line[0] eq 'cpu' )){
 			$cpu{'model_name'} = main::cleaner($line[1]);
 			$cpu{'model_name'} = cpu_cleaner($cpu{'model_name'});
+			if ( $line[1] =~ /ARM|AArch/){
+				$b_arm = 1;
+				$cpu{'type'} = 'arm';
+			}
 		}
-		if ( $type ne 'short' ){
-			if (!$cpu{'type'} && $line[0] eq 'vendor_id' ){
-				$line[1] = lc($line[1]);
-				if ( $line[1] =~ /intel/ ) {
-					$cpu{'type'} = "intel"
-				}
-				elsif ($line[1] =~ /amd/){
-					$cpu{'type'} = "amd"
-				}
-				# via
-				elsif ($line[1] =~ /centaur/){
-					$cpu{'type'} = "centaur"
-				}
+		elsif ( $line[0] eq 'cpu mhz' ){
+			$speed = speed_cleaner($line[1]);
+			$cpu{'processors'}[$proc_count-1] = $speed;
+			#$ids[$phys_id][$die_id] = ([($speed)]);
+		}
+		elsif (!$cpu{'siblings'} && $line[0] eq 'siblings' ){
+			$cpu{'siblings'} = $line[1];
+		}
+		elsif (!$cpu{'cores'} && $line[0] eq 'cpu cores' ){
+			$cpu{'cores'} = $line[1];
+		}
+		# increment by 1 for every new physical id we see. These are in almost all cases
+		# separate cpus, not separate dies within a single cpu body.
+		elsif ( $line[0] eq 'physical id' ){
+			if ($phys_holder != $line[1] ){
+				$phys_id++;
+				$phys_holder = $line[1];
+				$ids[$phys_id] = ([(0)]);
+				$ids[$phys_id][$die_id] = ([(0)]);
+			}
+		}
+		elsif ( $line[0] eq 'core id' ){
+			if ($line[1] > 0 ){
+				$die_holder = $line[1];
+			}
+			# this handles multi die cpus like 16 core ryzen
+			elsif ($line[1] == 0 && $die_holder > 0 ){
+				$die_id++ ;
+				$die_holder = $line[1];
+			}
+			$ids[$phys_id][$die_id][$line[1]] = $speed;
+		}
+		if (!$cpu{'type'} && $line[0] eq 'vendor_id' ){
+			$line[1] = lc($line[1]);
+			if ( $line[1] =~ /intel/ ) {
+				$cpu{'type'} = "intel"
+			}
+			elsif ($line[1] =~ /amd/){
+				$cpu{'type'} = "amd"
+			}
+			# via
+			elsif ($line[1] =~ /centaur/){
+				$cpu{'type'} = "centaur"
 			}
 		}
 		## this is only for -C full cpu output
 		if ( $type eq 'full' ){
-			if ($line[0] eq 'cache size'){
+			if (!$cpu{'cache'} && $line[0] eq 'cache size'){
 				if ($line[1] =~ /(\d+)\sKB$/){
-					$cpu{'cache'} += $1;
+					$cpu{'cache'} = $1;
 				}
 				elsif ($line[1] =~ /(\d+)\sMB$/){
-					$cpu{'cache'} += ($1/1024);
+					$cpu{'cache'} = ($1*1024);
 				}
+			}
+			elsif (!$cpu{'flags'} && ($line[0] eq 'flags' || $line[0] eq 'features' )){
+				$cpu{'flags'} = $line[1];
+			}
+		}
+		if ( $extra > 0 && $type eq 'full' ){
+			if ($line[0] eq 'bogomips'){
+				$cpu{'bogomips'} += $line[1];
 			}
 		}
 	}
-	if ($b_arm){
-	
-	}
-	
+	$cpu{'ids'} = (\@ids);
 	if ( $extra > 0 && $type ne 'short' ){
 		$cpu{'arch'} = cpu_arch($cpu{'type'},$cpu{'family'},$cpu{'model_id'});
 		#print "$cpu{'type'},$cpu{'family'},$cpu{'model_id'},$cpu{'arch'}\n";
 	}
 	#print Data::Dumper::Dumper \%cpu;
-	## temp so there is some output:
-	#my @data = ($cpu{'model_name'},$cpu{'arch'},);
-	
 	eval $end if $b_log;
 	return %cpu;
 }
 
+sub cpu_properties {
+	my (%cpu) = @_;
+	my $b_xeon = ($cpu{'model_name'} =~ /Xeon/i) ? 1 : 0;
+	my $b_ryzen = ($cpu{'type'} && $cpu{'type'} eq 'amd' && $cpu{'family'} eq '17') ? 1 : 0;
+	#my @dies = $phys[0][0];
+	my @phys = $cpu{'ids'};
+	my @processors;
+	my $phyical_count = scalar @phys;
+	$phyical_count ||= 1; # assume 1 if no id found, as with ARM
+	# count unique processors ##
+	# note, this fails for intel cpus at times
+	my $ref = $cpu{'processors'};
+	@processors = @$ref;
+	#print ref $cpu{'processors'}, "\n";
+	my $processors_count = scalar @processors;
+	#print Data::Dumper::Dumper \@processors;
+	# $cpu_cores is per physical cpu
+	my ($cpu_key,$cpu_type,$cache,$core_count,$cpu_cores,$die_count) = ('','',0,0,0,0);
+	my @cores;
+	foreach my $phys_ref ( @phys ){
+		my @dies = @$phys_ref;
+		$core_count = 0;
+		$die_count = 0;
+		foreach my $die_ref (@dies){
+			my @die = @$die_ref;
+			$die_count = scalar @die;
+			#print 'dies: ' . $die_count, "\n";
+			foreach my $core_ref (@die){
+				my @cores = @$core_ref;
+				$core_count += scalar @cores;
+				#print 'cores: ' . $core_count, "\n";
+			}
+		}
+	}
+	$cpu_cores = $cpu{'cores'} if $cpu{'cores'}; 
+	# xeon may show wrong core / physical id count, if it does, fix it. A xeon
+	# may show a repeated core id : 0 which gives a fake num_of_cores=1
+	if ($b_xeon && $cpu{'siblings'} > 1){
+		$cpu_cores = ($cpu{'siblings'}/2); 
+	}
+	if ($b_ryzen){
+		$cpu_cores = $cpu{'cores'}; 
+	}
+	# final check, override the num of cores value if it clearly is wrong
+	# and use the raw core count and synthesize the total instead of real count
+	if ( $cpu_cores == 0 && ($cpu{'cores'} * $phyical_count > 1)){
+		$cpu_cores = ($cpu{'cores'} * $phyical_count);
+	}
+	# last check, seeing some intel cpus and vms with intel cpus that do not show any
+	# core id data at all, or siblings.
+	if ($cpu_cores == 0 && $processors_count > 0){
+		$cpu_cores = $processors_count;
+	}
+	#print "pc: $processors_count s: $cpu{'siblings'} cpuc: $cpu_cores corec: $core_count\n";
+	# Algorithm:
+	# if > 1 processor && processor id (physical id) == core id then Multi threaded (MT)
+	# if siblings > 1 && siblings ==  2 * num_of_cores ($cpu{'cores'}) then Multi threaded (MT)
+	# if > 1 processor && processor id (physical id) != core id then Multi-Core Processors (MCP)
+	# if > 1 processor && processor ids (physical id) > 1 then Symmetric Multi Processing (SMP)
+	# if = 1 processor then single core/processor Uni-Processor (UP)
+	if ( $processors_count > 1 || ( $b_xeon && $cpu{'siblings'} > 0 ) ) {
+		# non-multicore MT
+		if ($processors_count == ($cpu_cores * 2)){
+			$cpu_type .= 'MT-'; 
+		}
+		elsif ($b_xeon && $cpu{'siblings'} > 1){
+			$cpu_type .= 'MT-'; 
+		}
+		elsif ($cpu{'siblings'} > 1 && ($cpu{'siblings'} == 2 * $cpu_cores )){
+			$cpu_type .= 'MT-'; 
+		}
+		# non-MT multi-core or MT multi-core
+		if ( ($processors_count == $cpu_cores ) || ($phyical_count < $cpu_cores)){
+			$cpu_type .= 'MCP-'; 
+		}
+		# >1 cpu sockets active: Symetric Multi Processing
+		if ($phyical_count > 1){
+			$cpu_type .= 'SMP-'; 
+		}
+	}
+	else {
+		$cpu_type = 'UP-';
+	}
+	if ($phyical_count > 1){
+		$cpu_key = "$phyical_count ";
+	}
+	if (!$bsd_type){
+		if ($die_count > 1){
+			$cpu_key .= count_alpha($die_count) . ' Die ';
+		}
+		$cpu_key .= count_alpha($cpu_cores) . ' Core';
+	}
+	else {
+	
+	}
+	# AMD SOS chips appear to report full L2 cache per core
+	if ($cpu{'type'} eq 'amd' && ($cpu{'family'} eq '14' || $cpu{'family'} eq '16')){
+		$cache = $cpu{'cache'} * $phyical_count;
+	}
+	elsif ($cpu{'type'} ne 'intel'){
+		$cache = $cpu{'cache'} * $cpu_cores * $phyical_count;
+	}
+	## note: this handles how intel reports L2, total instead of per core like AMD does
+	# note that we need to multiply by number of actual cpus here to get true cache size
+	else {
+		$cache = $cpu{'cache'} * $phyical_count;
+	}
+	$cache = ($cache > 10000) ? sprintf("%.02f MB",$cache/1024) : "$cache KB";
+	my %cpu_properties = (
+	'cpu-key' => $cpu_key,
+	'cpu-type' => $cpu_type,
+	'min-max' => '',
+	'cache' => $cache,
+	);
+	
+	#print Data::Dumper::Dumper \%cpu;
+	#print Data::Dumper::Dumper \%cpu_properties;
+	#my $dc = scalar @dies;
+	#print 'phys: ' . $pc . ' dies: ' . $dc, "\n";
+	return %cpu_properties;
+}
+
 sub create_short_data {
+	eval $start if $b_log;
 	my (@cpu) = @_;
 	my @data;
 	my $num = 0;
@@ -4468,12 +4702,14 @@ sub create_short_data {
 	if ($extra > 0){
 		$data[0]{$num++ . "#arch"} = $cpu[4];
 	}
+	eval $end if $b_log;
 	return @data;
 }
 sub prep_short_data {
 	eval $start if $b_log;
 	my (%cpu) = @_;
-	my ($cpu_key,$cpu,$speed_key,$speed) = ('CPU','N/A','speed','N/A');
+	my %properties = cpu_properties(%cpu);
+	my ($cpu,$speed_key,$speed) = ('N/A','speed','N/A',0);
 	if ($cpu{'cur-freq'} && $cpu{'min-freq'} && $cpu{'max-freq'} && 
 	   $cpu{'cur-freq'} != $cpu{'max-freq'} && $cpu{'cur-freq'} != $cpu{'min-freq'}){
 		$speed_key = 'speed/min/max';
@@ -4497,10 +4733,12 @@ sub prep_short_data {
 		$speed = "$cpu{'cur-freq'} MHz";
  	}
  	if ($cpu{'model_name'}){
-		$cpu = $cpu{'model_name'};
+		my $type = '';
+		$type = " (-$properties{'cpu-type'})" if $properties{'cpu-type'};
+		$cpu = $cpu{'model_name'} . $type;
  	}
  	my @result = (
- 	$cpu_key,
+ 	$properties{'cpu-key'},
  	$cpu,
  	$speed_key,
  	$speed,
@@ -4515,7 +4753,8 @@ sub cpu_arch {
 	eval $start if $b_log;
 	my ($type,$family,$model) = @_;
 	my $arch = '';
-		# https://en.wikipedia.org/wiki/List_of_AMD_CPU_microarchitectures
+	# https://en.wikipedia.org/wiki/List_of_AMD_CPU_microarchitectures
+	# print "$type;$family;$model\n";
 	if ( $type eq 'amd'){
 		if ($family eq '4'){
 			if ( $model =~ /^(3|7|8|9|A)$/ ) {$arch = 'Am486'}
@@ -4644,12 +4883,20 @@ sub cpu_arch {
 	eval $end if $b_log;
 	return $arch;
 }
+
+sub count_alpha {
+	my ($count) = @_;
+	#print "$count\n";
+	my @alpha = qw(Single Dual Triple Quad);
+	$count = $alpha[$count-1] if $count > 1 && $count < 5;
+	return $count;
+}
 # MHZ - cell cpus
 sub speed_cleaner {
 	my ($speed,$opt) = @_;
 	return if ! $speed || $speed eq '0';
 	$speed =~ s/MHZ|\.[0]+$//g;
-	$speed = $speed/1000 if !$opt;
+	$speed = ($speed/1000) if $opt && $opt eq 'khz';
 	return $speed;
 }
 sub cpu_cleaner {
@@ -4657,6 +4904,7 @@ sub cpu_cleaner {
 	return if ! $cpu;
 	$cpu =~ s/@|cpu |cpu deca|([0-9]+|single|dual|triple|tri|quad|penta|hepta|hexa|octa|multi)[ -]core|ennea|genuine|multi|processor|single|triple|[0-9\.]+ *[MmGg][Hh][Zz]//ig;
 	$cpu =~ s/\s\s+/ /g;
+	$cpu =~ s/^\s+|\s+$//g;
 	return $cpu;
 }
 }
