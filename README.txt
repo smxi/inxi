@@ -2,7 +2,7 @@
 README for development branch of inxi Perl version: pinxi
 ====================================================================
 FILE:    README.txt
-VERSION: 1.8
+VERSION: 1.9
 DATE:    2018-01-24
 
 NOTE: While the real program name will never change, for the sake
@@ -22,7 +22,7 @@ git clone https://github.com/smxi/inxi --branch inxi-Perl --single-branch
 Install pinxi for testing. Note that the -U option works now so 
 only the initial install is required:
 
-wget -O pinxi https://github.com/smxi/inxi/raw/inxi-Perl/pinxi
+wget -O pinxi https://github.com/smxi/inxi/raw/inxi-perl/pinxi
 
 ====================================================================
 
