@@ -2,8 +2,8 @@
 README for development branch of inxi Perl version: pinxi
 ====================================================================
 FILE:    README.txt
-VERSION: 1.7
-DATE:    2018-01-19
+VERSION: 1.8
+DATE:    2018-01-24
 
 NOTE: While the real program name will never change, for the sake
 of clarity, I will refer to the inxi-Perl dev branch inxi as pinxi, 
@@ -144,7 +144,7 @@ Note that my current development goals are, roughly in this order:
      Battery: Started
      Memory: Started
      PCI Slots: DONE: NEW!
-     CPU: Started 
+     CPU: DONE (except for BSD support)
      Graphics: Half Done 
      Audio: DONE 
      Network: DONE - with new features!
