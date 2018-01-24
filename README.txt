@@ -136,7 +136,7 @@ Note that my current development goals are, roughly in this order:
    
    Status of Lines:
      Short: 
-     Started (missing cpu/speed, hard drive, and half of memory for BSD)
+     Started (missing hard drive, half of memory for BSD)
      
      Full:
      System: DONE (except BSD compiler)
