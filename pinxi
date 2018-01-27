@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-27';
-my $self_patch='221-p';
+my $self_patch='222-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -3707,6 +3707,9 @@ sub row_defaults {
 	$id ||= '';
 	my %unfound = (
 	'ARM' => "ARM systems do not support $id data type",
+	'display-console' => 'Advanced graphics data unavailable in console. Try -G --display',
+	'display-root' => 'Advanced graphics data unaivailable in console for root.',
+	'display-tool' => "Unable to show advanced data. Required tool $id missing.",
 	'dev' => 'Feature under development',
 	'IP' => "No $id data found. Connected to the web? SSL issues?",
 	'Message' => "No $id data found.",
@@ -5127,9 +5130,8 @@ sub get {
 	}
 	@data = display_server();
 	@rows = (@rows,@data);
-	
 	@data = gl_data();
-	
+	@rows = (@rows,@data);
 	eval $end if $b_log;
 	return @rows;
 }
@@ -5191,7 +5193,6 @@ sub card_data {
 }
 sub display_server(){
 	eval $start if $b_log;
-	my ($tty_flag) = @_;
 	my (%graphics,@row);
 	my @xdpyinfo;
 	my $num = 0;
@@ -5201,7 +5202,7 @@ sub display_server(){
 		$graphics{'compositor'} = display_compositor();
 	}
 	$server = $ENV{'WAYLAND_DISPLAY'} if (!$server && $ENV{'WAYLAND_DISPLAY'});
-	if ( $show{'display-data'} && !$tty_flag ){
+	if ( $show{'display-data'}){
 		# X vendor and version detection.
 		# new method added since radeon and X.org and the disappearance of 
 		# <X server name> version : ...etc. Later on, the normal textual version string 
@@ -5324,6 +5325,96 @@ sub display_server(){
 		}
 	}
 	
+	eval $end if $b_log;
+	return @row;
+}
+sub gl_data(){
+	eval $start if $b_log;
+	my $num = 0;
+	my (@row);
+	if ( $show{'display-data'}){
+		if (my $program = main::check_program('glxinfo')){
+			# NOTE: glxinfo -B is not always available, unforunately
+			my @glxinfo = main::grabber("$program $display_opt 2>/dev/null");
+			@glxinfo = grep {!/^\s/} @glxinfo;
+			my $compat_version = '';
+			my (@core_profile_version,@direct_render,@renderer,@opengl_version,@working);
+			foreach (@glxinfo){
+				if (/^opengl renderer/i){
+					@working = split /:\s*/, $_;
+					$working[1] = main::cleaner($working[1]);
+					# Allow all mesas
+					if ($working[1] =~ /mesa/i){
+						
+					}
+					push @renderer, $working[1];
+				}
+				# dropping all conditions from this test to just show full mesa information
+				# there is a user case where not f and mesa apply, atom mobo
+				# /opengl version/ && ( f || $2 !~ /mesa/ ) {
+				elsif (/^opengl version/i){
+					# fglrx started appearing with this extra string, does not appear 
+					# to communicate anything of value
+					@working = split /:\s*/, $_;
+					$working[1] =~ s/(Compatibility Profile Context|\(Compatibility Profile\))//;
+					$working[1] =~ s/\s\s/ /g;
+					$working[1] =~ s/^\s+|\s+$//;
+					push @opengl_version, $working[1];
+				}
+				elsif (/^opengl core profile version/i){
+					# fglrx started appearing with this extra string, does not appear 
+					# to communicate anything of value
+					@working = split /:\s*/, $_;
+					$working[1] =~ s/(Compatibility Profile Context|\(Compatibility Profile\))//;
+					$working[1] =~ s/\s\s/ /g;
+					$working[1] =~ s/^\s+|\s+$//;
+					push @core_profile_version, $working[1];
+					# note: this is going to be off if ever multi opengl versions appear, never seen one
+					@working = split /\s+/, $working[1];
+					$compat_version = $working[0];
+				}
+				elsif (/direct rendering/){
+					@working = split /:\s*/, $_;
+					push @direct_render, $working[1];
+				}
+				# if -B was always available, we could skip this, but it is not
+				elsif (/GLX Visuals/){
+					last;
+				}
+			}
+			my ($direct_render,$renderer,$version) = ('N/A','N/A','N/A');
+			$direct_render = join ', ',  @direct_render if @direct_render;
+			if (@core_profile_version && @opengl_version && 
+			   join '', @core_profile_version ne join '', @opengl_version){
+				@opengl_version = @core_profile_version;
+				
+			}
+			$version = join ', ', @opengl_version if @opengl_version;
+			
+			$renderer = join ', ', @renderer if @renderer;
+			
+			@row = ({
+			$num++ . "#OpenGL" => '',
+			$num++ . "#renderer" => $renderer,
+			$num++ . "#version" => $version,
+			});
+			if ($extra > 1 && $compat_version){
+				$row[0]{$num++ . "#compat-v"} = $compat_version;
+			}
+			$row[0]{$num++ . "#direct render"} = $direct_render;
+		}
+		else {
+			@row = ({
+			$num++ . "#Message" => main::row_defaults('display-tool','glxinfo'),
+			});
+		}
+	}
+	else {
+		my $type = ($b_root) ? 'display-root': 'display-opt';
+		@row = ({
+		$num++ . "#Message" => main::row_defaults($type),
+		});
+	}
 	eval $end if $b_log;
 	return @row;
 }
@@ -5497,13 +5588,7 @@ sub display_compositor(){
 	return $compositor;
 }
 
-sub gl_data(){
-	eval $start if $b_log;
-	my (@row);
-	
-	eval $end if $b_log;
-	return @row;
-}
+
 }
 
 ## MachineData
