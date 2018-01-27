@@ -39,8 +39,8 @@ use Time::HiRes qw(gettimeofday tv_interval);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-01-24';
-my $self_patch='215-p';
+my $self_date='2018-01-26';
+my $self_patch='216-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -2805,12 +2805,13 @@ sub get_options{
 	'W|weather-location:s' => sub {
 		my ($opt,$arg) = @_;
 		$arg ||= '';
+		$arg =~ s/\s//g;
 		$show{'short'} = 0;
 		$b_downloader = 1;
 		if ( $b_weather ){
-			if ( $arg){
+			if ($arg){
 				$show{'weather'} = 1;
-				$show{'weather-location'} = 1;
+				$show{'weather-location'} = $arg;
 			}
 			else {
 				error_handler('bad-arg',$opt,$arg);
@@ -6940,40 +6941,119 @@ sub get {
 	$key1 = 'Status';
 	$val1 = main::row_defaults('dev');
 	#@rows = ({$num++ . "#$key1" => $val1,});
-	@rows = weather_data();
+	@rows = create_weather_data();
 	
 	eval $end if $b_log;
 	return @rows;
 }
-sub weather_data {
+sub create_weather_data {
 	eval $start if $b_log;
 	my $num = 0;
-	my (@data,@rows,%weather,@weather_data);
-	my $file2 = "$ENV{'HOME'}/bin/scripts/inxi/data/weather/weather-1.xml";
-	my $loc_arg = get_location();
-	
-	@weather_data = main::reader($file2);
-	@weather_data = map {
-	s/^\s+|\r//g;
-	s/.*icon.*//g;
-	s/<\/[^>]+>//;
-	s/>/^^/;
-	s/^<|NA$//g;
-	s/^(current|credit|terms|image|title|link|.*_url).*//;
-	s/\s\s/ /g;
-	chomp $_;
-	$_;
-	} @weather_data;
-	@weather_data = grep {!/^\s*$/} @weather_data;
-	print join "\n", @weather_data, "\n";
+	my (@data,@location,@rows,%weather,);
+	my ($conditions) = ('NA');
+	if ($show{'weather-location'}){
+		my $location_string;
+		if (!$show{'filter'}){
+			$location_string = $show{'weather-location'};
+			$location_string =~ s/\+/ /g;
+			if ( $location_string =~ /,/){
+				my @temp = split /,/, $location_string;
+				my $sep = '';
+				my $string = '';
+				foreach (@temp){
+					$_ = ucfirst($_);
+					$string .= $sep . $_;
+					$sep = ', ';
+				}
+				$location_string = $string;
+			}
+		}
+		else {
+			$location_string = $filter_string;
+		}
+		@location = ($show{'weather-location'},$location_string,'');
+	}
+	else {
+		@location = get_location();
+	}
+	%weather = get_weather(@location);
+	if ($weather{'temp'} && $weather{'weather'} ){
+		$conditions = "$weather{'temp'} - $weather{'weather'}";
+	}
+	elsif ($weather{'temp'}){
+		$conditions = $weather{'temp'};
+	}
+	elsif ($weather{'weather'}) {
+		$conditions = $weather{'weather'};
+	}
+	@data = ({
+	$num++ . "#Conditions" => $conditions,
+	},);
+	@rows = (@rows,@data);
+	if ($extra > 0){
+		$rows[0]{$num++ . "#Wind"} = $weather{'wind'};
+		$rows[0]{$num++ . "#Humidity"} = $weather{'humidity'};
+		$rows[0]{$num++ . "#Pressure"} = $weather{'pressure'};
+	}
+	if ($extra > 2){
+		$rows[0]{$num++ . "#Location"} = $location[1];
+		$rows[0]{$num++ . "#Altitude"} = $weather{'elevation'};
+	}
+	$rows[0]{$num++ . "#Time"} = $weather{'date-time'};
+	if ($extra > 2){
+		$rows[0]{$num++ . "#Observation Time"} = $weather{'observation-time-local'};
+	}
+	eval $end if $b_log;
+	return @rows;
+}
+sub get_weather {
+	eval $start if $b_log;
+	my (@location) = @_;
+	my $now = POSIX::strftime "%Y%m%d%H%M", localtime;
+	my ($date_time,$freshness,$tz,@weather_data,%weather);
+	my $loc_name = $location[0];
+	$loc_name =~ s/-\/|\s|,/-/g;
+	$loc_name =~ s/--/-/g;
+	my $file_cached = "$user_data_dir/weather-$loc_name.txt";
+	if (-f $file_cached){
+		@weather_data = main::reader($file_cached);
+		$freshness = (split /\^\^/, $weather_data[0])[1];
+		#print "$now:$freshness\n";
+	}
+	if (!$freshness || $freshness < $now - 90) {
+		my $url = "http://api.wunderground.com/auto/wui/geo/WXCurrentObXML/index.xml?query=$location[0]";
+ 		my $temp;
+# 		{
+# 			#my $file2 = "$ENV{'HOME'}/bin/scripts/inxi/data/weather/weather-1.xml";
+# 			# my $file2 = "$ENV{'HOME'}/bin/scripts/inxi/data/weather/feed-oslo-1.xml";
+# 			local $/;
+# 			my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/weather/weather-1.xml";
+# 			open my $fh, '<', $file or die "can't open $file: $!";
+# 			$temp = <$fh>;
+# 		}
+ 		$temp = main::download_file('stdout',$url);
+		$temp =~ s/\r|\n\n/\n/g;
+		my @weather_temp = split /\n/, $temp;
+		foreach (@weather_temp){
+			chomp $_;
+			$_ =~ s/<\/[^>]+>//;
+			$_ =~ s/.*icon.*|\r//g;
+			$_ =~ s/\s\s/ /g;
+			$_ =~ s/^\s+|\s+$//g;
+			$_ =~ s/>/^^/;
+			$_ =~ s/^<//;
+			$_ =~ s/^(current|credit|terms|image|title|link|.*_url).*//;
+			push @weather_data, $_ if $_ !~ /^\s*$/;
+		}
+		unshift (@weather_data,("timestamp^^$now"));
+		main::writer($file_cached,\@weather_data);
+		#print "$file_cached: download/cleaned\n";
+	}
+	#print join "\n", @weather_data, "\n";
 	
 	foreach (@weather_data){
 		my @working = split /\s*\^\^\s*/,$_;
-		if ( $working[0] eq 'observation_time' ){
-			$weather{'observation-time'} = $working[1];
-			$weather{'observation-time'} =~ s/Last Updated on //;
-		}
-		elsif ( $working[0] eq 'local_time' ){
+		if ( $working[0] eq 'local_time' ){
 			$weather{'local-time'} = $working[1];
 		}
 		elsif ( $working[0] eq 'weather' ){
@@ -6997,45 +7077,79 @@ sub weather_data {
 		elsif ( $working[0] eq 'windchill_string' ){
 			$weather{'windchill'} = $working[1];
 		}
+		elsif ( $working[0] eq 'observation_time_rfc822' ){
+			$weather{'observation-time-gmt'} = $working[1];
+		}
+		elsif ( $working[0] eq 'observation_time' ){
+			$weather{'observation-time-local'} = $working[1];
+			$weather{'observation-time-local'} =~ s/Last Updated on //;
+		}
+		elsif (!$weather{'elevation'} && $working[0] eq 'elevation'){
+			# note: bug in source data uses ft for meters, not 100% of time, but usually
+			$weather{'elevation'} = $working[1];
+			$weather{'elevation'} =~ s/ft/m/;
+		}
 	}
-	@data = (
-	{
-	$num++ . "#Conditions" => $weather{'weather'},
-	$num++ . "#wind" => $weather{'wind'},
-	$num++ . "#pressure" => $weather{'pressure'},
-	},
-	);
-	@rows = (@rows,@data);
-# 	if ($extra > 1 ){
-# 		$rows[$j]{$num++ . "#length"} = $length;
-# 	}
+	if ($show{'weather-location'}){
+		$weather{'observation-time-local'} =~ /^(.*)\s([\S]+)$/;
+		$tz = $2;
+		# very clever trick, just make the system think it's in the 
+		# remote timezone for this local block only
+		local $ENV{'TZ'} = $tz;
+		$date_time = POSIX::strftime "%c", localtime;
+		$weather{'date-time'} = $date_time;
+	}
+	else {
+		$date_time = POSIX::strftime "%c", localtime;
+		$tz = ( $location[2] ) ? " ($location[2])" : ''; 
+		$weather{'date-time'} = $date_time . $tz;
+	}
+	return %weather;
 	eval $end if $b_log;
-	return @rows;
 }
 sub get_location {
 	eval $start if $b_log;
-	my (%loc,$loc_arg,@loc_data);
-	my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/weather/location-1.xml";
-	@loc_data = main::reader($file);
-	@loc_data = map {
-	s/<\?.*<Response>//;
-	s/<\/[^>]+>/\n/g;
-	s/>/^^/g;
-	s/<//g;
-	$_;
-	} @loc_data;
-	@loc_data = split /\n/, $loc_data[0];
+	my ($city,$country,$freshness,%loc,$loc_arg,$loc_string,@loc_data,$state);
+	my $now = POSIX::strftime "%Y%m%d%H%M", localtime;
+	my $file_cached = "$user_data_dir/location-main.txt";
+	if (-f $file_cached){
+		@loc_data = main::reader($file_cached);
+		$freshness = (split /\^\^/, $loc_data[0])[1];
+	}
+	if (!$freshness || $freshness < $now - 90) {
+		my $temp;
+		my $url = "http://geoip.ubuntu.com/lookup";
+# 		{
+# 			local $/;
+# 			my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/weather/location-1.xml";
+# 			open my $fh, '<', $file or die "can't open $file: $!";
+# 			$temp = <$fh>;
+# 		}
+		$temp  = main::download_file('stdout',$url);
+		@loc_data = split /\n/, $temp;
+		@loc_data = map {
+		s/<\?.*<Response>//;
+		s/<\/[^>]+>/\n/g;
+		s/>/^^/g;
+		s/<//g;
+		$_;
+		} @loc_data;
+		@loc_data = split /\n/, $loc_data[0];
+		unshift (@loc_data,("timestamp^^$now"));
+		main::writer($file_cached,\@loc_data);
+		#print "$file_cached: download/cleaned\n";
+	}
 	foreach (@loc_data){
 		my @working = split /\s*\^\^\s*/,$_;
 		#print "$working[0]:$working[1]\n";
 		if ($working[0] eq 'CountryCode3' ) {
-			$loc{'country'} = $working[1];
+			$loc{'country3'} = $working[1];
 		}
-		elsif (! $loc{'country'} && $working[0] eq 'CountryCode' ) {
+		elsif ($working[0] eq 'CountryCode' ) {
 			$loc{'country'} = $working[1];
 		}
 		elsif ($working[0] eq 'CountryName' ) {
-			$loc{'country'} = $working[1];
+			$loc{'country2'} = $working[1];
 		}
 		elsif ($working[0] eq 'RegionCode' ) {
 			$loc{'region-id'} = $working[1];
@@ -7073,9 +7187,14 @@ sub get_location {
 	elsif ($loc{'zip'}){
 		$loc_arg = $loc{'zip'};
 	}
-	#print ($loc_arg, join "\n", @loc_data,"\n");
+	$country = ($loc{'country3'}) ? $loc{'country3'} : $loc{'country'};
+	$city = ($loc{'city'}) ? $loc{'city'} : 'City N/A';
+	$state = ($loc{'region-id'}) ? $loc{'region-id'} : 'Region N/A';
+	$loc_string = (!$show{'filter'}) ? "$city, $state, $country" : $filter_string;
+	my @location = ($loc_arg,$loc_string,$loc{'tz'});
+	#print ($loc_arg,"\n", join "\n", @loc_data, "\n",scalar @loc_data, "\n");
 	eval $end if $b_log;
-	return $loc_arg;
+	return @location;
 }
 }
 
