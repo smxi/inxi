@@ -1,5 +1,11 @@
 README for inxi - a command line system information tool
 
+NOTE: there is a feature freeze on inxi 2.3.xx development, except 
+for bug fixes. All current development is on the 2.9.00-xxx-p branch
+which is in alpha or beta states depending on the module being
+worked on. Once I view 2.9.00-xxx-p as feature complete or better 
+vs inxi 2.3.xx, it will become the current master branch of inxi.
+
 =====================================================================
 If you do not want to get the full master with gz history data, which
 gets bigger every year, you can clone inxi current using the: 
@@ -7,8 +13,8 @@ master-plain branch.
 
 git clone https://github.com/smxi/inxi --branch master-plain --single-branch
 
-This branch does not have inxi.1.gz or inxi.tar.gz, and so does not 
-suffer from the size inflation that master has. 
+The master-plain branch does not have inxi.1.gz or inxi.tar.gz, and 
+so does not suffer from the size inflation that master has. 
 =====================================================================
 SUPPORT INFO:
 
@@ -38,28 +44,27 @@ DEVELOPER FORUMS: http://techpatterns.com/forums/forum-32.html
 
 SOURCE VERSION CONTROL: https://github.com/smxi/inxi
 MAIN BRANCH: master
-DEVELOPMENT BRANCHES: one, two, three, android, bsd
+DEVELOPMENT BRANCHES: inxi-perl, one, two, three, android, bsd
 Dev branches are rarely used, but that's where the really hard new features etc
 are debugged and worked out. inxi itself has the built in feature to be able
 to update itself from anywhere, including these branches, which is very useful
 for development and debugging on many user systems.
 
-inxi was happily on googlecode until they decided to shut it down, which forced
-me to pick an inferior option, github in this case. Since all the options were
-bad, I picked the most popular of the bad options. I miss googlecode already...
-
 PULL REQUESTS: inxi is VERY complicated and VERY hard to work on, so unless
 you have already talked to me about contributing, and, more important, shown 
-that you can actually work with this type of arcane code, please do not 
-spend time trying to work on inxi, unless it's a trivial patch, to the 
-current branch, current version. Please: NEVER even think about looking at or 
-using previous inxi commits, previous to the current one, as a base for a patch.
-If you do, your patch / pull request will be rejected immediately, without 
-any discussion.
+that you can actually work with this type of logic, please do not spend time 
+trying to work on inxi, unless it's a trivial patch, to the current branch, 
+current version. Please: NEVER even think about looking at or using previous 
+inxi commits, previous to the current one, as a base for a patch. If you do, 
+your patch / pull request will be rejected immediately, without any discussion.
 
-inxi has one and only one release, and that is the current one. All 
-previous releases are immediately obsolete on the commit of every new release.
-There is no exception to this, and never will be.
+Note further: no core changes will be accepted until inxi 3.0.0 goes live, 
+since that's just more stuff I have to port over.
+
+inxi has one and only one release, and that is the current one (plus dev releases,
+of course, but those should never be packaged). All previous releases are 
+immediately obsolete on the commit of every new release. There is no exception to 
+this, and never will be.
 
 Man page updates, doc page updates, etc, of course, are easy and will probably
 be accepted, as long as they are done according to the requirements. 
@@ -106,40 +111,20 @@ correctly, which doesn't often happen, so in those cases, you want to
 confirm things like ram capacity with a reputable hardware source, like
 crucial.com, which has the best ram hardware tool I know of.
 
-Some might, correctly, note the insanity of writing a huge gawk program 
-wrapped in thousands of lines of bash, but this ignores the absolute core 
-mission of inxi: to always work on all systems all the time. Well, all 
-linux systems with the core tools inxi requires to operate installed. Ie, 
-not android, yet. What this means is this: you can have a 10 year old box,
-or probably 15, not sure, and you can install today's inxi on it, and it
-will run. It won't run fast, but it will run. I test inxi on a 200 MHz 
-laptop from about 1998 to keep it honest. That's also what was used to
-optimize the code.
+Tthe absolute core mission of inxi is to always work on all systems all the 
+time. Well, all linux systems with the core tools inxi requires to operate
+installed. Ie, not android, yet. What this means is this: you can have a 10 
+year old box, or probably 15, not sure, and you can install today's inxi on 
+it, and it will run. It won't run fast, but it will run. I test inxi on a 
+200 MHz  laptop from about 1998 to keep it honest. That's also what was 
+used to optimize the code at some points, since differences appear as seconds,
+not 10ths of seconds.
 
-In other words, inxi will not fail on a bash/gawk update, and you can 
-generally count on Bash and Gawk being installed on any real GNU/Linux 
-system. Well, they should be, although for some perverse reason Ubuntu 
-refuses to include gawk, which is gnu awk, in their base install. Why gawk?
-because that's the most commonly available language for parsing data and 
-creating reports. Arcane, yes, obsolete? yes, works? yes. Bash is interactive,
-and is available on almost all GNU/Linux systems. Do I like Bash or Gawk?
-No, I don't. But nothing comes close to the long term reliability and 
-stability of gawk/bash/sed/grep, nothing is even remotely close. I keep 
-looking, but language after language prove themselves to not be valid
-candidates for this core stability requirement as they change or break their
-APIs with new releases, along with not being parts of a generic core GNU/Linux
-install.
-
-This is why, for example, some Bash 4 things that would be nice to have in
-inxi are not used, to not break backward compatibility. It is a show stopper
-bug if an inxi update breaks something that was working in an old system.
-
-But why gawk instead of awk? That is an issue that has plagued inxi for a
-long time, the bottom line is this: both bash and awk are such inferior
-languages overall that the only way to really get them to work in a complex
-scenario like inxi is to use the most advanced version of awk possible, which 
-is gnu awk, aka, gawk. Gawk has: case insensitive switches (critical for 
-parsing garbage random system data), gensub (search and replace like sed).
+Once inxi has moved to Perl 5.x, from Bash / Gawk, the commitment to always
+work on all hardware no matter how old the OS, with reason, is not changed.
+inxi is being written, and tested, on Perl as old as 5.08, and will work on
+any system that runs Perl 5.08 or later. Pre 3.0.0 inxi will also run on 
+any system no matter how old, within reason, so there should be no difference.
 
 =====================================================================
 BSD SUPPORT
