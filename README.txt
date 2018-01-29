@@ -2,8 +2,8 @@
 README for development branch of inxi Perl version: pinxi
 ====================================================================
 FILE:    README.txt
-VERSION: 1.9
-DATE:    2018-01-24
+VERSION: 2.0
+DATE:    2018-01-28
 
 NOTE: While the real program name will never change, for the sake
 of clarity, I will refer to the inxi-Perl dev branch inxi as pinxi, 
@@ -145,7 +145,7 @@ Note that my current development goals are, roughly in this order:
      Memory: Started
      PCI Slots: DONE: NEW!
      CPU: DONE (except for BSD support)
-     Graphics: Half Done 
+     Graphics: DONE
      Audio: DONE 
      Network: DONE - with new features!
      Drives: Started - stub
@@ -156,7 +156,7 @@ Note that my current development goals are, roughly in this order:
      Sensors: Started - stub 
      Repos: Half Done, missing some distros and package tools
      Processes: DONE - Improved significantly
-     Weather: Started - stub
+     Weather: DONE
      Info: DONE (only half of BSD memory)
    
 10. Look into adding support for language hashes, that would replace 
