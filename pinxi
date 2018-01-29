@@ -39,8 +39,8 @@ use Time::HiRes qw(gettimeofday tv_interval);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-01-27';
-my $self_patch='229-p';
+my $self_date='2018-01-29';
+my $self_patch='230-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -8698,13 +8698,12 @@ sub get_memory_data_linux {
 #  0 0 0       0  84060 30273993 2845 12742 1164 407498171 320960902   0   0 ....
 sub get_memory_data_bsd {
 	eval $start if $b_log;
-	my $memory = 'BSD-dev';
-	my $total = 0;
-	my $avg = 0;
-	my (@data,$b_free);
-	
+	my $memory = '';
+	my ($avg,$total,$free_mem,$real_mem) = (0,0,0);
+	my (@data,$message);
 	if (my $program = check_program('vmstat')){
-		# see above, it's the last line
+		# see above, it's the last line. -H makes it hopefully all in kB so no need 
+		# for K/M/G tests
 		my $row = (grabber('vmstat -H 2>/dev/null','\n','strip'))[-1];
 		if ( $row ){
 			@data = split /\s+/, $row;
@@ -8713,20 +8712,48 @@ sub get_memory_data_bsd {
 				$avg = sprintf ('%.1f',$data[3]/1024);
 			}
 			elsif ($data[4] != 0){
-				$b_free = 1;
-				$avg = sprintf ('%.1f',$data[4]/1024);
+				$free_mem = sprintf ('%.1f',$data[4]/1024);
 			}
 		}
 	}
 	## code to get total goes here:
-	my $type = ($b_free) ? ' free':'' ;
-	if ($avg && !$total){
-		$memory = "$avg$type/(total N/A) MB";
+	if ($alerts{'sysctl'}{'action'} eq 'use'){
+		# for dragonfly, we will use free mem, not used because free is 0
+		my @working;
+		foreach (@sysctl){
+			# freebsd seems to use bytes here
+			if (!$real_mem && /^hw.physmem/){
+				@working = split /\s+/,$_;
+				$working[1] =~ s/^[^0-9]+|[^0-9]+$//g;
+				$real_mem = $working[1]/1024;
+				last if $free_mem;
+			}
+			# But, it uses K here. Openbsd does not seem to have this item
+			# this can be either: Free Memory OR Free Memory Pages
+			elsif (/^Free Memory/){
+				@working = split /\s+/,$_;
+				$working[-1] =~ s/[^0-9]+//g;
+				$free_mem = $working[-1]/1024;
+				last if $real_mem;
+			}
+		}
 	}
-	elsif ($avg && $total) {
-		my $used = (!$b_free) ? $avg : $total - $avg;
-		my $percent = ($used && $total) ? sprintf(" (%.1f%%)", ($used/$total)*100) : '';
-		$memory = "$used$type/$total MB" . $percent;
+	else {
+		$message = "sysctl $alerts{'sysctl'}{'action'}"
+	}
+	my $type = ($free_mem) ? ' free':'' ;
+	# hack: temp fix for openbsd/darwin: in case no free mem was detected but we have physmem
+	
+	if (($avg || $free_mem) && !$real_mem){
+		my $error = ($message) ? $message: 'total N/A';
+		my $used = (!$free_mem) ? $avg : $real_mem - $free_mem;
+		$memory = "$used$type/($error) MB";
+	}
+	# use openbsd/dragonfly avail mem data if available
+	elsif (($avg || $free_mem) && $real_mem) {
+		my $used = (!$free_mem) ? $avg : $real_mem - $free_mem;
+		my $percent = ($used && $real_mem) ? sprintf(" (%.1f%%)", ($used/$real_mem)*100) : '';
+		$memory = "$used$type/$real_mem MB" . $percent;
 	}
 	eval $end if $b_log;
 	return $memory;
