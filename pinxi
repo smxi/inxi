@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-01-30';
-my $self_patch='232-p';
+my $self_patch='233-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -6843,6 +6843,7 @@ sub get_repos_linux {
 	my $apk = '/etc/apk/repositories';
 	my $apt = '/etc/apt/sources.list';
 	my $pacman = '/etc/pacman.conf';
+	my $pisi_dir = '/etc/pisi/';
 	my $portage_dir = '/etc/portage/repos.conf/';
 	my $slackpkg = '/etc/slackpkg/mirrors';
 	my $slackpkg_plus = '/etc/slackpkg/slackpkgplus.conf';
@@ -7044,7 +7045,80 @@ sub get_repos_linux {
 		@data = repo_builder($apk,'apk','^\s*[^#]+');
 		@rows = (@rows,@data);
 	}
-	# print Dumper \@repos;
+	# Mandriva/Mageia using: urpmq
+	elsif ( main::check_program('urpmq') ){
+		@data2 = main::grabber("urpmq --list-media active --list-url","\n",'strip');
+		main::writer("$debugger_dir/system-repo-data-urpmq.txt",@data2) if $debugger_dir;
+		# now we need to create the structure: repo info: repo path
+		# we do that by looping through the lines of the output and then
+		# putting it back into the <data>:<url> format print repos expects to see
+		# note this structure in the data, so store first line and make start of line
+		# then when it's an http line, add it, and create the full line collection.
+		# Contrib ftp://ftp.uwsg.indiana.edu/linux/mandrake/official/2011/x86_64/media/contrib/release
+		# Contrib Updates ftp://ftp.uwsg.indiana.edu/linux/mandrake/official/2011/x86_64/media/contrib/updates
+		# Non-free ftp://ftp.uwsg.indiana.edu/linux/mandrake/official/2011/x86_64/media/non-free/release
+		# Non-free Updates ftp://ftp.uwsg.indiana.edu/linux/mandrake/official/2011/x86_64/media/non-free/updates
+		# Nonfree Updates (Local19) /mnt/data/mirrors/mageia/distrib/cauldron/x86_64/media/nonfree/updates
+		foreach (@data2){
+			# need to dump leading/trailing spaces and clear out color codes for irc output
+			$_ =~ s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]//g;
+			$_ =~ s/\e\[([0-9];)?[0-9]+m//g;
+			# urpmq output is the same each line, repo name space repo url, can be:
+			# rsync://, ftp://, file://, http:// OR repo is locally mounted on FS in some cases
+			if (/(.+)\s([\S]+:\/\/.+)/){
+				# pack the repo url
+				push @content, $1;
+				# get the repo
+				$repo = $2;
+				@data = (
+				{$num++ . "#urpmq repo" => $repo},
+				[@content],
+				);
+				@rows = (@rows,@data);
+				@content = ();
+			}
+		}
+	}
+	# Pardus
+	elsif (-d $pisi_dir && main::check_program('pisi') ){
+		@data2 = main::grabber("pisi list-repo 2>/dev/null","\n",'strip');
+		main::writer("$debugger_dir/system-repo-data-pisi.txt",@data2) if $debugger_dir;
+		# now we need to create the structure: repo info: repo path
+		# we do that by looping through the lines of the output and then
+		# putting it back into the <data>:<url> format print repos expects to see
+		# note this structure in the data, so store first line and make start of line
+		# then when it's an http line, add it, and create the full line collection.
+		# Pardus-2009.1 [Aktiv]
+		# 	http://packages.pardus.org.tr/pardus-2009.1/pisi-index.xml.bz2
+		# Contrib [Aktiv]
+		# 	http://packages.pardus.org.tr/contrib-2009/pisi-index.xml.bz2
+		foreach (@data2){
+			# need to dump leading/trailing spaces and clear out color codes for irc output
+			$_ =~ s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]//g;
+			$_ =~ s/\e\[([0-9];)?[0-9]+m//g;
+			if (/:\/\//){
+				push @content, $_;
+			}
+			else {
+				$repo = $_;
+				@data = (
+				{$num++ . "#pisi repo" => $repo},
+				[@content],
+				);
+				@rows = (@rows,@data);
+				@content = ();
+			}
+		}
+		# last one if present
+		if ($repo && @content){
+			@data = (
+			{$num++ . "#pisi repo" => $repo},
+			[@content],
+			);
+			@rows = (@rows,@data);
+		}
+	}
+	# print Dumper \@rows;
 	eval $end if $b_log;
 	return @rows;
 }
