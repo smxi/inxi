@@ -2,8 +2,8 @@
 README for development branch of inxi Perl version: pinxi
 ====================================================================
 FILE:    README.txt
-VERSION: 2.0
-DATE:    2018-01-28
+VERSION: 2.1
+DATE:    2018-01-30
 
 NOTE: While the real program name will never change, for the sake
 of clarity, I will refer to the inxi-Perl dev branch inxi as pinxi, 
@@ -136,13 +136,19 @@ Note that my current development goals are, roughly in this order:
    
    Status of Lines:
      Short: 
-     Started (missing hard drive, half of memory for BSD)
+     ALMOST DONE: 
+     missing Disk Basic
+     
+     Basic -b:
+     ALMOST DONE: 
+     missing Disk Basic
+     missing Battery
      
      Full:
      System: DONE (except BSD compiler)
      Machine: DONE
-     Battery: Started
-     Memory: Started
+     Battery: stub
+     Memory: stub
      PCI Slots: DONE: NEW!
      CPU: DONE (except for BSD support)
      Graphics: DONE
@@ -154,18 +160,20 @@ Note that my current development goals are, roughly in this order:
      Unmounted: Started - stub 
      USB Info: DONE: NEW!
      Sensors: Started - stub 
-     Repos: Half Done, missing some distros and package tools
+     Repos: DONE
      Processes: DONE - Improved significantly
      Weather: DONE
-     Info: DONE (only half of BSD memory)
-   
-10. Look into adding support for language hashes, that would replace 
+     Info: DONE
+     
+10. Man page. Not Started, waiting til feature complete more or less.
+
+11. Look into adding support for language hashes, that would replace 
     the hack key values in the print arrays with the alternate language 
     equivalent. Or, if missing that key, print the english. That would
     solve the issue of people flaking out on language support over time.
     Status: NOT Started (but support is designed in as I go along)
 
-11. Related to 10, add support for alternate output formats, using 
+12. Related to 10, add support for alternate output formats, using 
     json or csv or xml. I assume Perl has modules that make that easy, but 
     it's not very hard to do that manually either once you have the line
     data in hashes.
