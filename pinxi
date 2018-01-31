@@ -39,8 +39,8 @@ use Time::HiRes qw(gettimeofday tv_interval);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-01-29';
-my $self_patch='230-p';
+my $self_date='2018-01-30';
+my $self_patch='231-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -6838,13 +6838,16 @@ sub get {
 
 sub get_repos_linux {
 	eval $start if $b_log;
-	my (@content,@data,@data2,@files,@rows);
+	my (@content,@data,@data2,@files,$repo,@rows);
 	my $num = 0;
 	my $apk = '/etc/apk/repositories';
 	my $apt = '/etc/apt/sources.list';
 	my $pacman = '/etc/pacman.conf';
 	my $slackpkg = '/etc/slackpkg/mirrors';
 	my $slackpkg_plus = '/etc/slackpkg/slackpkgplus.conf';
+	my $yum_conf = '/etc/yum.conf';
+	my $yum_repo_dir = '/etc/yum.repos.d/';
+	my $zypp_repo_dir = '/etc/zypp/repos.d/';
 	
 	# apt - debian, buntus, also sometimes some yum/rpm repos may create 
 	# apt repos here as well
@@ -6921,6 +6924,68 @@ sub get_repos_linux {
 			@rows = (@rows,@data);
 			@content = ();
 		}
+	}
+	elsif (-d $yum_repo_dir || -f $yum_conf || -d $zypp_repo_dir){
+		if (-d $yum_repo_dir || -f $yum_conf){
+			@files = main::globber("$yum_repo_dir*.repo");
+			push @files, $yum_conf if -f $yum_conf;
+			$repo = 'yum';
+		}
+		elsif (-d $zypp_repo_dir){
+			@files = main::globber("$zypp_repo_dir*.repo");
+			main::log_data("zypp repo files:" . join '; ', @files) if $b_log;
+			$repo = 'zypp';
+		}
+		if (@files){
+			foreach (@files){
+				@data2 = main::reader($_);
+				my ($enabled,$url,$title) = ('','','');
+				foreach my $line (@data2){
+					# this is a hack, assuming that each item has these fields listed, we collect the 3
+					# items one by one, then when the url/enabled fields are set, we print it out and
+					# reset the data. Not elegant but it works. Note that if enabled was not present
+					# we assume it is enabled then, and print the line, reset the variables. This will
+					# miss the last item, so it is printed if found in END
+					if (/^\[(.+)\]/){
+						if ($url && $title){
+							push @content, "$title ~ $url";
+							($enabled,$url,$title) = ('','','');
+						}
+						$title = $1;
+					}
+					elsif (/^(mirrorlist|baseurl)\s*=\s*(.*)/){
+						$url = url_cleaner($2);
+					}
+					# note: enabled = 1. enabled = 0 means disabled
+					elsif (/^enabled\s*=([01])/){
+						$enabled = $1;
+					}
+					# print out the line if all 3 values are found, otherwise if a new
+					# repoTitle is hit above, it will print out the line there instead
+					if ($url && $title && $enabled){
+						if ($enabled > 0){
+							push @content, "$title ~ $url";
+						}
+						($enabled,$url,$title) = ('','','');
+					}
+				}
+				# print the last one if there is data for it
+				if ($url && $title){
+					push @content, "$title ~ $url";
+				}
+				@content = ("No $repo sources found in file") if ! @content;
+				@data = (
+				{$num++ . "#$repo sources" => $_},
+				[@content],
+				);
+				@rows = (@rows,@data);
+				@content = ();
+			}
+		}
+		else {
+			@files = qw(none);
+		}
+		main::log_data("$repo repo files:" . join '; ', @files) if $b_log;
 	}
 	# Alpine linux
 	elsif (-f $apk){
@@ -7022,6 +7087,8 @@ sub repo_builder {
 	'netbsd' => 'No pkg servers found in this file',
 	'slackpkg' => 'No sources found in this file',
 	'slackpkg-plus' => 'No sources found in this file',
+	'yum' => 'No sources found in this file',
+	'zypp' => 'No sources found in this file',
 	);
 	$missing = $unfound{$type};
 	my %keys = (
@@ -7036,6 +7103,8 @@ sub repo_builder {
 	'netbsd' => 'NetBSD pkg servers',
 	'slackpkg' => 'slackpkg sources',
 	'slackpkg-plus' => 'slackpkg+ sources',
+	'yum' => 'Active yum sources in',
+	'zypp' => 'Active zypp sources in',
 	);
 	$key = $keys{$type};
 
