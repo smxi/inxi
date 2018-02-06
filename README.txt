@@ -2,8 +2,8 @@
 README for development branch of inxi Perl version: pinxi
 ====================================================================
 FILE:    README.txt
-VERSION: 2.1
-DATE:    2018-01-30
+VERSION: 2.2
+DATE:    2018-02-06
 
 NOTE: While the real program name will never change, for the sake
 of clarity, I will refer to the inxi-Perl dev branch inxi as pinxi, 
@@ -145,7 +145,7 @@ Note that my current development goals are, roughly in this order:
      missing Battery
      
      Full:
-     System: DONE (except BSD compiler)
+     System: DONE
      Machine: DONE
      Battery: stub
      Memory: stub
@@ -155,6 +155,7 @@ Note that my current development goals are, roughly in this order:
      Audio: DONE 
      Network: DONE - with new features!
      Drives: Started - stub
+     Optical: Not started
      Partition: Started  - stub
      RAID: Started - stub 
      Unmounted: Started - stub 

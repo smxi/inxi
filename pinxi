@@ -39,8 +39,8 @@ use Time::HiRes qw(gettimeofday tv_interval);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-02-05';
-my $self_patch='237-p';
+my $self_date='2018-02-06';
+my $self_patch='238-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -4330,17 +4330,14 @@ sub create_full_data {
 		my ($key1,$val1) = ('','');
 		if ( $alerts{'sysctl'} ){
 			if ( $alerts{'sysctl'}{'action'} eq 'use' ){
-				$key1 = 'Status';
-				$val1 = main::row_defaults('dev');
+# 				$key1 = 'Status';
+# 				$val1 = main::row_defaults('dev');
+				%cpu = data_sysctl('full');
 			}
 			else {
 				$key1 = ucfirst($alerts{'sysctl'}{'action'});
 				$val1 = $alerts{'sysctl'}{$alerts{'sysctl'}{'action'}}
 			}
-		}
-		else {
-			$key1 = 'Status';
-			$val1 = main::row_defaults('dev');
 		}
 		@data = ({$num++ . "#$key1" => $val1,});
 		return @data;
@@ -4368,7 +4365,7 @@ sub create_full_data {
 			$rows[$j]{$num++ . "#rev"} = $cpu{'rev'};
 		}
 	}
-	$rows[$j]{$num++ . "#cache"} = $properties{'cache'};
+	$rows[$j]{$num++ . "#L2 cache"} = $properties{'l2-cache'};
 	if ($extra > 0 && !$show{'cpu-flag'}){
 		$j = scalar @rows;
 		@flags = split /\s+/, $cpu{'flags'} if $cpu{'flags'};
@@ -4442,17 +4439,14 @@ sub data_short {
 		my ($key1,$val1) = ('','');
 		if ( $alerts{'sysctl'} ){
 			if ( $alerts{'sysctl'}{'action'} eq 'use' ){
-				$key1 = 'Status';
-				$val1 = main::row_defaults('dev');
+# 				$key1 = 'Status';
+# 				$val1 = main::row_defaults('dev');
+				%cpu = data_sysctl($type);
 			}
 			else {
 				$key1 = ucfirst($alerts{'sysctl'}{'action'});
 				$val1 = $alerts{'sysctl'}{$alerts{'sysctl'}{'action'}}
 			}
-		}
-		else {
-			$key1 = 'Status';
-			$val1 = main::row_defaults('dev');
 		}
 		@data = ({$num++ . "#$key1" => $val1,});
 		return @data;
@@ -4517,80 +4511,19 @@ sub prep_short_data {
 sub data_cpuinfo {
 	eval $start if $b_log;
 	my ($file,$type)=  @_;
-	my ($arch,@arm,@ids,%cpu,%speeds,@line,$b_first,$b_proc_int);
+	my ($arch,@ids,@line,$b_first,$b_proc_int);
 	# $file = "$ENV{HOME}/bin/scripts/inxi/data/cpu/amd/16-core-32-mt-ryzen.txt";
 	#$file = "$ENV{HOME}/bin/scripts/inxi/data/cpu/arm/arm-4-4-speeds-1.txt";
 	#$file = "$ENV{HOME}/bin/scripts/inxi/data/cpu/intel/core-2-i3.txt";
 	#my @cpuinfo = main::reader($file);
-	my $sys = '/sys/devices/system/cpu/cpufreq/policy0';
-	my $sys2 = '/sys/devices/system/cpu/cpu0/cpufreq/';
-	my ($cur,$min,$max) = ('scaling_cur_freq','scaling_min_freq','scaling_max_freq');
-	if (!-d $sys && -d $sys2){
-		$sys = $sys2;
-		($cur,$min,$max) = ('scaling_cur_freq','cpuinfo_min_freq','cpuinfo_max_freq');
-	}
-	if (-d $sys){
-		$speeds{'cur-freq'} = (main::reader("$sys/$cur"))[0];
-		$speeds{'cur-freq'} = speed_cleaner($speeds{'cur-freq'},'khz');
-		$speeds{'min-freq'} = (main::reader("$sys/$min"))[0];
-		$speeds{'min-freq'} = speed_cleaner($speeds{'min-freq'},'khz');
-		$speeds{'max-freq'} = (main::reader("$sys/$max"))[0];
-		$speeds{'max-freq'} = speed_cleaner($speeds{'max-freq'},'khz');
-		if ($b_arm){
-			@arm = main::globber('/sys/devices/system/cpu/cpufreq/policy*/');
-			# there are arm chips with two dies, that run at different min max speeds!!
-			# see: https://github.com/smxi/inxi/issues/128.
-			# it would be slick to show both die min/max/cur speeds, but this is
-			# ok for now.
-			if (scalar @arm > 1){
-				my ($current,$max,$min) = (0,0,0);
-				foreach (@arm){
-					$_ =~ s/\/$//; # strip off last slash in case globs have them
-					my $max_temp = main::reader("$_/cpuinfo_max_freq");
-					$max_temp = speed_cleaner($max_temp,'khz');
-					if ($max_temp > $max){
-						$max = $max_temp;
-					}
-					my $min_temp = main::reader("$_/cpuinfo_min_freq");
-					$min_temp = speed_cleaner($min_temp,'khz');
-					if ($min_temp < $min || $min == 0){
-						$max = $min_temp;
-					}
-					my $cur_temp = main::reader("$_/cpuinfo_max_freq");
-					$cur_temp = speed_cleaner($cur_temp,'khz');
-					if ($cur_temp > $current){
-						$current = $cur_temp;
-					}
-				}
-				$speeds{'cur-freq'} = $current if $current;
-				$speeds{'max-freq'} = $max if $max;
-				$speeds{'min-freq'} = $min if $min;
-			}
-		}
-		# policy4/cpuinfo_max_freq:["2000000"]
-		# policy4/cpuinfo_min_freq:["200000"]
-		if ($speeds{'min-freq'} > $speeds{'max-freq'} || $speeds{'min-freq'} == $speeds{'max-freq'}){
-			$speeds{'min-freq'} = 0 ;
-		}
-	}
+	my %speeds = set_cpu_speeds_sys();
 	my @cpuinfo = main::reader($file);
 	my ($cache,$die_holder,$die_id,$phys_holder,$phys_id,$proc_count,$speed) = (0,0,0,0,0,0,0);
 	# need to prime for arm cpus, which do not have physical/core ids usually
 	# level 0 is phys id, level 1 is die id, level 2 is core id
 	$ids[0] = ([(0)]);
 	$ids[0][0] = ([(0)]);
-	%cpu =  (
-	'arch' => '',
-	'cache' => 0, # store in KB
-	'cores' => 0,
-	'family' => '',
-	'flags' => '',
-	'model_id' => '',
-	'model_name' => '',
-	'processors' => [],
-	'siblings' => 0,
-	'ids' => [],
-	);
+	my %cpu =  set_cpu_data();
 	# note, there con be a lot of processors, 32 core HT would have 64, for example.
 	foreach (@cpuinfo){
 		next if /^\s*$/;
@@ -4681,26 +4614,16 @@ sub data_cpuinfo {
 			$cpu{'dies'} = $die_id;
 		}
 		if (!$cpu{'type'} && $line[0] eq 'vendor_id' ){
-			$line[1] = lc($line[1]);
-			if ( $line[1] =~ /intel/ ) {
-				$cpu{'type'} = "intel"
-			}
-			elsif ($line[1] =~ /amd/){
-				$cpu{'type'} = "amd"
-			}
-			# via
-			elsif ($line[1] =~ /centaur/){
-				$cpu{'type'} = "centaur"
-			}
+			$cpu{'type'} = cpu_vendor($line[1]);
 		}
 		## this is only for -C full cpu output
 		if ( $type eq 'full' ){
-			if (!$cpu{'cache'} && $line[0] eq 'cache size'){
+			if (!$cpu{'l2-cache'} && $line[0] eq 'cache size'){
 				if ($line[1] =~ /(\d+)\sKB$/){
-					$cpu{'cache'} = $1;
+					$cpu{'l2-cache'} = $1;
 				}
 				elsif ($line[1] =~ /(\d+)\sMB$/){
-					$cpu{'cache'} = ($1*1024);
+					$cpu{'l2-cache'} = ($1*1024);
 				}
 			}
 			if (!$cpu{'flags'} && ($line[0] eq 'flags' || $line[0] eq 'features' )){
@@ -4719,7 +4642,6 @@ sub data_cpuinfo {
 		$cpu{'arch'} = cpu_arch($cpu{'type'},$cpu{'family'},$cpu{'model_id'});
 		#print "$cpu{'type'},$cpu{'family'},$cpu{'model_id'},$cpu{'arch'}\n";
 	}
-	
 	if (!$speeds{'cur-freq'}){
 		$cpu{'cur-freq'} = $cpu{'processors'}[0];
 		$speeds{'min-freq'} = 0;
@@ -4732,6 +4654,203 @@ sub data_cpuinfo {
 	}
 	#print Data::Dumper::Dumper \%cpu;
 	eval $end if $b_log;
+	return %cpu;
+}
+
+# 'arch' => '',
+# 'bogomips' => 0,
+# 'l2-cache' => 0, # store in KB
+# 'cores' => 0,
+# 'cur-freq' => 0,
+# 'dies' => 0,
+# 'family' => '',
+# 'flags' => '',
+# 'ids' => [],
+# 'max-freq' => 0,
+# 'min-freq' => 0,
+# 'model_id' => '',
+# 'model_name' => '',
+# 'processors' => [],
+# 'rev' => '',
+# 'siblings' => 0,
+# 'type' => '',
+
+sub data_sysctl {
+	eval $start if $b_log;
+	my ($type) = @_;
+	my %cpu = set_cpu_data();
+	my (@line,%speeds,@working);
+	my ($sep) = ('');
+	
+	foreach (@sysctl){
+		@line = split /\s*:\s*/, $_;
+		# darwin shows machine, like MacBook7,1, not cpu
+		# machdep.cpu.brand_string: Intel(R) Core(TM)2 Duo CPU     P8600  @ 2.40GHz
+		if ( ($bsd_type ne 'darwin' && $line[0] eq 'hw.model' ) || $line[0] eq 'machdep.cpu.brand_string' ){
+			# cut L2 cache/cpu max speed out of model string, if available
+			# openbsd 5.6: AMD Sempron(tm) Processor 3400+ ("AuthenticAMD" 686-class, 256KB L2 cache)
+			# freebsd 10: hw.model: AMD Athlon(tm) II X2 245 Processor
+			$line[1] = main::cleaner($line[1]);
+			$line[1] = cpu_cleaner($line[1]);
+			if ( $line[1] =~ /([0-9]+)[\-[:space:]]*([KM]B)\s+L2 cache/) {
+				my $multiplier = ($2 eq 'KB') ? 1024: 1;
+				$cpu{'l2-cache'} = $1 * $multiplier;
+			}
+			if ( $line[1] =~ /([^0-9\.][0-9\.]+)[\-[:space:]]*[MG]Hz/) {
+				$cpu{'max-freq'} = $1;
+				if ($cpu{'max-freq'} =~ /MHz/i) {
+					$cpu{'max-freq'} =~ s/[\-[:space:]]*MHz//;
+					$cpu{'max-freq'} = speed_cleaner($cpu{'max-freq'},'mhz');
+				}
+				elsif ($cpu{'max-freq'} =~ /GHz/) {
+					$cpu{'max-freq'} =~ s/[\-[:space:]]*GHz//i;
+					$cpu{'max-freq'} = $cpu{'max-freq'} / 1000;
+					$cpu{'max-freq'} = speed_cleaner($cpu{'max-freq'},'mhz');
+				}
+			}
+			if ( $line[1] =~ /\)$/ ){
+				$line[1] =~ s/\s*\(.*\)$//;
+			}
+			$cpu{'model_name'} = $line[1];
+			$cpu{'type'} = cpu_vendor($line[1]);
+		}
+		# NOTE: hw.l1icachesize: hw.l1dcachesize:
+		elsif ($line[0] eq 'hw.l1icachesize') {
+			$cpu{'l1-cache'} = $line[1]/1024;
+		}
+		elsif ($line[0] eq 'hw.l2cachesize') {
+			$cpu{'l2-cache'} = $line[1]/1024;
+		}
+		# this is in mghz in samples
+		elsif ($line[0] eq 'hw.clockrate' || $line[0] eq 'hw.cpuspeed') {
+			$cpu{'cur-freq'} = $line[1];
+		}
+		# these are in hz: 2400000000
+		elsif ($line[0] eq 'hw.cpufrequency') {
+			$cpu{'cur-freq'} = $line[1]/1000000;
+		}
+		elsif ($line[0] eq 'hw.busfrequency_min') {
+			$cpu{'min-freq'} = $line[1]/1000000;
+		}
+		elsif ($line[0] eq 'hw.busfrequency_max') {
+			$cpu{'max-freq'} = $line[1]/1000000;
+		}
+		elsif ($line[0] eq 'machdep.cpu.vendor') {
+			$cpu{'type'} = cpu_vendor($line[1]);
+		}
+		elsif ($line[0] eq 'machdep.cpu.features') {
+			$cpu{'flags'} = lc($line[1]);
+		}
+		elsif ($line[0] eq 'hw.ncpu' ) {
+			$cpu{'cores'} = $line[1];
+		}
+		# these are stacked, and are part of: kern.conftxt:
+		elsif ($line[0] =~ /^device\s/) {
+			@working = split /\s+/,$line[0];
+			$cpu{'flags'} .= $sep . lc($working[1]);
+			$sep = ' ';
+		}
+		
+		# Freebsd does some voltage hacking to actually run at lowest listed frequencies.
+		# The cpu does not actually support all the speeds output here but works in freebsd. 
+		elsif ($line[0] eq 'dev.cpu.0.freq_levels') {
+			$line[1] =~ s/^\s+|\/[0-9]+|\s+$//g;
+			if ( $line[1] =~ /[0-9]+\s+[0-9]+/ ) {
+				my @temp = split /\s+/, $line[1];
+				$cpu{'max-freq'} = $temp[0];
+				$cpu{'min-freq'} = $temp[-1];
+				$cpu{'scalings'} = \@temp;
+			}
+		}
+		elsif (!$cpu{'cur-freq'} && $line[0] eq 'dev.cpu.0.freq' ) {
+			$cpu{'cur-freq'} = $line[1];
+		}
+	}
+	
+	eval $end if $b_log;
+	return %cpu;
+}
+
+sub set_cpu_speeds_sys {
+	eval $start if $b_log;
+	my (@arm,%speeds);
+	my $sys = '/sys/devices/system/cpu/cpufreq/policy0';
+	my $sys2 = '/sys/devices/system/cpu/cpu0/cpufreq/';
+	my ($cur,$min,$max) = ('scaling_cur_freq','scaling_min_freq','scaling_max_freq');
+	if (!-d $sys && -d $sys2){
+		$sys = $sys2;
+		($cur,$min,$max) = ('scaling_cur_freq','cpuinfo_min_freq','cpuinfo_max_freq');
+	}
+	if (-d $sys){
+		$speeds{'cur-freq'} = (main::reader("$sys/$cur"))[0];
+		$speeds{'cur-freq'} = speed_cleaner($speeds{'cur-freq'},'khz');
+		$speeds{'min-freq'} = (main::reader("$sys/$min"))[0];
+		$speeds{'min-freq'} = speed_cleaner($speeds{'min-freq'},'khz');
+		$speeds{'max-freq'} = (main::reader("$sys/$max"))[0];
+		$speeds{'max-freq'} = speed_cleaner($speeds{'max-freq'},'khz');
+		if ($b_arm){
+			@arm = main::globber('/sys/devices/system/cpu/cpufreq/policy*/');
+			# there are arm chips with two dies, that run at different min max speeds!!
+			# see: https://github.com/smxi/inxi/issues/128.
+			# it would be slick to show both die min/max/cur speeds, but this is
+			# ok for now.
+			if (scalar @arm > 1){
+				my ($current,$max,$min) = (0,0,0);
+				foreach (@arm){
+					$_ =~ s/\/$//; # strip off last slash in case globs have them
+					my $max_temp = main::reader("$_/cpuinfo_max_freq");
+					$max_temp = speed_cleaner($max_temp,'khz');
+					if ($max_temp > $max){
+						$max = $max_temp;
+					}
+					my $min_temp = main::reader("$_/cpuinfo_min_freq");
+					$min_temp = speed_cleaner($min_temp,'khz');
+					if ($min_temp < $min || $min == 0){
+						$max = $min_temp;
+					}
+					my $cur_temp = main::reader("$_/cpuinfo_max_freq");
+					$cur_temp = speed_cleaner($cur_temp,'khz');
+					if ($cur_temp > $current){
+						$current = $cur_temp;
+					}
+				}
+				$speeds{'cur-freq'} = $current if $current;
+				$speeds{'max-freq'} = $max if $max;
+				$speeds{'min-freq'} = $min if $min;
+			}
+		}
+		# policy4/cpuinfo_max_freq:["2000000"]
+		# policy4/cpuinfo_min_freq:["200000"]
+		if ($speeds{'min-freq'} > $speeds{'max-freq'} || $speeds{'min-freq'} == $speeds{'max-freq'}){
+			$speeds{'min-freq'} = 0;
+		}
+	}
+	eval $end if $b_log;
+	return %speeds;
+}
+sub set_cpu_data {
+	my %cpu =  (
+	'arch' => '',
+	'bogomips' => 0,
+	'cores' => 0,
+	'cur-freq' => 0,
+	'dies' => 0,
+	'family' => '',
+	'flags' => '',
+	'ids' => [],
+	'l1-cache' => 0, # store in KB
+	'l2-cache' => 0, # store in KB
+	'l3-cache' => 0, # store in KB
+	'max-freq' => 0,
+	'min-freq' => 0,
+	'model_id' => '',
+	'model_name' => '',
+	'processors' => [],
+	'rev' => '',
+	'scalings' => [],
+	'siblings' => 0,
+	'type' => '',
+	);
 	return %cpu;
 }
 
@@ -4833,15 +4952,15 @@ sub cpu_properties {
 	}
 	# AMD SOS chips appear to report full L2 cache per core
 	if ($cpu{'type'} eq 'amd' && ($cpu{'family'} eq '14' || $cpu{'family'} eq '16')){
-		$cache = $cpu{'cache'} * $phyical_count;
+		$cache = $cpu{'l2-cache'} * $phyical_count;
 	}
 	elsif ($cpu{'type'} ne 'intel'){
-		$cache = $cpu{'cache'} * $cpu_cores * $phyical_count;
+		$cache = $cpu{'l2-cache'} * $cpu_cores * $phyical_count;
 	}
 	## note: this handles how intel reports L2, total instead of per core like AMD does
 	# note that we need to multiply by number of actual cpus here to get true cache size
 	else {
-		$cache = $cpu{'cache'} * $phyical_count;
+		$cache = $cpu{'l2-cache'} * $phyical_count;
 	}
 	$cache = ($cache > 10000) ? sprintf("%.02f MB",$cache/1024) : "$cache KB";
 	if ($cpu{'cur-freq'} && $cpu{'min-freq'} && $cpu{'max-freq'} ){
@@ -4878,7 +4997,7 @@ sub cpu_properties {
 	'min-max' => $min_max,
 	'speed-key' => $speed_key,
 	'speed' => $speed,
-	'cache' => $cache,
+	'l2-cache' => $cache,
 	);
 	
 	#print Data::Dumper::Dumper \%cpu;
@@ -4910,6 +5029,24 @@ sub cpu_speeds {
 	#print join '; ', @speeds, "\n";
 	eval $end if $b_log;
 	return @speeds;
+}
+sub cpu_vendor {
+	eval $start if $b_log;
+	my ($string) = @_;
+	my ($vendor) = ('');
+	$string = lc($string);
+	if ($string =~ /intel/) {
+		$vendor = "intel"
+	}
+	elsif ($string =~ /amd/){
+		$vendor = "amd"
+	}
+	# via
+	elsif ($string =~ /centaur/){
+		$vendor = "centaur"
+	}
+	eval $end if $b_log;
+	return $vendor;
 }
 
 sub cpu_arch {
@@ -5058,7 +5195,7 @@ sub count_alpha {
 sub speed_cleaner {
 	my ($speed,$opt) = @_;
 	return if ! $speed || $speed eq '0';
-	$speed =~ s/MHZ$//g;
+	$speed =~ s/[GMK]HZ$//gi;
 	$speed = ($speed/1000) if $opt && $opt eq 'khz';
 	$speed = sprintf "%.0f", $speed;
 	return $speed;
@@ -7906,10 +8043,11 @@ sub get_compiler_version_bsd {
 		my @working;
 		foreach (@sysctl){
 			# freebsd seems to use bytes here
-			@working = split /:\s*/, $_;
 			# Not every line will have a : separator though the processor should make 
-			# most have it.
-			if ($working[0] && $working[0] eq 'kern.compiler_version'){
+			# most have it. This appears to be 10.x late feature add, I don't see it
+			# on earlier BSDs
+			if (/^kern.compiler_version/){
+				@working = split /:\s*/, $_;
 				$working[1] =~ /.*(gcc|clang)\sversion\s([\S]+)\s.*/;
 				@compiler = ($1,$2);
 				last;
@@ -8723,7 +8861,6 @@ sub get_gcc_data {
 		$gcc =~ s/\([^\)]*\)//g;
 		$gcc = get_piece($gcc,2);
 	}
-	
 	if ($extra > 1){
 		# glob /usr/bin for gccs, strip out all non numeric values
 		@gccs = grep { s/.*\/gcc-[^0-9]+.*|.*\/gcc-// } </usr/bin/gcc-*>;
@@ -8937,22 +9074,21 @@ sub get_memory_data_bsd {
 		my @working;
 		foreach (@sysctl){
 			# freebsd seems to use bytes here
-			@working = split /:\s*/,$_;
-			if ($working[0]){
-				if (!$real_mem && $working[0] eq 'hw.physmem'){
-					#if ($working[1]){
-						$working[1] =~ s/^[^0-9]+|[^0-9]+$//g;
-						$real_mem = sprintf("%.1f", $working[1]/1024/1024);
-					#}
-					last if $free_mem;
-				}
-				# But, it uses K here. Openbsd does not seem to have this item
-				# this can be either: Free Memory OR Free Memory Pages
-				elsif ($working[0] eq 'Free Memory'){
-					$working[1] =~ s/[^0-9]+//g;
-					$free_mem = sprintf("%.1f", $working[1]/1024);
-					last if $real_mem;
-				}
+			if (!$real_mem && /^hw.physmem:/){
+				@working = split /:\s*/,$_;
+				#if ($working[1]){
+					$working[1] =~ s/^[^0-9]+|[^0-9]+$//g;
+					$real_mem = sprintf("%.1f", $working[1]/1024/1024);
+				#}
+				last if $free_mem;
+			}
+			# But, it uses K here. Openbsd/Dragonfly do not seem to have this item
+			# this can be either: Free Memory OR Free Memory Pages
+			elsif (/^Free Memory:/){
+				@working = split /:\s*/,$_;
+				$working[1] =~ s/[^0-9]+//g;
+				$free_mem = sprintf("%.1f", $working[1]/1024);
+				last if $real_mem;
 			}
 		}
 	}
@@ -9605,6 +9741,7 @@ sub set_sysctl_data {
 	$_ =~ s/\"//g;
 	$_;
 	} @sysctl if @sysctl;
+	print Dumper \@sysctl if $test[7];
 	eval $end if $b_log;
 }
 sub set_usb_data {
