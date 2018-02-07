@@ -150,7 +150,7 @@ Note that my current development goals are, roughly in this order:
      Battery: stub
      Memory: stub
      PCI Slots: DONE: NEW!
-     CPU: DONE (except for BSD support)
+     CPU: DONE
      Graphics: DONE
      Audio: DONE 
      Network: DONE - with new features!
