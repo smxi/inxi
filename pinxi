@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-02-06';
-my $self_patch='240-p';
+my $self_patch='241-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -502,7 +502,7 @@ sub system_files {
 		'xorg-log' => '/var/log/Xorg.0.log'
 		);
 		foreach ( keys %files ){
-			$system_files{$_} = -e $files{$_} ? $files{$_} : '';
+			$system_files{$_} = ( -e $files{$_} ) ? $files{$_} : '';
 		}
 		if ( ! $system_files{'xorg-log'} && check_program('xset') ){
 			my $data = qx(xset q 2>/dev/null);
@@ -1581,7 +1581,6 @@ sub system_files {
 	'/var/run/dmesg.boot',
 	);
 	copy_files(\@files,'system-bsd');
-	
 }
 
 sub copy_files {
@@ -4365,6 +4364,7 @@ sub create_full_data {
 			$rows[$j]{$num++ . "#rev"} = $cpu{'rev'};
 		}
 	}
+	$properties{'l2-cache'} ||= 'N/A';
 	$rows[$j]{$num++ . "#L2 cache"} = $properties{'l2-cache'};
 	if ($extra > 0 && !$show{'cpu-flag'}){
 		$j = scalar @rows;
@@ -4372,7 +4372,8 @@ sub create_full_data {
 		$flag_key = ($b_arm) ? 'features': 'flags';
 		my $flag = 'N/A';
 		if (@flags){
-			@flags = grep {/^(lm|nx|pae|pni|svm|vmx|(sss|ss)e([2-9])?([a-z])?(_[0-9])?)$/} @flags;
+			# failure to read dmesg.boot: dmesg.boot permissions
+			@flags = grep {/^(dmesg.boot|lm|nx|pae|permissions|pni|svm|vmx|(sss|ss)e([2-9])?([a-z])?(_[0-9])?)$/} @flags;
 			@flags = map {s/pni/sse3/; $_} @flags;
 			@flags = sort(@flags);
 			$flag = join ' ', @flags if @flags;
@@ -4502,6 +4503,7 @@ sub prep_short_data {
  	$properties{'min-max'},
  	);
  	if ($extra > 0){
+		$cpu{'arch'} ||= 'N/A';
 		$result[7] = $cpu{'arch'};
  	}
 	eval $end if $b_log;
@@ -4657,24 +4659,6 @@ sub data_cpuinfo {
 	return %cpu;
 }
 
-# 'arch' => '',
-# 'bogomips' => 0,
-# 'l2-cache' => 0, # store in KB
-# 'cores' => 0,
-# 'cur-freq' => 0,
-# 'dies' => 0,
-# 'family' => '',
-# 'flags' => '',
-# 'ids' => [],
-# 'max-freq' => 0,
-# 'min-freq' => 0,
-# 'model_id' => '',
-# 'model_name' => '',
-# 'processors' => [],
-# 'rev' => '',
-# 'siblings' => 0,
-# 'type' => '',
-
 sub data_sysctl {
 	eval $start if $b_log;
 	my ($type) = @_;
@@ -4746,13 +4730,6 @@ sub data_sysctl {
 		elsif ($line[0] eq 'hw.ncpu' ) {
 			$cpu{'cores'} = $line[1];
 		}
-		# these are stacked, and are part of: kern.conftxt:
-		# we've mapped 'device <flag> to: feature:<flag>
-		elsif ($line[0] eq 'feature' ) {
-			$cpu{'flags'} .= $sep . lc($line[1]);
-			$sep = ' ';
-		}
-		
 		# Freebsd does some voltage hacking to actually run at lowest listed frequencies.
 		# The cpu does not actually support all the speeds output here but works in freebsd. 
 		elsif ($line[0] eq 'dev.cpu.0.freq_levels') {
@@ -4768,7 +4745,10 @@ sub data_sysctl {
 			$cpu{'cur-freq'} = $line[1];
 		}
 	}
-	print Data::Dumper::Dumper \%cpu;
+	if (!$cpu{'flags'}){
+		$cpu{'flags'} = get_flags_bsd();
+	}
+	# print Data::Dumper::Dumper \%cpu;
 	eval $end if $b_log;
 	return %cpu;
 }
@@ -4909,7 +4889,7 @@ sub cpu_properties {
 		$cpu_cores = $processors_count;
 	}
 	# this happens with BSDs which have very little cpu data available
-	if ( $processors_count == 1 && $cpu_cores > 1 ){
+	if ( $processors_count == 1 && $cpu_cores > 0 ){
 		$processors_count = $cpu_cores;
 	}
 	#print "pc: $processors_count s: $cpu{'siblings'} cpuc: $cpu_cores corec: $core_count\n";
@@ -4972,7 +4952,12 @@ sub cpu_properties {
 	else {
 		$cache = $cpu{'l2-cache'} * $phyical_count;
 	}
-	$cache = ($cache > 10000) ? sprintf("%.02f MB",$cache/1024) : "$cache KB";
+	if ($cache > 10000){
+		$cache = sprintf("%.02f MB",$cache/1024);
+	}
+	elsif ($cache > 0){
+		$cache = "$cache KB";
+	}
 	if ($cpu{'cur-freq'} && $cpu{'min-freq'} && $cpu{'max-freq'} ){
 		$min_max = "$cpu{'min-freq'}/$cpu{'max-freq'} MHz";
 		$min_max_key = "min/max";
@@ -5015,6 +5000,39 @@ sub cpu_properties {
 	#my $dc = scalar @dies;
 	#print 'phys: ' . $pc . ' dies: ' . $dc, "\n";
 	return %cpu_properties;
+}
+sub cpu_flags_bsd {
+	eval $start if $b_log;
+	my ($flags,$sep) = ('','');
+	# this will be null if it was not readable
+	my $file = system_files('dmesg-boot')
+	if ( $file && ! -r $file ){
+		$flags = "dmesg.boot permissions";
+	}
+	else {
+		foreach (@dmesg_boot){
+			if ( /Features/ || ( $bsd_type eq "openbsd" && /^cpu0.*\s[a-z][a-z][a-z](\s|,)[a-z][a-z][a-z](\s|,)/ ) ) {
+				my @line = split /:/, $_;
+				# free bsd has to have weird syntax: <....<b23>,<b34>>
+				# Features2=0x1e98220b<SSE3,PCLMULQDQ,MON,SSSE3,CX16,SSE4.1,SSE4.2,POPCNT,AESNI,XSAVE,OSXSAVE,AVX>
+				$line[1] =~ s/^[^<]*<|>[^>]*$//g;
+				# then get rid of <b23> stuff
+				$line[1] =~ s/<[^>]+>//g;
+				# and replace commas with spaces
+				$line[1] =~ s/,/ /g;
+				$flags .= ' ' . $line[1];
+			}
+			elsif (/real mem/){
+				last;
+			}
+		}
+		if ($flags){
+			$flags =~ s/\s+/ /g;
+			$flags =~ s/^\s+|\s+$//g;
+		}
+	}
+	eval $end if $b_log;
+	return $flags;
 }
 sub cpu_speeds {
 	eval $start if $b_log;
@@ -9748,7 +9766,6 @@ sub set_sysctl_data {
 	@sysctl = grabber("$program -a 2>/dev/null");
 	@sysctl = map {
 	$_ =~ s/\s*=\s*|:\s+/:/;
-	$_ =~ s/^device\s+/feature:/; # we need this distinct to catch flags
 	$_ =~ s/\"//g;
 	$_;
 	} @sysctl if @sysctl;
