@@ -39,8 +39,8 @@ use Time::HiRes qw(gettimeofday tv_interval);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-02-06';
-my $self_patch='243-p';
+my $self_date='2018-02-08';
+my $self_patch='244-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -3706,7 +3706,8 @@ sub row_defaults {
 	my ($type,$id) = @_;
 	$id ||= '';
 	my %unfound = (
-	'ARM' => "ARM systems do not support $id data type",
+	'arm-pci' => "ARM systems do not support PCI data type",
+	'battery-data' => "No battery data found. Is one present?",
 	'display-console' => 'No advanced graphics data found on this system in console.',
 	'display-null' => 'No advanced graphics data found on this system.',
 	'display-root' => 'Advanced graphics data unavailable in console for root.',
@@ -3716,9 +3717,11 @@ sub row_defaults {
 	'display-try' => 'Advanced graphics data unavailable in console. Try -G --display',
 	'dev' => 'Feature under development',
 	'IP' => "No $id data found. Connected to the web? SSL issues?",
-	'Message' => "No $id data found.",
-	'machine-data' => "No machine data: try newer kernel$id.",
+	'machine-data' => "No machine data: try newer kernel.",
+	'machine-data-alt-33' => "No machine data: try newer kernel. Is dmidecode installed? Try -M --alt 33.",
+	'machine-data-dmidecode' => "No machine data: try newer kernel, or install dmidecoce.",
 	'output-limit' => "Output throttled. IPs: $id; Limit: $limit; Override: --limit [1-x;-1 all]",
+	'pcicard-data' => "No PCI card data found.",
 	'weather-null' => "No $id found. Internet connection working?",
 	);
 	return $unfound{$type};
@@ -4105,7 +4108,7 @@ sub get {
 	if ($b_arm){
 		my $key = 'ARM';
 		@data = ({
-		$num++ . "#$key" => main::row_defaults($key,'PCI'),
+		$num++ . "#$key" => main::row_defaults('arm-pci',''),
 		},);
 		@rows = (@rows,@data);
 	}
@@ -4117,7 +4120,7 @@ sub get {
 		if (!@rows){
 			my $key = 'Message';
 			@data = ({
-			$num++ . "#$key" => main::row_defaults($key,'PCI Card'),
+			$num++ . "#$key" => main::row_defaults('pcicard-data',''),
 			},);
 			@rows = (@rows,@data);
 		}
@@ -4269,7 +4272,7 @@ package BatteryData;
 
 sub get {
 	eval $start if $b_log;
-	my (@rows,$key1,$val1);
+	my (@rows,$key1,%battery,$val1);
 	my $num = 0;
 	if ($bsd_type || $b_dmidecode_force){
 		my $ref = $alerts{'dmidecode'};
@@ -4277,24 +4280,282 @@ sub get {
 			$key1 = $$ref{'action'};
 			$val1 = $$ref{$key1};
 			$key1 = ucfirst($key1);
+			@rows = ({$num++ . "#$key1" => $val1,});
+		}
+		else {
+			%battery = battery_data_dmi();
+			if (!%battery){
+				if ($show{'battery-forced'}){
+					$key1 = 'Message';
+					$val1 = main::row_defaults('battery-data','');
+					@rows = ({$num++ . "#$key1" => $val1,});
+				}
+			}
+			else {
+				@rows = create_battery_data(%battery);
+			}
 		}
 	}
-	if (!$key1) {
-		$key1 = 'Status';
-		$val1 = main::row_defaults('dev');
+	elsif (-d '/sys/class/power_supply/'){
+		%battery = battery_data_sys();
+		if (!%battery){
+			if ($show{'battery-forced'}){
+				$key1 = 'Message';
+				$val1 = main::row_defaults('battery-data','');
+				@rows = ({$num++ . "#$key1" => $val1,});
+			}
+		}
+		else {
+			@rows = create_battery_data(%battery);
+		}
 	}
-	my @data = ({$num++ . "#$key1" => $val1,});
-	return @data;
-	eval $end if $b_log;
+	else {
 	
+	}
+	eval $end if $b_log;
+	return @rows;
 }
-sub battery_data {
+# alarm capacity capacity_level charge_full charge_full_design charge_now 
+# 	cycle_count energy_full energy_full_design energy_now location manufacturer model_name 
+# 	power_now present serial_number status technology type voltage_min_design voltage_now
+# 0  name
+# 1  status
+# 2  present
+# 3  technology
+# 4  cycle_count
+# 5  voltage_min_design
+# 6  voltage_now
+# 7  power_now
+# 8  energy_full_design
+# 9  energy_full
+# 10 energy_now
+# 11 capacity
+# 12 capacity_level
+# 13 of_orig
+# 14 model_name
+# 15 manufacturer
+# 16 serial_number
+# 17 location
+sub create_battery_data {
 	eval $start if $b_log;
-	my (@rows);
+	my (%battery,@data,@rows) = @_;
+	my ($key);
 	my $num = 0;
+	my $j = 0;
+	foreach $key (sort keys %battery){
+		$num = 0;
+		my ($charge,$condition,$model,$serial,$status,$volts) = ('','','','','','');
+		my ($chemistry,$cycles,$location) = ('','','');
+		# $battery{$key}{''};
+		$charge = ($battery{$key}{'energy_now'}) ? "$battery{$key}{'energy_now'} Wh" : 'N/A';
+		if ($battery{$key}{'energy_full'}){
+			$battery{$key}{'energy_full_design'} ||= 'N/A';
+			$condition = "$battery{$key}{'energy_full'}/$battery{$key}{'energy_full_design'} Wh";
+			if ($battery{$key}{'of_orig'}){
+				$condition .= " ($battery{$key}{'of_orig'})"; 
+			}
+		}
+		$condition ||= 'N/A';
+		$j = scalar @rows;
+		@data = ({
+		$num++ . "#$key" => '',
+		$num++ . "#charge" => $charge,
+		$num++ . "#condition" => $condition,
+		},);
+		@rows = (@rows,@data);
+		if ($extra > 0){
+			if ($extra > 1){
+				if ($battery{$key}{'voltage_min_design'} || $battery{$key}{'voltage_now'}){
+					$battery{$key}{'voltage_min_design'} ||= 'N/A';
+					$volts = "$battery{$key}{'voltage_now'}/$battery{$key}{'voltage_min_design'}";
+				}
+				$volts ||= 'N/A';
+				$rows[$j]{$num++ . "#volts"} = $volts;
+			}
+			if ($battery{$key}{'manufacturer'} || $battery{$key}{'model_name'}) {
+				if ($battery{$key}{'manufacturer'} && $battery{$key}{'model_name'}){
+					$model = "$battery{$key}{'manufacturer'} $battery{$key}{'model_name'}";
+				}
+				elsif ($battery{$key}{'manufacturer'}){
+					$model = $battery{$key}{'manufacturer'};
+				}
+				elsif ($battery{$key}{'model_name'}){
+					$model = $battery{$key}{'model_name'};
+				}
+			}
+			else {
+				$model = 'N/A';
+			}
+			$rows[$j]{$num++ . "#model"} = $model;
+			if ($extra > 2){
+				$chemistry = ( $battery{$key}{'technology'} ) ? $battery{$key}{'technology'}: 'N/A';
+				$rows[$j]{$num++ . "#type"} = $chemistry;
+			}
+			if ($extra > 1){
+				$serial = main::apply_filter($battery{$key}{'serial_number'});
+				$rows[$j]{$num++ . "#serial"} = $serial;
+			}
+			$status = ($battery{$key}{'status'}) ? $battery{$key}{'status'}: 'N/A';
+			$rows[$j]{$num++ . "#status"} = $status;
+			if ($extra > 2){
+				if ($battery{$key}{'cycle_count'}){
+					$rows[$j]{$num++ . "#cycles"} = $battery{$key}{'cycle_count'};
+				}
+				if ($battery{$key}{'location'}){
+					$rows[$j]{$num++ . "#location"} = $battery{$key}{'location'};
+				}
+			}
+		}
+	}
 	
 	eval $end if $b_log;
 	return @rows;
+}
+
+# charge: mAh energy: Wh
+sub battery_data_sys {
+	eval $start if $b_log;
+	my ($b_ma,%battery,$file,$id,$item,$path,$value);
+	my $num = 0;
+	my @batteries = main::globber("/sys/class/power_supply/BAT*/");
+	# note: there is no 'location' file, but dmidecode has it
+	# 'type' is generic, like: Battery
+	my @items = qw(alarm capacity capacity_level charge_full charge_full_design charge_now 
+	cycle_count energy_full energy_full_design energy_now location manufacturer model_name 
+	power_now present serial_number status technology type voltage_min_design voltage_now);
+	foreach $item (@batteries){
+		$b_ma = 0;
+		$id = $item;
+		$id =~ s%/sys/class/power_supply/|\/$%%g;
+		$id =~ s/BAT/BAT-/;
+		$battery{$id} = ({});
+		foreach $file (@items){
+			$path = "$item$file";
+			$value = (-f $path) ? (main::reader($path))[0]: '';
+			if ($value){
+				if ($file eq 'voltage_min_design'){
+					$value = sprintf("%.1f", $value/1000000);
+				}
+				elsif ($file eq 'voltage_now'){
+					$value = sprintf("%.1f", $value/1000000);
+				}
+				elsif ($file eq 'energy_full_design'){
+					$value = $value/1000000;
+				}
+				elsif ($file eq 'energy_full'){
+					$value = $value/1000000;
+				}
+				elsif ($file eq 'energy_now'){
+					$value = sprintf("%.1f", $value/1000000);
+				}
+				# note: the following 3 were off, 100000 instead of 1000000
+				# why this is, I do not know. I did not document any reason for that
+				# so going on assumption it is a mistake. CHARGE is mAh, which are converted
+				# to Wh by: mAh x voltage. Note: voltage fluctuates so will make results vary slightly.
+				elsif ($file eq 'charge_full_design'){
+					$value = $value/1000000;
+					$b_ma = 1;
+				}
+				elsif ($file eq 'charge_full'){
+					$value = $value/1000000;
+					$b_ma = 1;
+				}
+				elsif ($file eq 'charge_now'){
+					$value = $value/1000000;
+					$b_ma = 1;
+				}
+				elsif ($file eq 'capacity'){
+					$value .= "%";
+				}
+			}
+			$battery{$id}{$file} = $value;
+			# print "$battery{$id}{$file}\n";
+		}
+		# note:voltage_now fluctuates, which will make capacity numbers change a bit
+		# if any of these values failed, the math will be wrong, but no way to fix that
+		# tests show more systems give right capacity/charge with voltage_min_design 
+		# than with voltage_now
+		if ($b_ma == "true" && $battery{$id}{'voltage_min_design'}){
+			if ($battery{$id}{'charge_now'}){
+				$battery{$id}{'energy_now'} = $battery{$id}{'charge_now'} * $battery{$id}{'voltage_min_design'};
+			}
+			if ($battery{$id}{'charge_full'}){
+				$battery{$id}{'energy_full'} = $battery{$id}{'charge_full'}*$battery{$id}{'voltage_min_design'};
+			}
+			if ($battery{$id}{'charge_full_design'}){
+				$battery{$id}{'energy_full_design'} = $battery{$id}{'charge_full_design'} * $battery{$id}{'voltage_min_design'};
+			}
+		}
+		if ($battery{$id}{'energy_now'} != "" && $battery{$id}{'energy_full'} != "" ){
+			$battery{$id}{'capacity'} = 100*$battery{$id}{'energy_now'}/$battery{$id}{'energy_full'};
+			$battery{$id}{'capacity'} = sprintf( "%.1f%", $battery{$id}{'capacity'} );
+		}
+		if ($battery{$id}{'energy_full_design '}!= "" && $battery{$id}{'energy_full'} != "" ){
+			$battery{$id}{'of_orig'} = 100 * $battery{$id}{'energy_full'}/$battery{$id}{'energy_full_design'};
+			$battery{$id}{'of_orig'} = sprintf( "%.0f%", $battery{$id}{'of_orig'} );
+		}
+		if ($battery{$id}{'energy_now'} != "" ){
+			$battery{$id}{'energy_now'} = sprintf( "%.1f", $battery{$id}{'energy_now'} );
+		}
+		if ($battery{$id}{'energy_full_design'} != "" ){
+			$battery{$id}{'energy_full_design'} = sprintf( "%.1f",$battery{$id}{' energy_full_design'} );
+		}
+		if ( $battery{$id}{'energy_full'} != "" ){
+			$battery{$id}{'energy_full'} = sprintf( "%.1f", $battery{$id}{'energy_full'} );
+		}
+	}
+	eval $end if $b_log;
+	return %battery;
+}
+# note, dmidecode does not have charge_now or charge_full
+sub battery_data_dmi {
+	eval $start if $b_log;
+	my (%battery,$id);
+	my $i = 0;
+	foreach (@dmi){
+		my @ref = @$_;
+		# Portable Battery
+		if ($ref[1] == 22){
+			$id = "BAT-$i";
+			$i++;
+			$battery{$id} = ({});
+			# skip first three row, we don't need that data
+			splice @ref, 0, 3 if @ref;
+			foreach my $item (@ref){
+				my @value = split /:\s+/, $item;
+				if ($value[0] eq 'Location') {$battery{'location'} = $value[1] }
+				elsif ($value[0] eq 'Manufacturer') {$battery{'manufacturer'} = $value[1] }
+				elsif ($value[0] =~ /Chemistry/) {$battery{'technology'} = $value[1] }
+				elsif ($value[0] =~ /Serial Number/) {$battery{'serial_number'} = $value[1] }
+				elsif ($value[0] =~ /^Name/) {$battery{'model_name'} = $value[1] }
+				elsif ($value[0] eq 'Design Capacity') {
+					$value[1] =~ s/\s*mwh$//i;
+					$battery{'energy_full_design'} = sprintf( "%.1f", $value[1]/1000);
+					
+				}
+				elsif ($value[0] eq 'Design Voltage') {
+					$value[1] =~ s/\s*mv$//i;
+					$battery{'voltage_min_design'} = sprintf( "%.1f", $value[1]/1000);
+				}
+				elsif ($value[0] eq '') {$battery{''} = $value[1] }
+				elsif ($value[0] eq '') {$battery{''} = $value[1] }
+				elsif ($value[0] eq '') {$battery{''} = $value[1] }
+			}
+			if ($battery{$id}{'energy_now'} && $battery{$id}{'energy_full'} ){
+				$battery{$id}{'capacity'} = 100 * $battery{$id}{'energy_now'} / $battery{$id}{'energy_full'};
+				$battery{$id}{'capacity'} = sprintf( "%.1f%", $battery{$id}{'capacity'} );
+			}
+			if ($battery{$id}{'energy_full_design'} && $battery{$id}{'energy_full'} ){
+				$battery{$id}{'of_orig'} = 100 * $battery{$id}{'energy_full'} / $battery{$id}{'energy_full_design'};
+				$battery{$id}{'of_orig'} = sprintf( "%.0f%", $battery{$id}{'of_orig'} );
+			}
+		}
+		elsif ($ref[1] > 22){
+			last;
+		}
+	}
+	eval $end if $b_log;
+	return %battery;
 }
 }
 
@@ -5285,7 +5546,7 @@ sub get {
 	if ($b_arm){
 		my $key = 'ARM';
 		@data = ({
-		$num++ . "#$key" => main::row_defaults($key,'PCI'),
+		$num++ . "#$key" => main::row_defaults('arm-pci',''),
 		},);
 		@rows = (@rows,@data);
 	}
@@ -5295,7 +5556,7 @@ sub get {
 		if (!@rows){
 			my $key = 'Message';
 			@data = ({
-			$num++ . "#$key" => main::row_defaults($key,'PCI Card'),
+			$num++ . "#$key" => main::row_defaults('pcicard-data',''),
 			},);
 			@rows = (@rows,@data);
 		}
@@ -5838,12 +6099,12 @@ sub get {
 		@data = machine_data_sys();
 		if (!@data){
 			$key1 = 'Message';
-			$val1 = main::row_defaults('machine-data',', or install dmidecode');
+			$val1 = main::row_defaults('machine-data-dmidecode','');
 		}
 	}
 	elsif (!$bsd_type) {
 		$key1 = 'Message';
-		$val1 = main::row_defaults('machine-data','. Is dmidecode installed? Try -M --alt 33');
+		$val1 = main::row_defaults('machine-data-alt-33','');
 	}
 	# if error case, null data, whatever
 	if ($key1) {
@@ -6155,7 +6416,7 @@ sub create_output {
 sub get_device_sys {
 	eval $start if $b_log;
 	my ($chasis_id) = @_;
-	my ($device);
+	my ($device) = ('');
 	my @chassis;
 	$chassis[2] = 'unknown';
 	# note: 13 is all-in-one which we take as a mac type system
@@ -6188,7 +6449,7 @@ sub get_device_sys {
 	$chassis[21] = 'peripheral';
 	$chassis[22] = 'RAID';
 	$chassis[26] = 'compact-PCI';
-	$device = $chassis[$chasis_id];
+	$device = $chassis[$chasis_id] if $chassis[$chasis_id];
 	eval $end if $b_log;
 	return $device;
 }
@@ -6283,7 +6544,7 @@ sub get {
 	if ($b_arm){
 		my $key = 'ARM';
 		@data = ({
-		$num++ . "#$key" => main::row_defaults($key,'PCI'),
+		$num++ . "#$key" => main::row_defaults('arm-pci',''),
 		},);
 		@rows = (@rows,@data);
 	}
@@ -6374,7 +6635,7 @@ sub card_data {
 	if (!@rows){
 		my $key = 'Message';
 		@data = ({
-		$num++ . "#$key" => main::row_defaults($key,'PCI Card'),
+		$num++ . "#$key" => main::row_defaults('pcicard-data',''),
 		},);
 		@rows = (@rows,@data);
 	}
@@ -6940,31 +7201,47 @@ package RamData;
 
 sub get {
 	eval $start if $b_log;
-	my (@rows,$key1,$val1);
+	my @rows = create_ram_data();
+	return @rows;
+	eval $end if $b_log;
+	
+}
+sub create_ram_data {
+	eval $start if $b_log;
+	my (@rows,$key1,%ram,$val1);
 	my $num = 0;
 	my $ref = $alerts{'dmidecode'};
 	if ( $$ref{'action'} ne 'use'){
 		$key1 = $$ref{'action'};
 		$val1 = $$ref{$key1};
 		$key1 = ucfirst($key1);
+		@rows = ({$num++ . "#$key1" => $val1,});
 	}
 	else {
 		$key1 = 'Status';
 		$val1 = main::row_defaults('dev');
+		@rows = ({$num++ . "#$key1" => $val1,});
 	}
-	
-	my @data = ({$num++ . "#$key1" => $val1,});
-	return @data;
 	eval $end if $b_log;
-	
+	return @rows;
 }
-sub ram_data {
+
+sub data_processor {
 	eval $start if $b_log;
-	my (@rows);
+	my (%ram) = @_;
 	my $num = 0;
 	
 	eval $end if $b_log;
-	return @rows;
+	return %ram;
+}
+sub dmidecode_data {
+	eval $start if $b_log;
+	my (%ram);
+	my $num = 0;
+	
+	%ram = data_processor(%ram);
+	eval $end if $b_log;
+	return %ram;
 }
 }
 
@@ -7450,30 +7727,64 @@ package SensorData;
 
 sub get {
 	eval $start if $b_log;
-	my (@rows,$key1,$val1);
+	my (@rows);
+	@rows = create_sensors_data();
+	eval $end if $b_log;
+	return @rows;
+}
+sub create_sensors_data {
+	eval $start if $b_log;
+	my (@data,@rows,$key1,%sensors,$val1);
 	my $num = 0;
 	my $ref = $alerts{'sensors'};
 	if ( $$ref{'action'} ne 'use'){
 		$key1 = $$ref{'action'};
 		$val1 = $$ref{$key1};
 		$key1 = ucfirst($key1);
+		@rows = ({$num++ . "#$key1" => $val1,});
 	}
 	else {
 		$key1 = 'Status';
 		$val1 = main::row_defaults('dev');
+		@rows = ({$num++ . "#$key1" => $val1,});
+		%sensors = sensors_data();
 	}
-	my @data = ({$num++ . "#$key1" => $val1,});
-	return @data;
 	eval $end if $b_log;
-	
+	return @rows;
 }
-sub sensor_data {
+
+sub data_processor {
 	eval $start if $b_log;
-	my (@rows);
+	my (%sensors) = @_;
 	my $num = 0;
 	
 	eval $end if $b_log;
-	return @rows;
+	return %sensors;
+}
+
+sub sensors_data {
+	eval $start if $b_log;
+	my (%sensors);
+	my $num = 0;
+	
+	%sensors = data_processor(%sensors);
+	eval $end if $b_log;
+	return %sensors;
+}
+# oddly, openbsd sysctl actually has hw.sensors data!
+sub sysctl_data {
+	eval $start if $b_log;
+	my (%sensors);
+	my $num = 0;
+	
+	%sensors = data_processor(%sensors);
+	eval $end if $b_log;
+	return %sensors;
+}
+sub gpu_temps {
+	eval $start if $b_log;
+	
+	eval $end if $b_log;
 }
 }
 
@@ -7488,7 +7799,7 @@ sub get {
 	my $ref = $alerts{'dmidecode'};
 	if ($b_arm){
 		$key1 = 'ARM';
-		$val1 = main::row_defaults($key1,'PCI');
+		$val1 = main::row_defaults('arm-pci','');
 		@rows = ({$num++ . "#$key1" => $val1,});
 	}
 	elsif ( $$ref{'action'} ne 'use'){
@@ -9221,6 +9532,9 @@ sub get_self_version {
 	eval $end if $b_log;
 	return $self_version . $patch;
 }
+sub sensors_gpu_search {
+	return 'amdgpu|intel|radeon|nouveau';
+}
 sub get_shell_data {
 	eval $start if $b_log;
 	my ($ppid) = @_;
@@ -10013,7 +10327,9 @@ sub generate_lines {
 			set_dmi_data() if $b_dmi && !$b_dmi_check; 
 			$b_dmi_check = 1;
 			%row = line_handler('Battery','battery');
-			assign_data(%row);
+			if (%row || $show{'battery-forced'}){
+				assign_data(%row);
+			}
 		}
 		if ( $show{'ram'} ){
 			set_dmi_data() if $b_dmi && !$b_dmi_check; 
@@ -10057,7 +10373,7 @@ sub generate_lines {
 			%row = line_handler('Network','network');
 			assign_data(%row);
 		}
-		if ( $show{'disk'} ){
+		if ( $show{'disk'} || $show{'disk-basic'} || $show{'disk-total'} ){
 			if ($bsd_type && $b_dmesg_boot_check){
 				set_dmesg_boot_data();
 				$b_dmesg_boot_check = 1;
