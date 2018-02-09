@@ -39,8 +39,8 @@ use Time::HiRes qw(gettimeofday tv_interval);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-02-08';
-my $self_patch='255-p';
+my $self_date='2018-02-09';
+my $self_patch='256-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -3723,6 +3723,7 @@ sub row_defaults {
 	'machine-data-dmidecode' => "No machine data: try newer kernel, or install dmidecoce.",
 	'output-limit' => "Output throttled. IPs: $id; Limit: $limit; Override: --limit [1-x;-1 all]",
 	'pcicard-data' => "No PCI card data found.",
+	'pci-advanced-data' => 'bus and chip ids not available',
 	'weather-null' => "No $id found. Internet connection working?",
 	);
 	return $unfound{$type};
@@ -4116,6 +4117,10 @@ sub get {
 	else {
 		@data = card_data();
 		@rows = (@rows,@data);
+		if (!@rows && (my $file = main::system_files('asound-cards') ) ){
+			@data = asound_data($file);
+			@rows = (@rows,@data);
+		}
 		@data = usb_data();
 		@rows = (@rows,@data);
 		if (!@rows){
@@ -4153,9 +4158,7 @@ sub card_data {
 			if ($extra > 1 && !$bsd_type){
 				if ($row[9] ){
 					my $version = main::get_module_version($row[9]);
-					if ($version){
-						$rows[$j]{$num++ . "#v"} = main::get_module_version($row[9]);
-					}
+					$rows[$j]{$num++ . "#v"} = $version if $version;
 				}
 			}
 			if ($extra > 0){
@@ -4169,6 +4172,44 @@ sub card_data {
 	}
 	#my $ref = $pci[-1];
 	#print $$ref[0],"\n";
+	eval $end if $b_log;
+	return @rows;
+}
+# this handles fringe cases where there is no card on pcibus,
+# but there is a card present. I don't know the exact architecture
+# involved but I know this situation exists on at least one old machine.
+sub asound_data {
+	eval $start if $b_log;
+	my ($file) = @_;
+	my (@asound,@rows,@data);
+	my ($card,$driver,$j,$num) = ('','',0,1);
+	@asound = main::reader($file);
+	foreach (@asound){
+		# filtering out modems and usb devices like webcams, this might get a
+		# usb audio card as well, this will take some trial and error
+		if ( !/modem|usb/i && /^\s*[0-9]/ ) {
+			my @working = split /:\s*/, $_;
+			# now let's get 1 2
+			$working[1] =~ /(.*)\s+-\s+(.*)/;
+			$card = $2;
+			$driver = $1;
+			if ( $card ){
+				$j = scalar @rows;
+				$driver ||= 'N/A';
+				@data = ({
+				$num++ . "#Card" => $card,
+				$num++ . "#driver" => $driver,
+				},);
+				@rows = (@rows,@data);
+				if ($extra > 0){
+					my $version = main::get_module_version($driver);
+					$rows[$j]{$num++ . "#v"} = $version if $version;
+					$rows[$j]{$num++ . "#message"} = main::row_defaults('pci-advanced-data','');
+				}
+			}
+		}
+	}
+	# print Data::Dumper:Dumper \s@rows;
 	eval $end if $b_log;
 	return @rows;
 }
