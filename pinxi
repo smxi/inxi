@@ -39,8 +39,8 @@ use Time::HiRes qw(gettimeofday tv_interval);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-02-09';
-my $self_patch='257-p';
+my $self_date='2018-02-10';
+my $self_patch='258-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -1386,6 +1386,7 @@ sub display_data {
 	my @cmds = (
 	# kde 5/plasma desktop 5, this is maybe an extra package and won't be used
 	['about-distro',''],
+	['aticonfig','--adapter=all --od-gettemperature'],
 	['glxinfo',''],
 	['glxinfo','-B'],
 	['kded','--version'],
@@ -1397,6 +1398,7 @@ sub display_data {
 	['kf6-config','--version'],
 	['kwin_x11','--version'],
 	['loginctl','--no-pager list-sessions'],
+	['nvidia-settings','-c :0.0 -q all'],
 	['nvidia-smi','-q'],
 	['nvidia-smi','-q -x'],
 	['plasmashell','--version'],
@@ -7786,6 +7788,7 @@ sub create_sensors_data {
 	my (@data,@rows,$key1,%sensors,$val1);
 	my $num = 0;
 	my $ref = $alerts{'sensors'};
+	
 	if ( $$ref{'action'} ne 'use'){
 		$key1 = $$ref{'action'};
 		$val1 = $$ref{$key1};
@@ -7830,10 +7833,77 @@ sub sysctl_data {
 	eval $end if $b_log;
 	return %sensors;
 }
-sub gpu_temps {
+sub gpu_data {
 	eval $start if $b_log;
-	
+	my (@data,@data2,@gpudata,$path,@screens,$temp);
+	my ($j) = (0);
+	if ($path = main::check_program('nvidia-settings')){
+		# first get the number of screens. This only work if you are in X
+		if ($b_display) {
+			@data = main::grabber("$path -q screens");
+			foreach (@data){
+				if ( /(:[0-9]\.[0-9])/ ) {
+					push @screens, $1;
+				}
+			}
+		}
+		# do a guess, this will work for most users, it's better than nothing for out of X
+		else {
+			$screens[0] = ':0.0';
+		}
+		# now we'll get the gpu temp for each screen discovered. The print out function
+		# will handle removing screen data for single gpu systems. -t shows only data we want
+		# GPUCurrentClockFreqs: 520,600
+		# VideoRam: 1048576
+		# CUDACores: 16 
+		# PCIECurrentLinkWidth: 16
+		# PCIECurrentLinkSpeed: 5000
+		# RefreshRate: 60.02 Hz [oer screen]
+		# ViewPortOut=1280x1024+0+0}, DPY-1: nvidia-auto-select @1280x1024 +1280+0 {ViewPortIn=1280x1024,
+		# ViewPortOut=1280x1024+0+0}
+		# ThermalSensorReading: 50
+		# PCIID: 4318,2661 - the pci stuff doesn't appear to work
+		# PCIBus: 2
+		# Irq: 30
+		foreach my $screen (@screens){
+			@data = main::grabber("$path -c $screen -q GPUCoreTemp -q VideoRam -q GPUCurrentClockFreqs 2>/dev/null");
+			$j = scalar @gpudata;
+			$gpudata[$j] = ({});
+			foreach my $item (@data){
+				if ($item =~ /^\s*Attribute\s\'([^']+)\'\s.*:\s*([\S]+)\.$/){
+					my $attribute = $1;
+					my $value = $2;
+					$gpudata[$j]{'type'} = 'nvidia';
+					$gpudata[$j]{'screen'} = $screen;
+					if ($attribute eq 'GPUCoreTemp'){
+						$gpudata[$j]{'temp'} = $value;
+					}
+					elsif ($attribute eq 'VideoRam'){
+						$gpudata[$j]{'ram'} = $value;
+					}
+					elsif ($attribute eq 'GPUCurrentClockFreqs'){
+						$gpudata[$j]{'clock'} = $value;
+					}
+				}
+			}
+		}
+	}
+	if ($path = main::check_program('aticonfig')){
+		# aticonfig --adapter=0 --od-gettemperature
+		@data = main::grabber("$path --adapter=all --od-gettemperature 2>/dev/null");
+		foreach (@data){
+			if (/Sensor [^0-9]*([0-9\.]+) /){
+				$j = scalar @gpudata;
+				$gpudata[$j] = ({});
+				my $value = $1;
+				$gpudata[$j]{'type'} = 'amd';
+				$gpudata[$j]{'temp'} = $value;
+			}
+		}
+	}
+	# print Data::Dumper::Dumper \@gpudata;
 	eval $end if $b_log;
+	return @gpudata;
 }
 }
 
