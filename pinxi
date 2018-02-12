@@ -39,8 +39,8 @@ use Time::HiRes qw(gettimeofday tv_interval);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-02-11';
-my $self_patch='269-p';
+my $self_date='2018-02-12';
+my $self_patch='270-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -65,7 +65,7 @@ my @test = (0,0,0,0,0);
 
 ## Booleans
 my ($b_arm,$b_console_irc,$b_display,$b_dmi,$b_dmidecode_force,$b_gpudata,$b_irc,
-$b_log,$b_log_colors,$b_log_full,$b_pci,$b_root,$b_running_in_display,$b_sysctl,
+$b_log,$b_log_colors,$b_log_full,$b_mem,$b_pci,$b_root,$b_running_in_display,$b_sysctl,
 $b_usb_check);
 my ($b_update,$b_weather) = (1,1);
 
@@ -2069,12 +2069,65 @@ sub error_handler {
 package CheckRecommends;
 sub run {
 	main::error_handler('not-in-irc', 'recommends') if $b_irc;
-	eval $start if $b_log;
-	main::print_line("Would have run recommends\n");
+	my (@data,@rows);
+	if ($bsd_type){
 	
-	eval $end if $b_log;
+	}
+	else {
+		push @data, @rows;
+	}
+	# main::print_line("Would have run recommends\n");
+	print_basic(@data); 
 	exit 1;
 }
+
+sub basic_data {
+	
+}
+
+
+sub data {
+	my ($type) = @_;
+	my %data = (
+	'' => ({
+	'' => '',
+	'' => '',
+	'' => '',
+	'' => '',
+	'' => '',
+	'' => '',
+	'' => '',
+	'' => '',
+	}),
+	
+	);
+	
+	my $ref = $data{$type};
+	my %values = %$ref;
+	
+	return %values;
+}
+# note: end will vary, but should always be treated as longest value possible.
+# expected values: Present/Missing
+sub make_row {
+	my ($type,$start,$middle,$end) = @_;
+	$middle = " $middle" if $middle;
+	my ($dots,$line) = ('','');
+	my $dots_length = $size{'max'} - 10 - length("$start$middle");
+	for (my $i = 0; $i < $dots_length; $i++){
+		$dots .= '-';
+	}
+	$line = "$start$middle$dots  $end";
+	return $line;
+}
+sub make_line {
+	my $line = '';
+	for (my $i = 0; $i < $size{'max'}; $i++){
+		$line .= '-';
+	}
+	return $line;
+}
+
 }
 
 #### -------------------------------------------------------------------
@@ -3696,6 +3749,25 @@ sub increment_starters {
 	}
 	return $result;
 }
+sub memory_data_full {
+	eval $start if $b_log;
+	my ($source) = @_;
+	my $num = 0;
+	my ($memory,$percent,$report,@rows);
+	if (!$show{'info'}){
+		$memory = get_memory_data();
+		$memory ||= 'N/A';
+		$memory =~ /(.+\s[MGTP]B)( \(([^\)]+)\))?/;
+		$report = $1;
+		$percent = $3 if $3; 
+		$rows[0]{$num++ . "#System Memory"} = '' if $source eq 'process';
+		$rows[0]{$num++ . "#Used/Total"} = $report;
+		$rows[0]{$num++ . "#used"} = $percent if $percent;
+	}
+	$b_mem = 1;
+	eval $end if $b_log;
+	return @rows;
+}
 
 sub pci_cleaner {
 	my ($string) = @_;
@@ -3726,6 +3798,7 @@ sub row_defaults {
 	'output-limit' => "Output throttled. IPs: $id; Limit: $limit; Override: --limit [1-x;-1 all]",
 	'pcicard-data' => "No PCI card data found.",
 	'pci-advanced-data' => 'bus/chip ids unavailable',
+	'ram-data' => "No RAM data was found. SOC maybe?",
 	'weather-null' => "No $id found. Internet connection working?",
 	);
 	return $unfound{$type};
@@ -7137,15 +7210,7 @@ sub mem_processes {
 		my @b = split(/\s+/,$b); 
 		$b[5] <=> $a[5] } @ps_aux;
 	@rows = splice @rows,0,$count;
-	if (!$show{'info'}){
-		$memory = main::get_memory_data();
-		$memory ||= 'N/A';
-		@data = (
-		{$num++ . "#System Memory" => '',
-		$num++ . "#Used/Total" => $memory,},
-		);
-		@processes = (@processes,@data);
-	}
+	@processes = main::memory_data_full('process') if !$b_mem;
 	$cpu_mem = ' - CPU: % used' if $extra > 0;
 	$j = scalar @rows;
 	my $throttled = throttled($ps_count,$count,$j);
@@ -7253,39 +7318,45 @@ sub raid_data {
 package RamData;
 
 sub get {
-	my (@rows,$key1,@ram,$val1);
+	my (@data,@rows,$key1,@ram,$val1);
 	my $num = 0;
 	my $ref = $alerts{'dmidecode'};
+	@rows = main::memory_data_full('ram') if !$b_mem;
 	if ( $$ref{'action'} ne 'use'){
 		$key1 = $$ref{'action'};
 		$val1 = $$ref{$key1};
-		$key1 = ucfirst($key1);
-		@rows = ({$num++ . "#$key1" => $val1,});
+		@data = ({
+		$num++ . "#RAM Report" => '',
+		$num++ . "#$key1" => $val1,
+		});
+		@rows = (@rows,@data);
 	}
 	else {
-		$key1 = 'Status';
-		$val1 = main::row_defaults('dev');
-		@rows = ({$num++ . "#$key1" => $val1,});
 		@ram = dmidecode_data();
-		@rows = create_ram_data(@ram);
+		if (@ram){
+			@data = create_ram_data(@ram);
+		}
+		else {
+			$key1 = 'message';
+			$val1 = main::row_defaults('ram-data');
+			@data = ({
+			$num++ . "#RAM Report" => '',
+			$num++ . "#$key1" => $val1,
+			});
+		}
+		@rows = (@rows,@data);
 	}
 	eval $end if $b_log;
 	return @rows;
 }
+
 sub create_ram_data {
 	eval $start if $b_log;
 	my (@ram) = @_;
+	return if !@ram;
 	my $num = 0;
 	my $j = 0;
 	my (@data,@rows);
-	if (!$show{'info'}){
-		my $memory = main::get_memory_data();
-		$memory ||= 'N/A';
-		@data = (
-		{$num++ . "#Used/Total" => $memory,},
-		);
-		@rows = (@rows,@data);
-	}
 	foreach (@ram){
 		$j = scalar @rows;
 		my %ref = %$_;
@@ -7561,7 +7632,7 @@ sub dmidecode_data {
 			last;
 		}
 	}
-	@ram = data_processor(@ram);
+	@ram = data_processor(@ram) if @ram;
 	# print Data::Dumper::Dumper \@ram;
 	eval $end if $b_log;
 	return @ram;
@@ -10081,6 +10152,7 @@ sub get_memory_data_bsd {
 	eval $end if $b_log;
 	return $memory;
 }
+
 sub get_module_version {
 	eval $start if $b_log;
 	my ($module) = @_;

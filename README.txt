@@ -2,8 +2,8 @@
 README for development branch of inxi Perl version: pinxi
 ====================================================================
 FILE:    README.txt
-VERSION: 2.2
-DATE:    2018-02-06
+VERSION: 2.3
+DATE:    2018-02-12
 
 NOTE: While the real program name will never change, for the sake
 of clarity, I will refer to the inxi-Perl dev branch inxi as pinxi, 
@@ -115,7 +115,7 @@ Note that my current development goals are, roughly in this order:
 
 4. Complete recommends output. This will wait for longer down the
    road when I actually know what the recommends are.
-   Status: NOT STARTED
+   Status: STARTED
    
 5. Complete option handler. 
    Status: DONE.
@@ -147,8 +147,8 @@ Note that my current development goals are, roughly in this order:
      Full:
      System: DONE
      Machine: DONE
-     Battery: stub
-     Memory: stub
+     Battery: DONE
+     Memory: DONE
      PCI Slots: DONE: NEW!
      CPU: DONE
      Graphics: DONE
@@ -160,7 +160,7 @@ Note that my current development goals are, roughly in this order:
      RAID: Started - stub 
      Unmounted: Started - stub 
      USB Info: DONE: NEW!
-     Sensors: Started - stub 
+     Sensors: Started
      Repos: DONE
      Processes: DONE - Improved significantly
      Weather: DONE
