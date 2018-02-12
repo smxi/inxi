@@ -39,8 +39,8 @@ use Time::HiRes qw(gettimeofday tv_interval);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-02-10';
-my $self_patch='258-p';
+my $self_date='2018-02-11';
+my $self_patch='259-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -58,14 +58,14 @@ my ( %alerts, %client, %colors, %dl, %files, %rows, %system_files, %use );
 
 ## arrays
 # ps_aux is full output, ps_cmd is only the last 10 to last
-my (@app,@dmesg_boot,@dmi,@ifs,@ifs_bsd,@pci,@ps_aux,@ps_cmd,@sysctl,@usb);
+my (@app,@dmesg_boot,@dmi,@gpudata,@ifs,@ifs_bsd,@pci,@ps_aux,@ps_cmd,@sysctl,@usb);
 my @test = (0,0,0,0,0);
 
 #my $opt_parser = Getopt::Long::Parser->new;
 
 ## Booleans
-my ($b_arm,$b_console_irc,$b_display,$b_dmi,$b_dmidecode_force,$b_irc,$b_log,
-$b_log_colors,$b_log_full,$b_pci,$b_root,$b_running_in_display,$b_sysctl,
+my ($b_arm,$b_console_irc,$b_display,$b_dmi,$b_dmidecode_force,$b_gpudata,$b_irc,
+$b_log,$b_log_colors,$b_log_full,$b_pci,$b_root,$b_running_in_display,$b_sysctl,
 $b_usb_check);
 my ($b_update,$b_weather) = (1,1);
 
@@ -3864,8 +3864,10 @@ sub print_data {
 		if (ref($data{$key1}) eq 'ARRAY'){
 			# @working = @{$data{$key1}};
 			%ids = (
+			'Array' => 1,
 			'Battery' => 1,
 			'Card' => 1,
+			'Device' => 1,
 			'Id' => 1,
 			);
 			foreach my $val1 (@{$data{$key1}}){
@@ -7251,15 +7253,7 @@ sub raid_data {
 package RamData;
 
 sub get {
-	eval $start if $b_log;
-	my @rows = create_ram_data();
-	return @rows;
-	eval $end if $b_log;
-	
-}
-sub create_ram_data {
-	eval $start if $b_log;
-	my (@rows,$key1,%ram,$val1);
+	my (@rows,$key1,@ram,$val1);
 	my $num = 0;
 	my $ref = $alerts{'dmidecode'};
 	if ( $$ref{'action'} ne 'use'){
@@ -7272,27 +7266,481 @@ sub create_ram_data {
 		$key1 = 'Status';
 		$val1 = main::row_defaults('dev');
 		@rows = ({$num++ . "#$key1" => $val1,});
+		@ram = dmidecode_data();
+		@rows = create_ram_data(@ram);
+	}
+	eval $end if $b_log;
+	return @rows;
+}
+sub create_ram_data {
+	eval $start if $b_log;
+	my (@ram) = @_;
+	my $num = 0;
+	my $j = 0;
+	my (@data,@rows);
+	if (!$show{'info'}){
+		my $memory = main::get_memory_data();
+		$memory ||= 'N/A';
+		@data = (
+		{$num++ . "#Used/Total" => $memory,},
+		);
+		@rows = (@rows,@data);
+	}
+	foreach (@ram){
+		$j = scalar @rows;
+		my %ref = %$_;
+		@data = ({
+		$num++ . "#Array" => '',
+		$num++ . "#capacity" => process_size($ref{'capacity'}),
+		});
+		@rows = (@rows,@data);
+		if ($ref{'cap-qualifier'}){
+			$rows[$j]{$num++ . "#note"} = $ref{'cap-qualifier'};
+		}
+		$rows[$j]{$num++ . "#slots"} = $ref{'slots'};
+		$rows[$j]{$num++ . "#EC"} = $ref{'eec'};
+		if ($extra > 0 ){
+			$ref{'max-module-size'} ||= 'N/A';
+			$rows[$j]{$num++ . "#max module size"} = process_size($ref{'max-module-size'});
+			if ($ref{'mod-qualifier'}){
+				$rows[$j]{$num++ . "#note"} = $ref{'mod-qualifier'};
+			}
+		}
+		foreach my $ref2 ($ref{'modules'}){
+			my @modules = @$ref2;
+			# print Data::Dumper::Dumper \@modules;
+			foreach my $ref3 ( @modules){
+				$j = scalar @rows;
+				my %mod = %$ref3;
+				$mod{'locator'} ||= 'N/A';
+				@data = ({
+				$num++ . "#Device" => $mod{'locator'},
+				$num++ . "#size" => process_size($mod{'size'}),
+				$num++ . "#speed" => $mod{'speed'},
+				$num++ . "#type" => $mod{'device-type'},
+				});
+				@rows = (@rows,@data);
+				if ($extra > 0 ){
+					$mod{'type'} ||= 'N/A';
+					$rows[$j]{$num++ . "#type"} = $mod{'type'};
+				}
+				if ($extra > 2 && $mod{'type'} ne 'N/A'){
+					$mod{'device-type-detail'} ||= 'N/A';
+					$rows[$j]{$num++ . "#detail"} = $mod{'device-type-detail'};
+				}
+				if ($extra > 2 ){
+					$mod{'data-width'} ||= 'N/A';
+					$rows[$j]{$num++ . "#bus width"} = $mod{'data-width'};
+					$mod{'total-width'} ||= 'N/A';
+					$rows[$j]{$num++ . "#total"} = $mod{'total-width'};
+				}
+				if ($extra > 1 ){
+					$mod{'manufacturer'} ||= 'N/A';
+					$rows[$j]{$num++ . "#manufacturer"} = $mod{'manufacturer'};
+					$mod{'part-number'} ||= 'N/A';
+					$rows[$j]{$num++ . "#part-nu"} = $mod{'part-number'};
+				}
+				if ($extra > 2 ){
+					$mod{'serial'} ||= 'N/A';
+					$rows[$j]{$num++ . "#serial"} = $mod{'serial'};
+				}
+			}
+		}
 	}
 	eval $end if $b_log;
 	return @rows;
 }
 
-sub data_processor {
-	eval $start if $b_log;
-	my (%ram) = @_;
-	my $num = 0;
-	
-	eval $end if $b_log;
-	return %ram;
-}
 sub dmidecode_data {
 	eval $start if $b_log;
-	my (%ram);
-	my $num = 0;
-	
-	%ram = data_processor(%ram);
+	my ($b_5,$handle,@ram,@temp);
+	my ($derived_module_size,$max_cap_5,$max_cap_16,$max_module_size,) = (0,0,0,0,);
+	my ($i,$j,$k) = (0,0,0);
+	foreach (@dmi){
+		my @ref = @$_;
+		# Portable Battery
+		if ($ref[0] == 5){
+			$ram[$k] = ({}) if !$ram[$k];
+			foreach my $item (@ref){
+				@temp = split /:\s*/, $item;
+				next if ! $temp[1];
+				if ($temp[0] eq 'Maximum Memory Module Size'){
+					$max_module_size = calculate_size($temp[1],$max_module_size);
+					$ram[$k]{'max-module-size'} = $max_module_size;
+				}
+				elsif ($temp[0] eq 'Maximum Total Memory Size'){
+					$max_cap_5 = calculate_size($temp[1],$max_cap_5);
+					$ram[$k]{'max-capacity-5'} = $max_cap_5;
+				}
+				elsif ($temp[0] eq 'Memory Module Voltage'){
+					$temp[1] =~ s/\s*V.*$//;
+					$ram[$k]{'voltage'} = $temp[1];
+				}
+				elsif ($temp[0] eq 'Associated Memory Slots'){
+					$ram[$k]{'slots-5'} = $temp[1];
+				}
+			}
+			$ram[$k]{'modules'} = ([],);
+			#print Data::Dumper::Dumper \@ram;
+			$b_5 = 1;
+		}
+		elsif ($ref[0] == 6){
+			my ($size,$speed,$type) = (0,0,0);
+			foreach my $item (@ref){
+				@temp = split /:\s*/, $item;
+				next if ! $temp[1];
+				if ($temp[0] eq 'Installed Size'){
+					# get module size
+					$size = calculate_size($temp[1],0);
+					# get data after module size
+					$temp[1] =~ s/ Connection\)?//;
+					$temp[1] =~ s/^[0-9]+\s*[MGTP]B\s*\(?//;
+					$type = lc($temp[1]);
+				}
+				elsif ($temp[0] eq 'Current Speed'){
+					$speed = $temp[1];
+				}
+			}
+			$ram[$k]{'modules'}[$j] = ({
+			'size' => $size,
+			'speed-ns' => $speed,
+			'type' => $type,
+			});
+			#print Data::Dumper::Dumper \@ram;
+			$j++;
+		}
+		elsif ($ref[0] == 16){
+			$handle = $ref[1];
+			$ram[$handle] = $ram[$k] if $ram[$k];
+			$ram[$k] = undef;
+			$ram[$handle] = ({}) if !$ram[$handle];
+			foreach my $item (@ref){
+				@temp = split /:\s*/, $item;
+				next if ! $temp[1];
+				if ($temp[0] eq 'Maximum Capacity'){
+					$max_cap_16 = calculate_size($temp[1],$max_cap_16);
+					$ram[$handle]{'max-capacity-16'} = $max_cap_16;
+				}
+				# note: these 3 have cleaned data in set_dmidecode_data, so replace stuff manually
+				elsif ($temp[0] eq 'Location'){
+					$temp[1] =~ s/\sOr\sMotherboard//;
+					$temp[1] ||= 'System Board';
+					$ram[$handle]{'location'} = $temp[1];
+				}
+				elsif ($temp[0] eq 'Use'){
+					$temp[1] ||= 'System Memory';
+					$ram[$handle]{'use'} = $temp[1];
+				}
+				elsif ($temp[0] eq 'Error Correction Type'){
+					$temp[1] ||= 'None';
+					$ram[$handle]{'eec'} = $temp[1];
+				}
+				elsif ($temp[0] eq 'Number Of Devices'){
+					$ram[$handle]{'slots-16'} = $temp[1];
+				}
+				#print "0: $temp[0]\n";
+			}
+			$ram[$handle]{'derived-module-size'} = 0;
+			$ram[$handle]{'device-count-found'} = 0;
+			$ram[$handle]{'used-capacity'} = 0;
+			#print "s16: $ram[$handle]{'slots-16'}\n";
+		}
+		elsif ($ref[0] == 17){
+			my ($bank_locator,$configured_clock_speed,$data_width) = ('','','');
+			my ($device_type,$device_type_detail,$form_factor,$locator,$main_locator) = ('','','','','');
+			my ($manufacturer,$part_number,$serial,$speed,$total_width) = ('','','','','');
+			my ($device_size,$i_data,$i_total,$working_size) = (0,0,0,0);
+			foreach my $item (@ref){
+				@temp = split /:\s*/, $item;
+				next if ! $temp[1];
+				if ($temp[0] eq 'Array Handle'){
+					$handle = hex($temp[1]);
+				}
+				elsif ($temp[0] eq 'Data Width'){
+					$data_width = $temp[1];
+				}
+				elsif ($temp[0] eq 'Total Width'){
+					$total_width = $temp[1];
+				}
+				# do not try to guess from installed modules, only use this to correct type 5 data
+				elsif ($temp[0] eq 'Size'){
+					$derived_module_size = calculate_size($temp[1],$derived_module_size);
+					$working_size = calculate_size($temp[1],0);
+					# we want any non real size data to be preserved
+					if ( $temp[1] =~ /^[0-9]+\s*[MTPG]B/ ) {
+						$device_size = $working_size;
+					}
+					else {
+						$device_size = $temp[1];
+					}
+				}
+				elsif ($temp[0] eq 'Locator'){
+					$temp[1] =~ s/RAM slot #/Slot/;
+					$locator = $temp[1];
+				}
+				elsif ($temp[0] eq 'Bank Locator'){
+					$bank_locator = $temp[1];
+				}
+				elsif ($temp[0] eq 'Form Factor'){
+					$form_factor = $temp[1];
+				}
+				elsif ($temp[0] eq 'Type'){
+					$device_type = $temp[1];
+				}
+				elsif ($temp[0] eq 'Type Detail'){
+					$device_type_detail = $temp[1];
+				}
+				elsif ($temp[0] eq 'Speed'){
+					$speed = $temp[1];
+				}
+				elsif ($temp[0] eq 'Configured Clock Speed'){
+					$configured_clock_speed = $temp[1];
+				}
+				elsif ($temp[0] eq 'Manufacturer'){
+					$temp[1] =~ s/(^[0]+$|Undefined.*|.*Manufacturer.*)//g;
+					$manufacturer = $temp[1];
+				}
+				elsif ($temp[0] eq 'Part Number'){
+					$temp[1] =~ s/(^[0]+$||.*Module.*|Undefined.*|PartNum.*)//g;
+					$part_number = $temp[1];
+				}
+				elsif ($temp[0] eq 'Serial Number'){
+					$temp[1] =~ s/(^[0]+$|Undefined.*|SerNum.*)//g;
+					$serial = $temp[1];
+				}
+			}
+			# because of the wide range of bank/slot type data, we will just use
+			# the one that seems most likely to be right. Some have: Bank: SO DIMM 0 slot: J6A
+			# so we dump the useless data and use the one most likely to be visibly correct
+			if ( $bank_locator =~ /DIMM/ ) {
+				$main_locator = $bank_locator;
+			}
+			else {
+				$main_locator = $locator;
+			}
+			if ($working_size =~ /^[0-9][0-9]+$/) {
+				$ram[$handle]{'device-count-found'}++;
+				# build up actual capacity found for override tests
+				$ram[$handle]{'used-capacity'} += $working_size;
+			}
+			# sometimes the data is just wrong, they reverse total/data. data I believe is
+			# used for the actual memory bus width, total is some synthetic thing, sometimes missing.
+			# note that we do not want a regular string comparison, because 128 bit memory buses are
+			# in our future, and 128 bits < 64 bits with string compare
+			$data_width =~ /(^[0-9]+).*/;
+			$i_data = $1;
+			$total_width =~ /(^[0-9]+).*/;
+			$i_total = $1;
+			if ($i_data && $i_total && $i_data > $i_total){
+				my $temp_width = $data_width;
+				$data_width = $total_width;
+				$total_width = $temp_width;
+			}
+			$ram[$handle]{'derived-module-size'} = $derived_module_size;
+			$ram[$handle]{'modules'}[$i]{'configured-clock-speed'} = $configured_clock_speed;
+			$ram[$handle]{'modules'}[$i]{'data-width'} = $data_width;
+			$ram[$handle]{'modules'}[$i]{'device-size'} = $device_size;
+			$ram[$handle]{'modules'}[$i]{'device-type'} = $device_type;
+			$ram[$handle]{'modules'}[$i]{'device-type-detail'} = lc($device_type_detail);
+			$ram[$handle]{'modules'}[$i]{'form-factor'} = $form_factor;
+			$ram[$handle]{'modules'}[$i]{'locator'} = $main_locator;
+			$ram[$handle]{'modules'}[$i]{'manufacturer'} = $manufacturer;
+			$ram[$handle]{'modules'}[$i]{'part-number'} = $part_number;
+			$ram[$handle]{'modules'}[$i]{'serial'} = $serial;
+			$ram[$handle]{'modules'}[$i]{'speed'} = $speed;
+			$ram[$handle]{'modules'}[$i]{'total-width'} = $total_width;
+			$i++
+		}
+		elsif ($ref[0] < 17 ){
+			next;
+		}
+		elsif ($ref[0] > 17 ){
+			last;
+		}
+	}
+	@ram = data_processor(@ram);
+	# print Data::Dumper::Dumper \@ram;
 	eval $end if $b_log;
-	return %ram;
+	return @ram;
+}
+sub data_processor {
+	eval $start if $b_log;
+	my (@ram) = @_;
+	my $b_debug = 0;
+	my (@return,@temp);
+	
+	foreach (@ram){
+		# because we use the actual array handle as the index, 
+		# there will be many undefined keys
+		next if ! defined $_;
+		my %ref = %$_;
+		my ($max_cap,$max_mod_size) = (0,0);
+		my ($alt_cap,$est_cap,$est_mod,$unit) = (0,'','','');
+		$max_cap = $ref{'max-capacity-16'};
+		$ref{'slots-16'} ||= 0; # make sure it's an integer not string if empty
+		# 1: if max cap 1 is null, and max cap 2 not null, use 2
+		if ($b_debug){
+			print "1: mms: $ref{'max-module-size'} :dms: $ref{'derived-module-size'} :mc: $max_cap :uc: $ref{'used-capacity'}\n";
+		}
+		if (!$max_cap && $ref{'max-capacity-5'}) {
+			$max_cap = $ref{'max-capacity-5'};
+		}
+		if ($b_debug){
+			print "2: mms: $ref{'max-module-size'} :dms: $ref{'derived-module-size'} :mc: $max_cap :uc: $ref{'used-capacity'}\n";
+		}
+		# 2: now check to see if actually found module sizes are > than listed max module, replace if >
+		if ( $ref{'max-module-size'} && $ref{'derived-module-size'} && 
+		     $ref{'derived-module-size'} > $ref{'max-module-size'} ){
+			$ref{'max-module-size'} = $ref{'derived-module-size'};
+			$est_mod = 'est';
+		}
+		if ($b_debug){
+			print "3: dcf: $ref{'device-count-found'} :dms: $ref{'derived-module-size'} :mc: $max_cap :uc: $ref{'used-capacity'}\n";
+		}
+		# note: some cases memory capacity == max module size, so one stick will fill it
+		# but I think only with cases of 2 slots does this happen, so if > 2, use the count of slots.
+		if ($max_cap && ($ref{'device-count-found'} || $ref{'slots-16'}) ){
+			# first check that actual memory found is not greater than listed max cap, or
+			# checking to see module count * max mod size is not > used capacity
+			if ($ref{'used-capacity'} && $ref{'max-capacity-16'}){
+				if ($ref{'used-capacity'} > $max_cap){
+					if ($ref{'max-module-size'} && 
+					  $ref{'used-capacity'} < ($ref{'slots-16'} * $ref{'max-module-size'} )){
+						$max_cap = $ref{'slots-16'} * $ref{'max-module-size'};
+						$est_cap = 'est';
+						print "A\n" if $b_debug;
+					}
+					elsif ($ref{'derived-module-size'} && 
+					  $ref{'used-capacity'} < ($ref{'slots-16'} * $ref{'derived-module-size'}) ){
+						$max_cap = $ref{'slots-16'} * $ref{'derived-module-size'};
+						$est_cap = 'est';
+						print "B\n" if $b_debug;
+					}
+					else {
+						$max_cap = $ref{'used-capacity'};
+						$est_cap = 'est';
+						print "C\n" if $b_debug;
+					}
+				}
+			}
+			# note that second case will never really activate except on virtual machines and maybe
+			# mobile devices
+			if (!$est_cap){
+				# do not do this for only single modules found, max mod size can be equal to the array size
+				if ($ref{'slots-16'} > 1 && $ref{'device-count-found'} > 1 && 
+				  $max_cap < ($ref{'derived-module-size'} * $ref{'slots-16'} ) ){
+					$max_cap = $ref{'derived-module-size'} * $ref{'slots-16'};
+					$est_cap = 'est';
+					print "D\n" if $b_debug;
+				}
+				elsif ($ref{'device-count-found'} > 0 && $max_cap < ( $ref{'derived-module-size'} * $ref{'device-count-found'} )){
+					$max_cap = $ref{'derived-module-size'} * $ref{'device-count-found'};
+					$est_cap = 'est';
+					print "E\n" if $b_debug;
+				}
+				## handle cases where we have type 5 data: mms x device count equals type 5 max cap
+				# however do not use it if cap / devices equals the derived module size
+				elsif ($ref{'max-module-size'} > 0 &&
+				  ($ref{'max-module-size'} * $ref{'slots-16'}) == $ref{'max-capacity-5'} &&
+				  $ref{'max-capacity-5'} != $ref{'max-capacity-16'} &&
+				  $ref{'derived-module-size'} != ($ref{'max-capacity-16'}/$ref{'slots-16'}) ){
+					$max_cap = $ref{'max-capacity-5'};
+					$est_cap = 'est';
+					print "F\n" if $b_debug;
+				}
+				
+			}
+			if ($b_debug){
+				print "4: mms: $ref{'max-module-size'} :dms: $ref{'derived-module-size'} :mc: $max_cap :uc: $ref{'used-capacity'}\n";
+			}
+			# some cases of type 5 have too big module max size, just dump the data then since
+			# we cannot know if it is valid or not, and a guess can be wrong easily
+			if ($ref{'max-module-size'} && $max_cap && $ref{'max-module-size'} > $max_cap){
+				$ref{'max-module-size'} = 0;
+			}
+			if ($b_debug){
+				print "5: dms: $ref{'derived-module-size'} :s16: $ref{'slots-16'} :mc: $max_cap\n";
+			}
+			# now prep for rebuilding the ram array data 
+			if (!$ref{'max-module-size'}){
+				# ie: 2x4gB
+				if (!$est_cap && $ref{'derived-module-size'} > 0 && $max_cap > ($ref{'derived-module-size'} * $ref{'slots-16'} * 4) ){
+					$est_cap = 'check';
+					print "G\n" if $b_debug;
+				}
+			}
+			# case where listed max cap is too big for actual slots x max cap, eg:
+			# listed max cap, 8gb, max mod 2gb, slots 2
+			else {
+				if (!$est_cap && $ref{'max-module-size'} > 0){
+					if ($max_cap > ( $ref{'max-module-size'} * $ref{'slots-16'})){
+						$est_cap = 'check';
+						print "H\n" if $b_debug;
+					}
+				}
+			}
+		}
+		@temp = ({
+		'capacity' => $max_cap,
+		'cap-qualifier' => $est_cap,
+		'eec' => $ref{'eec'},
+		'location' => $ref{'location'},
+		'max-module-size' => $ref{'max-module-size'},
+		'mod-qualifier' => $est_mod,
+		'modules' => $ref{'modules'},
+		'slots' => $ref{'slots-16'},
+		'use' => $ref{'use'},
+		'voltage' => $ref{'voltage'},
+		});
+		@return = (@return,@temp);
+	}
+	eval $end if $b_log;
+	return @return;
+}
+sub process_size {
+	my ($size) = @_;
+	my ($b_trim,$unit) = (0,'');
+	return 'N/A' if ( ! $size );
+	if ( $size < 1024 ){
+		$unit='MB';
+	}
+	elsif ( $size < 1024000 ){
+		$size = $size / 1024;
+		$unit='GB';
+		$b_trim = 1;
+	}
+	elsif ( $size < 1024000000 ){
+		$size = $size / 1024000;
+		$unit='TB';
+		$b_trim = 1;
+	}
+	# we only want a max 2 decimal places, and only when it's 
+	# a unit > MB
+	$size = sprintf("%.2f",$size) if $b_trim;
+	$size =~ s/\.[0]+$//;
+	$size = "$size $unit";
+	return $size;
+}
+sub calculate_size {
+	my ($data, $size) = @_;
+	if ( $data =~ /^[0-9]+\s*[GMTP]B/) {
+		if ( $data =~ /([0-9]+)\s*GB/ ) {
+			$data = $1 * 1024;
+		}
+		elsif ( $data =~ /([0-9]+)\s*MB/ ) {
+			$data = $1;
+		}
+		elsif ( $data =~ /([0-9]+)\s*TB/ ) {
+			$data = $1 * 1024 * 1000;
+		}
+		elsif ( $data =~ /([0-9]+)\s*PB/ ) {
+			$data = $1 * 1024 * 1000 * 1000;
+		}
+		if ($data =~ /^[0-9][0-9]+$/ && $data > $size ) {
+			$size=$data;
+		}
+	}
+	return $size;
 }
 }
 
@@ -7779,16 +8227,16 @@ package SensorData;
 sub get {
 	eval $start if $b_log;
 	my (@rows);
-	@rows = create_sensors_data();
+	@rows = create_sensor_data();
 	eval $end if $b_log;
 	return @rows;
 }
-sub create_sensors_data {
+sub create_sensor_data {
 	eval $start if $b_log;
 	my (@data,@rows,$key1,%sensors,$val1);
 	my $num = 0;
 	my $ref = $alerts{'sensors'};
-	
+	# gpu_data();
 	if ( $$ref{'action'} ne 'use'){
 		$key1 = $$ref{'action'};
 		$val1 = $$ref{$key1};
@@ -7818,8 +8266,20 @@ sub sensors_data {
 	eval $start if $b_log;
 	my (%sensors);
 	my $num = 0;
+	my @data = load_sensors();
 	
 	%sensors = data_processor(%sensors);
+	eval $end if $b_log;
+	return %sensors;
+}
+sub load_sensors {
+	eval $start if $b_log;
+	my (@data,%sensors);
+	@data = main::grabber(main::check_program('sensors') . " 2>/dev/null");
+	foreach (@data){
+		$_ =~ s/:\s*\+?/:/;
+		
+	}
 	eval $end if $b_log;
 	return %sensors;
 }
@@ -7833,9 +8293,26 @@ sub sysctl_data {
 	eval $end if $b_log;
 	return %sensors;
 }
+sub load_sysctl {
+eval $start if $b_log;
+	my (@data,%sensors);
+	foreach (@sysctl){
+		if (/^hw.sensors\.([0-9a-z]+)\.(temp|fan|volt)([0-9])/){
+			my $sensor = $1;
+			my $type = $2;
+			my $number = $3;
+			my @working = split /:/, $_;
+		}
+		
+		last if /^(hw.cpuspeed|hw.vendor|hw.physmem)/;
+	}
+	eval $end if $b_log;
+	return %sensors;
+}
 sub gpu_data {
 	eval $start if $b_log;
-	my (@data,@data2,@gpudata,$path,@screens,$temp);
+	return @gpudata if $b_gpudata;
+	my ($cmd,@data,@data2,$path,@screens,$temp);
 	my ($j) = (0);
 	if ($path = main::check_program('nvidia-settings')){
 		# first get the number of screens. This only work if you are in X
@@ -7854,6 +8331,7 @@ sub gpu_data {
 		# now we'll get the gpu temp for each screen discovered. The print out function
 		# will handle removing screen data for single gpu systems. -t shows only data we want
 		# GPUCurrentClockFreqs: 520,600
+		# GPUCurrentFanSpeed: 50 0-100, not rpm, percent I think
 		# VideoRam: 1048576
 		# CUDACores: 16 
 		# PCIECurrentLinkWidth: 16
@@ -7864,9 +8342,15 @@ sub gpu_data {
 		# ThermalSensorReading: 50
 		# PCIID: 4318,2661 - the pci stuff doesn't appear to work
 		# PCIBus: 2
+		# PCIDevice: 0
 		# Irq: 30
 		foreach my $screen (@screens){
-			@data = main::grabber("$path -c $screen -q GPUCoreTemp -q VideoRam -q GPUCurrentClockFreqs 2>/dev/null");
+			my $screen2 = $screen;
+			$screen2 =~ s/\.[0-9]$//;
+			$cmd = '-q GPUCoreTemp -q VideoRam -q GPUCurrentClockFreqs -q PCIECurrentLinkWidth ';
+			$cmd .= '-q Irq -q PCIBus -q PCIDevice -q GPUCurrentFanSpeed';
+			@data = main::grabber("$path -c $screen2 $cmd 2>/dev/null");
+			@data = (@data,@data2);
 			$j = scalar @gpudata;
 			$gpudata[$j] = ({});
 			foreach my $item (@data){
@@ -7875,14 +8359,23 @@ sub gpu_data {
 					my $value = $2;
 					$gpudata[$j]{'type'} = 'nvidia';
 					$gpudata[$j]{'screen'} = $screen;
-					if ($attribute eq 'GPUCoreTemp'){
+					if (!$gpudata[$j]{'temp'} && $attribute eq 'GPUCoreTemp'){
 						$gpudata[$j]{'temp'} = $value;
 					}
-					elsif ($attribute eq 'VideoRam'){
+					elsif (!$gpudata[$j]{'ram'} && $attribute eq 'VideoRam'){
 						$gpudata[$j]{'ram'} = $value;
 					}
-					elsif ($attribute eq 'GPUCurrentClockFreqs'){
+					elsif (!$gpudata[$j]{'clock'} && $attribute eq 'GPUCurrentClockFreqs'){
 						$gpudata[$j]{'clock'} = $value;
+					}
+					elsif (!$gpudata[$j]{'bus'} && $attribute eq 'PCIBus'){
+						$gpudata[$j]{'bus'} = $value;
+					}
+					elsif (!$gpudata[$j]{'bus-id'} && $attribute eq 'PCIDevice'){
+						$gpudata[$j]{'bus-id'} = $value;
+					}
+					elsif (!$gpudata[$j]{'fan-speed'} && $attribute eq 'GPUCurrentFanSpeed'){
+						$gpudata[$j]{'fan-speed'} = $value;
 					}
 				}
 			}
@@ -7901,7 +8394,9 @@ sub gpu_data {
 			}
 		}
 	}
-	# print Data::Dumper::Dumper \@gpudata;
+	# we'll probably use this data elsewhere so make it a one time call
+	$b_gpudata = 1;
+	 print Data::Dumper::Dumper \@gpudata;
 	eval $end if $b_log;
 	return @gpudata;
 }
