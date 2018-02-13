@@ -142,7 +142,6 @@ Note that my current development goals are, roughly in this order:
      Basic -b:
      ALMOST DONE: 
      missing Disk Basic
-     missing Battery
      
      Full:
      System: DONE
