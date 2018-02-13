@@ -39,8 +39,8 @@ use Time::HiRes qw(gettimeofday tv_interval);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-02-12';
-my $self_patch='280-p';
+my $self_date='2018-02-13';
+my $self_patch='281-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -2075,18 +2075,18 @@ sub run {
 	@data = basic_data($line);
 	push @rows,@data;
 	if (!$bsd_type){
-		@data = required_directories($line);
+		@data = check_items('required system directories',$line,$pm);
 		push @rows,@data;
 	}
-	@data = recommends_programs($line,$pm);
+	@data = check_items('recommended system programs',$line,$pm);
 	push @rows,@data;
-	@data = recommends_display_programs($line,$pm);
+	@data = check_items('recommended display information programs',$line,$pm);
 	push @rows,@data;
-	@data = recommends_downloader_programs($line,$pm);
+	@data = check_items('recommended downloader programs',$line,$pm);
 	push @rows,@data;
-	@data = recommends_directories($line);
+	@data = check_items('recommended directories',$line,'');
 	push @rows,@data;
-	@data = recommends_files($line);
+	@data = check_items('recommended files',$line,'');
 	push @rows,@data;
 	@data = (
 	['0', '', '', "$line"],
@@ -2103,314 +2103,166 @@ sub basic_data {
 	my ($line) = @_;
 	my (@data,@rows);
 	my $client = $client{'name-print'};
-	if ($client{'version'}){
-		$client .= ' ' . $client{'version'};
+	$client .= ' ' . $client{'version'} if $client{'version'};
+	my $default_shell = 'N/A';
+	if ($ENV{'SHELL'}){
+		$default_shell = $ENV{'SHELL'};
+		$default_shell =~ s/.*\///;
 	}
 	@rows = (
 	['0', '', '', "$self_name will now begin checking for the programs it needs 
-	to operate. First a check of the main tools $self_name uses."],
+	to operate."],
+	['0', '', '', "" ],
+	['0', '', '', "Look at 	$self_name --help or the man page (man $self_name) 
+	to see what options are available." ],
 	['0', '', '', "$line" ],
-	['0', '', '', "Perl version: $]" ],
-	['0', '', '', "Shell: " . $client ],
+	['0', '', '', "Check: core tools" ],
+	['0', '', '', "" ],
+	['0', '', '', "Perl version: ^$]" ],
+	['0', '', '', "Current shell: " . $client ],
+	['0', '', '', "Default shell: " . $default_shell ],
 	);
 	return @rows;
 }
-
-sub required_directories {
-	my ($line) = @_;
-	my ($row,@missing,@rows,$result);
-	my @dirs = qw(/proc /sys);
-	my $i = 0;
-	@rows = (
-	['0', '', '', "$line" ],
-	['0', '', '', "Test: Required System Directories:" ],
-	['0', '', '', " " ],
-	);
-	foreach (@dirs){
-		$i = scalar @rows;
-		if (-d $_){
-			$result = 'Present';
+sub check_items {
+	my ($type,$line,$pm) = @_;
+	my (@data,%info,@missing,$row,@rows,$result,@unreadable);
+	my ($b_dir,$b_file,$b_program,$item);
+	my ($about,$extra,$extra2,$extra3,$extra4,$info_os,$install,$row_type) = ('','','','','','info','','');
+	my ($b_data) = (1);
+	if ($type eq 'required system directories'){
+		@data = qw(/proc /sys);
+		$b_data = 0;
+		$b_dir = 1;
+		$item = 'Directory';
+		$row_type = 'empty';
+	}
+	elsif ($type eq 'recommended system programs'){
+		if ($bsd_type){
+			@data = qw(dig dmidecode file hddtemp ifconfig lsusb sudo sysctl tree uptime usbdevs);
+			$info_os = 'info-bsd';
 		}
 		else {
-			$result = 'Missing';
-			push @missing, $_;
+			@data = qw(dig dmidecode file hddtemp ifconfig ip lsusb modinfo 
+			runlevel sensors strings sudo tree uptime);
 		}
-		$row = make_row('empty',$_,'',$result);
-		$rows[$i] = (['0', '', '', $row]);
+		$b_program = 1;
+		$item = 'Program';
+		$row_type = 'app';
 	}
-	$i = scalar @rows;
-	$rows[$i] = (['0', '', '', " "]);
-	$i = scalar @rows;
-	if (@missing){
-		$rows[$i] = (['0', '', '', "The following directories are missing: "]);
-		foreach (@missing) {
-			$i = scalar @rows;
-			$rows[$i] = (['0', '', '', "Directory: $_"]);
-		}
-	}
-	else {
-		$rows[$i] = (['0', '', '', "All Directories are present"]);
-	}
-	return @rows;
-}
-sub recommends_programs {
-	my ($line,$pm) = @_;
-	my ($row,$middle,@missing,@programs,@rows,$result);
-	my $type = 'info';
-	if ($bsd_type){
-		@programs = qw(dig dmidecode file hddtemp ifconfig lsusb sudo sysctl tree uptime usbdevs);
-		$type = 'info-bsd';
-	}
-	else {
-		@programs = qw(dig dmidecode file hddtemp ifconfig ip lsusb modinfo 
-		runlevel sensors strings sudo tree uptime);
-	}
-	my $i = 0;
-	@rows = (
-	['0', '', '', "$line" ],
-	['0', '', '', "Test: Recommended System programs:" ],
-	['0', '', '', " " ],
-	);
-	foreach (@programs){
-		$i = scalar @rows;
-		my $install = '';
-		my %data = program_data($_);
-		if (main::check_program($_)){
-			$result = 'Present';
+	elsif ($type eq 'recommended display information programs'){
+		if ($bsd_type){
+			@data = qw(glxinfo xdpyinfo xprop xrandr);
+			$info_os = 'info-bsd';
 		}
 		else {
-			$result = 'Missing';
-			$install = " install: $data{$pm}" if $pm;
-			push @missing, "$_$install";
+			@data = qw(glxinfo xdpyinfo xprop xrandr);
 		}
-		$row = make_row('app',$_,$data{$type},$result);
-		$rows[$i] = (['0', '', '', $row]);
+		$b_program = 1;
+		$item = 'Program';
+		$row_type = 'app';
 	}
-	$i = scalar @rows;
-	$rows[$i] = (['0', '', '', " "]);
-	$i = scalar @rows;
-	if (@missing){
-		$rows[$i] = (['0', '', '', "The following programs are missing:"]);
-		foreach (@missing){
-			$i = scalar @rows;
-			$rows[$i] = (['0', '', '', "Program: $_"]);
-		}
-	}
-	else {
-		$rows[$i] = (['0', '', '', "All programs are present."]);
-	}
-	return @rows;
-}
-sub recommends_display_programs {
-	my ($line,$pm) = @_;
-	my ($row,$middle,@missing,@programs,@rows,$result);
-	my $type = 'info';
-	if ($bsd_type){
-		@programs = qw(glxinfo xdpyinfo xprop xrandr);
-		$type = 'info-bsd';
-	}
-	else {
-		@programs = qw(glxinfo xdpyinfo xprop xrandr);
-	}
-	my $i = 0;
-	@rows = (
-	['0', '', '', "$line" ],
-	['0', '', '', "Test: Recommended Display information programs:" ],
-	['0', '', '', " " ],
-	);
-	foreach (@programs){
-		$i = scalar @rows;
-		my $install = '';
-		my %data = program_data($_);
-		if (main::check_program($_)){
-			$result = 'Present';
+	elsif ($type eq 'recommended downloader programs'){
+		if ($bsd_type){
+			@data = qw(curl dig fetch ftp wget);
+			$info_os = 'info-bsd';
 		}
 		else {
-			$result = 'Missing';
-			$install = " install: $data{$pm}" if $pm;
-			push @missing, "$_$install";
+			@data = qw(curl dig wget);
 		}
-		$row = make_row('app',$_,$data{$type},$result);
-		$rows[$i] = (['0', '', '', $row]);
+		$b_program = 1;
+		$extra = ' (You only need one of these)';
+		$extra2 = "Perl HTTP::Tiny is the default downloader tool. 
+		See --help --alt 40-44 options for how to override default downloader(s) in case of issues. ";
+		$extra3 = "If dig is installed, it is the default for WAN IP data. 
+		Strongly recommended. Dig is fast and accurate.";
+		$extra4 = " However, you really only need dig in most cases so don't worry, Perl is the default anyway and you obviously have that installed";
+		$item = 'Program';
+		$row_type = 'app';
 	}
-	$i = scalar @rows;
-	$rows[$i] = (['0', '', '', " "]);
-	$i = scalar @rows;
-	if (@missing){
-		$rows[$i] = (['0', '', '', "The following display information programs are missing:"]);
-		foreach (@missing){
-			$i = scalar @rows;
-			$rows[$i] = (['0', '', '', "Program: $_"]);
-		}
-	}
-	else {
-		$rows[$i] = (['0', '', '', "All programs are present."]);
-	}
-	return @rows;
-}
-sub recommends_downloader_programs {
-	my ($line,$pm) = @_;
-	my ($row,$middle,@missing,@programs,@rows,$result);
-	my $type = 'info';
-	if ($bsd_type){
-		@programs = qw(curl dig fetch ftp wget);
-		$type = 'info-bsd';
-	}
-	else {
-		@programs = qw(curl dig wget);
-	}
-	my $i = 0;
-	@rows = (
-	['0', '', '', "$line" ],
-	['0', '', '', "Test: Recommended Downloader programs (You only need one)." ],
-	['0', '', '', " " ],
-	['0', '', '', "Perl HTTP::Tiny is the default downloader tool. 
-	See --help --alt 40-44 options for how to override default downloader(s) 
-	in case of issues." ],
-	['0', '', '', "If dig is installed, it is the default for WAN IP data. 
-	Strongly recommended. Dig is fast and accurate." ],
-	['0', '', '', " " ],
-	);
-	foreach (@programs){
-		$i = scalar @rows;
-		my $install = '';
-		my %data = program_data($_);
-		if (main::check_program($_)){
-			$result = 'Present';
+	elsif ($type eq 'recommended directories'){
+		if ($bsd_type){
+			@data = qw(/dev);
 		}
 		else {
-			$result = 'Missing';
-			$install = " install: $data{$pm}" if $pm;
-			push @missing, "$_$install";
+			@data = qw(/dev /dev/disk/by-label /dev/disk/by-uuid /sys/class/dmi/id);
 		}
-		$row = make_row('app',$_,$data{$type},$result);
-		$rows[$i] = (['0', '', '', $row]);
+		$b_dir = 1;
+		$item = 'Directory';
+		$row_type = 'dir';
 	}
-	$i = scalar @rows;
-	$rows[$i] = (['0', '', '', " "]);
-	$i = scalar @rows;
-	if (@missing){
-		$rows[$i] = (['0', '', '', "The following downloader programs are missing. However, you really only need dig in most cases so don't worry, Perl is the default anyway and you obviously have that installed:"]);
-		foreach (@missing){
-			$i = scalar @rows;
-			$rows[$i] = (['0', '', '', "Program: $_"]);
-		}
-	}
-	else {
-		$rows[$i] = (['0', '', '', "All downloaders are present."]);
-	}
-	return @rows;
-}
-sub recommends_directories {
-	my ($line) = @_;
-	my ($row,$middle,@missing,@dirs,@rows,$result);
-	my $type = 'info';
-	if ($bsd_type){
-		@dirs = qw(/dev);
-	}
-	else {
-		@dirs = qw(/dev /dev/disk/by-label /dev/disk/by-uuid /sys/class/dmi/id);
-	}
-	my $i = 0;
-	@rows = (
-	['0', '', '', "$line" ],
-	['0', '', '', "Test: Recommended directories." ],
-	['0', '', '', " " ],
-	);
-	foreach (@dirs){
-		$i = scalar @rows;
-		my %data = directory_data($_);
-		if ( -d $_){
-			$result = 'Present';
+	elsif ($type eq 'recommended files'){
+		if ($bsd_type){
+			@data = qw(/var/run/dmesg.boot /var/log/Xorg.0.log);
 		}
 		else {
-			$result = 'Missing';
-			push @missing, "$_";
+			@data = qw(/etc/lsb-release /etc/os-release /proc/asound/cards 
+			/proc/asound/version /proc/cpuinfo /proc/mdstat /proc/meminfo /proc/modules 
+			/proc/mounts /proc/scsi/scsi /var/log/Xorg.0.log );
 		}
-		$row = make_row('dir',$_,$data{$type},$result);
-		$rows[$i] = (['0', '', '', $row]);
+		$b_file = 1;
+		$item = 'File';
+		$row_type = 'file';
+		$extra2 = "Note that not all of these are used by every system, 
+		so if one is missing it's usually not a big deal.";
 	}
-	$i = scalar @rows;
-	$rows[$i] = (['0', '', '', " "]);
-	$i = scalar @rows;
-	if (@missing){
-		$rows[$i] = (['0', '', '', "The recommended directories are missing:"]);
-		foreach (@missing){
-			$i = scalar @rows;
-			$rows[$i] = (['0', '', '', "Directory: $_"]);
-		}
-	}
-	else {
-		$rows[$i] = (['0', '', '', "All directories are present."]);
-	}
-	return @rows;
-}
-sub recommends_files {
-	my ($line) = @_;
-	my ($row,$middle,@missing,@files,@rows,$result,@unreadable);
-	my $type = 'info';
-	if ($bsd_type){
-		@files = qw(/var/run/dmesg.boot /var/log/Xorg.0.log);
-	}
-	else {
-		@files = qw(/etc/lsb-release /etc/os-release /proc/asound/cards 
-		/proc/asound/version /proc/cpuinfo /proc/mdstat /proc/meminfo /proc/modules 
-		/proc/mounts /proc/scsi/scsi /var/log/Xorg.0.log );
-	}
-	my $i = 0;
 	@rows = (
 	['0', '', '', "$line" ],
-	['0', '', '', "Test: Recommended files." ],
-	['0', '', '', " " ],
-	['0', '', '', "Note that not all of these are used by every system, so if one is missing it's usually not a big deal." ],
+	['0', '', '', "Test: $type$extra:" ],
 	['0', '', '', " " ],
 	);
-	foreach (@files){
-		$i = scalar @rows;
-		my %data = file_data($_);
-		if ( -r $_){
+	if ($extra2){
+		$rows[scalar @rows] = (['0', '', '', $extra2]);
+		$rows[scalar @rows] = (['0', '', '', ' ']);
+	}
+	if ($extra3){
+		$rows[scalar @rows] = (['0', '', '', $extra3]);
+		$rows[scalar @rows] = (['0', '', '', ' ']);
+	}
+	foreach (@data){
+		$install = '';
+		$about = '';
+		if ($b_data){
+			%info = item_data($_) if $b_data;
+			$about = $info{$info_os};
+		}
+		if ( ( $b_dir && -d $_ ) || ( $b_file && -r $_ ) || ($b_program && main::check_program($_) )  ){
 			$result = 'Present';
 		}
-		elsif ( -f $_){
+		elsif ($b_file && -f $_){
 			$result = 'Unreadable';
 			push @unreadable, "$_";
 		}
 		else {
 			$result = 'Missing';
-			push @missing, "$_";
+			$install = " ~ Install package: $info{$pm}" if ($b_program && $pm);
+			push @missing, "$_$install";
 		}
-		$row = make_row('file',$_,$data{$type},$result);
-		$rows[$i] = (['0', '', '', $row]);
+		$row = make_row($row_type,$_,$about,$result);
+		$rows[scalar @rows] = (['0', '', '', $row]);
 	}
-	$i = scalar @rows;
-	$rows[$i] = (['0', '', '', " "]);
-	if (@unreadable || @missing){
-		if (@missing){
-			$i = scalar @rows;
-			$rows[$i] = (['0', '', '', "These recommended files are missing:"]);
-			foreach (@missing){
-				$i = scalar @rows;
-				$rows[$i] = (['0', '', '', "File: $_"]);
-			}
-		}
-		if (@unreadable){
-			$i = scalar @rows;
-			$rows[$i] = (['0', '', '', "These recommended files are not readable:"]);
-			foreach (@unreadable){
-				$i = scalar @rows;
-				$rows[$i] = (['0', '', '', "File: $_"]);
-			}
+	$rows[scalar @rows] = (['0', '', '', " "]);
+	if (@missing){
+		$rows[scalar @rows] = (['0', '', '', "The following $type are missing$extra4:"]);
+		foreach (@missing) {
+			$rows[scalar @rows] = (['0', '', '', "$item: $_$install"]);
 		}
 	}
-	else {
-		$rows[$i] = (['0', '', '', "All files are present."]);
+	if (@unreadable){
+		$rows[scalar @rows] = (['0', '', '', "The following $type are not readable: "]);
+		foreach (@unreadable) {
+			$rows[scalar @rows] = (['0', '', '', "$item: $_"]);
+		}
+	}
+	if (!@missing && !@unreadable){
+		$rows[scalar @rows] = (['0', '', '', "All $type are present"]);
 	}
 	return @rows;
 }
-
-sub directory_data {
+sub item_data {
 	my ($type) = @_;
 	my %data = (
+	# directory data
 	'/sys/class/dmi/id' => ({
 	'info' => '-M system, motherboard, bios',
 	}),
@@ -2423,14 +2275,13 @@ sub directory_data {
 	'/dev/disk/by-uuid' => ({
 	'info' => '-u,-o,-p,-P partition uuid',
 	}),
-	);
-	my $ref = $data{$type};
-	my %values = %$ref;
-	return %values;
-}
-sub file_data {
-	my ($type) = @_;
-	my %data = (
+	'/proc' => ({
+	'info' => 'Many core features',
+	}),
+	'/sys' => ({
+	'info' => 'Many core features',
+	}),
+	# file data
 	'/etc/lsb-release' => ({
 	'info' => '-S distro version data (older version)',
 	}),
@@ -2467,14 +2318,6 @@ sub file_data {
 	'/var/run/dmesg.boot' => ({
 	'info' => '-D,-d disk data',
 	}),
-	);
-	my $ref = $data{$type};
-	my %values = %$ref;
-	return %values;
-}
-sub program_data {
-	my ($type) = @_;
-	my %data = (
 	# system tools
 	# apt-dpkg,apt-get; pm-arch,pacman; rpm-redhat,suse
 	'curl' => ({
@@ -2583,7 +2426,7 @@ sub program_data {
 	'rpm' => '?',
 	}),
 	'sysctl' => ({
-	'info' => '=',
+	'info' => '',
 	'info-bsd' => '-C,-I;-m;-t m',
 	'apt' => '?',
 	'pacman' => '?',
@@ -2676,7 +2519,7 @@ sub get_pm {
 sub make_row {
 	my ($type,$start,$middle,$end) = @_;
 	$middle = " $middle" if $middle;
-	my ($dots,$line,$sep) = ('','','');
+	my ($dots,$line,$sep) = ('','',' ');
 	$sep = ': ' if $type ne 'empty';
 	my $dots_length = $size{'max'} - 14 - length("$start$middle");
 	foreach (0 .. $dots_length){
