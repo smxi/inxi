@@ -2,7 +2,7 @@
 README for development branch of inxi Perl version: pinxi
 ====================================================================
 FILE:    README.txt
-VERSION: 2.3
+VERSION: 2.4
 DATE:    2018-02-12
 
 NOTE: While the real program name will never change, for the sake
@@ -113,9 +113,9 @@ Note that my current development goals are, roughly in this order:
 3. Complete debugger data collector. 
    Status: DONE
 
-4. Complete recommends output. This will wait for longer down the
-   road when I actually know what the recommends are.
-   Status: STARTED
+4. Complete recommends output. This is OS aware, and only offers BSDs
+   and GNU/Linux systems the appropriate files/directories/programs.
+   Status: DONE
    
 5. Complete option handler. 
    Status: DONE.
