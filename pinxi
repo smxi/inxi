@@ -39,8 +39,8 @@ use Time::HiRes qw(gettimeofday tv_interval);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-02-13';
-my $self_patch='290-p';
+my $self_date='2018-02-14';
+my $self_patch='291-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -58,7 +58,8 @@ my ( %alerts, %client, %colors, %dl, %files, %rows, %system_files, %use );
 
 ## arrays
 # ps_aux is full output, ps_cmd is only the last 10 to last
-my (@app,@dmesg_boot,@dmi,@gpudata,@ifs,@ifs_bsd,@pci,@ps_aux,@ps_cmd,@sysctl,@usb);
+my (@app,@dmesg_boot,@dmi,@gpudata,@ifs,@ifs_bsd,@pci,@ps_aux,@ps_cmd,@sysctl,
+@sysctl_battery,@sysctl_sensors,@sysctl_machine,@usb);
 my @test = (0,0,0,0,0);
 
 #my $opt_parser = Getopt::Long::Parser->new;
@@ -5481,8 +5482,9 @@ sub data_sysctl {
 	eval $start if $b_log;
 	my ($type) = @_;
 	my %cpu = set_cpu_data();
-	my (@line,%speeds,@working);
+	my (@ids,@line,%speeds,@working);
 	my ($sep) = ('');
+	my ($cache,$die_holder,$die_id,$phys_holder,$phys_id,$proc_count,$speed) = (0,0,0,0,0,0,0);
 	
 	foreach (@sysctl){
 		@line = split /\s*:\s*/, $_;
@@ -5562,6 +5564,44 @@ sub data_sysctl {
 		elsif (!$cpu{'cur-freq'} && $line[0] eq 'dev.cpu.0.freq' ) {
 			$cpu{'cur-freq'} = $line[1];
 		}
+		# the following have only been seen in DragonflyBSD data but thumbs up!
+		elsif ($line[0] eq 'hw.cpu_topology.members' ) {
+			my @temp = split /\s+/, $line[1];
+			my $count = scalar @temp;
+			$count-- if $count > 0;
+			$cpu{'processors'}[$count] = 0;
+			# no way to get per processor speeds yet, so assign 0 to each
+			foreach (0 ... $count){
+				$cpu{'processors'}[$_] = 0;
+			}
+		}
+		elsif ($line[0] eq 'hw.cpu_topology.cpu1.physical_siblings' ) {
+			# string, like: cpu0 cpu1
+			my @temp = split /\s+/, $line[1];
+			$cpu{'siblings'} = scalar @temp;
+		}
+		# increment by 1 for every new physical id we see. These are in almost all cases
+		# separate cpus, not separate dies within a single cpu body.
+		elsif ( $line[0] eq 'hw.cpu_topology.cpu0.physical_id' ){
+			if ($phys_holder != $line[1] ){
+				$phys_id++;
+				$phys_holder = $line[1];
+				$ids[$phys_id] = ([(0)]);
+				$ids[$phys_id][$die_id] = ([(0)]);
+			}
+		}
+		elsif ( $line[0] eq 'hw.cpu_topology.cpu0.core_id' ){
+			if ($line[1] > 0 ){
+				$die_holder = $line[1];
+			}
+			# this handles multi die cpus like 16 core ryzen
+			elsif ($line[1] == 0 && $die_holder > 0 ){
+				$die_id++ ;
+				$die_holder = $line[1];
+			}
+			$ids[$phys_id][$die_id][$line[1]] = $speed;
+			$cpu{'dies'} = $die_id;
+		}
 	}
 	if (!$cpu{'flags'}){
 		$cpu{'flags'} = cpu_flags_bsd();
@@ -5632,6 +5672,7 @@ sub set_cpu_speeds_sys {
 sub cpu_properties {
 	my (%cpu) = @_;
 	my $b_xeon = ($cpu{'model_name'} =~ /Xeon/i) ? 1 : 0;
+	my $b_ht = 0;
 	my $b_ryzen = ($cpu{'type'} && $cpu{'type'} eq 'amd' && $cpu{'family'} eq '17') ? 1 : 0;
 	#my @dies = $phys[0][0];
 	my $ref = $cpu{'ids'};
@@ -5651,6 +5692,10 @@ sub cpu_properties {
 	my ($cpu_layout,$cpu_type,$min_max,$min_max_key,$cache,$core_count,
 	   $cpu_cores,$die_count) = ('','','','',0,0,0,0);
 	my @cores;
+	# like, intel core duo
+	if ($b_xeon || $cpu{'model_name'} =~ /intel.*core/i){
+		$b_ht = 1;
+	}
 	foreach my $die_ref ( @phys ){
 		my @dies = @$die_ref;
 		$core_count = 0;
@@ -5684,6 +5729,9 @@ sub cpu_properties {
 	# this happens with BSDs which have very little cpu data available
 	if ( $processors_count == 0 && $cpu_cores > 0 ){
 		$processors_count = $cpu_cores;
+		if ($bsd_type && ($b_ht || $b_ryzen) && $cpu_cores > 1 ){
+			$cpu_cores = $cpu_cores/2;;
+		}
 	}
 	#print "pc: $processors_count s: $cpu{'siblings'} cpuc: $cpu_cores corec: $core_count\n";
 	# Algorithm:
@@ -11219,12 +11267,23 @@ sub set_sysctl_data {
 	return if $alerts{'sysctl'}{'action'} ne 'use';
 	# darwin sysctl has BOTH = and : separators, and repeats data. Why? 
 	my $program = check_program('sysctl');
-	@sysctl = grabber("$program -a 2>/dev/null");
-	@sysctl = map {
-	$_ =~ s/\s*=\s*|:\s+/:/;
-	$_ =~ s/\"//g;
-	$_;
-	} @sysctl if @sysctl;
+	my @temp = grabber("$program -a 2>/dev/null");
+	foreach (@temp){
+		$_ =~ s/\s*=\s*|:\s+/:/;
+		$_ =~ s/\"//g;
+		push @sysctl, $_;
+		# we're building these here so we can use these arrays to test 
+		# in each feature if we will try to build the feature for bsds
+		if (/^hw\.sensors/ && !/^hw\.sensors\.acpibat/){
+			push @sysctl_sensors, $_;
+		}
+		elsif (/^hw\.(vendor|product|version|serialno|uuid)/){
+			push @sysctl_machine, $_;
+		}
+		elsif (/^hw\.sensors\.acpibat/){
+			push @sysctl_battery, $_;
+		}
+	}
 	print Dumper \@sysctl if $test[7];
 	eval $end if $b_log;
 }
