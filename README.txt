@@ -2,11 +2,11 @@
 README for development branch of inxi Perl version: pinxi
 ====================================================================
 FILE:    README.txt
-VERSION: 2.4
-DATE:    2018-02-12
+VERSION: 2.5
+DATE:    2018-02-16
 
 NOTE: While the real program name will never change, for the sake
-of clarity, I will refer to the inxi-Perl dev branch inxi as pinxi, 
+of clarity, I will refer to the inxi-perl dev branch inxi as pinxi, 
 and bash/gawk master branch inxi as binxi in the following.
 
 During development, so I can more easily test changes, the name is 
@@ -52,6 +52,12 @@ See: docs/Perl-version-support.txt
 Notes on what features can be used for the Perl version. 5.08 is the current 
 cutoff. No newer features will be used, this lets me maintain the core inxi 
 mission of supporting almost everything, no matter how old.
+
+See: docs/inxi-tools.txt
+Core tools available for features and modules. Since most log their 
+data, it's always preferable using a core tool that to recode it again.
+With some exceptions, for example, extreme repetitions where you want
+to remove any possible overhead in the action, like parsing 1000 lines.
 
 See: docs/inxi-values.txt
 User config options; the values of the primary hashes that contain the 
