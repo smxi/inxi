@@ -2,8 +2,8 @@
 README for development branch of inxi Perl version: pinxi
 ====================================================================
 FILE:    README.txt
-VERSION: 2.5
-DATE:    2018-02-16
+VERSION: 2.6
+DATE:    2018-02-26
 
 NOTE: While the real program name will never change, for the sake
 of clarity, I will refer to the inxi-perl dev branch inxi as pinxi, 
@@ -171,7 +171,7 @@ Note that my current development goals are, roughly in this order:
      Weather: DONE
      Info: DONE
      
-10. Man page. Not Started, waiting til feature complete more or less.
+10. Man page. DONE
 
 11. Look into adding support for language hashes, that would replace 
     the hack key values in the print arrays with the alternate language 
