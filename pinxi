@@ -39,8 +39,8 @@ use Time::HiRes qw(gettimeofday tv_interval);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-02-24';
-my $self_patch='304-p';
+my $self_date='2018-02-28';
+my $self_patch='305-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -3095,10 +3095,10 @@ sub get_options{
 	'C|cpu' => sub {
 		$show{'short'} = 0;
 		$show{'cpu'} = 1; },
-	'd|disk-all' => sub {
+	'd|disk-full|optical' => sub {
 		$show{'short'} = 0;
 		$show{'disk'} = 1;
-		$show{'optical-full'} = 1; },
+		$show{'optical'} = 1; },
 	'D' => sub {
 		$show{'short'} = 0;
 		$show{'disk'} = 1; },
@@ -3117,6 +3117,7 @@ sub get_options{
 		$show{'machine'} = 1;
 		$show{'network'} = 1;
 		$show{'network-advanced'} = 1;
+		$show{'optical-basic'} = 1;
 		$show{'partition'} = 1;
 		$show{'raid'} = 1;
 		$show{'sensor'} = 1;
@@ -3251,13 +3252,14 @@ sub get_options{
 				$show{'audio'} = 1;
 				$show{'ram'} = 1;
 				$show{'label'} = 1;
+				$show{'optical-basic'} = 1;
 				$show{'ram'} = 1;
 				$show{'raid'} = 1;
 				$show{'sensor'} = 1;
 				$show{'uuid'} = 1;
 			}
 			if ($arg >= 6 ){
-				$show{'optical-full'} = 1;
+				$show{'optical'} = 1;
 				$show{'partition-full'} = 1;
 				$show{'unmounted'} = 1;
 				$extra = 2;
@@ -3481,6 +3483,11 @@ sub get_options{
 	}
 	# override for things like -b or -v2 to -v3
 	$show{'cpu-basic'} = 0 if $show{'cpu'};
+	$show{'optical-basic'} = 0 if $show{'optical'};
+	if ($show{'disk'} || $show{'optical'} ){
+		$show{'disk-basic'} = 0;
+		$show{'disk-total'} = 0;
+	}
 } 
 
 sub show_options {
@@ -3533,7 +3540,7 @@ sub show_options {
 	removes global." ],
 	['1', '-C', '--cpu', "CPU output, including per CPU clockspeed and max CPU speed 
 	(if available)." ],
-	['1', '-d', '--optical', "Optical drive data (and floppy disks, if present). Same as -Dd. 
+	['1', '-d', '--disk-full, --optical', "Adds optical drive data (and floppy disks, if present). Same as -Dd. 
 	See also -x and -xx." ],
 	['1', '-D', '--disk', "Full hard Disk info, not only model, ie: /dev/sda ST380817AS 
 	80.0GB. See also -x and -xx. Disk total used percentage includes swap 
@@ -4219,6 +4226,7 @@ sub row_defaults {
 	'arm-pci' => "ARM systems do not support PCI data type",
 	'battery-data' => "No battery data found. Is one present?",
 	'battery-data-sys' => "No /sys data found. Old system?",
+	'data-bsd' => "Feature not supported yet for BSDs.",
 	'display-console' => 'No advanced graphics data found on this system in console.',
 	'display-null' => 'No advanced graphics data found on this system.',
 	'display-root' => 'Advanced graphics data unavailable in console for root.',
@@ -4231,6 +4239,7 @@ sub row_defaults {
 	'machine-data' => "No machine data: try newer kernel.",
 	'machine-data-alt-33' => "No machine data: try newer kernel. Is dmidecode installed? Try -M --alt 33.",
 	'machine-data-dmidecode' => "No machine data: try newer kernel, or install dmidecoce.",
+	'optical-data' => "No Optical or Floppy data was found.",
 	'output-limit' => "Output throttled. IPs: $id; Limit: $limit; Override: --limit [1-x;-1 all]",
 	'pci-advanced-data' => 'bus/chip ids unavailable',
 	'pci-card-data' => "No PCI card data found.",
@@ -4385,7 +4394,9 @@ sub print_data {
 			'Battery' => 1,
 			'Card' => 1,
 			'Device' => 1,
-			'Id' => 1,
+			'Floppy' => 1,
+			'ID' => 1,
+			'Optical' => 1,
 			);
 			foreach my $val1 (@{$data{$key1}}){
 				$length = $indent;
@@ -6137,20 +6148,25 @@ package DiskData;
 
 sub get {
 	eval $start if $b_log;
-	my (@rows,$key1,$val1);
+	my (@data,@rows,$key1,$val1);
 	my $num = 0;
-# 	my $ref = $alerts{'sensors'};
-# 	if ( $$ref{'action'} ne 'use'){
-# 		$key1 = $$ref{'action'};
-# 		$val1 = $$ref{$key1};
-# 		$key1 = ucfirst($key1);
-# 	}
-# 	else {
+	if ($show{'disk-total'}){
 		$key1 = 'Status';
 		$val1 = main::row_defaults('dev');
-# 	}
-	my @data = ({$num++ . "#$key1" => $val1,});
-	return @data;
+		@data = ({$num++ . "#$key1" => $val1,});
+	}
+	elsif ($show{'disk'}){
+		$key1 = 'Status';
+		$val1 = main::row_defaults('dev');
+		@data = ({$num++ . "#$key1" => $val1,});
+	}
+	@rows = (@rows,@data);
+	@data = ();
+	if ($show{'optical'}){
+		@data = OpticalData::get();
+	}
+	@rows = (@rows,@data);
+	return @rows;
 	eval $end if $b_log;
 	
 }
@@ -7620,28 +7636,208 @@ package OpticalData;
 
 sub get {
 	eval $start if $b_log;
-	my (@rows,$key1,$val1);
+	my (@data,@rows,$key1,$val1);
 	my $num = 0;
-# 	my $ref = $alerts{'sensors'};
-# 	if ( $$ref{'action'} ne 'use'){
-# 		$key1 = $$ref{'action'};
-# 		$val1 = $$ref{$key1};
-# 		$key1 = ucfirst($key1);
-# 	}
-# 	else {
-		$key1 = 'Status';
-		$val1 = main::row_defaults('dev');
-# 	}
-	my @data = ({$num++ . "#$key1" => $val1,});
-	return @data;
+	if ($bsd_type){
+		#@data = optical_data_bsd();
+		$key1 = 'Optical';
+		$val1 = main::row_defaults('data-bsd');
+		@data = ({$num++ . "#$key1" => $val1,});
+	}
+	else {
+		@data = optical_data_linux();
+	}
+	if (!@data){
+		$key1 = 'Message';
+		$val1 = main::row_defaults('optical-data');
+		@data = ({$num++ . "#$key1" => $val1,});
+	}
+	@rows = (@rows,@data);
+	return @rows;
 	eval $end if $b_log;
 	
 }
-sub partition_data {
+sub optical_data_bsd {
 	eval $start if $b_log;
-	my (@rows);
-	my $num = 0;
+	my (@data,%devices,@rows);
 	
+	@rows = create_data(%devices) if %devices;
+	eval $end if $b_log;
+	return @rows;
+}
+sub optical_data_linux {
+	eval $start if $b_log;
+	my (@data,%devices,@info,@rows);
+	@data = main::globber('/dev/dvd* /dev/cd* /dev/scd* /dev/sr* /dev/fd[0-9]');
+	# Newer kernel is NOT linking all optical drives. Some, but not all.
+	# Get the actual disk dev location, first try default which is easier to run, 
+	# need to preserve line breaks
+	foreach (@data){
+		my $working = readlink($_);
+		$working = ($working) ? $working: $_;
+		next if $working =~ /random/;
+		$working =~ s/\/dev\///;
+		$_ =~ s/\/dev\///;
+		if  (! defined $devices{$working}){
+			my @temp = ($_ ne $working) ? ([$_]) : ([]);
+			$devices{$working} = ({'links' => @temp});
+			$devices{$working}{'type'} = ($working =~ /^fd/) ? 'floppy' : 'optical' ;
+		}
+ 		else {
+			my $ref = $devices{$working}{'links'};
+ 			push @$ref, $_ if $_ ne $working;
+ 		}
+		#print "$working\n";
+	}
+	if ($show{'optical'} && -e '/proc/sys/dev/cdrom/info'){
+		@info = main::reader('/proc/sys/dev/cdrom/info','strip');
+	}
+	#print join '; ', @data, "\n";
+	foreach my $key (keys %devices){
+		next if $devices{$key}{'type'} eq 'floppy';
+		my $device = "/sys/block/$key/device";
+		if ( -d $device){
+			if (-e "$device/vendor"){
+				$devices{$key}{'vendor'} = (main::reader("$device/vendor"))[0];
+				$devices{$key}{'vendor'} = main::cleaner($devices{$key}{'vendor'});
+				$devices{$key}{'state'} = (main::reader("$device/state"))[0];
+				$devices{$key}{'model'} = (main::reader("$device/model"))[0];
+				$devices{$key}{'model'} = main::trimmer($devices{$key}{'model'});
+				$devices{$key}{'rev'} = (main::reader("$device/rev"))[0];
+			}
+		}
+		elsif ( -e "/proc/ide/$_/model"){
+			$devices{$key}{'vendor'} = (main::reader("/proc/ide/$_/model"))[0];
+			$devices{$key}{'vendor'} = main::cleaner($devices{$key}{'vendor'});
+		}
+		if ($show{'optical'} && @info){
+			my $index = 0;
+			foreach my $item (@info){
+				next if /^\s*$/;
+				my @split = split '\s+', $item;
+				if ($item =~ /^drive name:/){
+					foreach my $id (@split){
+						if ($id eq $key){
+							last;
+						}
+						$index++;
+					}
+					last if ! $index; # index will be > 0 if it was found
+				}
+				elsif ($item =~/^drive speed:/) {
+					$devices{$key}{'speed'} = $split[$index];
+				}
+				elsif ($item =~/^Can read multisession:/) {
+					$devices{$key}{'multisession'}=$split[$index+1];
+				}
+				elsif ($item =~/^Can read MCN:/) {
+					$devices{$key}{'mcn'}=$split[$index+1];
+				}
+				elsif ($item =~/^Can play audio:/) {
+					$devices{$key}{'audio'}=$split[$index+1];
+				}
+				elsif ($item =~/^Can write CD-R:/) {
+					$devices{$key}{'cdr'}=$split[$index+1];
+				}
+				elsif ($item =~/^Can write CD-RW:/) {
+					$devices{$key}{'cdrw'}=$split[$index+1];
+				}
+				elsif ($item =~/^Can read DVD:/) {
+					$devices{$key}{'dvd'}=$split[$index+1];
+				}
+				elsif ($item =~/^Can write DVD-R:/) {
+					$devices{$key}{'dvdr'}=$split[$index+1];
+				}
+				elsif ($item =~/^Can write DVD-RAM:/) {
+					$devices{$key}{'dvdram'}=$split[$index+1];
+				}
+			}
+		}
+	}
+	
+	#print Data::Dumper::Dumper \%devices;
+	@rows = create_data(%devices) if %devices;
+	
+	eval $end if $b_log;
+	return @rows;
+}
+sub create_data {
+	eval $start if $b_log;
+	my (%devices) = @_;
+	my (@data,@rows);
+	my $num = 0;
+	my $j = 0;
+	# build floppy if any
+	foreach my $key (sort keys %devices){
+		if ($devices{$key}{'type'} eq 'floppy'){
+			@data = ({ $num++ . '#' . ucfirst($devices{$key}{'type'}) => "/dev/$key"});
+			@rows = (@rows,@data);
+			delete $devices{$key};
+		}
+	}
+	foreach my $key (sort keys %devices){
+		$j = scalar @rows;
+		my $vendor = $devices{$key}{'vendor'};
+		$vendor ||= 'N/A';
+		my $model = $devices{$key}{'model'};
+		$model ||= 'N/A';
+		@data = ({ 
+		$num++ . '#' . ucfirst($devices{$key}{'type'}) => "/dev/$key",
+		$num++ . '#vendor' => $vendor,
+		$num++ . '#model' => $model,
+		});
+		@rows = (@rows,@data);
+		if ($extra > 0){
+			my $rev = $devices{$key}{'rev'};
+			$rev ||= 'N/A';
+			$rows[$j]{ $num++ . '#rev'} = $rev;
+		}
+		my $ref = $devices{$key}{'links'};
+		my $links = (@$ref) ? join ',', sort @$ref: 'N/A' ;
+		$rows[$j]{ $num++ . '#dev-links'} = $links;
+		
+		if ($show{'optical'}){
+			$j = scalar @rows;
+			my $speed = $devices{$key}{'speed'};
+			$speed ||= 'N/A';
+			my $multisession = ( $devices{$key}{'multisession'} == 1 ) ? 'yes' : 'no' ;
+			my $audio = ( $devices{$key}{'audio'} == 1 ) ? 'yes' : 'no' ;
+			my $dvd = 'N/A';
+			my (@rw,$rws);
+			if (defined $devices{$key}{'dvd'}){
+				$dvd = ( $devices{$key}{'dvd'} == 1 ) ? 'yes' : 'no' ;
+			}
+			if ($devices{$key}{'cdr'}){
+				push @rw, 'cd-r';
+			}
+			if ($devices{$key}{'cdrw'}){
+				push @rw, 'cd-rw';
+			}
+			if ($devices{$key}{'dvdr'}){
+				push @rw, 'dvd-r';
+			}
+			if ($devices{$key}{'dvdram'}){
+				push @rw, 'dvd-ram';
+			}
+			$rws = (@rw) ? join ',', @rw: 'none' ;
+			@data = ({
+			$num++ . '#Features' => '',
+			$num++ . '#speed' => $speed,
+			$num++ . '#multisession' => $multisession,
+			$num++ . '#audio' => $audio,
+			$num++ . '#dvd' => $dvd,
+			$num++ . '#rw' => $rws,
+			});
+			@rows = (@rows,@data);
+			
+			if ($extra > 0 ){
+				my $state = $devices{$key}{'state'};
+				$state ||= 'N/A';
+				$rows[$j]{ $num++ . '#state'} = $state;
+			}
+		}
+	}
+	#print Data::Dumper::Dumper \%devices;
 	eval $end if $b_log;
 	return @rows;
 }
@@ -11640,7 +11836,7 @@ sub generate_lines {
 			%row = line_handler('Network','network');
 			assign_data(%row);
 		}
-		if ( $show{'disk'} || $show{'disk-basic'} || $show{'disk-total'} ){
+		if ( $show{'disk'} || $show{'disk-basic'} || $show{'disk-total'} || $show{'optical'} ){
 			if ($bsd_type && $b_dmesg_boot_check){
 				set_dmesg_boot_data();
 				$b_dmesg_boot_check = 1;
