@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-02-28';
-my $self_patch='306-p';
+my $self_patch='307-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -4244,6 +4244,7 @@ sub row_defaults {
 	'pci-card-data' => "No PCI card data found.",
 	'pci-slot-data' => "No PCI slot data found. SOC?",
 	'ram-data' => "No RAM data was found. SOC?",
+	'sensors-data-linux' => "No sensors data was found. Is sensors configured?",
 	'usb-data' => "No USB data was found. Server?",
 	'weather-null' => "No $id found. Internet connection working?",
 	);
@@ -9050,20 +9051,14 @@ sub file_path {
 ## SensorData
 {
 package SensorData;
-
+my (@sensors_data);
 sub get {
 	eval $start if $b_log;
-	my (@rows);
-	@rows = create_sensor_data();
-	eval $end if $b_log;
-	return @rows;
-}
-sub create_sensor_data {
-	eval $start if $b_log;
-	my (@data,@rows,$key1,%sensors,$val1);
+	my ($key1,$val1,@rows,%sensors);
 	my $num = 0;
 	my $ref = $alerts{'sensors'};
 	# gpu_data();
+	
 	if ( $$ref{'action'} ne 'use'){
 		$key1 = $$ref{'action'};
 		$val1 = $$ref{$key1};
@@ -9071,68 +9066,472 @@ sub create_sensor_data {
 		@rows = ({$num++ . "#$key1" => $val1,});
 	}
 	else {
-		$key1 = 'Status';
-		$val1 = main::row_defaults('dev');
-		@rows = ({$num++ . "#$key1" => $val1,});
 		%sensors = sensors_data();
+		@rows = create_sensor_data(%sensors);
+		if (!@rows) {
+			$key1 = 'Message';
+			$val1 = main::row_defaults('sensors-data-linux');
+			@rows = ({$num++ . "#$key1" => $val1,});
+		}
+	}
+	undef @sensors_data;
+	eval $end if $b_log;
+	return @rows;
+}
+sub create_sensor_data {
+	eval $start if $b_log;
+	my (%sensors) = @_;
+	return if ! %sensors;
+	my (@gpu,@data,@rows,@fan_default,@fan_main);
+	my $fan_number = 0;
+	my $num = 0;
+	my $j = 0;
+	@gpu = gpu_data();
+	my $cpu_temp = ($sensors{'cpu-temp'}) ? $sensors{'cpu-temp'}: 'N/A';
+	my $mobo_temp = ($sensors{'mobo-temp'}) ? $sensors{'mobo-temp'}: 'N/A';
+	my $temp_unit  = ($sensors{'temp-unit'}) ? " $sensors{'temp-unit'}": '';
+	@data = ({
+	$num++ . '#System Temperatores' => '',
+	$num++ . '#cpu' => $cpu_temp . $temp_unit,
+	$num++ . '#mobo' => $mobo_temp . $temp_unit,
+	});
+	@rows = (@rows,@data);
+	if (scalar @gpu == 1){
+		my $gpu_temp = $gpu[0]{'temp'};
+		my $gpu_type = $gpu[0]{'type'};
+		my $gpu_unit = ($gpu[0]{'temp-unit'} ) ? " $gpu[0]{'temp-unit'}" : ' C';
+		$rows[$j]{$num++ . '#gpu'} = $gpu_type;
+		$rows[$j]{$num++ . '#temp'} = $gpu_temp . $gpu_unit;
+	}
+	$j = scalar @rows;
+	my $ref_main = $sensors{'fan-main'};
+	my $ref_default = $sensors{'fan-default'};
+	@fan_main = @$ref_main if @$ref_main;
+	@fan_default = @$ref_default if @$ref_default;
+	$rows[$j]{$num++ . '#Fan Speeds (in RPM)'} = '';
+	my $b_cpu = 0;
+	for (my $i = 0; $i < scalar @fan_main; $i++){
+		next if $i == 0;# starts at 1, not 0
+		if (defined $fan_main[$i]){
+			if ($i == 1 || ($i == 2 && !$b_cpu )){
+				$rows[$j]{$num++ . '#cpu'} = $fan_main[$i];
+				$b_cpu = 1;
+			}
+			elsif ($i == 2 && $b_cpu){
+				$rows[$j]{$num++ . '#mobo'} = $fan_main[$i];
+			}
+			elsif ($i == 3){
+				$rows[$j]{$num++ . '#psu'} = $fan_main[$i];
+			}
+			elsif ($i > 3){
+				$fan_number = $i - 3;
+				$rows[$j]{$num++ . '#sys-' . $fan_number} = $fan_main[$i];
+			}
+		}
+	}
+	for (my $i = 0; $i < scalar @fan_default; $i++){
+		next if $i == 0;# starts at 1, not 0
+		if (defined $fan_default[$i]){
+			$rows[$j]{$num++ . '#fan-' . $i} =$fan_default[$i];
+		}
+	}
+	if (scalar @gpu == 1 && defined $gpu[0]{'speed'}){
+		my $gpu_fan = $gpu[0]{'speed'};
+		my $gpu_type = $gpu[0]{'type'};
+		$rows[$j]{$num++ . '#gpu'} = $gpu_type;
+		$rows[$j]{$num++ . '#fan'} = $gpu_fan;
 	}
 	eval $end if $b_log;
 	return @rows;
 }
-
-sub data_processor {
-	eval $start if $b_log;
-	my (%sensors) = @_;
-	my $num = 0;
-	
-	eval $end if $b_log;
-	return %sensors;
-}
-
 sub sensors_data {
 	eval $start if $b_log;
 	my (%sensors);
-	my $num = 0;
-	my @data = load_sensors();
-	
-	%sensors = data_processor(%sensors);
-	eval $end if $b_log;
-	return %sensors;
-}
-sub load_sensors {
-	eval $start if $b_log;
-	my (@data,%sensors);
-	@data = main::grabber(main::check_program('sensors') . " 2>/dev/null");
-	foreach (@data){
-		$_ =~ s/:\s*\+?/:/;
-		
+	my ($b_valid,$sys_fan_nu)  = (0,0);
+	my ($adapter,$fan_working,$temp_working,$working_unit)  = ('','','','');
+	@sensors_data = main::grabber(main::check_program('sensors') . " 2>/dev/null");
+	@sensors_data = map {$_ =~ s/\s*:\s*\+?/:/;$_} @sensors_data;
+	foreach (@sensors_data){
+		# we get this from gpu_data()
+		if (/^(amdgpu|intel|nouveau|radeon)-pci/){
+			$b_valid = 0;
+			$adapter = '';
+			next;
+		}
+		if (/^!(amdgpu|intel|nouveau|radeon)-(isa|pci|virtual)-/){
+			$b_valid = 1;
+			$adapter = $1;
+			next;
+		}
+		my @working = split /:/, $_;
+		# There are some guesses here, but with more sensors samples it will get closer.
+		# note: using arrays starting at 1 for all fan arrays to make it easier overall
+		# we have to be sure we are working with the actual real string before assigning
+		# data to real variables and arrays. Extracting C/F degree unit as well to use
+		# when constructing temp items for array. 
+		# note that because of charset issues, no "°" degree sign used, but it is required 
+		# in testing regex to avoid error.
+		if (/^(M\/B|MB|SIO|SYS)(.*):([0-9\.]+)[ \t°](C|F)/i) {
+			$sensors{'mobo-temp'} = $2;
+			$working_unit = $3;
+			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
+		}
+		# issue 58 msi/asus show wrong for CPUTIN so overwrite it if PECI 0 is present
+		# http://www.spinics.net/lists/lm-sensors/msg37308.html
+		if (/^CPU(.*)\+([0-9]+):([0-9\.]+)[ \t°](C|F)/i) {
+			$sensors{'cpu-temp'} = $2;
+			$working_unit = $3;
+			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
+		}
+		if (/^PECI\sAgent\s0(.*):([0-9\.]+)[ \t°](C|F)/i) {
+			$sensors{'cpu-peci-temp'} = $2;
+			$working_unit = $3;
+			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
+		}
+		if (/^(P\/S|Power)(.*):([0-9\.]+)[ \t°](C|F)/i) {
+			$sensors{'psu-temp'} = $3;
+			$working_unit = $4;
+			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
+		}
+		# for temp1/2 only use temp1/2 if they are null or greater than the last ones
+		if (/^temp1:([0-9\.]+)[ \t°](C|F)/i) {
+			$temp_working = $1;
+			$working_unit = $2;
+			if ( !$sensors{'temp1'} || ( defined $temp_working && $temp_working > 0 ) ) {
+				$sensors{'temp1'} = $temp_working;
+			}
+			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
+		}
+		if (/^temp2:([0-9\.]+)[ \t°](C|F)/i) {
+			$temp_working = $1;
+			$working_unit = $2;
+			if ( !$sensors{'temp2'} || ( defined $temp_working && $temp_working > 0 ) ) {
+				$sensors{'temp2'} = $temp_working;
+			}
+			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
+		}
+		# temp3 is only used as an absolute override for systems with all 3 present
+		if (/^temp3:([0-9\.]+)[ \t°](C|F)/i) {
+			$temp_working = $1;
+			$working_unit = $2;
+			if ( !$sensors{'temp3'} || ( defined $temp_working && $temp_working > 0 ) ) {
+				$sensors{'temp3'} = $temp_working;
+			}
+			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
+		}
+		# final fallback if all else fails, funtoo user showed sensors putting
+		# temp on wrapped second line, not handled
+		if (/^(core0|core 0|Physical id 0)(.*):([0-9\.]+)[ \t°](C|F)/i) {
+			$temp_working = $3;
+			$working_unit = $4;
+			if ( !$sensors{'core-0-temp'} || ( defined $temp_working && $temp_working > 0 ) ) {
+				$sensors{'core-0-temp'} = $temp_working;
+			}
+			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
+		}
+		# note: can be cpu fan:, cpu fan speed:, etc.
+		if (/^CPU(.*):([0-9]+)[ \t]RPM/i) {
+			$sensors{'fan-main'} = () if !$sensors{'fan-main'};
+			$sensors{'fan-main'}[1] = $2;
+		}
+		if (/^(M\/B|MB|SYS)(.*):([0-9]+)[ \t]RPM/i) {
+			$sensors{'fan-main'} = () if !$sensors{'fan-main'};
+			$sensors{'fan-main'}[2] = $3;
+		}
+		if (/(Power|P\/S|POWER)(.*):([0-9]+)[ \t]RPM/i) {
+			$sensors{'fan-main'} = () if !$sensors{'fan-main'};
+			$sensors{'fan-main'}[3] = $3;
+		}
+		# note that the counters are dynamically set for fan numbers here
+		# otherwise you could overwrite eg aux fan2 with case fan2 in theory
+		# note: cpu/mobo/ps are 1/2/3
+		if (/^(AUX[1]? |CASE[1]? |CHASSIS[1]? )(.*):([0-9]+)[ \t]RPM/i) {
+			$temp_working = $3;
+			$sensors{'fan-main'} = () if !$sensors{'fan-main'};
+			for ( my $i = 4; $i < 7; $i++ ){
+				next if defined $sensors{'fan-main'}[$i];
+				if ( !defined $sensors{'fan-main'}[$i] ){
+					$sensors{'fan-main'}[$i] = $temp_working;
+					last;
+				}
+			}
+		}
+		if (/^(AUX[2-9] |CASE[2-9] |CHASSIS[2-9] )(.*):([0-9]+)[ \t]RPM/i) {
+			$temp_working = $3;
+			$sensors{'fan-main'} = () if !$sensors{'fan-main'};
+			for ( my $i = 5; $i < 30; $i++ ){
+				next if defined $sensors{'fan-main'}[$i];
+				if ( !defined $sensors{'fan-main'}[$i] ){
+					$sys_fan_nu = $i;
+					$sensors{'fan-main'}[$i] = $temp_working;
+					last;
+				}
+			}
+		}
+		# in rare cases syntax is like: fan1: xxx RPM
+		if (/^FAN(1)?:([0-9]+)[ \t]RPM/i) {
+			$sensors{'fan-default'} = () if !$sensors{'fan-default'};
+			$sensors{'fan-default'}[1] = $2;
+		}
+		if (/^FAN([2-9]|1[0-9])(.*):([0-9]+)[ \t]RPM/i) {
+			$fan_working = $3;
+			$sys_fan_nu = $1;
+			$sensors{'fan-default'} = () if !$sensors{'fan-default'};
+			if ( $sys_fan_nu =~ /^([0-9]+)$/ ) {
+				# add to array if array index does not exist OR if number is > existing number
+				if ( defined $sensors{'fan-default'}[$sys_fan_nu] ) {
+					if ( $fan_working >= $sensors{'fan-default'}[$sys_fan_nu] ) {
+						$sensors{'fan-default'}[$sys_fan_nu] = $fan_working;
+					}
+				}
+				else {
+					$sensors{'fan-default'}[$sys_fan_nu] = $fan_working;
+				}
+			}
+		}
 	}
+	#print Data::Dumper::Dumper \%sensors;
+	%sensors = data_processor(%sensors);
+	# print Data::Dumper::Dumper \%sensors;
 	eval $end if $b_log;
 	return %sensors;
 }
+
 # oddly, openbsd sysctl actually has hw.sensors data!
 sub sysctl_data {
 	eval $start if $b_log;
-	my (%sensors);
-	my $num = 0;
-	
-	%sensors = data_processor(%sensors);
-	eval $end if $b_log;
-	return %sensors;
-}
-sub load_sysctl {
-eval $start if $b_log;
 	my (@data,%sensors);
-	foreach (@sysctl){
+	foreach (@sysctl_sensors){
 		if (/^hw.sensors\.([0-9a-z]+)\.(temp|fan|volt)([0-9])/){
 			my $sensor = $1;
 			my $type = $2;
 			my $number = $3;
 			my @working = split /:/, $_;
 		}
-		
 		last if /^(hw.cpuspeed|hw.vendor|hw.physmem)/;
 	}
+	
+	%sensors = data_processor(%sensors);
+	eval $end if $b_log;
+	return %sensors;
+}
+sub set_temp_unit {
+	my ($sensors,$working) = @_;
+	my $return_unit = '';
+	
+	if ( !$sensors && $working ){
+		$return_unit = $working;
+	}
+	elsif ($sensors){
+		$return_unit = $sensors;
+	}
+	return $return_unit;
+}
+
+sub data_processor {
+	eval $start if $b_log;
+	my (%sensors) = @_;
+	my ($cpu_temp,$index_count_fan_default,$index_count_fan_main,$mobo_temp,$psu_temp) = (0,0,0,0,0);
+	my ($fan_type,$i,$j) = (0,0,0);
+	my $temp_diff = 20; # for C, handled for F after that is determined
+	my (@fan_main,@fan_default);
+	# first we need to handle the case where we have to determine which temp/fan to use for cpu and mobo:
+	# note, for rare cases of weird cool cpus, user can override in their prefs and force the assignment
+	# this is wrong for systems with > 2 tempX readings, but the logic is too complex with 3 variables
+	# so have to accept that it will be wrong in some cases, particularly for motherboard temp readings.
+	if ( $sensors{'temp1'} && $sensors{'temp2'} ){
+		if ( $sensors_cpu_nu ) {
+			$fan_type = $sensors_cpu_nu;
+		}
+		else {
+			# first some fringe cases with cooler cpu than mobo: assume which is cpu temp based on fan speed
+			# but only if other fan speed is 0.
+			if ( $sensors{'temp1'} >= $sensors{'temp2'} && 
+			     defined $fan_default[1] && defined $fan_default[2] && $fan_default[1] == 0 && $fan_default[2] > 0 ) {
+				$fan_type = 2;
+			}
+			elsif ( $sensors{'temp2'} >= $sensors{'temp1'} && 
+			        defined $fan_default[1] && defined $fan_default[2] && $fan_default[2] == 0 && $fan_default[1] > 0 ) {
+				$fan_type = 1;
+			}
+			# then handle the standard case if these fringe cases are false
+			elsif ( $sensors{'temp1'} >= $sensors{'temp2'} ) {
+				$fan_type = 1;
+			}
+			else {
+				$fan_type = 2;
+			}
+		}
+	}
+	# need a case for no temps at all reported, like with old intels
+	elsif ( !$sensors{'temp2'} && !$sensors{'cpu-temp'} ){
+		if ( !$sensors{'temp1'} && !$sensors{'mobo-temp'} ){
+			$fan_type = 1;
+		}
+		elsif ( $sensors{'temp1'} && !$sensors{'mobo-temp'} ){
+			$fan_type = 1;
+		}
+		elsif ( $sensors{'temp1'} && $sensors{'mobo-temp'} ){
+			$fan_type = 1;
+		}
+	}
+	# convert the diff number for F, it needs to be bigger that is
+	if ( $sensors{'temp-unit'} eq "F" ) {
+		$temp_diff = $temp_diff * 1.8
+	}
+	if ( $sensors{'cpu-temp'} ) {
+		# specific hack to handle broken CPUTIN temps with PECI
+		if ( $sensors{'cpu-peci-temp'} && ( $sensors{'cpu-temp'} - $sensors{'cpu-peci-temp'} ) > $temp_diff ){
+			$cpu_temp = $sensors{'cpu-peci-temp'};
+		}
+		# then get the real cpu temp, best guess is hottest is real
+		else {
+			$cpu_temp = $sensors{'cpu-temp'};
+		}
+	}
+	else {
+		if ($fan_type ){
+			# there are some weird scenarios
+			if ( $fan_type == 1 ){
+				if ( $sensors{'temp1'} && $sensors{'temp2'} && $sensors{'temp2'} > $sensors{'temp1'} ) {
+					$cpu_temp = $sensors{'temp2'};
+				}
+				else {
+					$cpu_temp = $sensors{'temp1'};
+				}
+			}
+			else {
+				if ( $sensors{'temp1'} && $sensors{'temp2'} && $sensors{'temp1'} > $sensors{'temp2'} ) {
+					$cpu_temp = $sensors{'temp1'};
+				}
+				else {
+					$cpu_temp = $sensors{'temp2'};
+				}
+			}
+		}
+		else {
+			$cpu_temp = $sensors{'temp1'}; # can be null, that is ok
+		}
+		if ( $cpu_temp ) {
+			# using $sensors{'temp3'} is just not reliable enough, more errors caused than fixed imo
+			#if ( $sensors{'temp3'} && $sensors{'temp3'} > $cpu_temp ) {
+			#	$cpu_temp = $sensors{'temp3'};
+			#}
+			# there are some absurdly wrong $sensors{'temp1'}: acpitz-virtual-0 $sensors{'temp1'}: +13.8°C
+			if ( $sensors{'core-0-temp'} && ($sensors{'core-0-temp'} - $cpu_temp) > $temp_diff ) {
+				$cpu_temp = $sensors{'core-0-temp'};
+			}
+		}
+	}
+	# if all else fails, use core0/peci temp if present and cpu is null
+	if ( !$cpu_temp ) {
+		if ( $sensors{'core-0-temp'} ) {
+			$cpu_temp = $sensors{'core-0-temp'};
+		}
+		# note that peci temp is known to be colder than the actual system
+		# sometimes so it is the last fallback we want to use even though in theory
+		# it is more accurate, but fact suggests theory wrong.
+		elsif ( $sensors{'cpu-peci-temp'} ) {
+			$cpu_temp = $sensors{'cpu-peci-temp'};
+		}
+	}
+	# then the real mobo temp
+	if ( $sensors{'mobo-temp'} ){
+		$mobo_temp = $sensors{'mobo-temp'};
+	}
+	elsif ( $fan_type ){
+		if ( $fan_type == 1 ) {
+			if ( $sensors{'temp1'} && $sensors{'temp2'} && $sensors{'temp2'} > $sensors{'temp1'} ) {
+				$mobo_temp = $sensors{'temp1'};
+			}
+			else {
+				$mobo_temp = $sensors{'temp2'};
+			}
+		}
+		else {
+			if ( $sensors{'temp1'} && $sensors{'temp2'} && $sensors{'temp1'} > $sensors{'temp2'} ) {
+				$mobo_temp = $sensors{'temp2'};
+			}
+			else {
+				$mobo_temp = $sensors{'temp1'};
+			}
+		}
+		## NOTE: not safe to assume $sensors{'temp3'} is the mobo temp, sad to say
+		#if ( $sensors{'temp1'} && $sensors{'temp2'} && $sensors{'temp3'} && $sensors{'temp3'} < $mobo_temp ) {
+		#	$mobo_temp = $sensors{'temp3'};
+		#}
+	}
+	else {
+		$mobo_temp = $sensors{'temp2'};
+	}
+	@fan_main = @{$sensors{'fan-main'}} if $sensors{'fan-main'};
+	$index_count_fan_main = (@fan_main) ? scalar @fan_main : 0;
+	@fan_default = @{$sensors{'fan-default'}} if $sensors{'fan-default'};
+	$index_count_fan_default = (@fan_default) ? scalar @fan_default : 0;
+	# then set the cpu fan speed
+	if ( ! $fan_main[1] ) {
+		# note, you cannot test for $fan_default[1] or [2] != "" 
+		# because that creates an array item in gawk just by the test itself
+		if ( $fan_type == 1 && defined $fan_default[1] ) {
+			$fan_main[1] = $fan_default[1];
+			$fan_default[1] = undef;
+		}
+		elsif ( $fan_type == 2 && defined $fan_default[2] ) {
+			$fan_main[1] = $fan_default[2];
+			$fan_default[2] = undef;
+		}
+	}
+	# clear out any duplicates. Primary fan real trumps fan working always if same speed
+	for ($i = 1; $i <= $index_count_fan_main; $i++) {
+		if ( defined $fan_main[$i] && $fan_main[$i] ) {
+			for ($j = 1; $j <= $index_count_fan_default; $j++) {
+				if ( defined $fan_default[$j] && $fan_main[$i] == $fan_default[$j] ) {
+					$fan_default[$j] = undef;
+				}
+			}
+		}
+	}
+	# now see if you can find the fast little mobo fan, > 5000 rpm and put it as mobo
+	# note that gawk is returning true for some test cases when $fan_default[j] < 5000
+	# which has to be a gawk bug, unless there is something really weird with arrays
+	# note: 500 > $fan_default[j] < 1000 is the exact trigger, and if you manually 
+	# assign that value below, the > 5000 test works again, and a print of the value
+	# shows the proper value, so the corruption might be internal in awk. 
+	# Note: gensub is the culprit I think, assigning type string for range 501-1000 but 
+	# type integer for all others, this triggers true for >
+	for ($j = 1; $j <= $index_count_fan_default; $j++) {
+		if ( defined $fan_default[$j] && $fan_default[$j] > 5000 && !$fan_main[2] ) {
+			$fan_main[2] = $fan_default[$j];
+			$fan_default[$j] = '';
+			# then add one if required for output
+			if ( $index_count_fan_main < 2 ) {
+				$index_count_fan_main = 2;
+			}
+		}
+	}
+	# if they are ALL null, print error message. psFan is not used in output currently
+	if ( !$cpu_temp && !$mobo_temp && !$fan_main[1] && !$fan_main[2] && !$fan_main[1] && !@fan_default ) {
+		%sensors = ();
+	}
+	else {
+		my ($psu_temp);
+		if ( $sensors{'psu-temp'} ){
+			$psu_temp = $sensors{'psu-temp'};
+		}
+		%sensors = (
+		'cpu-temp' => $cpu_temp,
+		'mobo-temp' => $mobo_temp,
+		'psu-temp' => $psu_temp,
+		'temp-unit' => $sensors{'temp-unit'},
+		'fan-main' => \@fan_main,
+		'fan-default' => \@fan_default,
+		);
+		if ($psu_temp){
+			$sensors{'psu-temp'} = $psu_temp;
+		}
+	}
+	
+		
 	eval $end if $b_log;
 	return %sensors;
 }
@@ -9221,9 +9620,34 @@ sub gpu_data {
 			}
 		}
 	}
+	if (@sensors_data){
+		my ($b_found,$holder) = (0,'');
+		foreach (@sensors_data){
+			next if (/^Adapter:/ || /^\s*$/);
+			if (/^(amdgpu|intel|nouveau|radeon)-pci-(.*)/){
+				$b_found = 1;
+				$holder = $1;
+				$j = scalar @gpudata;
+			}
+			if ($b_found){
+				if (/^temp.*:([0-9]+).*(C|F)/){
+					$gpudata[$j]{'temp'} = $1;
+					$gpudata[$j]{'type'} = $holder;
+					$gpudata[$j]{'unit'} = $2;
+				}
+				if (/^fan.*:([0-9]+).*(RPM)?/){
+					$gpudata[$j]{'fan-speed'} = $1;
+				}
+			}
+			if (/!(intel|nouveau|radeon)-(pci|virtual|isa)-(.*)/){
+				$b_found = 0;
+				$holder = '';
+			}
+		}
+	}
 	# we'll probably use this data elsewhere so make it a one time call
 	$b_gpudata = 1;
-	 print Data::Dumper::Dumper \@gpudata;
+	# print Data::Dumper::Dumper \@gpudata;
 	eval $end if $b_log;
 	return @gpudata;
 }
