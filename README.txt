@@ -165,7 +165,7 @@ Note that my current development goals are, roughly in this order:
      RAID: Started - stub 
      Unmounted: Started - stub 
      USB Info: DONE: NEW!
-     Sensors: Started
+     Sensors: DONE [BSD is todo]
      Repos: DONE
      Processes: DONE - Improved significantly
      Weather: DONE
