@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-03-01';
-my $self_patch='311-p';
+my $self_patch='312-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -3163,7 +3163,7 @@ sub get_options{
 		$show{'unmounted'} = 1; },
 	'p|partition-full' => sub {
 		$show{'short'} = 0;
-		$show{'partition'} = 1;
+		$show{'partition'} = 0;
 		$show{'partition-full'} = 1; },
 	'P|partitions|partition' => sub {
 		$show{'short'} = 0;
@@ -3483,6 +3483,7 @@ sub get_options{
 	# override for things like -b or -v2 to -v3
 	$show{'cpu-basic'} = 0 if $show{'cpu'};
 	$show{'optical-basic'} = 0 if $show{'optical'};
+	$show{'partition'} = 0 if $show{'partition-full'};
 	if ($show{'disk'} || $show{'optical'} ){
 		$show{'disk-basic'} = 0;
 		$show{'disk-total'} = 0;
@@ -4240,6 +4241,7 @@ sub row_defaults {
 	'machine-data-dmidecode' => "No machine data: try newer kernel, or install dmidecoce.",
 	'optical-data' => "No Optical or Floppy data was found.",
 	'output-limit' => "Output throttled. IPs: $id; Limit: $limit; Override: --limit [1-x;-1 all]",
+	'partition-data' => "No Partition data was found.",
 	'pci-advanced-data' => 'bus/chip ids unavailable',
 	'pci-card-data' => "No PCI card data found.",
 	'pci-slot-data' => "No PCI slot data found. SOC?",
@@ -7845,30 +7847,179 @@ package PartitionData;
 
 sub get {
 	eval $start if $b_log;
-	my (@rows,$key1,$val1);
+	my (@partitions,@rows,$key1,$val1);
 	my $num = 0;
-# 	my $ref = $alerts{'sensors'};
-# 	if ( $$ref{'action'} ne 'use'){
-# 		$key1 = $$ref{'action'};
-# 		$val1 = $$ref{$key1};
-# 		$key1 = ucfirst($key1);
-# 	}
-# 	else {
-		$key1 = 'Status';
-		$val1 = main::row_defaults('dev');
-# 	}
-	my @data = ({$num++ . "#$key1" => $val1,});
-	return @data;
-	eval $end if $b_log;
-	
-}
-sub partition_data {
-	eval $start if $b_log;
-	my (@rows);
-	my $num = 0;
+	@partitions = partition_data();
+ 	if (!@partitions) {
+		$key1 = 'Message';
+		$val1 = main::row_defaults('partition-data');
+		@rows = ({$num++ . "#$key1" => $val1,});
+ 	}
+ 	else {
+		@rows = create_partition_data(@partitions);
+ 	}
 	
 	eval $end if $b_log;
 	return @rows;
+}
+sub create_partition_data {
+	eval $start if $b_log;
+	my (@partitions) = @_;
+	my $num = 0;
+	my (@data,@rows);
+	foreach my $ref (@partitions){
+		my %row = %$ref;
+		next if $row{'type'} eq 'secondary' && $show{'partition'};
+		my $size = (defined $row{'size'})? $row{'size'} . ' GB': 'N/A';
+		my $used = (defined $row{'used'})? $row{'used'} . ' GB': 'N/A';
+		my $percent = (defined $row{'size'} && defined $row{'used'} && $row{'size'} != 0) ? ' (' . sprintf("%.0f", $row{'used'}/$row{'size'}) . '%)' : '';
+		my $fs = (defined $row{'fs'})? $row{'fs'}: 'N/A';
+		my $dev = (defined $row{'dev-base'})? '/dev/' . $row{'dev-base'}: 'N/A';
+		@data = ({
+		$num++ . '#ID' => $row{'id'},
+		$num++ . '#size' => $size,
+		$num++ . '#used' => $used . $percent,
+		$num++ . '#fs' => $fs,
+		$num++ . '#dev' => $dev,
+		});
+		@rows = (@rows,@data);
+	}
+	eval $end if $b_log;
+	return @rows;
+}
+sub partition_data {
+	eval $start if $b_log;
+	my (@data,@partitions,@rows);
+	my ($b_fs,$b_load,$cols,$roots) = (1,0,6,0);
+	my ($dev_base,$fs,$id,$percent_used,$size,$type,$used);
+	# most current OS support -T and -k, but -P means different things
+	# in freebsd. However since most use is from linux, we make that default
+	if (!$bsd_type){
+		@partitions = main::grabber("df -P -T -k 2>/dev/null");
+	}
+	else {
+		@partitions = main::grabber("df -T -k 2>/dev/null");
+		# this is missing the file system data
+		if (!@partitions){
+			@partitions = main::grabber("df -k 2>/dev/null");
+			$b_fs = 0;
+			$cols = 5;
+		}
+	}
+	# determine positions
+	my $row1 = shift @partitions;
+	# new kernels/df have rootfs and / repeated, creating two entries for the same partition
+	# so check for two string endings of / then slice out the rootfs one, I could check for it
+	# before slicing it out, but doing that would require the same action twice re code execution
+	foreach (@partitions){
+		if (/\s\/$/){
+			$roots++;
+		}
+	}
+	@partitions = grep {!/^rootfs/} @partitions if $roots > 1;
+	foreach (@partitions){
+		my @row = split /\s+/, $_;
+		if ($row[0] =~ /^(aufs|devfs|devtmpfs|fdescfs|iso9660|linprocfs|procfs|squashfs|\/sys|sysfs|tmpfs|type|udev|unionfs)$/ ||
+			$row[0] =~ /^ROOT/i){
+			next;
+		}
+		$dev_base = '';
+		$fs = '';
+		$id = '';
+		$size = 0;
+		$used = 0;
+		$percent_used = 0;
+		$type = '';
+		$b_load = 0;
+		# NOTE: using -P for linux fixes line wraps, and for bsds, assuming they don't use such long file names
+		if ($row[0] =~ /^\/dev\/|:\/|\/\//){
+			$dev_base = $row[0];
+			$dev_base =~ s/^\/dev\///;
+		}
+		# this handles zfs type devices/partitions, which do not start with / but contain /
+		if (!$dev_base && $row[0] =~ /^[^\/]+\/.+/){
+			$row[0] =~ /^([^\/]+\/)([^\/]+)$/;
+			$dev_base = "non-dev-$1$2";
+		}
+		# this handles yet another fredforfaen special case where a mounted drive
+		# has the search string in its name
+		if ($row[-1] =~ /^\/$|^\/boot$|^\/var$|^\/var\/tmp$|^\/var\/log$|^\/home$|^\/opt$|^\/tmp$|^\/usr$/){
+			$b_load = 1;
+			# note, older df in bsd do not have file system column
+			$type = 'main';
+		}
+		elsif ($row[$cols] !~ /^\/$|^\/boot$|^\/var$|^\/var\/tmp$|^\/var\/log$|^\/home$|^\/opt$|^\/tmp$|^\/usr$|^filesystem/){
+			$b_load = 1;
+			$type = 'secondary';
+		}
+		if ($b_load){
+			$fs = ($b_fs) ? $row[1]: '';
+			$id = join ' ', @row[$cols .. $#row];
+			$id =~ s/\/home\/[^\/]+\/(.*)/\/home\/$filter_string\/$1/ if $show{'filter'};
+			$size = sprintf("%.1f", $row[$cols - 4]/1024/1024);
+			$used = sprintf("%.1f", $row[$cols - 3]/1024/1024);
+			$percent_used = sprintf( "%.0f", ( $used/$size )*100 ) if ($size);
+			@data = ({
+			'id' => $id,
+			'dev-base' => $dev_base,
+			'fs' => $fs,
+			'size' => $size,
+			'type' => $type,
+			'used' => $used,
+			'percent-used' => $percent_used,
+			});
+			@rows = (@rows,@data);
+		}
+		
+	}
+	@data = swap_data();
+	@rows = (@rows,@data);
+	#print Data::Dumper::Dumper \@rows;
+	eval $end if $b_log;
+	return @rows;
+}
+
+sub swap_data {
+	eval $start if $b_log;
+	
+	my (@swap,@working,$path);
+	my ($s,$j,$size_id,$used_id) = (1,0,2,3);
+	if (!$bsd_type){
+		if ( $path = main::check_program('swapon') ){
+			@working = main::grabber("$path -s");
+		}
+	}
+	else {
+		if ( $path = main::check_program('swapctl') ){
+			@working = main::grabber("$path -l -k 2>/dev/null");
+		}
+		($size_id,$used_id) = (1,2);
+	}
+	# now add the swap partition data, don't want to show swap files, just partitions,
+	# though this can include /dev/ramzswap0. Note: you can also use /proc/swaps for this
+	# data, it's the same exact output as swapon -s
+	foreach (@working){
+		next if ! /^\/dev/;
+		my @data = split /\s+/, $_;
+		my $dev_base = $data[0];
+		$dev_base =~ s/^\/dev\///;
+		my $size = sprintf( "%.2f", $data[$size_id]*1024/1000**3 );
+		my $used = sprintf( "%.2f", $data[$used_id]*1024/1000**3 );
+		my $percent_used = sprintf( "%.0f", ( $used/$size )*100 );
+		@data = ({
+		'id' => "swap-$s",
+		'dev-base' => $dev_base,
+		'fs' => 'swap',
+		'size' => $size,
+		'type' => 'main',
+		'used' => $used,
+		'percent-used' => $percent_used,
+		});
+		@swap = (@swap,@data);
+		$s++;
+	}
+	eval $end if $b_log;
+	return @swap;
 }
 }
 
@@ -12291,7 +12442,7 @@ sub generate_lines {
 			%row = line_handler('Drives','disk');
 			assign_data(%row);
 		}
-		if ( $show{'partition'} ){
+		if ( $show{'partition'} || $show{'partition-full'}){
 			%row = line_handler('Partition','partition');
 			assign_data(%row);
 		}
