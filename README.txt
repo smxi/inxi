@@ -2,8 +2,8 @@
 README for development branch of inxi Perl version: pinxi
 ====================================================================
 FILE:    README.txt
-VERSION: 2.7
-DATE:    2018-02-28
+VERSION: 2.8
+DATE:    2018-03-02
 
 NOTE: While the real program name will never change, for the sake
 of clarity, I will refer to the inxi-perl dev branch inxi as pinxi, 
@@ -161,7 +161,7 @@ Note that my current development goals are, roughly in this order:
      Network: DONE - with new features!
      Drives: Started - stub
      Optical: DONE
-     Partition: Started  - stub
+     Partition: DONE
      RAID: Started - stub 
      Unmounted: Started - stub 
      USB Info: DONE: NEW!

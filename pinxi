@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-03-02';
-my $self_patch='320-p';
+my $self_patch='321-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -58,7 +58,7 @@ my ( %alerts, %client, %colors, %dl, %files, %rows, %system_files, %use );
 
 ## arrays
 # ps_aux is full output, ps_cmd is only the last 10 to last
-my (@app,@dmesg_boot,@dmi,@gpudata,@ifs,@ifs_bsd,@pci,@ps_aux,@ps_cmd,@raid,
+my (@app,@dmesg_boot,@dmi,@gpudata,@ifs,@ifs_bsd,@partitions,@pci,@ps_aux,@ps_cmd,@raid,
 @sysctl,@sysctl_battery,@sysctl_sensors,@sysctl_machine,@usb);
 my @test = (0,0,0,0,0);
 
@@ -7844,20 +7844,21 @@ sub create_data {
 ## PartitionData
 {
 package PartitionData;
-my (@labels,@uuids);
+my (@gpart,@labels,@uuids);
 sub get {
 	eval $start if $b_log;
-	my (@partitions,@rows,$key1,$val1);
+	my (@rows,$key1,$val1);
 	my $num = 0;
-	@partitions = partition_data();
+	partition_data();
  	if (!@partitions) {
 		$key1 = 'Message';
 		$val1 = main::row_defaults('partition-data');
 		@rows = ({$num++ . "#$key1" => $val1,});
  	}
  	else {
-		@rows = create_partition_data(@partitions);
+		@rows = create_partition_data();
  	}
+ 	@gpart = undef;
 	@labels = undef;
 	@uuids = undef;
 	eval $end if $b_log;
@@ -7865,15 +7866,16 @@ sub get {
 }
 sub create_partition_data {
 	eval $start if $b_log;
-	my (@partitions) = @_;
 	my $num = 0;
 	my $j = 0;
-	my (@data,@rows,$dev,$dev_type);
+	my (@data,@data2,@rows,$dev,$dev_type);
 	foreach my $ref (@partitions){
 		my %row = %$ref;
 		next if $row{'type'} eq 'secondary' && $show{'partition'};
-		my $size = (defined $row{'size'})? $row{'size'} . ' GB': 'N/A';
-		my $used = (defined $row{'used'})? $row{'used'} . ' GB': 'N/A';
+		@data2 = main::get_size($row{'size'}) if (defined $row{'size'});
+		my $size = (@data2) ? $data2[0] . ' ' . $data2[1]: 'N/A';
+		@data2 = main::get_size($row{'used'}) if (defined $row{'used'});
+		my $used = (@data2) ? $data2[0] . ' ' . $data2[1]: 'N/A';
 		my $percent = (defined $row{'percent-used'}) ? ' (' . $row{'percent-used'} . '%)' : '';
 		my $fs = (defined $row{'fs'})? $row{'fs'}: 'N/A';
 		if (defined $row{'dev-base'}){
@@ -7916,45 +7918,51 @@ sub create_partition_data {
 }
 sub partition_data {
 	eval $start if $b_log;
-	my (@data,@partitions,@rows,@mount);
+	my (@data,@rows,@mapper,@mount,@partitions_working);
 	my ($b_fs,$b_load,$cols,$roots) = (1,0,6,0);
 	my ($dev_base,$fs,$id,$label,$percent_used,$size,$type,$uuid,$used);
 	# most current OS support -T and -k, but -P means different things
 	# in freebsd. However since most use is from linux, we make that default
 	if (!$bsd_type){
-		@partitions = main::grabber("df -P -T -k 2>/dev/null");
+		@partitions_working = main::grabber("df -P -T -k 2>/dev/null");
 		if (-d '/dev/disk/by-label'){
 			@labels = main::globber('/dev/disk/by-label/*');
 		}
 		if (-d '/dev/disk/by-uuid'){
 			@uuids = main::globber('/dev/disk/by-uuid/*');
 		}
+		if (-d '/dev/disk/mapper'){
+			@mapper = main::globber('/dev/mapper/*');
+		}
 	}
 	else {
-		@partitions = main::grabber("df -T -k 2>/dev/null");
+		@partitions_working = main::grabber("df -T -k 2>/dev/null");
 		# this is missing the file system data
-		if (!@partitions){
-			@partitions = main::grabber("df -k 2>/dev/null");
+		if (!@partitions_working){
+			@partitions_working = main::grabber("df -k 2>/dev/null");
 			$b_fs = 0;
 			$cols = 5;
 			if (my $path = main::check_program('mount')){
 				@mount = main::grabber("$path 2>/dev/null");
 			}
 		}
+		if ( ($show{'label'} || $show{'uuid'} ) && (my $path = main::check_program('gpart'))){
+			@gpart = main::grabber("$path list 2>/dev/null",'strip');
+		}
 	}
 	
 	# determine positions
-	my $row1 = shift @partitions;
+	my $row1 = shift @partitions_working;
 	# new kernels/df have rootfs and / repeated, creating two entries for the same partition
 	# so check for two string endings of / then slice out the rootfs one, I could check for it
 	# before slicing it out, but doing that would require the same action twice re code execution
-	foreach (@partitions){
+	foreach (@partitions_working){
 		if (/\s\/$/){
 			$roots++;
 		}
 	}
-	@partitions = grep {!/^rootfs/} @partitions if $roots > 1;
-	foreach (@partitions){
+	@partitions_working = grep {!/^rootfs/} @partitions_working if $roots > 1;
+	foreach (@partitions_working){
 		my @row = split /\s+/, $_;
 		if ($row[0] =~ /^(aufs|devfs|devtmpfs|fdescfs|iso9660|linprocfs|procfs|squashfs|\/sys|sysfs|tmpfs|type|udev|unionfs)$/ ||
 			$row[0] =~ /^ROOT/i){
@@ -7975,6 +7983,12 @@ sub partition_data {
 			# sometimes paths are set using /dev/disk/by-[label|uuid] so we need to get the /dev/xxx path
 			if ($row[0] =~ /by-label|by-uuid/){
 				$row[0] = Cwd::abs_path($row[0]);
+			}
+			elsif ($row[0] =~ /mapper\// && @mapper){
+				$row[0] = get_mapper($row[0],@mapper);
+			}
+			elsif ($row[0] eq '/dev/root'){
+				$row[0] = get_root();
 			}
 			$dev_base = $row[0];
 			$dev_base =~ s/^\/dev\///;
@@ -8002,12 +8016,19 @@ sub partition_data {
 			if ($show{'uuid'} && @uuids){
 				$uuid = get_uuid($row[0],@uuids);
 			}
-			$fs = ($b_fs) ? $row[1]: bsd_fs($row[0],@mount);
+			if ($bsd_type && @gpart && ($show{'label'} || $show{'uuid'} ) ){
+				my @extra = get_bsd_label_uuid("$dev_base");
+				if (@extra){
+					$label = $extra[0];
+					$uuid = $extra[1];
+				}
+			}
+			$fs = ($b_fs) ? $row[1]: get_bsd_fs($row[0],@mount);
 			$id = join ' ', @row[$cols .. $#row];
 			$id =~ s/\/home\/[^\/]+\/(.*)/\/home\/$filter_string\/$1/ if $show{'filter'};
-			$size = sprintf("%.1f", $row[$cols - 4]/1024/1024);
-			$used = sprintf("%.1f", $row[$cols - 3]/1024/1024);
-			$percent_used = sprintf( "%.0f", ( $used/$size )*100 ) if ($size);
+			$size = $row[$cols - 4];
+			$used = $row[$cols - 3];
+			$percent_used = sprintf( "%.1f", ( $used/$size )*100 ) if ($size);
 			@data = ({
 			'id' => $id,
 			'dev-base' => $dev_base,
@@ -8019,29 +8040,29 @@ sub partition_data {
 			'uuid' => $uuid,
 			'percent-used' => $percent_used,
 			});
-			@rows = (@rows,@data);
+			@partitions = (@partitions,@data);
 		}
-		
 	}
 	@data = swap_data();
-	@rows = (@rows,@data);
-	# print Data::Dumper::Dumper \@rows;
+	@partitions = (@partitions,@data);
+	# print Data::Dumper::Dumper \@partitions;
 	eval $end if $b_log;
-	return @rows;
 }
 
 sub swap_data {
 	eval $start if $b_log;
-	
 	my (@swap,@working,$path,$label,$uuid);
 	my ($s,$j,$size_id,$used_id) = (1,0,2,3);
 	if (!$bsd_type){
 		if ( $path = main::check_program('swapon') ){
-			@working = main::grabber("$path -s");
+			# note: while -s is deprecated, --show --bytes is not supported
+			# on older systems
+			@working = main::grabber("$path -s 2>/dev/null");
 		}
 	}
 	else {
 		if ( $path = main::check_program('swapctl') ){
+			# output in in KB blocks
 			@working = main::grabber("$path -l -k 2>/dev/null");
 		}
 		($size_id,$used_id) = (1,2);
@@ -8054,14 +8075,21 @@ sub swap_data {
 		my @data = split /\s+/, $_;
 		my $dev_base = $data[0];
 		$dev_base =~ s/^\/dev\///;
-		my $size = sprintf( "%.2f", $data[$size_id]*1024/1000**3 );
-		my $used = sprintf( "%.2f", $data[$used_id]*1024/1000**3 );
-		my $percent_used = sprintf( "%.0f", ( $used/$size )*100 );
+		my $size = $data[$size_id];
+		my $used = $data[$used_id];
+		my $percent_used = sprintf( "%.1f", ( $used/$size )*100 );
 		if ($show{'label'} && @labels){
 			$label = get_label($data[0],@labels);
 		}
 		if ($show{'uuid'} && @uuids){
 			$uuid = get_uuid($data[0],@uuids);
+		}
+		if ($bsd_type && @gpart && ($show{'label'} || $show{'uuid'} ) ){
+			my @extra = get_bsd_label_uuid("$dev_base");
+			if (@extra){
+				$label = $extra[0];
+				$uuid = $extra[1];
+			}
 		}
 		@data = ({
 		'id' => "swap-$s",
@@ -8080,36 +8108,8 @@ sub swap_data {
 	eval $end if $b_log;
 	return @swap;
 }
-sub get_label {
-	my ($item,@labels) = @_;
-	my $label = '';
-	foreach (@labels){
-		if ($item eq Cwd::abs_path($_)){
-			$label = $_;
-			$label =~ s/\/dev\/disk\/by-label\///;
-			$label =~ s/\\x20/ /g;
-			last;
-		}
-	}
-	$label ||= 'N/A';
-	return $label;
-}
-sub get_uuid {
-	my ($item,@uuids) = @_;
-	my $uuid = '';
-	foreach (@uuids){
-		if ($item eq Cwd::abs_path($_)){
-			$uuid = $_;
-			$uuid =~ s/\/dev\/disk\/by-uuid\///;
-			
-			last;
-		}
-	}
-	$uuid ||= 'N/A';
-	return $uuid;
-}
-
-sub bsd_fs {
+sub get_bsd_fs {
+	eval $start if $b_log;
 	my ($item,@mount) = @_;
 	return 'N/A' if ! @mount;
 	my ($fs) = ('');
@@ -8121,8 +8121,101 @@ sub bsd_fs {
 			last;
 		}
 	}
+	eval $end if $b_log;
 	return $fs;
 }
+# 1. Name: ada1p1
+#   label: (null)
+#   label: ssd-root
+#   rawuuid: b710678b-f196-11e1-98fd-021fc614aca9
+sub get_bsd_label_uuid {
+	eval $start if $b_log;
+	my ($item) = @_;
+	my (@data,$b_found);
+	foreach (@gpart){
+		my @working = split /\s*:\s*/, $_;
+		if ($_ =~ /^[0-9]+\.\sName:/ && $working[1] eq $item){
+			$b_found = 1;
+		}
+		elsif ($_ =~ /^[0-9]+\.\sName:/ && $working[1] ne $item){
+			$b_found = 0;
+		}
+		if ($b_found){
+			if ($working[0] eq 'label'){
+				$data[0] = $working[1];
+				$data[0] =~ s/\(|\)//g; # eg: label:(null) - we want to show null
+			}
+			if ($working[0] eq 'rawuuid'){
+				$data[1] = $working[1];
+				$data[0] =~ s/\(|\)//g; 
+			}
+		}
+	}
+	eval $end if $b_log;
+	return @data;
+}
+sub get_label {
+	eval $start if $b_log;
+	my ($item,@labels) = @_;
+	my $label = '';
+	foreach (@labels){
+		if ($item eq Cwd::abs_path($_)){
+			$label = $_;
+			$label =~ s/\/dev\/disk\/by-label\///;
+			$label =~ s/\\x20/ /g;
+			last;
+		}
+	}
+	$label ||= 'N/A';
+	eval $end if $b_log;
+	return $label;
+}
+# args: $1 - dev item $2 - @mapper
+# check for mapper, then get actual dev item if mapped
+# /dev/mapper/ will usually be a symbolic link to the real /dev id
+sub get_mapper {
+	eval $start if $b_log;
+	my ($item,@mapper) = @_;
+	my $mapped = '';
+	foreach (@mapper){
+		if ($item eq $_){
+			my $temp = Cwd::abs_path($_);
+			$mapped = $temp if $temp;
+			last;
+		}
+	}
+	$mapped ||= $item;
+	eval $end if $b_log;
+	return $mapped;
+}
+sub get_root {
+	eval $start if $b_log;
+	my ($path) = ('/dev/root');
+	# note: the path may be a symbolic link to by-label/by-uuid but not 
+	# sure how far in abs_path resolves the path.
+	my $temp = Cwd::abs_path($path);
+	$path = $temp if $temp;
+	eval $end if $b_log;
+	return $path;
+}
+
+sub get_uuid {
+	eval $start if $b_log;
+	my ($item,@uuids) = @_;
+	my $uuid = '';
+	foreach (@uuids){
+		if ($item eq Cwd::abs_path($_)){
+			$uuid = $_;
+			$uuid =~ s/\/dev\/disk\/by-uuid\///;
+			last;
+		}
+	}
+	$uuid ||= 'N/A';
+	eval $end if $b_log;
+	return $uuid;
+}
+
+
 }
 
 ## ProcessData 
@@ -11683,6 +11776,36 @@ sub get_self_version {
 	}
 	eval $end if $b_log;
 	return $self_version . $patch;
+}
+# args: $1 - size in KB, return KB, MB, GB, TB, PB, EB
+sub get_size {
+	my ($size) = @_;
+	my (@data);
+	if ($size > 1024**5){
+		$data[0] = sprintf("%.2f",$size/1024**5);
+		$data[1] = 'EB';
+	}
+	elsif ($size > 1024**4){
+		$data[0] = sprintf("%.2f",$size/1024**4);
+		$data[1] = 'PB';
+	}
+	elsif ($size > 1024**3){
+		$data[0] = sprintf("%.2f",$size/1024**3);
+		$data[1] = 'TB';
+	}
+	elsif ($size > 1024**2){
+		$data[0] = sprintf("%.2f",$size/1024**2);
+		$data[1] = 'GB';
+	}
+	elsif ($size > 1024){
+		$data[0] = sprintf("%.1f",$size/1024);
+		$data[1] = 'MB';
+	}
+	else {
+		$data[0] = sprintf("%.0f",$size);
+		$data[1] = 'KB';
+	}
+	return @data;
 }
 sub sensors_gpu_search {
 	return 'amdgpu|intel|radeon|nouveau';
