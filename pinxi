@@ -39,8 +39,8 @@ use Time::HiRes qw(gettimeofday tv_interval);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-03-01';
-my $self_patch='315-p';
+my $self_date='2018-03-02';
+my $self_patch='317-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -7866,6 +7866,7 @@ sub create_partition_data {
 	eval $start if $b_log;
 	my (@partitions) = @_;
 	my $num = 0;
+	my $j = 0;
 	my (@data,@rows,$dev,$dev_type);
 	foreach my $ref (@partitions){
 		my %row = %$ref;
@@ -7893,6 +7894,7 @@ sub create_partition_data {
 			$dev_type = 'dev';
 		}
 		$dev ||= 'N/A';
+		$j = scalar @rows;
 		@data = ({
 		$num++ . '#ID' => $row{'id'},
 		$num++ . '#size' => $size,
@@ -7901,19 +7903,31 @@ sub create_partition_data {
 		$num++ . "#$dev_type" => $dev,
 		});
 		@rows = (@rows,@data);
+		if ($show{'label'}){
+			$rows[$j]{$num++ . '#label'} = ($row{'label'}) ? $row{'label'}: 'N/A';
+		}
+		if ($show{'uuid'}){
+			$rows[$j]{$num++ . '#uuid'} = ($row{'uuid'}) ? $row{'uuid'}: 'N/A';
+		}
 	}
 	eval $end if $b_log;
 	return @rows;
 }
 sub partition_data {
 	eval $start if $b_log;
-	my (@data,@partitions,@rows,@mount);
+	my (@data,@labels,@partitions,@rows,@mount,@uuids);
 	my ($b_fs,$b_load,$cols,$roots) = (1,0,6,0);
-	my ($dev_base,$fs,$id,$percent_used,$size,$type,$used);
+	my ($dev_base,$fs,$id,$label,$percent_used,$size,$type,$uuid,$used);
 	# most current OS support -T and -k, but -P means different things
 	# in freebsd. However since most use is from linux, we make that default
 	if (!$bsd_type){
 		@partitions = main::grabber("df -P -T -k 2>/dev/null");
+		if ($show{'label'} && -d '/dev/disk/by-label'){
+			@labels = main::globber('/dev/disk/by-label/*');
+		}
+		if ($show{'uuid'} && -d '/dev/disk/by-uuid'){
+			@uuids = main::globber('/dev/disk/by-uuid/*');
+		}
 	}
 	else {
 		@partitions = main::grabber("df -T -k 2>/dev/null");
@@ -7927,6 +7941,7 @@ sub partition_data {
 			}
 		}
 	}
+	
 	# determine positions
 	my $row1 = shift @partitions;
 	# new kernels/df have rootfs and / repeated, creating two entries for the same partition
@@ -7947,10 +7962,12 @@ sub partition_data {
 		$dev_base = '';
 		$fs = '';
 		$id = '';
+		$label = '';
 		$size = 0;
 		$used = 0;
 		$percent_used = 0;
 		$type = '';
+		$uuid = '';
 		$b_load = 0;
 		# NOTE: using -P for linux fixes line wraps, and for bsds, assuming they don't use such long file names
 		if ($row[0] =~ /^\/dev\/|:\/|\/\//){
@@ -7974,6 +7991,12 @@ sub partition_data {
 			$type = 'secondary';
 		}
 		if ($b_load){
+			if ($show{'label'} && @labels){
+				$label = get_label($row[0],@labels);
+			}
+			if ($show{'uuid'} && @uuids){
+				$uuid = get_uuid($row[0],@uuids);
+			}
 			$fs = ($b_fs) ? $row[1]: bsd_fs($row[0],@mount);
 			$id = join ' ', @row[$cols .. $#row];
 			$id =~ s/\/home\/[^\/]+\/(.*)/\/home\/$filter_string\/$1/ if $show{'filter'};
@@ -7984,9 +8007,11 @@ sub partition_data {
 			'id' => $id,
 			'dev-base' => $dev_base,
 			'fs' => $fs,
+			'label' => $label,
 			'size' => $size,
 			'type' => $type,
 			'used' => $used,
+			'uuid' => $uuid,
 			'percent-used' => $percent_used,
 			});
 			@rows = (@rows,@data);
@@ -7995,7 +8020,7 @@ sub partition_data {
 	}
 	@data = swap_data();
 	@rows = (@rows,@data);
-	#print Data::Dumper::Dumper \@rows;
+	# print Data::Dumper::Dumper \@rows;
 	eval $end if $b_log;
 	return @rows;
 }
@@ -8042,6 +8067,35 @@ sub swap_data {
 	eval $end if $b_log;
 	return @swap;
 }
+sub get_label {
+	my ($item,@labels) = @_;
+	my $label = '';
+	foreach (@labels){
+		if ($item eq Cwd::abs_path($_)){
+			$label = $_;
+			$label =~ s/\/dev\/disk\/by-label\///;
+			$label =~ s/\\x20/ /g;
+			last;
+		}
+	}
+	$label ||= 'N/A';
+	return $label;
+}
+sub get_uuid {
+	my ($item,@uuids) = @_;
+	my $uuid = '';
+	foreach (@uuids){
+		if ($item eq Cwd::abs_path($_)){
+			$uuid = $_;
+			$uuid =~ s/\/dev\/disk\/by-uuid\///;
+			
+			last;
+		}
+	}
+	$uuid ||= 'N/A';
+	return $uuid;
+}
+
 sub bsd_fs {
 	my ($item,@mount) = @_;
 	return 'N/A' if ! @mount;
