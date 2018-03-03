@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-03-02';
-my $self_patch='326-p';
+my $self_patch='327-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -6154,7 +6154,7 @@ sub cpu_cleaner {
 ## DiskData
 {
 package DiskData;
-
+my ($b_hddtemp,$b_nvme,$b_sudo,$hddtemp,$nvme,$sudo);
 sub get {
 	eval $start if $b_log;
 	my (@data,@rows,$key1,$val1);
@@ -6175,19 +6175,89 @@ sub get {
 		@data = OpticalData::get();
 	}
 	@rows = (@rows,@data);
-	return @rows;
+	($b_hddtemp,$b_nvme,$b_sudo,$hddtemp,$nvme,$sudo) = (undef,undef,undef,undef,undef,undef);
 	eval $end if $b_log;
+	return @rows;
+}
+sub create_disk_data {
+	eval $start if $b_log;
+	my (@data,@rows);
 	
+	eval $end if $b_log;
+	return @rows;
 }
 sub disk_data {
 	eval $start if $b_log;
 	my (@rows);
 	my $num = 0;
+	my @ids = main::globber('/dev/disk/by-id/*');
 	
 	eval $end if $b_log;
 	return @rows;
 }
 
+sub disk_serial {
+	eval $start if $b_log;
+	my ($device,@ids) = @_;
+	my ($serial) = ('');
+	foreach (@ids){
+		if ($device eq Cwd::abs_path($_)){
+			my @data = split /_/, $_;
+			$serial = $data[-1];
+			last;
+		}
+	}
+	eval $end if $b_log;
+	return $serial;
+}
+# Normally hddtemp requires root, but you can set user rights in /etc/sudoers.
+# args: $1 - /dev/<disk> to be tested for
+sub hdd_temp {
+	eval $start if $b_log;
+	my ($device) = @_;
+	my ($path) = ('');
+	my (@data,$hdd_temp);
+	if (!$b_sudo){
+		$b_sudo = 1;
+		if (!$b_root && ($path = main::check_program('sudo') )) {
+			$sudo = "$path -n ";
+		}
+	}
+	if ($device =~ /nvme/i){
+		if (!$b_nvme){
+			$b_nvme = 1;
+			if ($path = main::check_program('nvme')) {
+				$nvme = $path;
+			}
+		}
+		if ($nvme){
+			$device =~ s/n[0-9]//;
+			@data = main::grabber("$sudo$nvme smart-log $device 2>/dev/null");
+			foreach (@data){
+				my @row = split /\s*:\s*/, $_;
+				# other rows may have: Temperature sensor 1 :
+				if ( $row[0] eq 'temperature') {
+					$row[1] =~ s/\s*C//;
+					$hdd_temp = $row[1];
+					last;
+				}
+			}
+		}
+	}
+	else {
+		if (!$b_hddtemp){
+			$b_hddtemp = 1;
+			if ($path = main::check_program('hddtemp')) {
+				$hddtemp = $path;
+			}
+		}
+		if ($hddtemp){
+			$hdd_temp = (main::grabber("$sudo$hddtemp -nq -u C $device 2>/dev/null"))[0];
+		}
+	}
+	eval $end if $b_log;
+	return $hdd_temp;
+}
 }
 
 ## GraphicData 
