@@ -159,7 +159,7 @@ Note that my current development goals are, roughly in this order:
      Graphics: DONE
      Audio: DONE 
      Network: DONE - with new features!
-     Drives: Started - stub
+     Drives: STARTED
      Optical: DONE
      Partition: DONE
      RAID: STARTED
