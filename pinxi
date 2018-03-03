@@ -39,8 +39,8 @@ use Time::HiRes qw(gettimeofday tv_interval);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-03-02';
-my $self_patch='328-p';
+my $self_date='2018-03-03';
+my $self_patch='329-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -4232,6 +4232,7 @@ sub row_defaults {
 	'battery-data-sys' => "No /sys data found. Old system?",
 	'data-bsd' => "Feature not supported yet for BSDs.",
 	'disk-data' => "No Disk data was found.",
+	'disk-data-bsd' => "No Advanced Disk data available yet in BSDs.",
 	'display-console' => 'No advanced graphics data found on this system in console.',
 	'display-null' => 'No advanced graphics data found on this system.',
 	'display-root' => 'Advanced graphics data unavailable in console for root.',
@@ -4240,6 +4241,8 @@ sub row_defaults {
 	'display-tool' => "Unable to show advanced data. Required tool $id missing.",
 	'display-try' => 'Advanced graphics data unavailable in console. Try -G --display',
 	'dev' => 'Feature under development',
+	'dmesg-boot-permissions' => 'dmesg.boot permissions',
+	'dmesg-boot-missing' => 'dmesg.boot not found',
 	'IP' => "No $id data found. Connected to the web? SSL issues?",
 	'machine-data' => "No machine data: try newer kernel.",
 	'machine-data-alt-33' => "No machine data: try newer kernel. Is dmidecode installed? Try -M --alt 33.",
@@ -4878,7 +4881,7 @@ sub get {
 				}
 			}
 			else {
-				@rows = create_battery_data(%battery);
+				@rows = create_output(%battery);
 			}
 		}
 	}
@@ -4892,7 +4895,7 @@ sub get {
 			}
 		}
 		else {
-			@rows = create_battery_data(%battery);
+			@rows = create_output(%battery);
 		}
 	}
 	else {
@@ -4926,7 +4929,7 @@ sub get {
 # 15 manufacturer
 # 16 serial_number
 # 17 location
-sub create_battery_data {
+sub create_output {
 	eval $start if $b_log;
 	my (%battery,@data,@rows) = @_;
 	my ($key);
@@ -5161,12 +5164,12 @@ sub get {
 		@rows = data_short($type);
 	}
 	else {
-		@rows = create_full_data();
+		@rows = create_output_full();
 	}
 	return @rows;
 	eval $end if $b_log;
 }
-sub create_full_data {
+sub create_output_full {
 	eval $start if $b_log;
 	my $num = 0;
 	my ($b_flags,$flag_key,@flags,%cpu,@data,@rows);
@@ -5274,6 +5277,26 @@ sub create_full_data {
 	eval $end if $b_log;
 	return @rows;
 }
+sub create_output_short {
+	eval $start if $b_log;
+	my (@cpu) = @_;
+	my @data;
+	my $num = 0;
+	@data = ({
+	$num++ . "#$cpu[0]" => $cpu[1],
+	$num++ . "#type" => $cpu[2],
+	},);
+	if ($extra > 0){
+		$data[0]{$num++ . "#arch"} = $cpu[7];
+	}
+	$data[0]{$num++ . "#$cpu[3]"} = $cpu[4];
+	if ($cpu[6]){
+		$data[0]{$num++ . "#$cpu[5]"} = $cpu[6];
+	}
+	
+	eval $end if $b_log;
+	return @data;
+}
 sub data_short {
 	eval $start if $b_log;
 	my ($type) = @_;
@@ -5308,31 +5331,12 @@ sub data_short {
 		@data = prep_short_data(%cpu);
 	}
 	if ($type eq 'basic'){
-		@data = create_short_data(@data);
+		@data = create_output_short(@data);
 	}
 	eval $end if $b_log;
 	return @data;
 }
-sub create_short_data {
-	eval $start if $b_log;
-	my (@cpu) = @_;
-	my @data;
-	my $num = 0;
-	@data = ({
-	$num++ . "#$cpu[0]" => $cpu[1],
-	$num++ . "#type" => $cpu[2],
-	},);
-	if ($extra > 0){
-		$data[0]{$num++ . "#arch"} = $cpu[7];
-	}
-	$data[0]{$num++ . "#$cpu[3]"} = $cpu[4];
-	if ($cpu[6]){
-		$data[0]{$num++ . "#$cpu[5]"} = $cpu[6];
-	}
-	
-	eval $end if $b_log;
-	return @data;
-}
+
 sub prep_short_data {
 	eval $start if $b_log;
 	my (%cpu) = @_;
@@ -5896,7 +5900,7 @@ sub cpu_flags_bsd {
 	my $file = main::system_files('dmesg-boot');
 	
 	if ( $file && ! -r $file ){
-		$flags = "dmesg.boot permissions";
+		$flags = main::row_defaults('dmesg-boot-permissions');
 	}
 	else {
 		foreach (@dmesg_boot){
@@ -6156,44 +6160,42 @@ sub cpu_cleaner {
 {
 package DiskData;
 my ($b_hddtemp,$b_nvme,$b_sudo,$hddtemp,$nvme,$sudo);
+
 sub get {
 	eval $start if $b_log;
 	my (@data,@rows,$key1,$val1);
 	my ($type) = @_;
 	$type ||= 'standard';
 	my $num = 0;
-	if ($show{'disk-total'} || $show{'disk'} || $show{'short'}){
-		@data = disk_data();
-		if (!$bsd_type){
-			if (@data){
-				if ($type eq 'standard'){
-					@data = create_disk_data(@data);
-					@rows = (@rows,@data);
-				}
-				else {
-					@rows = @data;
-					# print Data::Dumper::Dumper \@rows;
-				}
-			}
-			else {
-				$key1 = 'Message';
-				$val1 = main::row_defaults('disk-size');
-				@rows = ({$num++ . "#$key1" => $val1,});
-			}
+
+	@data = disk_data();
+	if (@data){
+		if ($type eq 'standard'){
+			@data = create_output(@data);
+			@rows = (@rows,@data);
 		}
 		else {
-			$key1 = 'Message';
-			$val1 = main::row_defaults('data-bsd');
-			@rows = ({$num++ . "#$key1" => $val1,});
+			@rows = @data;
+			# print Data::Dumper::Dumper \@rows;
 		}
 	}
-	
+	else {
+		$key1 = 'Message';
+		$val1 = main::row_defaults('disk-size');
+		@rows = ({$num++ . "#$key1" => $val1,});
+	}
+	if ($bsd_type && $type eq 'standard'){
+		$key1 = 'Message';
+		$val1 = main::row_defaults('disk-data-bsd');
+		@data = ({$num++ . "#$key1" => $val1,});
+		@rows = (@rows,@data);
+	}
+
 	if (!@rows){
 		$key1 = 'Message';
 		$val1 = main::row_defaults('disk-data');
 		@data = ({$num++ . "#$key1" => $val1,});
 	}
-	
 	#@rows = (@rows,@data);
 	@data = ();
 	if ($show{'optical'} || $show{'optical-basic'}){
@@ -6204,7 +6206,7 @@ sub get {
 	eval $end if $b_log;
 	return @rows;
 }
-sub create_disk_data {
+sub create_output {
 	eval $start if $b_log;
 	my (@disks) = @_;
 	#print Data::Dumper::Dumper \@disks;
@@ -6213,7 +6215,8 @@ sub create_disk_data {
 	my ($size,$used,$percent,$size_holder,$used_holder) = ('','','','','');
 	my @sizing = main::get_size($disks[0]{'size'});
 	if (@sizing){
-		if (defined $sizing[0]){
+		# note: if a string is returned there will be no Size unit so just use string.
+		if (defined $sizing[0] && $sizing[1]){
 			$size = $sizing[0] . ' ' . $sizing[1];
 			$size_holder = $sizing[0];
 		}
@@ -6221,7 +6224,7 @@ sub create_disk_data {
 	}
 	@sizing = main::get_size($disks[0]{'used'});
 	if (@sizing){
-		if (defined $sizing[0]){
+		if (defined $sizing[0] && $sizing[1]){
 			$used = $sizing[0] . ' ' . $sizing[1];
 			$used_holder = $sizing[0];
 			if ($size_holder && ($used_holder || $used_holder == 0) ){
@@ -6264,17 +6267,17 @@ sub disk_data {
 		}
 	}
 	if (my $file = main::system_files('partitions')){
-		@data = proc_data($used,$file);
+		@data = proc_disks($used,$file);
 	}
 	else {
-		
+		@data = dmesg_boot_disks($used);
 	}
 	#print Data::Dumper::Dumper \@data;
 	main::log_data("used: $used");
 	eval $end if $b_log;
 	return @data;
 }
-sub proc_data {
+sub proc_disks {
 	eval $start if $b_log;
 	my ($used,$file) = @_;
 	my (@data);
@@ -6308,10 +6311,28 @@ sub proc_data {
 	eval $end if $b_log;
 	return @data;
 }
-sub dmesg_boot_data {
+sub dmesg_boot_disks {
 	eval $start if $b_log;
+	my ($used) = @_;
+	my (@data,@rows,$size);
+	my $file = main::system_files('dmesg-boot');
 	
-	my (@rows,@data);
+	if ( $file && ! -r $file ){
+		$size = main::row_defaults('dmesg-boot-permissions');
+	}
+	elsif (! -f $file ){
+		$size = main::row_defaults('dmesg-boot-missing');
+	}
+	if (@dmesg_boot){
+# 		foreach (@dmesg_boot){
+# 		
+# 		}
+	}
+	@data = ({
+	'size' => $size,
+	'used' => $used,
+	});
+	
 	eval $end if $b_log;
 	return @rows;
 }
@@ -6962,6 +6983,129 @@ sub get {
 	return @data;
 	eval $end if $b_log;
 }
+## keys for machine data are:
+# 0-sys_vendor 1-product_name 2-product_version 3-product_serial 4-product_uuid 
+# 5-board_vendor 6-board_name 7-board_version 8-board_serial 
+# 9-bios_vendor 10-bios_version 11-bios_date
+## with extra data: 
+# 12-chassis_vendor 13-chassis_type 14-chassis_version 15-chassis_serial
+## unused: 16-bios_rev  17-bios_romsize 18 - firmware type
+sub create_output {
+	eval $start if $b_log;
+	my ($ref) = @_;
+	my (%data,@row,@rows);
+	%data = %$ref;
+	my $firmware = 'BIOS';
+	my $num = 0;
+	my $j = 0;
+	my ($b_chassis,$b_skip_chassis,$b_skip_system);
+	my ($bios_date,$bios_rev,$bios_romsize,$bios_vendor,$bios_version,$chassis_serial,
+	$chassis_type,$chassis_vendor,$chassis_version, $mobo_model,$mobo_serial,$mobo_vendor,
+	$mobo_version,$product_name,$product_serial,$product_version,$system_vendor);
+# 	foreach my $key (keys %data){
+# 		print "$key: $data{$key}\n";
+# 	}
+	# found a case of battery existing but having nothing in it on desktop mobo
+	# not all laptops show the first. /proc/acpi/battery is deprecated.
+	if (!$data{'sys_vendor'}){
+		$b_skip_system = 1;
+	}
+	elsif ( !glob('/proc/acpi/battery/*') && !glob('/sys/class/power_supply/*') ){
+		# ibm / ibm can be true; dell / quantum is false, so in other words, only do this
+		# in case where the vendor is the same and the version is the same and not null, 
+		# otherwise the version information is going to be different in all cases I think
+		if ( ($data{'sys_vendor'} && $data{'sys_vendor'} eq $data{'board_vendor'} ) &&
+			( ($data{'product_version'} && $data{'product_version'} eq $data{'board_version'} ) ||
+			(!$data{'product_version'} && $data{'product_name'} eq $data{'board_name'} ) ) ){
+			$b_skip_system = 1;
+		}
+	}
+	$data{'device'} ||= 'N/A';
+	$j = scalar @rows;
+	@row = ({
+	$num++ . "#Type" => ucfirst($data{'device'}),
+	},);
+	@rows = (@rows,@row);
+	if (!$b_skip_system){
+		# this has already been tested for above so we know it's not null
+		$system_vendor = main::cleaner($data{'sys_vendor'});
+		$product_name = ($data{'product_name'})?$data{'product_name'}:'N/A';
+		$product_version = ($data{'product_version'})?$data{'product_version'}:'N/A';
+		$product_serial = main::apply_filter($data{'product_serial'});
+		$rows[$j]{$num++ . "#System"} = $system_vendor;
+		$rows[$j]{$num++ . "#product"} = $product_name;
+		$rows[$j]{$num++ . "#v"} = $product_version;
+		$rows[$j]{$num++ . "#serial"} = $product_serial;
+		# no point in showing chassis if system isn't there, it's very unlikely that 
+		# would be correct
+		if ($extra > 1){
+			if ($data{'board_version'} && $data{'chassis_version'} eq $data{'board_version'}){
+				$b_skip_chassis = 1;
+			}
+			if (!$b_skip_chassis && $data{'chassis_vendor'} ){
+				if ($data{'chassis_vendor'} ne $data{'sys_vendor'} ){
+					$chassis_vendor = $data{'chassis_vendor'};
+				}
+				if ($data{'chassis_type'} ){
+					$chassis_type = $data{'chassis_type'};
+				}
+				if ($data{'chassis_version'}){
+					$chassis_version = $data{'chassis_version'}
+				}
+				$chassis_serial = main::apply_filter($data{'chassis_serial'});
+				$chassis_vendor ||= '';
+				$chassis_type ||= '';
+				$rows[$j]{$num++ . "#Chassis"} = $chassis_vendor;
+				if ($chassis_type){
+					$rows[$j]{$num++ . "#type"} = $chassis_type;
+				}
+				if ($chassis_version){
+					$rows[$j]{$num++ . "#v"} = $chassis_version;
+				}
+				$rows[$j]{$num++ . "#serial"} = $chassis_serial;
+			}
+		}
+		$j++; # start new row
+	}
+	if ($data{'firmware'}){
+		$firmware = $data{'firmware'};
+	}
+	$mobo_vendor = ($data{'board_vendor'}) ? main::cleaner($data{'board_vendor'}) : 'N/A';
+	$mobo_model = ($data{'board_name'}) ? $data{'board_name'}: 'N/A';
+	$mobo_version = ($data{'board_version'})? $data{'board_version'} : '';
+	$mobo_serial = main::apply_filter($data{'board_serial'});
+	$bios_vendor = ($data{'bios_vendor'}) ? main::cleaner($data{'bios_vendor'}) : 'N/A';
+	if ($data{'bios_version'}){
+		$bios_version = $data{'bios_version'};
+		if ($data{'bios_rev'}){
+			$bios_rev = $data{'bios_rev'};
+		}
+		$bios_version ||= 'N/A';
+	}
+	if ($data{'bios_date'}){
+		$bios_date = $data{'bios_date'};
+	}
+	if ($extra > 1 && $data{'bios_romsize'}){
+		$bios_romsize = $data{'bios_romsize'};
+	}
+	$rows[$j]{$num++ . "#Mobo"} = $mobo_vendor;
+	$rows[$j]{$num++ . "#model"} = $mobo_model;
+	if ($mobo_version){
+		$rows[$j]{$num++ . "#v"} = $mobo_version;
+	}
+	$rows[$j]{$num++ . "#serial"} = $mobo_serial;
+	$rows[$j]{$num++ . "#$firmware"} = $bios_vendor;
+	$rows[$j]{$num++ . "#v"} = $bios_version;
+	if ($bios_rev){
+		$rows[$j]{$num++ . "#rev"} = $bios_rev;
+	}
+	$rows[$j]{$num++ . "#date"} = $bios_date;
+	if ($bios_romsize){
+		$rows[$j]{$num++ . "#rom size"} = $bios_romsize;
+	}
+	eval $end if $b_log;
+	return @rows;
+}
 
 sub machine_data_sys {
 	eval $start if $b_log;
@@ -7139,129 +7283,6 @@ sub machine_data_dmi {
 # 		print "$_: $data{$_}\n";
 # 	}
 	my @rows = create_output(\%data);
-	eval $end if $b_log;
-	return @rows;
-}
-## keys for machine data are:
-# 0-sys_vendor 1-product_name 2-product_version 3-product_serial 4-product_uuid 
-# 5-board_vendor 6-board_name 7-board_version 8-board_serial 
-# 9-bios_vendor 10-bios_version 11-bios_date
-## with extra data: 
-# 12-chassis_vendor 13-chassis_type 14-chassis_version 15-chassis_serial
-## unused: 16-bios_rev  17-bios_romsize 18 - firmware type
-sub create_output {
-	eval $start if $b_log;
-	my ($ref) = @_;
-	my (%data,@row,@rows);
-	%data = %$ref;
-	my $firmware = 'BIOS';
-	my $num = 0;
-	my $j = 0;
-	my ($b_chassis,$b_skip_chassis,$b_skip_system);
-	my ($bios_date,$bios_rev,$bios_romsize,$bios_vendor,$bios_version,$chassis_serial,
-	$chassis_type,$chassis_vendor,$chassis_version, $mobo_model,$mobo_serial,$mobo_vendor,
-	$mobo_version,$product_name,$product_serial,$product_version,$system_vendor);
-# 	foreach my $key (keys %data){
-# 		print "$key: $data{$key}\n";
-# 	}
-	# found a case of battery existing but having nothing in it on desktop mobo
-	# not all laptops show the first. /proc/acpi/battery is deprecated.
-	if (!$data{'sys_vendor'}){
-		$b_skip_system = 1;
-	}
-	elsif ( !glob('/proc/acpi/battery/*') && !glob('/sys/class/power_supply/*') ){
-		# ibm / ibm can be true; dell / quantum is false, so in other words, only do this
-		# in case where the vendor is the same and the version is the same and not null, 
-		# otherwise the version information is going to be different in all cases I think
-		if ( ($data{'sys_vendor'} && $data{'sys_vendor'} eq $data{'board_vendor'} ) &&
-			( ($data{'product_version'} && $data{'product_version'} eq $data{'board_version'} ) ||
-			(!$data{'product_version'} && $data{'product_name'} eq $data{'board_name'} ) ) ){
-			$b_skip_system = 1;
-		}
-	}
-	$data{'device'} ||= 'N/A';
-	$j = scalar @rows;
-	@row = ({
-	$num++ . "#Type" => ucfirst($data{'device'}),
-	},);
-	@rows = (@rows,@row);
-	if (!$b_skip_system){
-		# this has already been tested for above so we know it's not null
-		$system_vendor = main::cleaner($data{'sys_vendor'});
-		$product_name = ($data{'product_name'})?$data{'product_name'}:'N/A';
-		$product_version = ($data{'product_version'})?$data{'product_version'}:'N/A';
-		$product_serial = main::apply_filter($data{'product_serial'});
-		$rows[$j]{$num++ . "#System"} = $system_vendor;
-		$rows[$j]{$num++ . "#product"} = $product_name;
-		$rows[$j]{$num++ . "#v"} = $product_version;
-		$rows[$j]{$num++ . "#serial"} = $product_serial;
-		# no point in showing chassis if system isn't there, it's very unlikely that 
-		# would be correct
-		if ($extra > 1){
-			if ($data{'board_version'} && $data{'chassis_version'} eq $data{'board_version'}){
-				$b_skip_chassis = 1;
-			}
-			if (!$b_skip_chassis && $data{'chassis_vendor'} ){
-				if ($data{'chassis_vendor'} ne $data{'sys_vendor'} ){
-					$chassis_vendor = $data{'chassis_vendor'};
-				}
-				if ($data{'chassis_type'} ){
-					$chassis_type = $data{'chassis_type'};
-				}
-				if ($data{'chassis_version'}){
-					$chassis_version = $data{'chassis_version'}
-				}
-				$chassis_serial = main::apply_filter($data{'chassis_serial'});
-				$chassis_vendor ||= '';
-				$chassis_type ||= '';
-				$rows[$j]{$num++ . "#Chassis"} = $chassis_vendor;
-				if ($chassis_type){
-					$rows[$j]{$num++ . "#type"} = $chassis_type;
-				}
-				if ($chassis_version){
-					$rows[$j]{$num++ . "#v"} = $chassis_version;
-				}
-				$rows[$j]{$num++ . "#serial"} = $chassis_serial;
-			}
-		}
-		$j++; # start new row
-	}
-	if ($data{'firmware'}){
-		$firmware = $data{'firmware'};
-	}
-	$mobo_vendor = ($data{'board_vendor'}) ? main::cleaner($data{'board_vendor'}) : 'N/A';
-	$mobo_model = ($data{'board_name'}) ? $data{'board_name'}: 'N/A';
-	$mobo_version = ($data{'board_version'})? $data{'board_version'} : '';
-	$mobo_serial = main::apply_filter($data{'board_serial'});
-	$bios_vendor = ($data{'bios_vendor'}) ? main::cleaner($data{'bios_vendor'}) : 'N/A';
-	if ($data{'bios_version'}){
-		$bios_version = $data{'bios_version'};
-		if ($data{'bios_rev'}){
-			$bios_rev = $data{'bios_rev'};
-		}
-		$bios_version ||= 'N/A';
-	}
-	if ($data{'bios_date'}){
-		$bios_date = $data{'bios_date'};
-	}
-	if ($extra > 1 && $data{'bios_romsize'}){
-		$bios_romsize = $data{'bios_romsize'};
-	}
-	$rows[$j]{$num++ . "#Mobo"} = $mobo_vendor;
-	$rows[$j]{$num++ . "#model"} = $mobo_model;
-	if ($mobo_version){
-		$rows[$j]{$num++ . "#v"} = $mobo_version;
-	}
-	$rows[$j]{$num++ . "#serial"} = $mobo_serial;
-	$rows[$j]{$num++ . "#$firmware"} = $bios_vendor;
-	$rows[$j]{$num++ . "#v"} = $bios_version;
-	if ($bios_rev){
-		$rows[$j]{$num++ . "#rev"} = $bios_rev;
-	}
-	$rows[$j]{$num++ . "#date"} = $bios_date;
-	if ($bios_romsize){
-		$rows[$j]{$num++ . "#rom size"} = $bios_romsize;
-	}
 	eval $end if $b_log;
 	return @rows;
 }
@@ -7852,15 +7873,94 @@ sub get {
 		@data = ({$num++ . "#$key1" => $val1,});
 	}
 	@rows = (@rows,@data);
-	return @rows;
 	eval $end if $b_log;
-	
+	return @rows;
+}
+sub create_output {
+	eval $start if $b_log;
+	my (%devices) = @_;
+	my (@data,@rows);
+	my $num = 0;
+	my $j = 0;
+	# build floppy if any
+	foreach my $key (sort keys %devices){
+		if ($devices{$key}{'type'} eq 'floppy'){
+			@data = ({ $num++ . '#' . ucfirst($devices{$key}{'type'}) => "/dev/$key"});
+			@rows = (@rows,@data);
+			delete $devices{$key};
+		}
+	}
+	foreach my $key (sort keys %devices){
+		$j = scalar @rows;
+		my $vendor = $devices{$key}{'vendor'};
+		$vendor ||= 'N/A';
+		my $model = $devices{$key}{'model'};
+		$model ||= 'N/A';
+		@data = ({ 
+		$num++ . '#' . ucfirst($devices{$key}{'type'}) => "/dev/$key",
+		$num++ . '#vendor' => $vendor,
+		$num++ . '#model' => $model,
+		});
+		@rows = (@rows,@data);
+		if ($extra > 0){
+			my $rev = $devices{$key}{'rev'};
+			$rev ||= 'N/A';
+			$rows[$j]{ $num++ . '#rev'} = $rev;
+		}
+		my $ref = $devices{$key}{'links'};
+		my $links = (@$ref) ? join ',', sort @$ref: 'N/A' ;
+		$rows[$j]{ $num++ . '#dev-links'} = $links;
+		
+		if ($show{'optical'}){
+			$j = scalar @rows;
+			my $speed = $devices{$key}{'speed'};
+			$speed ||= 'N/A';
+			my $multisession = ( $devices{$key}{'multisession'} == 1 ) ? 'yes' : 'no' ;
+			my $audio = ( $devices{$key}{'audio'} == 1 ) ? 'yes' : 'no' ;
+			my $dvd = 'N/A';
+			my (@rw,$rws);
+			if (defined $devices{$key}{'dvd'}){
+				$dvd = ( $devices{$key}{'dvd'} == 1 ) ? 'yes' : 'no' ;
+			}
+			if ($devices{$key}{'cdr'}){
+				push @rw, 'cd-r';
+			}
+			if ($devices{$key}{'cdrw'}){
+				push @rw, 'cd-rw';
+			}
+			if ($devices{$key}{'dvdr'}){
+				push @rw, 'dvd-r';
+			}
+			if ($devices{$key}{'dvdram'}){
+				push @rw, 'dvd-ram';
+			}
+			$rws = (@rw) ? join ',', @rw: 'none' ;
+			@data = ({
+			$num++ . '#Features' => '',
+			$num++ . '#speed' => $speed,
+			$num++ . '#multisession' => $multisession,
+			$num++ . '#audio' => $audio,
+			$num++ . '#dvd' => $dvd,
+			$num++ . '#rw' => $rws,
+			});
+			@rows = (@rows,@data);
+			
+			if ($extra > 0 ){
+				my $state = $devices{$key}{'state'};
+				$state ||= 'N/A';
+				$rows[$j]{ $num++ . '#state'} = $state;
+			}
+		}
+	}
+	#print Data::Dumper::Dumper \%devices;
+	eval $end if $b_log;
+	return @rows;
 }
 sub optical_data_bsd {
 	eval $start if $b_log;
 	my (@data,%devices,@rows);
 	
-	@rows = create_data(%devices) if %devices;
+	@rows = create_output(%devices) if %devices;
 	eval $end if $b_log;
 	return @rows;
 }
@@ -7952,90 +8052,11 @@ sub optical_data_linux {
 		}
 	}
 	#print Data::Dumper::Dumper \%devices;
-	@rows = create_data(%devices) if %devices;
+	@rows = create_output(%devices) if %devices;
 	eval $end if $b_log;
 	return @rows;
 }
-sub create_data {
-	eval $start if $b_log;
-	my (%devices) = @_;
-	my (@data,@rows);
-	my $num = 0;
-	my $j = 0;
-	# build floppy if any
-	foreach my $key (sort keys %devices){
-		if ($devices{$key}{'type'} eq 'floppy'){
-			@data = ({ $num++ . '#' . ucfirst($devices{$key}{'type'}) => "/dev/$key"});
-			@rows = (@rows,@data);
-			delete $devices{$key};
-		}
-	}
-	foreach my $key (sort keys %devices){
-		$j = scalar @rows;
-		my $vendor = $devices{$key}{'vendor'};
-		$vendor ||= 'N/A';
-		my $model = $devices{$key}{'model'};
-		$model ||= 'N/A';
-		@data = ({ 
-		$num++ . '#' . ucfirst($devices{$key}{'type'}) => "/dev/$key",
-		$num++ . '#vendor' => $vendor,
-		$num++ . '#model' => $model,
-		});
-		@rows = (@rows,@data);
-		if ($extra > 0){
-			my $rev = $devices{$key}{'rev'};
-			$rev ||= 'N/A';
-			$rows[$j]{ $num++ . '#rev'} = $rev;
-		}
-		my $ref = $devices{$key}{'links'};
-		my $links = (@$ref) ? join ',', sort @$ref: 'N/A' ;
-		$rows[$j]{ $num++ . '#dev-links'} = $links;
-		
-		if ($show{'optical'}){
-			$j = scalar @rows;
-			my $speed = $devices{$key}{'speed'};
-			$speed ||= 'N/A';
-			my $multisession = ( $devices{$key}{'multisession'} == 1 ) ? 'yes' : 'no' ;
-			my $audio = ( $devices{$key}{'audio'} == 1 ) ? 'yes' : 'no' ;
-			my $dvd = 'N/A';
-			my (@rw,$rws);
-			if (defined $devices{$key}{'dvd'}){
-				$dvd = ( $devices{$key}{'dvd'} == 1 ) ? 'yes' : 'no' ;
-			}
-			if ($devices{$key}{'cdr'}){
-				push @rw, 'cd-r';
-			}
-			if ($devices{$key}{'cdrw'}){
-				push @rw, 'cd-rw';
-			}
-			if ($devices{$key}{'dvdr'}){
-				push @rw, 'dvd-r';
-			}
-			if ($devices{$key}{'dvdram'}){
-				push @rw, 'dvd-ram';
-			}
-			$rws = (@rw) ? join ',', @rw: 'none' ;
-			@data = ({
-			$num++ . '#Features' => '',
-			$num++ . '#speed' => $speed,
-			$num++ . '#multisession' => $multisession,
-			$num++ . '#audio' => $audio,
-			$num++ . '#dvd' => $dvd,
-			$num++ . '#rw' => $rws,
-			});
-			@rows = (@rows,@data);
-			
-			if ($extra > 0 ){
-				my $state = $devices{$key}{'state'};
-				$state ||= 'N/A';
-				$rows[$j]{ $num++ . '#state'} = $state;
-			}
-		}
-	}
-	#print Data::Dumper::Dumper \%devices;
-	eval $end if $b_log;
-	return @rows;
-}
+
 }
 
 ## PartitionData
@@ -8053,12 +8074,12 @@ sub get {
 		@rows = ({$num++ . "#$key1" => $val1,});
  	}
  	else {
-		@rows = create_partition_data();
+		@rows = create_output();
  	}
 	eval $end if $b_log;
 	return @rows;
 }
-sub create_partition_data {
+sub create_output {
 	eval $start if $b_log;
 	my $num = 0;
 	my $j = 0;
@@ -8573,7 +8594,7 @@ sub get {
 		}
 	}
 	else {
-		@rows = create_raid_data();
+		@rows = create_output();
 	}
 	if (!@rows && $key1){
 		@rows = ({$num++ . "#$key1" => $val1,});
@@ -8582,7 +8603,7 @@ sub get {
 	eval $end if $b_log;
 	
 }
-sub create_raid_data {
+sub create_output {
 	eval $start if $b_log;
 	my (@data,@rows);
 	my $num = 0;
@@ -8739,7 +8760,7 @@ sub get {
 	else {
 		@ram = dmidecode_data();
 		if (@ram){
-			@data = create_ram_data(@ram);
+			@data = create_output(@ram);
 		}
 		else {
 			$key1 = 'message';
@@ -8755,7 +8776,7 @@ sub get {
 	return @rows;
 }
 
-sub create_ram_data {
+sub create_output {
 	eval $start if $b_log;
 	my (@ram) = @_;
 	return if !@ram;
@@ -9733,7 +9754,7 @@ sub get {
 	}
 	else {
 		%sensors = sensors_data();
-		@rows = create_sensor_data(%sensors);
+		@rows = create_output(%sensors);
 		if (!@rows) {
 			$key1 = 'Message';
 			$val1 = main::row_defaults('sensors-data-linux');
@@ -9744,7 +9765,7 @@ sub get {
 	eval $end if $b_log;
 	return @rows;
 }
-sub create_sensor_data {
+sub create_output {
 	eval $start if $b_log;
 	my (%sensors) = @_;
 	# note: might revisit this, since gpu sensors data might be present
@@ -10463,7 +10484,7 @@ sub get {
 				$val1 = main::row_defaults('unmounted-data');
 			}
 			else {
-				@rows = create_unmounted_data(@data);
+				@rows = create_output(@data);
 			}
 		}
 		else {
@@ -10478,7 +10499,7 @@ sub get {
 	eval $end if $b_log;
 	
 }
-sub create_unmounted_data {
+sub create_output {
 	eval $start if $b_log;
 	my (@unmounted) = @_;
 	my (@data,@rows,$fs);
@@ -10761,11 +10782,11 @@ sub get {
 	eval $start if $b_log;
 	my (@rows,$key1,$val1);
 	my $num = 0;
-	@rows = create_weather_data();
+	@rows = create_output();
 	eval $end if $b_log;
 	return @rows;
 }
-sub create_weather_data {
+sub create_output {
 	eval $start if $b_log;
 	my $num = 0;
 	my (@data,@location,@rows,%weather,);
@@ -12245,7 +12266,11 @@ sub get_self_version {
 sub get_size {
 	my ($size) = @_;
 	my (@data);
-	if ($size > 1024**5){
+	if ($size !~ /^[0-9\.]+$/){
+		$data[0] = $size;
+		$data[1] = '';
+	}
+	elsif ($size > 1024**5){
 		$data[0] = sprintf("%.2f",$size/1024**5);
 		$data[1] = 'EB';
 	}
@@ -13254,18 +13279,20 @@ sub generate_short_data {
 	my ($size,$used,$size_type,$used_type) = ('','','','');
 	my (@temp);
 	if (@disk){
+		$size = $disk[0]{'size'};
 		if (defined $disk[0]{'size'} && $disk[0]{'size'} =~ /^[0-9\.]+$/){
-			@temp = get_size($disk[0]{'size'});
+			@temp = get_size($size);
 			$size = $temp[0];
 			$size_type = " $temp[1]";
 		}
 		$size ||= 'N/A';
+		$used = $disk[0]{'used'};
 		if (defined $disk[0]{'used'} && $disk[0]{'used'} =~ /^[0-9\.]+$/){
-			@temp = get_size($disk[0]{'used'});
+			@temp = get_size($used);
 			$used = $temp[0];
 			$used_type = " $temp[1]";
 		}
-		if ($size && $used ne ''){
+		if ($size && $size_type && $used_type){
 			my $percent = ' (' . sprintf("%.1f", $used/$size*100) . '% used)';
 			$disk_string = "$size$size_type$percent";
 		}
@@ -13290,7 +13317,6 @@ sub generate_short_data {
 	my %row = (
 	$prefix . '#SHORT' => [(@data),],
 	);
-
 	eval $end if $b_log;
 	return %row;
 }
