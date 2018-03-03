@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-03-02';
-my $self_patch='321-p';
+my $self_patch='323-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -58,8 +58,10 @@ my ( %alerts, %client, %colors, %dl, %files, %rows, %system_files, %use );
 
 ## arrays
 # ps_aux is full output, ps_cmd is only the last 10 to last
-my (@app,@dmesg_boot,@dmi,@gpudata,@ifs,@ifs_bsd,@partitions,@pci,@ps_aux,@ps_cmd,@raid,
+my (@app,@dmesg_boot,@dmi,@gpudata,@ifs,@ifs_bsd,@pci,@ps_aux,@ps_cmd,
 @sysctl,@sysctl_battery,@sysctl_sensors,@sysctl_machine,@usb);
+## disk arrays 
+my (@gpart,@labels,@partitions,@raid,@uuids);
 my @test = (0,0,0,0,0);
 
 #my $opt_parser = Getopt::Long::Parser->new;
@@ -68,6 +70,8 @@ my @test = (0,0,0,0,0);
 my ($b_arm,$b_console_irc,$b_display,$b_dmi,$b_dmidecode_force,$b_gpudata,$b_irc,
 $b_log,$b_log_colors,$b_log_full,$b_mem,$b_pci,$b_root,$b_running_in_display,$b_sysctl,
 $b_usb_check);
+## disk checks
+my ($b_partitions,$b_partition_extra,$b_raid);
 my ($b_update,$b_weather) = (1,1);
 
 ## System
@@ -4245,8 +4249,11 @@ sub row_defaults {
 	'pci-advanced-data' => 'bus/chip ids unavailable',
 	'pci-card-data' => "No PCI card data found.",
 	'pci-slot-data' => "No PCI slot data found. SOC?",
+	'raid-data' => "No RAID data was found.",
 	'ram-data' => "No RAM data was found. SOC?",
 	'sensors-data-linux' => "No sensors data was found. Is sensors configured?",
+	'unmounted-data' => "No unmounted partitions found.",
+	'unmounted-file' => "No /proc/partitions file found.",
 	'usb-data' => "No USB data was found. Server?",
 	'weather-null' => "No $id found. Internet connection working?",
 	);
@@ -7844,12 +7851,12 @@ sub create_data {
 ## PartitionData
 {
 package PartitionData;
-my (@gpart,@labels,@uuids);
+
 sub get {
 	eval $start if $b_log;
 	my (@rows,$key1,$val1);
 	my $num = 0;
-	partition_data();
+	partition_data() if !$b_partitions;;
  	if (!@partitions) {
 		$key1 = 'Message';
 		$val1 = main::row_defaults('partition-data');
@@ -7858,9 +7865,6 @@ sub get {
  	else {
 		@rows = create_partition_data();
  	}
- 	@gpart = undef;
-	@labels = undef;
-	@uuids = undef;
 	eval $end if $b_log;
 	return @rows;
 }
@@ -7916,21 +7920,19 @@ sub create_partition_data {
 	eval $end if $b_log;
 	return @rows;
 }
+
 sub partition_data {
 	eval $start if $b_log;
 	my (@data,@rows,@mapper,@mount,@partitions_working);
 	my ($b_fs,$b_load,$cols,$roots) = (1,0,6,0);
 	my ($dev_base,$fs,$id,$label,$percent_used,$size,$type,$uuid,$used);
+	$b_partitions = 1;
+	# set labels, uuid, gpart
+	main::get_partition_extra_data() if !$b_partition_extra;
 	# most current OS support -T and -k, but -P means different things
 	# in freebsd. However since most use is from linux, we make that default
 	if (!$bsd_type){
 		@partitions_working = main::grabber("df -P -T -k 2>/dev/null");
-		if (-d '/dev/disk/by-label'){
-			@labels = main::globber('/dev/disk/by-label/*');
-		}
-		if (-d '/dev/disk/by-uuid'){
-			@uuids = main::globber('/dev/disk/by-uuid/*');
-		}
 		if (-d '/dev/disk/mapper'){
 			@mapper = main::globber('/dev/mapper/*');
 		}
@@ -7945,9 +7947,6 @@ sub partition_data {
 			if (my $path = main::check_program('mount')){
 				@mount = main::grabber("$path 2>/dev/null");
 			}
-		}
-		if ( ($show{'label'} || $show{'uuid'} ) && (my $path = main::check_program('gpart'))){
-			@gpart = main::grabber("$path list 2>/dev/null",'strip');
 		}
 	}
 	
@@ -8011,10 +8010,10 @@ sub partition_data {
 		}
 		if ($b_load){
 			if ($show{'label'} && @labels){
-				$label = get_label($row[0],@labels);
+				$label = get_label($row[0]);
 			}
 			if ($show{'uuid'} && @uuids){
-				$uuid = get_uuid($row[0],@uuids);
+				$uuid = get_uuid($row[0]);
 			}
 			if ($bsd_type && @gpart && ($show{'label'} || $show{'uuid'} ) ){
 				my @extra = get_bsd_label_uuid("$dev_base");
@@ -8083,10 +8082,10 @@ sub swap_data {
 		my $used = $data[$used_id];
 		my $percent_used = sprintf( "%.1f", ( $used/$size )*100 );
 		if ($show{'label'} && @labels){
-			$label = get_label($data[0],@labels);
+			$label = get_label($data[0]);
 		}
 		if ($show{'uuid'} && @uuids){
-			$uuid = get_uuid($data[0],@uuids);
+			$uuid = get_uuid($data[0]);
 		}
 		if ($bsd_type && @gpart && ($show{'label'} || $show{'uuid'} ) ){
 			my @extra = get_bsd_label_uuid("$dev_base");
@@ -8160,7 +8159,7 @@ sub get_bsd_label_uuid {
 }
 sub get_label {
 	eval $start if $b_log;
-	my ($item,@labels) = @_;
+	my ($item) = @_;
 	my $label = '';
 	foreach (@labels){
 		if ($item eq Cwd::abs_path($_)){
@@ -8205,7 +8204,7 @@ sub get_root {
 
 sub get_uuid {
 	eval $start if $b_log;
-	my ($item,@uuids) = @_;
+	my ($item) = @_;
 	my $uuid = '';
 	foreach (@uuids){
 		if ($item eq Cwd::abs_path($_)){
@@ -8376,27 +8375,131 @@ sub get {
 	my (@rows,$key1,$val1);
 	my $num = 0;
 	my $ref = $alerts{'sensors'};
-# 	if ( $$ref{'action'} ne 'use'){
-# 		$key1 = $$ref{'action'};
-# 		$val1 = $$ref{$key1};
-# 		$key1 = ucfirst($key1);
-# 	}
-# 	else {
-		$key1 = 'Status';
-		$val1 = main::row_defaults('dev');
-# 	}
-	my @data = ({$num++ . "#$key1" => $val1,});
-	return @data;
+	raid_data() if !$b_raid;
+	if (!@raid){
+		if ($show{'raid-forced'}){
+			$key1 = 'Message';
+			$val1 = main::row_defaults('raid-data');
+		}
+	}
+	else {
+		@rows = create_raid_data();
+	}
+	if (!@rows && $key1){
+		@rows = ({$num++ . "#$key1" => $val1,});
+	}
+	return @rows;
 	eval $end if $b_log;
 	
 }
-sub raid_data {
+sub create_raid_data {
 	eval $start if $b_log;
-	my (@rows);
+	my (@data,@rows);
 	my $num = 0;
-	
+	foreach my $ref (@raid){
+		my %row = %$ref;
+		my $ref2 = $row{'components'};
+		my @components = @$ref2;
+		my $component_string = (@components) ? join ' ', @components : 'N/A';
+		@data = ({
+		$num++ . '#ID' => $row{'id'},
+		$num++ . '#type' => $row{'type'},
+		$num++ . '#status' => $row{'status'},
+		$num++ . '#raid' => $row{'raid'},
+		$num++ . '#components' => $component_string,
+		});
+		@rows = (@rows,@data);
+	}
 	eval $end if $b_log;
 	return @rows;
+}
+sub raid_data {
+	eval $start if $b_log;
+	my (@data);
+	$b_raid = 1;
+	if (my $file = main::system_files('mdstat')){
+		@data = mdraid_data($file);
+		@raid = (@raid,@data);
+	}
+	if (my $path = main::check_program('zpool')){
+		@data = zfs_data($path);
+		@raid = (@raid,@data);
+	}
+	#print Data::Dumper::Dumper \@raid;
+	eval $end if $b_log;
+}
+sub mdraid_data {
+	eval $start if $b_log;
+	my ($mdstat) = @_;
+	my $j = 0;
+	my @working = main::reader($mdstat,'strip');
+	my (@data,@mdraid,$b_found);
+	foreach (@working){
+		$_ =~ s/\s*:\s*/:/;
+		if (/^(md[0-9]+):([^\s]+)\s([^\s]+)\s(.*)/){
+			my $id = $1;
+			my $status = $2;
+			my $raid = $3;
+			$raid =~ s/^raid//;
+			$raid = 'mirror' if $raid eq '1';
+			# remember, these include the [x] id, so remove that for disk/unmounted
+			my $component_string = $4;
+			my @components = split /\s+/, $component_string;
+			$j = scalar @mdraid;
+			@data = ({
+			'id' => $id,
+			'raid' => $raid,
+			'status' => $status,
+			'components' => \@components,
+			'type' => 'mdraid',
+			});
+			@mdraid = (@mdraid,@data);
+		}
+		if (/^([0-9]+)\sblocks/){
+			$mdraid[$j]{'blocks'} = $1;
+		}
+	}
+	eval $end if $b_log;
+	return @mdraid;
+}
+sub zfs_data {
+	eval $start if $b_log;
+	my ($zpool) = @_;
+	my (@components,@data,@zfs);
+	my $b_v = 1;
+	my ($i,$j) = (0,0);
+	my @working = main::grabber("$zpool list -v 2>/dev/null");
+	# bsd sed does not support inserting a true \n so use this trick
+	# some zfs does not have -v
+	if (!@working){
+		@working = main::grabber("$zpool list 2>/dev/null");
+		$b_v = 0;
+	}
+	# NAME   SIZE  ALLOC   FREE  EXPANDSZ   FRAG    CAP  DEDUP  HEALTH  ALTROOT
+	shift @working; # get rid of first header line
+	foreach (@working){
+		my @row = split /\s+/, $_;
+		if (/^[\S]+/){
+			@components = ();
+			$i = 0;
+			my $status = ($row[8]) ? $row[8]: 'N/A';
+			$j = scalar @zfs;
+			@data = ({
+			'id' => $row[0],
+			'components' => ([]),
+			'status' => $status,
+			'type' => 'zfs',
+			});
+			@zfs = (@zfs,@data);
+		}
+		#    ada2        -      -      -         -      -      -
+		if ($row[1] =~ /^[a-z0-9]+[0-9]+$/ && $row[2] eq '-'){
+			$zfs[$j]{'components'}[$i] = $row[1];
+			$i++;
+		}
+	}
+	eval $end if $b_log;
+	return @zfs;
 }
 }
 
@@ -10131,32 +10234,156 @@ package UnmountedData;
 
 sub get {
 	eval $start if $b_log;
-	my (@rows,$key1,$val1);
+	my (@data,@rows,$key1,$val1);
 	my $num = 0;
-# 	my $ref = $alerts{'sensors'};
-# 	if ( $$ref{'action'} ne 'use'){
-# 		$key1 = $$ref{'action'};
-# 		$val1 = $$ref{$key1};
-# 		$key1 = ucfirst($key1);
-# 	}
-# 	else {
-		$key1 = 'Status';
-		$val1 = main::row_defaults('dev');
-# 	}
-	my @data = ({$num++ . "#$key1" => $val1,});
-	return @data;
+	if ($bsd_type){
+		$key1 = 'Message';
+		$val1 = main::row_defaults('data-bsd');
+	}
+ 	else {
+		if (my $file = main::system_files('partitions')){
+			@data = unmounted_data($file);
+			if (!@data){
+				$key1 = 'Message';
+				$val1 = main::row_defaults('unmounted-data');
+			}
+			else {
+				@rows = create_unmounted_data(@data);
+			}
+		}
+		else {
+			$key1 = 'Message';
+			$val1 = main::row_defaults('unmounted-file');
+		}
+ 	}
+ 	if (!@rows && $key1){
+		@rows = ({$num++ . "#$key1" => $val1,});
+ 	}
+	return @rows;
 	eval $end if $b_log;
 	
 }
-sub unmounted_data {
+sub create_unmounted_data {
 	eval $start if $b_log;
-	my (@rows);
+	my (@unmounted) = @_;
+	my (@data,@rows,$fs);
 	my $num = 0;
-	
+	foreach my $ref (@unmounted){
+		my %row = %$ref;
+		my @data2 = main::get_size($row{'size'}) if (defined $row{'size'});
+		my $size = (@data2) ? $data2[0] . ' ' . $data2[1]: 'N/A';
+		if ($row{'fs'}){
+			$fs = $row{'fs'};
+		}
+		else {
+			if (main::check_program('file')){
+				$fs = ($b_root) ? 'N/A' : 'root required' ;
+			}
+			else {
+				$fs = 'requires file';
+			}
+		}
+		@data = ({
+		$num++ . '#ID' => , "/dev/$row{'dev-base'}",
+		$num++ . '#size' => , $size,
+		$num++ . '#fs' => , $fs,
+		$num++ . '#label' => , $row{'label'},
+		$num++ . '#uuid' => , $row{'uuid'},
+		});
+		@rows = (@rows,@data);
+	}
 	eval $end if $b_log;
 	return @rows;
 }
+sub unmounted_data {
+	eval $start if $b_log;
+	my ($file) = @_;
+	my (@data,@unmounted);
+	my @mounted = ('scd[0-9]+','sr[0-9]+','cdrom[0-9]*','cdrw[0-9]*',
+	'dvd[0-9]*','dvdrw[0-9]*','fd[0-9]','ram[0-9]*');
+	my @mounts = main::reader($file,'strip');
+	my $num = 0;
+	# set labels, uuid, gpart
+	PartitionData::partition_data() if !$b_partitions;
+	main::get_partition_extra_data() if !$b_partition_extra;
+	RaidData::raid_data() if !$b_raid;
+	foreach my $ref (@partitions){
+		my %row = %$ref;
+		push @mounted, $row{'dev-base'} if $row{'dev-base'};
+	}
+	foreach my $ref (@raid){
+		my %row = %$ref;
+		my $ref2 = $row{'components'};
+		my @components = @$ref2;
+		foreach my $component (@components){
+			$component =~ s/\[[0-9]+\]//; # strip off [0] from mdraid
+			push @mounted, $component;
+		}
+	}
+	foreach (@mounts){
+		my @working = split /\s+/, $_;
+		# note that size 1 means it is a logical extended partition container
+		# lvm might have dm-1 type syntax
+		# need to exclude loop type file systems, squashfs for example
+		if ( $working[-1] =~ /[a-z][0-9]+$|dm-[0-9]+$/ && $working[2] != 1 && 
+		   $working[-1] !~ /loop/ && !(grep {$working[-1] =~ /$_/} @mounted)){
+		   my $label = PartitionData::get_label("/dev/$working[-1]");
+		   my $uuid = PartitionData::get_uuid("/dev/$working[-1]");
+		   my $fs = unmounted_filesystem($working[-1]);
+			@data = ({
+			'dev-base' => $working[-1],
+			'fs' => $fs,
+			'label' => $label,
+			'size' => $working[2],
+			'uuid' => $uuid,
+			});
+			@unmounted = (@unmounted,@data);
+		}
+	}
+	# print Data::Dumper::Dumper @unmounted;
+	eval $end if $b_log;
+	return @unmounted;
 }
+sub unmounted_filesystem {
+	eval $start if $b_log;
+	my ($item) = @_;
+	my ($data);
+	my ($file,$fs,$path,$sudo) = ('','','','');
+	if ($path = main::check_program('file')) {
+		$file = $path;
+	}
+	# order matters in this test!
+	my @filesystems = ('ext2','ext3','ext4','ext5','ext','ntfs',
+	'fat32','fat16','fat\s\(.*\)','vfat','fatx','tfat','swap','btrfs',
+	'ffs','hfs\+','hfs\splus','hfs\sextended\sversion\s[1-9]','hfsj',
+	'hfs','jfs','nss','reiserfs','reiser4','ufs2','ufs','xfs','zfs');
+	if ($file){
+		# only use sudo if not root, -n option requires sudo -V 1.7 or greater. 
+		# sudo will just error out which is the safest course here for now,
+		# otherwise that interactive sudo password thing is too annoying
+		# important: -n makes it non interactive, no prompt for password
+		if (!$b_root && ($path = main::check_program('sudo') )) {
+			$sudo = "$path -n ";
+		}
+		# this will fail if regular user and no sudo present, but that's fine, it will just return null
+		# note the hack that simply slices out the first line if > 1 items found in string
+		# also, if grub/lilo is on partition boot sector, no file system data is available
+		$data = (main::grabber("$sudo$file -s /dev/$item 2>/dev/null"))[0];
+		if ($data){
+			foreach (@filesystems){
+				if ($data =~ /($_)\s/){
+					$fs = $1;
+					$fs = main::trimmer($fs);
+					last;
+				}
+			}
+		}
+	}
+	eval $end if $b_log;
+	return $fs;
+}
+}
+
 ## UsbData
 {
 package UsbData;
@@ -11724,6 +11951,24 @@ sub get_module_version {
 	$version ||= '';
 	eval $end if $b_log;
 	return $version;
+}
+sub get_partition_extra_data {
+	eval $start if $b_log;
+	$b_partition_extra = 1;
+	if (!$bsd_type){
+		if (-d '/dev/disk/by-label'){
+			@labels = main::globber('/dev/disk/by-label/*');
+		}
+		if (-d '/dev/disk/by-uuid'){
+			@uuids = main::globber('/dev/disk/by-uuid/*');
+		}
+	}
+	else {
+		if ( ($show{'unmounted'} || $show{'label'} || $show{'uuid'} ) && (my $path = main::check_program('gpart'))){
+			@gpart = main::grabber("$path list 2>/dev/null",'strip');
+		}
+	}
+	eval $end if $b_log;
 }
 # # check? /var/run/nologin for bsds?
 sub get_runlevel_data {
