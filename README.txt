@@ -2,7 +2,7 @@
 README for development branch of inxi Perl version: pinxi
 ====================================================================
 FILE:    README.txt
-VERSION: 2.9
+VERSION: 3.0
 DATE:    2018-03-02
 
 NOTE: While the real program name will never change, for the sake
@@ -141,13 +141,9 @@ Note that my current development goals are, roughly in this order:
 9. Start on get data and print lines, which is about 2/3 the program.
    
    Status of Lines:
-     Short: 
-     ALMOST DONE: 
-     missing Disk Basic
-     
-     Basic -b:
-     ALMOST DONE: 
-     missing Disk Basic
+     Short: DONE
+    
+     Basic -b: DONE
      
      Full:
      System: DONE
@@ -159,7 +155,7 @@ Note that my current development goals are, roughly in this order:
      Graphics: DONE
      Audio: DONE 
      Network: DONE - with new features!
-     Drives: STARTED
+     Drives: 1/2 DONE
      Optical: DONE
      Partition: DONE
      RAID: STARTED

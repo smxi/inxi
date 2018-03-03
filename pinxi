@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-03-02';
-my $self_patch='327-p';
+my $self_patch='328-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -4231,6 +4231,7 @@ sub row_defaults {
 	'battery-data' => "No battery data found. Is one present?",
 	'battery-data-sys' => "No /sys data found. Old system?",
 	'data-bsd' => "Feature not supported yet for BSDs.",
+	'disk-data' => "No Disk data was found.",
 	'display-console' => 'No advanced graphics data found on this system in console.',
 	'display-null' => 'No advanced graphics data found on this system.',
 	'display-root' => 'Advanced graphics data unavailable in console for root.',
@@ -6159,52 +6160,86 @@ sub get {
 	eval $start if $b_log;
 	my (@data,@rows,$key1,$val1);
 	my ($type) = @_;
+	$type ||= 'standard';
 	my $num = 0;
-	if ($show{'disk-total'} || $show{'disk'}){
+	if ($show{'disk-total'} || $show{'disk'} || $show{'short'}){
+		@data = disk_data();
 		if (!$bsd_type){
-			@data = disk_data();
 			if (@data){
 				if ($type eq 'standard'){
-					@rows = create_disk_data(@data);
+					@data = create_disk_data(@data);
 					@rows = (@rows,@data);
 				}
 				else {
 					@rows = @data;
+					# print Data::Dumper::Dumper \@rows;
 				}
 			}
 			else {
-				$key1 = 'Status';
-				$val1 = main::row_defaults('dev');
-				@data = ({$num++ . "#$key1" => $val1,});
+				$key1 = 'Message';
+				$val1 = main::row_defaults('disk-size');
+				@rows = ({$num++ . "#$key1" => $val1,});
 			}
 		}
 		else {
-			$key1 = 'Status';
-			$val1 = main::row_defaults('dev');
-			@data = ({$num++ . "#$key1" => $val1,});
+			$key1 = 'Message';
+			$val1 = main::row_defaults('data-bsd');
+			@rows = ({$num++ . "#$key1" => $val1,});
 		}
 	}
 	
-	if ($show{'disk'}){
-		$key1 = 'Status';
-		$val1 = main::row_defaults('dev');
+	if (!@rows){
+		$key1 = 'Message';
+		$val1 = main::row_defaults('disk-data');
 		@data = ({$num++ . "#$key1" => $val1,});
 	}
 	
-	@rows = (@rows,@data);
+	#@rows = (@rows,@data);
 	@data = ();
 	if ($show{'optical'} || $show{'optical-basic'}){
 		@data = OpticalData::get();
+		@rows = (@rows,@data);
 	}
-	@rows = (@rows,@data);
 	($b_hddtemp,$b_nvme,$b_sudo,$hddtemp,$nvme,$sudo) = (undef,undef,undef,undef,undef,undef);
 	eval $end if $b_log;
 	return @rows;
 }
 sub create_disk_data {
 	eval $start if $b_log;
+	my (@disks) = @_;
+	#print Data::Dumper::Dumper \@disks;
 	my (@data,@rows);
+	my ($num,$j) = (0,0);
+	my ($size,$used,$percent,$size_holder,$used_holder) = ('','','','','');
+	my @sizing = main::get_size($disks[0]{'size'});
+	if (@sizing){
+		if (defined $sizing[0]){
+			$size = $sizing[0] . ' ' . $sizing[1];
+			$size_holder = $sizing[0];
+		}
+		$size ||= 'N/A';
+	}
+	@sizing = main::get_size($disks[0]{'used'});
+	if (@sizing){
+		if (defined $sizing[0]){
+			$used = $sizing[0] . ' ' . $sizing[1];
+			$used_holder = $sizing[0];
+			if ($size_holder && ($used_holder || $used_holder == 0) ){
+				$used = $used . ' (' . sprintf("%0.1f", $used_holder/$size_holder*100) . '%)';
+			}
+		}
+		$used ||= 'N/A';
+	}
+	@data = ({
+	$num++ . '#HDD Total Size' => $size,
+	$num++ . '#used' => $used,
+	});
+	@rows = (@rows,@data);
 	
+	if ( $show{'disk'} ){
+		shift @disks;
+	}
+
 	eval $end if $b_log;
 	return @rows;
 }
@@ -6230,25 +6265,27 @@ sub disk_data {
 	}
 	if (my $file = main::system_files('partitions')){
 		@data = proc_data($used,$file);
-		@rows = (@rows,@data);
 	}
 	else {
-		@rows = (@rows,@data);
+		
 	}
+	#print Data::Dumper::Dumper \@data;
 	main::log_data("used: $used");
 	eval $end if $b_log;
-	return @rows;
+	return @data;
 }
 sub proc_data {
 	eval $start if $b_log;
 	my ($used,$file) = @_;
 	my (@data);
 	my ($size,$drive_size) = (0,0);
-	my @proc_partitions = main::reader($file);
+	my @proc_partitions = main::reader($file,'strip');
+	shift @proc_partitions;
 	foreach (@proc_partitions){
+		next if (/^\s*$/);
 		my @row = split /\s+/, $_;
 		if ( $row[0] =~ /([hsv]d[a-z]+|(ada|mmcblk|nvme[0-9]+n)[0-9]+)$/) {
-			$drive_size = 
+			$drive_size = $row[0];
 		}
 		# See http://lanana.org/docs/device-list/devices-2.6+.txt for major numbers used below
 		# See https://www.mjmwired.net/kernel/Documentation/devices.txt for kernel 4.x device numbers
@@ -6259,7 +6296,7 @@ sub proc_data {
 		# note: known starters: vm: 252/253/254; grsec: 202; nvme: 259
 		if ( $row[0] =~ /^(3|8|22|33|202|252|253|254|259)$/ && 
 		     $row[-1] =~ /(nvme[0-9]+n[0-9]+|[hsv]d[a-z]+)$/ && 
-		     ( $row[1] % 16 == 0 || $row[1] % 16 == 8 ) {
+		     ( $row[1] % 16 == 0 || $row[1] % 16 == 8 ) ) {
 			$size += $row[2];
 		}
 	}
@@ -6267,6 +6304,7 @@ sub proc_data {
 	'size' => $size,
 	'used' => $used,
 	});
+	# print Data::Dumper::Dumper \@data;
 	eval $end if $b_log;
 	return @data;
 }
@@ -13210,6 +13248,32 @@ sub generate_short_data {
 			}
 		}
 	}
+	my @disk = DiskData::get('short');
+	# print Dumper \@disk;
+	my $disk_string = 'N/A';
+	my ($size,$used,$size_type,$used_type) = ('','','','');
+	my (@temp);
+	if (@disk){
+		if (defined $disk[0]{'size'} && $disk[0]{'size'} =~ /^[0-9\.]+$/){
+			@temp = get_size($disk[0]{'size'});
+			$size = $temp[0];
+			$size_type = " $temp[1]";
+		}
+		$size ||= 'N/A';
+		if (defined $disk[0]{'used'} && $disk[0]{'used'} =~ /^[0-9\.]+$/){
+			@temp = get_size($disk[0]{'used'});
+			$used = $temp[0];
+			$used_type = " $temp[1]";
+		}
+		if ($size && $used ne ''){
+			my $percent = ' (' . sprintf("%.1f", $used/$size*100) . '% used)';
+			$disk_string = "$size$size_type$percent";
+		}
+		else {
+			$disk_string = "$used$used_type/$size$size_type";
+		}
+		
+	}
  	#print join '; ', @cpu, " sleep: $cpu_sleep\n";
 	$memory ||= 'N/A';
 	my @data = ({
@@ -13218,7 +13282,7 @@ sub generate_short_data {
 		$num++ . "#$kernel_os" => &get_kernel_data(),
 		$num++ . "#Up" => &get_uptime(),
 		$num++ . "#Mem" => $memory,
-		$num++ . "#HD" => 'N/A',
+		$num++ . "#HDD" => $disk_string,
 		# could make -1 for ps aux itself, -2 for ps aux and self
 		$num++ . "#Procs" => scalar @ps_aux,
 		$num++ . "#$client_shell" => $client,
