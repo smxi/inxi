@@ -6158,7 +6158,8 @@ sub cpu_cleaner {
 ## DiskData
 {
 package DiskData;
-my ($b_hddtemp,$b_nvme,$b_sudo,$hddtemp,$nvme,$sudo);
+my ($b_hddtemp,$b_nvme,$b_sudo);
+my ($hddtemp,$nvme,$sudo) = ('','','');
 
 sub get {
 	eval $start if $b_log;
@@ -6245,7 +6246,7 @@ sub create_output {
 		foreach my $ref (@disks){
 			my %row = %$ref;
 			my $model = ($row{'model'}) ? $row{'model'}: 'N/A';
-			my $id =  ($row{'id'}) ? $row{'id'}:'N/A';
+			my $id =  ($row{'id'}) ? "/dev/$row{'id'}":'N/A';
 			my @sizing = main::get_size($row{'size'});
 			#print Data::Dumper::Dumper \@disks;
 			if (@sizing){
@@ -6257,12 +6258,20 @@ sub create_output {
 				}
 				$size ||= 'N/A';
 			}
+			$j = scalar @rows;
 			@data = ({
 			$num++ . '#ID' => $id,
 			$num++ . '#model' => $model,
 			$num++ . '#size' => $size,
 			});
 			@rows = (@rows,@data);
+			if ($extra > 1){
+				my $serial = ($row{'serial'})?$row{'serial'}:'N/A';
+				$rows[$j]{$num++ . '#serial'} = $serial;
+			}
+			if ($extra > 0 && $row{'temp'}){
+				$rows[$j]{$num++ . '#temp'} = $row{'temp'} . ' C';
+			}
 		}
 	}
 
@@ -6356,7 +6365,7 @@ sub proc_data_advanced {
 	eval $start if $b_log;
 	my ($b_hdx,@drives) = @_;
 	my ($i) = (0);
-	my (@data,@rows,$model,$serial,$firmware,$temp);
+	my (@data,@rows,@scsi,@temp,$block_type,$model,$path,$serial,$working_path);
 	## check for all ide type drives, non libata, only do it if hdx is in array
 	## this is now being updated for new /sys type paths, this may handle that ok too
 	## skip the first rows in the loops since that's the basic size/used data
@@ -6366,6 +6375,54 @@ sub proc_data_advanced {
 			if ( $drives[$i]{'id'} =~ /^hd[a-z]/ && -e $file){
 				my $model = (main::reader($file))[0];
 				$drives[$i]{'model'} = $model;
+			}
+		}
+	}
+	# scsi stuff
+	for ($i = 1; $i < $#drives; $i++){
+		next if $drives[$i]{'id'} =~ /^hd[a-z]/;
+		
+		if ($drives[$i]{'id'} =~ /sd[a-z]/){
+			$block_type = 'sdx';
+			$working_path = "/sys/block/$drives[$i]{'id'}/device/";
+		}
+		elsif ($drives[$i]{'id'} =~ /nvme/){
+			$block_type = 'nvme';
+			# this results in:
+			# /sys/devices/pci0000:00/0000:00:03.2/0000:06:00.0/nvme/nvme0/nvme0n1
+			# but we want to go one level down so slice off trailing nvme0n1
+			$working_path = Cwd::abs_path("/sys/block/$drives[$i]{'id'}");
+			$working_path =~ s/nvme[^\/]*$//;
+		}
+		if ($block_type){
+			$path = "${working_path}model";
+			if ( -e $path){
+				$model = (main::reader($path))[0];
+				if ($model){
+					$model = main::trimmer($model);
+					$model =~ s/\s/_/g;
+					@temp = split /-/, $model;
+					$drives[$i]{'model'} = $temp[0];
+				}
+			}
+			elsif ($#scsi > 1){
+			
+			}
+		}
+		if ($extra > 0){
+			$drives[$i]{'temp'} = hdd_temp("/dev/$drives[$i]{'id'}");
+			if ($extra > 1){
+				$path = "${working_path}serial";
+				if ( -e $path){
+					$serial = (main::reader($path))[0];
+					if ($serial){
+						$drives[$i]{'serial'} = main::trimmer($serial);
+					}
+				}
+				else {
+					$drives[$i]{'serial'} = disk_serial("/dev/$drives[$i]{'id'}");
+				}
+				
 			}
 		}
 	}
