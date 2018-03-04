@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-03-03';
-my $self_patch='329-p';
+my $self_patch='331-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -2599,25 +2599,6 @@ sub count_dir_files {
 	return $count;
 }
 
-# arg 1: type to return
-sub get_defaults {
-	my ($type) = @_;
-	my %defaults = (
-	'ftp-upload' => 'ftp.techpatterns.com/incoming',
-	# 'inxi-branch-1' => 'https://github.com/smxi/inxi/raw/one/',
-	# 'inxi-branch-2' => 'https://github.com/smxi/inxi/raw/two/',
-	'inxi-main' => 'https://github.com/smxi/inxi/raw/master/',
-	'inxi-pinxi' => 'https://github.com/smxi/inxi/raw/inxi-perl/',
-	'inxi-man' => "https://github.com/smxi/inxi/raw/master/$self_name.1.gz",
-	);
-	if ( exists $defaults{$type}){
-		return $defaults{$type};
-	}
-	else {
-		error_handler('bad-arg-int', $type);
-	}
-}
-
 # args: 1 - the string to get piece of
 # 2 - the position in string, starting at 1 for 0 index.
 # 3 - the separator, default is ' '
@@ -2886,6 +2867,24 @@ sub writer {
 #### UPDATER
 ##### -------------------------------------------------------------------
 
+# arg 1: type to return
+sub get_defaults {
+	my ($type) = @_;
+	my %defaults = (
+	'ftp-upload' => 'ftp.techpatterns.com/incoming',
+	# 'inxi-branch-1' => 'https://github.com/smxi/inxi/raw/one/',
+	# 'inxi-branch-2' => 'https://github.com/smxi/inxi/raw/two/',
+	'inxi-main' => 'https://github.com/smxi/inxi/raw/master/',
+	'inxi-pinxi' => 'https://github.com/smxi/inxi/raw/inxi-perl/',
+	'inxi-man' => "https://github.com/smxi/inxi/raw/master/$self_name.1.gz",
+	);
+	if ( exists $defaults{$type}){
+		return $defaults{$type};
+	}
+	else {
+		error_handler('bad-arg-int', $type);
+	}
+}
 # args: 1 - download url, not including file name; 2 - string to print out
 # 3 - update type option
 # note that 1 must end in / to properly construct the url path
@@ -6184,7 +6183,7 @@ sub get {
 		$val1 = main::row_defaults('disk-size');
 		@rows = ({$num++ . "#$key1" => $val1,});
 	}
-	if ($bsd_type && $type eq 'standard'){
+	if ($bsd_type && $type eq 'standard' && $show{'disk'}){
 		$key1 = 'Message';
 		$val1 = main::row_defaults('disk-data-bsd');
 		@data = ({$num++ . "#$key1" => $val1,});
@@ -6214,18 +6213,21 @@ sub create_output {
 	my ($num,$j) = (0,0);
 	my ($size,$used,$percent,$size_holder,$used_holder) = ('','','','','');
 	my @sizing = main::get_size($disks[0]{'size'});
+	#print Data::Dumper::Dumper \@disks;
 	if (@sizing){
+		$size = $sizing[0];
 		# note: if a string is returned there will be no Size unit so just use string.
 		if (defined $sizing[0] && $sizing[1]){
-			$size = $sizing[0] . ' ' . $sizing[1];
+			$size .= ' ' . $sizing[1];
 			$size_holder = $sizing[0];
 		}
 		$size ||= 'N/A';
 	}
 	@sizing = main::get_size($disks[0]{'used'});
 	if (@sizing){
+		$used = $sizing[0];
 		if (defined $sizing[0] && $sizing[1]){
-			$used = $sizing[0] . ' ' . $sizing[1];
+			$used .= ' ' . $sizing[1];
 			$used_holder = $sizing[0];
 			if ($size_holder && ($used_holder || $used_holder == 0) ){
 				$used = $used . ' (' . sprintf("%0.1f", $used_holder/$size_holder*100) . '%)';
@@ -6238,9 +6240,30 @@ sub create_output {
 	$num++ . '#used' => $used,
 	});
 	@rows = (@rows,@data);
-	
-	if ( $show{'disk'} ){
+	if ( $show{'disk'}  ){
 		shift @disks;
+		foreach my $ref (@disks){
+			my %row = %$ref;
+			my $model = ($row{'model'}) ? $row{'model'}: 'N/A';
+			my $id =  ($row{'id'}) ? $row{'id'}:'N/A';
+			my @sizing = main::get_size($row{'size'});
+			#print Data::Dumper::Dumper \@disks;
+			if (@sizing){
+				$size = $sizing[0];
+				# note: if a string is returned there will be no Size unit so just use string.
+				if (defined $sizing[0] && $sizing[1]){
+					$size .= ' ' . $sizing[1];
+					$size_holder = $sizing[0];
+				}
+				$size ||= 'N/A';
+			}
+			@data = ({
+			$num++ . '#ID' => $id,
+			$num++ . '#model' => $model,
+			$num++ . '#size' => $size,
+			});
+			@rows = (@rows,@data);
+		}
 	}
 
 	eval $end if $b_log;
@@ -6267,28 +6290,38 @@ sub disk_data {
 		}
 	}
 	if (my $file = main::system_files('partitions')){
-		@data = proc_disks($used,$file);
+		@data = proc_data($used,$file);
 	}
-	else {
-		@data = dmesg_boot_disks($used);
+	elsif ($bsd_type) {
+		@data = dmesg_boot_data($used);
 	}
 	#print Data::Dumper::Dumper \@data;
-	main::log_data("used: $used");
+	main::log_data("used: $used") if $b_log;
 	eval $end if $b_log;
 	return @data;
 }
-sub proc_disks {
+sub proc_data {
 	eval $start if $b_log;
 	my ($used,$file) = @_;
-	my (@data);
-	my ($size,$drive_size) = (0,0);
+	my (@data,@drives,@rows);
+	my ($b_hdx,$size,$drive_size) = (0,0,0);
 	my @proc_partitions = main::reader($file,'strip');
 	shift @proc_partitions;
 	foreach (@proc_partitions){
 		next if (/^\s*$/);
 		my @row = split /\s+/, $_;
-		if ( $row[0] =~ /([hsv]d[a-z]+|(ada|mmcblk|nvme[0-9]+n)[0-9]+)$/) {
-			$drive_size = $row[0];
+		if ( $row[-1] =~ /^([hsv]d[a-z]+|(ada|mmcblk|nvme[0-9]+n)[0-9]+)$/) {
+			$drive_size = $row[2];
+			$b_hdx = 1 if $row[-1] =~ /^hd[a-z]/;
+			@data = ({
+			'id' => $row[-1],
+			'size' => $drive_size,
+			'model' => '',
+			'temp' => '',
+			'serial' => '',
+			'firmware' => '',
+			});
+			@drives = (@drives,@data);
 		}
 		# See http://lanana.org/docs/device-list/devices-2.6+.txt for major numbers used below
 		# See https://www.mjmwired.net/kernel/Documentation/devices.txt for kernel 4.x device numbers
@@ -6303,15 +6336,45 @@ sub proc_disks {
 			$size += $row[2];
 		}
 	}
+	#print Data::Dumper::Dumper \@drives;
+	main::log_data("size: $size") if $b_log;
 	@data = ({
 	'size' => $size,
 	'used' => $used,
 	});
+	@drives = (@data,@drives);
+	#print Data::Dumper::Dumper \@rows;
+	if ( $show{'disk'} ){
+		@data = proc_data_advanced($b_hdx,@drives);
+		@rows = (@rows,@data);
+	}
 	# print Data::Dumper::Dumper \@data;
 	eval $end if $b_log;
 	return @data;
 }
-sub dmesg_boot_disks {
+sub proc_data_advanced {
+	eval $start if $b_log;
+	my ($b_hdx,@drives) = @_;
+	my ($i) = (0);
+	my (@data,@rows,$model,$serial,$firmware,$temp);
+	## check for all ide type drives, non libata, only do it if hdx is in array
+	## this is now being updated for new /sys type paths, this may handle that ok too
+	## skip the first rows in the loops since that's the basic size/used data
+	if ($b_hdx){
+		for ($i = 1; $i < $#drives; $i++){
+			my $file = "/proc/ide/$drives[$i]{'id'}/model";
+			if ( $drives[$i]{'id'} =~ /^hd[a-z]/ && -e $file){
+				my $model = (main::reader($file))[0];
+				$drives[$i]{'model'} = $model;
+			}
+		}
+	}
+	
+	# print Data::Dumper::Dumper \@data;
+	eval $end if $b_log;
+	return @drives;
+}
+sub dmesg_boot_data {
 	eval $start if $b_log;
 	my ($used) = @_;
 	my (@data,@rows,$size);
@@ -6324,6 +6387,7 @@ sub dmesg_boot_disks {
 		$size = main::row_defaults('dmesg-boot-missing');
 	}
 	if (@dmesg_boot){
+		$size = main::row_defaults('data-bsd');
 # 		foreach (@dmesg_boot){
 # 		
 # 		}
@@ -6332,9 +6396,8 @@ sub dmesg_boot_disks {
 	'size' => $size,
 	'used' => $used,
 	});
-	
 	eval $end if $b_log;
-	return @rows;
+	return @data;
 }
 
 sub disk_serial {
@@ -12266,6 +12329,7 @@ sub get_self_version {
 sub get_size {
 	my ($size) = @_;
 	my (@data);
+	return ('','') if ! defined $size;
 	if ($size !~ /^[0-9\.]+$/){
 		$data[0] = $size;
 		$data[1] = '';
