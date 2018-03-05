@@ -39,8 +39,8 @@ use Time::HiRes qw(gettimeofday tv_interval);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-03-03';
-my $self_patch='331-p';
+my $self_date='2018-03-04';
+my $self_patch='332-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -1030,7 +1030,7 @@ sub begin_logging {
 	my $log_file_3="$user_data_dir/$self_name.2.log";
 	my $data = '';
 	$end='main::log_data("fe", (caller(1))[3], "");';
-	$start='main::log_data("fs", (caller(1))[3], @_);';
+	$start='main::log_data("fs", (caller(1))[3], \@_);';
 	#require Time::HiRes;
 	#import Time::HiRes;
 	$t3 = tv_interval ($t0, [gettimeofday]);
@@ -1060,19 +1060,22 @@ sub begin_logging {
 # NOTE: no logging available until get_parameters is run, since that's what 
 # sets logging # in order to trigger earlier logging manually set $b_log
 # to true in top variables.
-# arg: $one alone: logs data; $two with or without $three logs func start/end.
-# arg: $one type (fs/fe/cat/raw) or logged data; 
+# args: $1 - type [fs|fe|cat|dump|raw] OR data to log
+# arg: $2 - 
+# arg: $one type (fs/fe/cat/dump/raw) or logged data; 
 # [$two is function name; [$three - function args]]
 sub log_data {
 	return if ! $b_log;
-	my ($one, $two, @args) = @_;
+	my ($one, $two, $three) = @_;
 	my $args = '';
 	my $data = '';
 	my $spacer = '   ';
 	# print "1: $one 2: $two 3: $three\n";
 	if ($one eq 'fs') {
-		if (defined $args[0]){
-			$args = "\n${spacer}Args: " . join '; ', @args;
+		if (ref $three eq 'ARRAY'){
+			my @temp = @$three;
+			# print Data::Dumper::Dumper \@$three;
+			$args = "\n${spacer}Args: " . joiner($three, '; ', 'unset');
 		}
 		else {
 			$args = "\n${spacer}Args: None";
@@ -1096,6 +1099,24 @@ sub log_data {
 			$spacer='';
 		}
 	}
+	elsif ($one eq 'data'){
+		$data = "$two\n";
+	}
+	elsif ( $one eq 'dump') {
+		$data = "$two:\n";
+		if (ref $three eq 'HASH'){
+			$data .= Data::Dumper::Dumper \%$three;
+		}
+		elsif (ref $three eq 'ARRAY'){
+			# print Data::Dumper::Dumper \@$three;
+			$data .= Data::Dumper::Dumper \@$three;
+		}
+		else {
+			$data .= Data::Dumper::Dumper $three;
+		}
+		$data .= "\n";
+		# print $data;
+	}
 	elsif ( $one eq 'raw') {
 		if ( $b_log_full ){
 			$data = "\n${line3}Raw System Data:\n\n$two\n$line3";
@@ -1103,7 +1124,7 @@ sub log_data {
 		}
 	}
 	else {
-		$data = "$one\n";
+		$data = "$two\n";
 	}
 	# print "d: $data";
 	if ($data){
@@ -2648,7 +2669,15 @@ sub joiner {
 	my ($ref,$join,$default) = @_;
 	my @arr = @$ref;
 	$default ||= '';
-	my $string = (@arr && defined $arr[0]) ? join "$join",  @arr: $default;
+	my $string = '';
+	foreach (@arr){
+		if (defined $_){
+			$string .= $_ . $join;
+		}
+		else {
+			$string .= $default . $join;
+		}
+	}
 	return $string;
 }
 
@@ -2737,7 +2766,7 @@ sub program_values {
 		@client_data = @$ref;
 	}
 	#my $debug = main::Dumper \@client_data;
-	# main::log_data("Client Data: " . main::Dumper \@client_data);
+	main::log_data('dump',"Client Data",\@client_data) if $b_log;
 	return @client_data;
 }
 # args: 1 - desktop/app command for --version; 2 - search string; 
@@ -2778,7 +2807,7 @@ sub program_version {
 	else {
 		$cmd = "$app $version 2>/dev/null";
 	}
-	log_data("version: $version num: $num search: $search command: $cmd") if $b_log;
+	log_data('data',"version: $version num: $num search: $search command: $cmd") if $b_log;
 	$output = qx($cmd);
 	# print "$cmd : $output\n";
 	# sample: dwm-5.8.2, ©.. etc, why no space? who knows. Also get rid of v in number string
@@ -2800,7 +2829,7 @@ sub program_version {
 		}
 		close $ch if $ch;
 	}
-	log_data("Program version: $version_nu") if $b_log;
+	log_data('data',"Program version: $version_nu") if $b_log;
 	eval $end if $b_log;
 	return $version_nu;
 }
@@ -3901,7 +3930,10 @@ sub get_client_name {
 			}
 		}
 	}
-	main::log_data("Client: $client{'name'} :: version: $client{'version'} :: konvi: $client{'konvi'} :: PPID: $ppid") if $b_log;
+	if ($b_log){
+		my $string = "Client: $client{'name'} :: version: $client{'version'} :: konvi: $client{'konvi'} :: PPID: $ppid";
+		main::log_data('data', $string);
+	}
 	eval $end if $b_log;
 }
 sub get_client_version {
@@ -4013,7 +4045,7 @@ sub get_cmdline {
 		$cmdline[0] = $rows[0];
 		$i = ($cmdline[0]) ? 1 : 0;
 	}
-	main::log_data("cmdline: @cmdline count: $i") if $b_log;
+	main::log_data('string',"cmdline: @cmdline count: $i") if $b_log;
 	eval $end if $b_log;
 	return @cmdline;
 }
@@ -4060,7 +4092,10 @@ sub perl_python_client {
 	else {
 		$client{'name-print'} = "Unknown $client{'name'} client";
 	}
-	main::log_data("namep: $client{'name-print'} name: $client{'name'} version: $client{'version'}") if $b_log;
+	if ($b_log){
+		my $string = "namep: $client{'name-print'} name: $client{'name'} version: $client{'version'}";
+		main::log_data('data',$string);
+	}
 	eval $end if $b_log;
 }
 ## try to infer the use of Konversation >= 1.2, which shows $PPID improperly
@@ -4075,11 +4110,11 @@ sub check_modern_konvi {
 	my $konvi = '';
 	my $pid = '';
 	my (@temp);
-	# main::log_data("name: $client{'name'} :: qdb: $client{'qdbus'} :: version: $client{'version'} :: konvi: $client{'konvi'} :: PPID: $ppid") if $b_log;
+	# main::log_data('data',"name: $client{'name'} :: qdb: $client{'qdbus'} :: version: $client{'version'} :: konvi: $client{'konvi'} :: PPID: $ppid") if $b_log;
 	# sabayon uses /usr/share/apps/konversation as path
 	if ( -d '/usr/share/kde4/apps/konversation' || -d '/usr/share/apps/konversation' ){
 		$pid = main::awk(\@ps_aux,'konversation',2,'\s+');
-		main::log_data("pid: $pid") if $b_log;
+		main::log_data('data',"pid: $pid") if $b_log;
 		$konvi = readlink ("/proc/$pid/exe");
 		$konvi =~ s/^.*\///; # basename
 		@app = main::program_values('konversation');
@@ -4099,9 +4134,9 @@ sub check_modern_konvi {
 			}
 		}
 	}
-	main::log_data("name: $client{'name'} name print: $client{'name-print'} 
+	main::log_data('data',"name: $client{'name'} name print: $client{'name-print'} 
 	qdb: $client{'qdbus'} version: $konvi_version konvi: $konvi PID: $pid") if $b_log;
-	main::log_data("b_is_qt4: $b_modern_konvi") if $b_log;
+	main::log_data('data',"b_is_qt4: $b_modern_konvi") if $b_log;
 	## for testing this module
 # 	my $ppid = getppid();
 # 	system('qdbus org.kde.konversation', '/irc', 'say', $client{'dserver'}, $client{'dtarget'}, 
@@ -6160,7 +6195,7 @@ sub cpu_cleaner {
 package DiskData;
 my ($b_hddtemp,$b_nvme,$b_sudo);
 my ($hddtemp,$nvme,$sudo) = ('','','');
-
+my (@by_id,@by_path);
 sub get {
 	eval $start if $b_log;
 	my (@data,@rows,$key1,$val1);
@@ -6203,6 +6238,7 @@ sub get {
 		@rows = (@rows,@data);
 	}
 	($b_hddtemp,$b_nvme,$b_sudo,$hddtemp,$nvme,$sudo) = (undef,undef,undef,undef,undef,undef);
+	(@by_id,@by_path) = (undef,undef);
 	eval $end if $b_log;
 	return @rows;
 }
@@ -6243,6 +6279,7 @@ sub create_output {
 	@rows = (@rows,@data);
 	if ( $show{'disk'}  ){
 		shift @disks;
+		@disks = sort { $a->{'id'} cmp $b->{'id'} } @disks;
 		foreach my $ref (@disks){
 			my %row = %$ref;
 			my $model = ($row{'model'}) ? $row{'model'}: 'N/A';
@@ -6261,13 +6298,19 @@ sub create_output {
 			$j = scalar @rows;
 			@data = ({
 			$num++ . '#ID' => $id,
-			$num++ . '#model' => $model,
-			$num++ . '#size' => $size,
 			});
 			@rows = (@rows,@data);
+			if ($row{'type'}){
+				$rows[$j]{$num++ . '#type'} = $row{'type'},
+			}
+			$rows[$j]{$num++ . '#model'} = $model;
+			$rows[$j]{$num++ . '#size'} = $size;
 			if ($extra > 1){
-				my $serial = ($row{'serial'})?$row{'serial'}:'N/A';
+				my $serial = main::apply_filter($row{'serial'});
 				$rows[$j]{$num++ . '#serial'} = $serial;
+				if ($row{'firmware'}){
+					$rows[$j]{$num++ . '#firmware'} = $row{'firmware'};
+				}
 			}
 			if ($extra > 0 && $row{'temp'}){
 				$rows[$j]{$num++ . '#temp'} = $row{'temp'} . ' C';
@@ -6283,7 +6326,6 @@ sub disk_data {
 	my (@rows,@data,@devs);
 	my $num = 0;
 	my ($used) = (0);
-	my @ids = main::globber('/dev/disk/by-id/*');
 	PartitionData::partition_data() if !$b_partitions;
 	foreach my $ref (@partitions){
 		my %row = %$ref;
@@ -6305,14 +6347,14 @@ sub disk_data {
 		@data = dmesg_boot_data($used);
 	}
 	#print Data::Dumper::Dumper \@data;
-	main::log_data("used: $used") if $b_log;
+	main::log_data('data',"used: $used") if $b_log;
 	eval $end if $b_log;
 	return @data;
 }
 sub proc_data {
 	eval $start if $b_log;
 	my ($used,$file) = @_;
-	my (@data,@drives,@rows);
+	my (@data,@drives);
 	my ($b_hdx,$size,$drive_size) = (0,0,0);
 	my @proc_partitions = main::reader($file,'strip');
 	shift @proc_partitions;
@@ -6323,12 +6365,14 @@ sub proc_data {
 			$drive_size = $row[2];
 			$b_hdx = 1 if $row[-1] =~ /^hd[a-z]/;
 			@data = ({
-			'id' => $row[-1],
-			'size' => $drive_size,
-			'model' => '',
-			'temp' => '',
-			'serial' => '',
 			'firmware' => '',
+			'id' => $row[-1],
+			'model' => '',
+			'serial' => '',
+			'size' => $drive_size,
+			'temp' => '',
+			'type' => '',
+			'vendor' => '',
 			});
 			@drives = (@drives,@data);
 		}
@@ -6345,18 +6389,19 @@ sub proc_data {
 			$size += $row[2];
 		}
 	}
-	#print Data::Dumper::Dumper \@drives;
-	main::log_data("size: $size") if $b_log;
+	# print Data::Dumper::Dumper \@drives;
+	main::log_data('data',"size: $size") if $b_log;
 	@data = ({
 	'size' => $size,
 	'used' => $used,
 	});
-	@drives = (@data,@drives);
-	#print Data::Dumper::Dumper \@rows;
+	#print Data::Dumper::Dumper \@data;
 	if ( $show{'disk'} ){
+		@drives = (@data,@drives);
+		# print 'drives:', Data::Dumper::Dumper \@drives;
 		@data = proc_data_advanced($b_hdx,@drives);
-		@rows = (@rows,@data);
 	}
+	main::log_data('dump','@data',\@data) if $b_log;
 	# print Data::Dumper::Dumper \@data;
 	eval $end if $b_log;
 	return @data;
@@ -6365,23 +6410,31 @@ sub proc_data_advanced {
 	eval $start if $b_log;
 	my ($b_hdx,@drives) = @_;
 	my ($i) = (0);
-	my (@data,@rows,@scsi,@temp,$block_type,$model,$path,$serial,$working_path);
+	my (@data,@rows,@scsi,@temp,@working);
+	my ($block_type,$file,$firmware,$model,$path,$serial,$vendor,$working_path);
+	@by_id = main::globber('/dev/disk/by-id/*');
+	@by_path = main::globber('/dev/disk/by-path/*');
 	## check for all ide type drives, non libata, only do it if hdx is in array
 	## this is now being updated for new /sys type paths, this may handle that ok too
 	## skip the first rows in the loops since that's the basic size/used data
 	if ($b_hdx){
-		for ($i = 1; $i < $#drives; $i++){
-			my $file = "/proc/ide/$drives[$i]{'id'}/model";
+		for ($i = 1; $i < scalar @drives; $i++){
+			$file = "/proc/ide/$drives[$i]{'id'}/model";
 			if ( $drives[$i]{'id'} =~ /^hd[a-z]/ && -e $file){
-				my $model = (main::reader($file))[0];
+				$model = (main::reader($file))[0];
 				$drives[$i]{'model'} = $model;
 			}
 		}
 	}
 	# scsi stuff
-	for ($i = 1; $i < $#drives; $i++){
-		next if $drives[$i]{'id'} =~ /^hd[a-z]/;
-		
+	if ($file = main::system_files('scsi')){
+		@scsi = scsi_data($file);
+	}
+	#print 'drives:', Data::Dumper::Dumper \@drives;
+	for ($i = 1; $i < scalar @drives; $i++){
+		#next if $drives[$i]{'id'} =~ /^hd[a-z]/;
+		($block_type,$firmware,$model,$serial,$vendor,$working_path) = ('','','','','','');
+		#print "$drives[$i]{'id'}\n";
 		if ($drives[$i]{'id'} =~ /sd[a-z]/){
 			$block_type = 'sdx';
 			$working_path = "/sys/block/$drives[$i]{'id'}/device/";
@@ -6394,7 +6447,9 @@ sub proc_data_advanced {
 			$working_path = Cwd::abs_path("/sys/block/$drives[$i]{'id'}");
 			$working_path =~ s/nvme[^\/]*$//;
 		}
+		main::log_data('data',"working path: $working_path") if $b_log;
 		if ($block_type){
+			# NOTE: while path ${working_path}vendor exists, it contains junk value, like: ATA
 			$path = "${working_path}model";
 			if ( -e $path){
 				$model = (main::reader($path))[0];
@@ -6405,10 +6460,34 @@ sub proc_data_advanced {
 					$drives[$i]{'model'} = $temp[0];
 				}
 			}
-			elsif ($#scsi > 1){
-			
+			elsif (@scsi && @by_id){
+				## ok, ok, it's incomprehensible, search /dev/disk/by-id for a line that contains the
+				# discovered disk name AND ends with the correct identifier, sdx
+				# get rid of whitespace for some drive names and ids, and extra data after - in name
+				foreach my $ref (@scsi){
+					my %row = %$ref;
+					if ($row{'model'}){
+						$row{'model'} =~ s/\s/_/g;
+						$row{'model'} = (split /-/,$row{'model'})[0];
+						foreach my $id (@by_id){
+							if ($id =~ /$row{'model'}/ && "/dev/$drives[$i]{'id'}" eq Cwd::abs_path($id)){
+								$drives[$i]{'firmware'} = $row{'firmware'};
+								$drives[$i]{'model'} = $row{'model'};
+								$drives[$i]{'vendor'} = $row{'vendor'};
+								last;
+							}
+						}
+					}
+				}
+			}
+			$path = "${working_path}removable";
+			if (-e $path){
+				my $b_removable = (main::reader($path))[0]; # 0/1 value
+				$drives[$i]{'type'} = 'Removable' if $b_removable;
 			}
 		}
+		$drives[$i]{'type'} = peripheral_data($drives[$i]{'id'});
+		# print "type:$drives[$i]{'type'}\n";
 		if ($extra > 0){
 			$drives[$i]{'temp'} = hdd_temp("/dev/$drives[$i]{'id'}");
 			if ($extra > 1){
@@ -6422,14 +6501,83 @@ sub proc_data_advanced {
 				else {
 					$drives[$i]{'serial'} = disk_serial("/dev/$drives[$i]{'id'}");
 				}
-				
+				$path = "${working_path}rev";
+				if ( -e $path){
+					$drives[$i]{'firmware'} = (main::reader($path))[0];
+				}
 			}
 		}
 	}
-	
-	# print Data::Dumper::Dumper \@data;
+	# print Data::Dumper::Dumper \@drives;
 	eval $end if $b_log;
 	return @drives;
+}
+# check for usb/firewire/[and thunderwire when data found]
+sub peripheral_data {
+	eval $start if $b_log;
+	my ($id) = @_;
+	my ($type) = ('');
+	# print "$id here\n";
+	if (@by_id){
+		foreach (@by_id) {
+			if ("/dev/$id" eq Cwd::abs_path($_)){
+				#print "$id here\n";
+				if (/usb-/i){
+					$type = 'USB';
+				}
+				elsif (/ieee1394--/i){
+					$type = 'FireWire';
+				}
+				last;
+			}
+		}
+	}
+	# note: sometimes with wwn- numbering usb does not appear in by-id but it does in by-path
+	if (!$type && @by_path){
+		foreach (@by_path) {
+			if ("/dev/$id" eq Cwd::abs_path($_)){
+				if (/usb-/i){
+					$type = 'USB';
+				}
+				elsif (/ieee1394--/i){
+					$type = 'FireWire';
+				}
+				last;
+			}
+		}
+	}
+	eval $end if $b_log;
+	return $type;
+}
+sub scsi_data {
+	eval $start if $b_log;
+	my ($file) = @_;
+	my @temp = main::reader($file);
+	my (@scsi);
+	my ($firmware,$model,$vendor) = ('','','');
+	foreach (@temp){
+		if (/Vendor:\s*(.*)\s+Model:\s*(.*)\s+Rev:\s*(.*)/i){
+			$vendor = $1;
+			$model = $2;
+			$firmware = $3;
+		}
+		if (/Type:/i){
+			if (/Type:\s*Direct-Access/i){
+				my @working = ({
+				'vendor' => $vendor,
+				'model' => $model,
+				'firmware' => $firmware,
+				});
+				@scsi = (@scsi,@working);
+			}
+			else {
+				($firmware,$model,$vendor) = ('','','');
+			}
+		}
+	}
+	main::log_data('dump','@scsi', \@scsi) if $b_log;
+	eval $end if $b_log;
+	return @scsi;
 }
 sub dmesg_boot_data {
 	eval $start if $b_log;
@@ -6453,18 +6601,21 @@ sub dmesg_boot_data {
 	'size' => $size,
 	'used' => $used,
 	});
+	main::log_data('dump','@data',\@data) if $b_log;
 	eval $end if $b_log;
 	return @data;
 }
 
 sub disk_serial {
 	eval $start if $b_log;
-	my ($device,@ids) = @_;
+	my ($device) = @_;
 	my ($serial) = ('');
-	foreach (@ids){
+	foreach (@by_id){
 		if ($device eq Cwd::abs_path($_)){
 			my @data = split /_/, $_;
 			$serial = $data[-1];
+			$serial =~ s/-[0-9]+:[0-9]+$//;
+			# print $device, ' ', Cwd::abs_path($_),' ', $serial,"\n";
 			last;
 		}
 	}
@@ -6989,7 +7140,7 @@ sub x_version {
 }
 sub display_compositor(){
 	eval $start if $b_log;
-	my ($compositor);
+	my ($compositor) = ('');
 #  	my $compositors = 'mutter|gnome-shell|kwin|moblin|kmscon|sway|grefson|westford|rustland|fireplace|wayhouse|weston|compton|compiz|swc|dwc';
 # 	foreach (@ps_cmd){
 # 		if (/($compositors)/){
@@ -7057,6 +7208,7 @@ sub display_compositor(){
 	elsif (main::check_program('dwc') && (grep {/dwc/} @ps_cmd ) ) {
 		$compositor = 'dwc';
 	}
+	main::log_data('data',"compositor: $compositor") if $b_log;
 	eval $end if $b_log;
 	return $compositor;
 }
@@ -7278,6 +7430,7 @@ sub machine_data_sys {
 # 	foreach (keys %data){
 # 		print "$_: $data{$_}\n";
 # 	}
+	main::log_data('dump','%data',\%data) if $b_log;
 	my @rows = create_output(\%data);
 	eval $end if $b_log;
 	return @rows;
@@ -7402,6 +7555,7 @@ sub machine_data_dmi {
 # 	foreach (keys %data){
 # 		print "$_: $data{$_}\n";
 # 	}
+	main::log_data('dump','%data',\%data) if $b_log;
 	my @rows = create_output(\%data);
 	eval $end if $b_log;
 	return @rows;
@@ -8080,6 +8234,7 @@ sub optical_data_bsd {
 	eval $start if $b_log;
 	my (@data,%devices,@rows);
 	
+	main::log_data('dump','%devices',\%devices) if $b_log;
 	@rows = create_output(%devices) if %devices;
 	eval $end if $b_log;
 	return @rows;
@@ -8171,6 +8326,7 @@ sub optical_data_linux {
 			}
 		}
 	}
+	main::log_data('dump','%devices',\%devices) if $b_log;
 	#print Data::Dumper::Dumper \%devices;
 	@rows = create_output(%devices) if %devices;
 	eval $end if $b_log;
@@ -8375,6 +8531,7 @@ sub partition_data {
 	}
 	@data = swap_data();
 	@partitions = (@partitions,@data);
+	main::log_data('dump','@partitions',\@partitions) if $b_log;
 	# print Data::Dumper::Dumper \@partitions;
 	eval $end if $b_log;
 }
@@ -8456,6 +8613,7 @@ sub get_bsd_fs {
 		}
 	}
 	eval $end if $b_log;
+	main::log_data('data',"fs: $fs") if $b_log;
 	return $fs;
 }
 # 1. Name: ada1p1
@@ -8485,6 +8643,7 @@ sub get_bsd_label_uuid {
 			}
 		}
 	}
+	main::log_data('dump','@data',\@data) if $b_log;
 	eval $end if $b_log;
 	return @data;
 }
@@ -8757,6 +8916,7 @@ sub raid_data {
 		@data = zfs_data($path);
 		@raid = (@raid,@data);
 	}
+	main::log_data('dump','@raid',\@raid) if $b_log;
 	#print Data::Dumper::Dumper \@raid;
 	eval $end if $b_log;
 }
@@ -9179,6 +9339,7 @@ sub dmidecode_data {
 		}
 	}
 	@ram = data_processor(@ram) if @ram;
+	main::log_data('dump','@ram',\@ram) if $b_log;
 	# print Data::Dumper::Dumper \@ram;
 	eval $end if $b_log;
 	return @ram;
@@ -9427,7 +9588,7 @@ sub get_repos_linux {
 	if (-f $apt || -d "$apt.d"){
 		@files = main::globber('/etc/apt/sources.list.d/*.list');
 		push @files, $apt;
-		main::log_data("apt repo files:\n" . main::joiner(\@files, "\n", 'unset') ) if $b_log;
+		main::log_data('data',"apt repo files:\n" . main::joiner(\@files, "\n", 'unset') ) if $b_log;
 		foreach ( sort @files){
 			@data = repo_builder($_,'apt','^\s*deb') if -r $_;
 			@rows = (@rows,@data);
@@ -9509,7 +9670,7 @@ sub get_repos_linux {
 		}
 		elsif (-d $zypp_repo_dir){
 			@files = main::globber("$zypp_repo_dir*.repo");
-			main::log_data("zypp repo files:\n" . main::joiner(\@files, "\n", 'unset')) if $b_log;
+			main::log_data('data',"zypp repo files:\n" . main::joiner(\@files, "\n", 'unset')) if $b_log;
 			$repo = 'zypp';
 		}
  		#$repo = 'yum';
@@ -10128,7 +10289,8 @@ sub sensors_data {
 		}
 	}
 	#print Data::Dumper::Dumper \%sensors;
-	%sensors = data_processor(%sensors);
+	%sensors = data_processor(%sensors) if %sensors;
+	main::log_data('dump','%sensors',\%sensors) if $b_log;
 	# print Data::Dumper::Dumper \%sensors;
 	eval $end if $b_log;
 	return %sensors;
@@ -10148,7 +10310,8 @@ sub sysctl_data {
 		last if /^(hw.cpuspeed|hw.vendor|hw.physmem)/;
 	}
 	
-	%sensors = data_processor(%sensors);
+	%sensors = data_processor(%sensors) if %sensors;
+	main::log_data('dump','%sensors',\%sensors) if $b_log;
 	eval $end if $b_log;
 	return %sensors;
 }
@@ -10213,7 +10376,7 @@ sub data_processor {
 		}
 	}
 	# convert the diff number for F, it needs to be bigger that is
-	if ( $sensors{'temp-unit'} eq "F" ) {
+	if ( $sensors{'temp-unit'} && $sensors{'temp-unit'} eq "F" ) {
 		$temp_diff = $temp_diff * 1.8
 	}
 	if ( $sensors{'cpu-temp'} ) {
@@ -10697,6 +10860,7 @@ sub unmounted_data {
 		}
 	}
 	# print Data::Dumper::Dumper @unmounted;
+	main::log_data('dump','@unmounted',\@unmounted) if $b_log;
 	eval $end if $b_log;
 	return @unmounted;
 }
@@ -10735,6 +10899,7 @@ sub unmounted_filesystem {
 			}
 		}
 	}
+	main::log_data('data',"fs: $fs") if $b_log;
 	eval $end if $b_log;
 	return $fs;
 }
@@ -11224,7 +11389,7 @@ sub get_compiler_version_bsd {
 	else {
 		@compiler = ('N/A','');
 	}
-	log_data(@compiler) if $b_log;
+	log_data('dump','@compiler',\@compiler) if $b_log;
 	eval $end if $b_log;
 	return @compiler;
 }
@@ -11243,7 +11408,7 @@ sub get_compiler_version_linux {
 			@compiler = ($1,$type);
 		}
 	}
-	log_data(@compiler) if $b_log;
+	log_data('dump','@compiler',\@compiler) if $b_log;
 	
 	eval $end if $b_log;
 	return @compiler;
@@ -11280,7 +11445,7 @@ sub get {
 	if ($extra > 2 && @desktop){
 		set_info_data();
 	}
-	main::log_data('desktop data: ' . main::joiner(\@desktop, "\n", 'unset')) if $b_log;
+	main::log_data('dump','@desktop', \@desktop) if $b_log;
 	return @desktop;
 }
 sub get_kde_data {
@@ -11748,7 +11913,7 @@ sub get_display_manager {
 	}
 	# might add this in, but the rate of new dm's makes it more likely it's an 
 	# unknown dm, so we'll keep output to N/A
-	log_data('display manager: ' . main::joiner(\@found, '; ', 'unset')) if $b_log;
+	log_data('dump','display manager: @found',\@found) if $b_log;
 	eval $end if $b_log;
 	return join ',', @found if @found;
 }
@@ -11813,8 +11978,8 @@ sub get_linux_distro {
 	my $issue = '/etc/issue';
 	my $os_release = '/etc/os-release';
 	my $b_os_release = ( -f $os_release ) ? 1 : 0;
-	main::log_data( "distro files:\n" . main::joiner(\@distro_files, "\n", 'unset')) if $b_log;
-	if ( $#distro_files == 1 ){
+	main::log_data('dump','@distro_files',\@distro_files) if $b_log;
+	if ( scalar @distro_files == 1 ){
 		$distro_file = $distro_files[0];
 	}
 	else {
@@ -11838,7 +12003,7 @@ sub get_linux_distro {
 				last;
 			}
 		}
-		main::log_data("distro_file: $distro_file") if $b_log;
+		main::log_data('data',"distro_file: $distro_file") if $b_log;
 	}
 	
 	# first test for the legacy antiX distro id file
@@ -11938,6 +12103,7 @@ sub get_lsb_release {
 	eval $start if $b_log;
 	my ($distro,$id,$release,$codename,$description,) = ('','','','','');
 	my @content = main::reader('/etc/lsb-release');
+	main::log_data('dump','@content',\@content) if $b_log;
 	@content = map {s/,|\*|\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} @content if @content;
 	foreach (@content){
 		my @working = split /\s*=\s*/, $_;
@@ -11977,6 +12143,7 @@ sub get_os_release {
 	my ($pretty_name,$name,$version_name,$version_id,
 	$distro_name,$distro) = ('','','','','','');
 	my @content = main::reader('/etc/os-release');
+	main::log_data('dump','@content',\@content) if $b_log;
 	@content = map {s/\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} @content if @content;
 	foreach (@content){
 		my @working = split /\s*=\s*/, $_;
@@ -12036,7 +12203,7 @@ sub get_gcc_data {
 		}
 	}
 	unshift @gccs, $gcc;
-	log_data("gccs: " . main::joiner(\@gccs, '; ', 'unset')) if $b_log;
+	log_data('dump','@gccs',\@gccs) if $b_log;
 	eval $end if $b_log;
 	return @gccs;
 }
@@ -12155,7 +12322,7 @@ sub get_kernel_data {
 	}
 	
 	$kernel ||= 'N/A';
-	log_data("kernel: $kernel ksplice: $ksplice") if $b_log;
+	log_data('data',"kernel: $kernel ksplice: $ksplice") if $b_log;
 	eval $end if $b_log;
 	return $kernel;
 }
@@ -12201,7 +12368,7 @@ sub get_memory_data_linux {
 	my $used = $total - $not_used;
 	my $percent = ($used && $total) ? sprintf(" (%.1f%%)", ($used/$total)*100) : '';
 	$memory = sprintf("%.1f/%.1f MB", $used/1024, $total/1024) . $percent;
-	log_data("memory: $memory") if $b_log;
+	log_data('data',"memory: $memory") if $b_log;
 	eval $end if $b_log;
 	return $memory;
 }
@@ -12469,7 +12636,7 @@ sub get_shell_source {
 			$shell_parent = get_shell_parent($script_parent);
 		}
 	}
-	log_data("parents: script: $script_parent shell: $shell_parent") if $b_log;
+	log_data('data',"parents: script: $script_parent shell: $shell_parent") if $b_log;
 	eval $end if $b_log;
 	return $shell_parent;
 }
@@ -12496,7 +12663,7 @@ sub get_tty_console_irc {
 	$tty_session = awk(\@ps_aux,".*$ppid.*$client{'name'}",7,'\s+');
 	$tty_session =~ s/^[^[0-9]+// if $tty_session;
 	$tty_session = '' if ! defined $tty_session;
-	log_data("conole-irc-tty:$tty_session") if $b_log;
+	log_data('data',"conole-irc-tty:$tty_session") if $b_log;
 	eval $end if $b_log;
 	return $tty_session;
 }
@@ -12506,7 +12673,7 @@ sub get_tty_number {
 	#variants: /dev/pts/1 /dev/tty1 /dev/pts/5 /dev/ttyp2 /dev/pts/1
 	$tty =~ s/.*\/[^0-9]*//g if defined $tty;
 	$tty = '' if ! defined $tty;
-	log_data("tty:$tty") if $b_log;
+	log_data('data',"tty:$tty") if $b_log;
 	eval $end if $b_log;
 	return $tty;
 }
@@ -12548,7 +12715,7 @@ sub set_dmesg_boot_data {
 		$_;
 		} @dmesg_boot;
 	}
-	log_data(@dmesg_boot) if $b_log;
+	log_data('dump','@dmesg_boot',\@dmesg_boot) if $b_log;
 	eval $end if $b_log;
 }
 # note, all actual tests have already been run in check_tools so if we
@@ -12617,6 +12784,7 @@ sub set_dmidecode_data {
 	# about random dmi type ordering in the data, which happens. Also sort 
 	# by handle, as secondary sort.
 	@dmi = sort { $a->[0] <=> $b->[0] || $a->[1] <=> $b->[1] } @dmi;
+	main::log_data('dump','@dmi',\@dmi) if $b_log;
 	print Dumper \@dmi if $test[2];
 	eval $end if $b_log;
 }
@@ -12679,6 +12847,7 @@ sub set_ip_addr {
 		@temp = ($if,[@ips]);
 		@ifs = (@ifs,@temp);
 	}
+	main::log_data('dump','@ifs',\@ifs) if $b_log;
 	print Dumper \@ifs if $test[3];
 	eval $end if $b_log;
 }
@@ -12770,6 +12939,8 @@ sub set_ifconfig {
 	}
 	print Dumper \@ifs if $test[3];
 	print Dumper \@ifs_bsd if $test[3];
+	main::log_data('dump','@ifs',\@ifs) if $b_log;
+	main::log_data('dump','@ifs_bsd',\@ifs_bsd) if $b_log;
 	eval $end if $b_log;
 }
 
@@ -12858,6 +13029,7 @@ sub set_lspci_data {
 		$device = '';
 	}
 	print Dumper \@pci if $test[4];
+	main::log_data('dump','@pci',\@pci) if $b_log;
 	eval $end if $b_log;
 }
 # em0@pci0:6:0:0:	class=0x020000 card=0x10d315d9 chip=0x10d38086 rev=0x00 hdr=0x00
@@ -12938,6 +13110,7 @@ sub set_pciconf_data {
 		$device = '';
 	}
 	print Dumper \@pci if $test[4];
+	main::log_data('dump','@pci',\@pci) if $b_log;
 	eval $end if $b_log;
 }
 sub set_ps_aux {
@@ -12955,7 +13128,7 @@ sub set_ps_aux {
 		@split = @split[10 .. $final ];
 		join " ", @split;
 	} @ps_aux;
-	print Dumper \@pci if $test[5];
+	print Dumper \@ps_aux if $test[5];
 	eval $end if $b_log;
 }
 
@@ -12982,6 +13155,10 @@ sub set_sysctl_data {
 		}
 	}
 	print Dumper \@sysctl if $test[7];
+	if ($b_log){
+		main::log_data('dump','@sysctl',\@sysctl);
+		main::log_data('dump','@sysctl',\@sysctl);
+	}
 	eval $end if $b_log;
 }
 sub set_usb_data {
@@ -13028,6 +13205,7 @@ sub set_lsusb_data_short {
 		}
 	}
 	print Dumper \@usb if $test[6];
+	main::log_data('dump','@usb: short',\@usb) if $b_log;
 	eval $end if $b_log;
 }
 sub set_lsusb_data_long {
@@ -13095,6 +13273,7 @@ sub set_lsusb_data_long {
 	# about random dmi type ordering in the data, which happens
 	@usb = sort { $a->[0] <=> $b->[0] || $a->[1] <=> $b->[1] } @usb;
 	print Dumper \@usb if $test[6];
+	main::log_data('dump','@usb: long',\@usb) if $b_log;
 	eval $end if $b_log;
 }
 # Controller /dev/usb2:
@@ -13165,6 +13344,7 @@ sub set_usbdevs_data {
 		[@working],
 		);
 	}
+	main::log_data('dump','@usb: usbdevs',\@usb) if $b_log;
 	print Dumper \@usb if $test[6];
 	eval $end if $b_log;
 }
@@ -13193,6 +13373,11 @@ sub generate_lines {
 	my (%row,$b_pci_check,$b_dmesg_boot_check,$b_dmi_check);
 	set_ps_aux() if ! @ps_aux;
 	set_sysctl_data() if $b_sysctl;
+	# note: ps aux loads before logging starts, so create debugger data here
+	if ($b_log){
+		main::log_data('dump','@ps_aux',\@ps_aux);
+		main::log_data('dump','@ps_cmd',\@ps_cmd);
+	}
 # 	if ($test[3]){
 # 		%row = generate_test_data();
 # 		assign_data(%row);
