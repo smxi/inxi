@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-03-05';
-my $self_patch='338-p';
+my $self_patch='339-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -4223,6 +4223,42 @@ sub cleaner {
 	return $item;
 }
 
+# args: $1 - size in KB, return KB, MB, GB, TB, PB, EB
+sub get_size {
+	my ($size) = @_;
+	my (@data);
+	return ('','') if ! defined $size;
+	if ($size !~ /^[0-9\.]+$/){
+		$data[0] = $size;
+		$data[1] = '';
+	}
+	elsif ($size > 1024**5){
+		$data[0] = sprintf("%.2f",$size/1024**5);
+		$data[1] = 'EB';
+	}
+	elsif ($size > 1024**4){
+		$data[0] = sprintf("%.2f",$size/1024**4);
+		$data[1] = 'PB';
+	}
+	elsif ($size > 1024**3){
+		$data[0] = sprintf("%.2f",$size/1024**3);
+		$data[1] = 'TB';
+	}
+	elsif ($size > 1024**2){
+		$data[0] = sprintf("%.2f",$size/1024**2);
+		$data[1] = 'GB';
+	}
+	elsif ($size > 1024){
+		$data[0] = sprintf("%.1f",$size/1024);
+		$data[1] = 'MB';
+	}
+	else {
+		$data[0] = sprintf("%.0f",$size);
+		$data[1] = 'KB';
+	}
+	return @data;
+}
+
 # not used, but keeping logic for now
 sub increment_starters {
 	my ($key,$indexes) = @_;
@@ -4237,16 +4273,22 @@ sub memory_data_full {
 	eval $start if $b_log;
 	my ($source) = @_;
 	my $num = 0;
-	my ($memory,$percent,$report,@rows);
+	my ($memory,@rows);
+	my ($percent,$total,$used) = ('','','');
 	if (!$show{'info'}){
-		$memory = get_memory_data();
-		$memory ||= 'N/A';
-		$memory =~ /(.+\s[MGTP]B)( \(([^\)]+)\))?/;
-		$report = $1;
-		$percent = $3 if $3; 
-		$rows[0]{$num++ . "#System Memory"} = '' if $source eq 'process';
-		$rows[0]{$num++ . "#Used/Total"} = $report;
-		$rows[0]{$num++ . "#used"} = $percent if $percent;
+		$memory = get_memory_data('splits');
+		if ($memory){
+			my @temp = split /:/, $memory;
+			my @temp2 = get_size($temp[0]);
+			$total = ($temp2[1]) ? $temp2[0] . ' ' . $temp2[1] : $temp2[0];
+			@temp2 = get_size($temp[1]);
+			$used = ($temp2[1]) ? $temp2[0] . ' ' . $temp2[1] : $temp2[0];
+			$used .= " ($temp[2]%)" if $temp[2];
+		}
+		my $key = ($source eq 'process') ? 'System RAM': 'RAM';
+		$rows[0]{$num++ . "#$key"} = '';
+		$rows[0]{$num++ . "#total"} = $total;
+		$rows[0]{$num++ . "#used"} = $used;
 	}
 	$b_mem = 1;
 	eval $end if $b_log;
@@ -12355,19 +12397,20 @@ sub get_kernel_bits {
 }
 sub get_memory_data {
 	eval $start if $b_log;
+	my ($type) = @_;
 	my ($memory);
 	if (my $file = system_files('meminfo') ) {
-		$memory = get_memory_data_linux($file);
+		$memory = get_memory_data_linux($type,$file);
 	}
 	else {
-		$memory = get_memory_data_bsd();
+		$memory = get_memory_data_bsd($type);
 	}
 	eval $end if $b_log;
 	return $memory;
 }
 sub get_memory_data_linux {
 	eval $start if $b_log;
-	my ($file) = @_;
+	my ($type,$file) = @_;
 	my $memory = '';
 	my $total = 0;
 	my $not_used = 0;
@@ -12381,8 +12424,14 @@ sub get_memory_data_linux {
 		}
 	}
 	my $used = $total - $not_used;
-	my $percent = ($used && $total) ? sprintf(" (%.1f%%)", ($used/$total)*100) : '';
-	$memory = sprintf("%.1f/%.1f MB", $used/1024, $total/1024) . $percent;
+	my $percent = ($used && $total) ? sprintf("%.1f", ($used/$total)*100) : '';
+	if ($type eq 'string'){
+		$percent = " ($percent%)" if $percent;
+		$memory = sprintf("%.1f/%.1f MB", $used/1024, $total/1024) . $percent;
+	}
+	else {
+		$memory = "$total:$used:$percent";
+	}
 	log_data('data',"memory: $memory") if $b_log;
 	eval $end if $b_log;
 	return $memory;
@@ -12403,6 +12452,7 @@ sub get_memory_data_linux {
 #  0 0 0       0  84060 30273993 2845 12742 1164 407498171 320960902   0   0 ....
 sub get_memory_data_bsd {
 	eval $start if $b_log;
+	my ($type) = @_;
 	my $memory = '';
 	my ($avail,$total,$free_mem,$real_mem) = (0,0,0,0);
 	my (@data,$message);
@@ -12417,7 +12467,7 @@ sub get_memory_data_bsd {
 				$avail = sprintf ('%.1f',$data[3]/1024);
 			}
 			elsif ($data[4] != 0){
-				$free_mem = sprintf ('%.1f',$data[4]/1024);
+				$free_mem = sprintf ('%.1f',$data[4]);
 			}
 		}
 	}
@@ -12432,7 +12482,7 @@ sub get_memory_data_bsd {
 				@working = split /:\s*/,$_;
 				#if ($working[1]){
 					$working[1] =~ s/^[^0-9]+|[^0-9]+$//g;
-					$real_mem = sprintf("%.1f", $working[1]/1024/1024);
+					$real_mem = sprintf("%.1f", $working[1]/1024);
 				#}
 				last if $free_mem;
 			}
@@ -12441,7 +12491,7 @@ sub get_memory_data_bsd {
 			elsif (/^Free Memory:/){
 				@working = split /:\s*/,$_;
 				$working[1] =~ s/[^0-9]+//g;
-				$free_mem = sprintf("%.1f", $working[1]/1024);
+				$free_mem = sprintf("%.1f", $working[1]);
 				last if $real_mem;
 			}
 		}
@@ -12455,13 +12505,27 @@ sub get_memory_data_bsd {
 	if (($avail || $free_mem) && !$real_mem){
 		my $error = ($message) ? $message: 'total N/A';
 		my $used = (!$free_mem) ? $avail : $real_mem - $free_mem;
-		$memory = "$used/($error) MB";
+		if ($type eq 'string'){
+			$used = sprintf("%.1f",$used/1024);
+			$memory = "$used/($error) MB";
+		}
+		else {
+			$memory = "$error:$used:";
+		}
 	}
 	# use openbsd/dragonfly avail mem data if available
 	elsif (($avail || $free_mem) && $real_mem) {
 		my $used = (!$free_mem) ? $avail : $real_mem - $free_mem;
-		my $percent = ($used && $real_mem) ? sprintf(" (%.1f%%)", ($used/$real_mem)*100) : '';
-		$memory = "$used/$real_mem MB" . $percent;
+		my $percent = ($used && $real_mem) ? sprintf("%.1f", ($used/$real_mem)*100) : '';
+		if ($type eq 'string'){
+			$used = sprintf("%.1f",$used/1024);
+			$real_mem = sprintf("%.1f",$real_mem/1024);
+			$percent = " ($percent)" if $percent;
+			$memory = "$used/$real_mem MB" . $percent;
+		}
+		else {
+			$memory = "$real_mem:$used:$percent";
+		}
 	}
 	eval $end if $b_log;
 	return $memory;
@@ -12564,41 +12628,7 @@ sub get_self_version {
 	eval $end if $b_log;
 	return $self_version . $patch;
 }
-# args: $1 - size in KB, return KB, MB, GB, TB, PB, EB
-sub get_size {
-	my ($size) = @_;
-	my (@data);
-	return ('','') if ! defined $size;
-	if ($size !~ /^[0-9\.]+$/){
-		$data[0] = $size;
-		$data[1] = '';
-	}
-	elsif ($size > 1024**5){
-		$data[0] = sprintf("%.2f",$size/1024**5);
-		$data[1] = 'EB';
-	}
-	elsif ($size > 1024**4){
-		$data[0] = sprintf("%.2f",$size/1024**4);
-		$data[1] = 'PB';
-	}
-	elsif ($size > 1024**3){
-		$data[0] = sprintf("%.2f",$size/1024**3);
-		$data[1] = 'TB';
-	}
-	elsif ($size > 1024**2){
-		$data[0] = sprintf("%.2f",$size/1024**2);
-		$data[1] = 'GB';
-	}
-	elsif ($size > 1024){
-		$data[0] = sprintf("%.1f",$size/1024);
-		$data[1] = 'MB';
-	}
-	else {
-		$data[0] = sprintf("%.0f",$size);
-		$data[1] = 'KB';
-	}
-	return @data;
-}
+
 sub sensors_gpu_search {
 	return 'amdgpu|intel|radeon|nouveau';
 }
@@ -13567,7 +13597,7 @@ sub generate_short_data {
 		$client .= ' ' . $client{'version'};
 	}
 	my ($cpu_string,$speed,$speed_key,$type) = ('','','speed','');
-	my $memory = get_memory_data();
+	my $memory = get_memory_data('string');
  	my @cpu = CpuData::get('short');
  	if (scalar @cpu > 1){
 		$type = ($cpu[2]) ? " (-$cpu[2]-)" : '';
@@ -13730,6 +13760,7 @@ sub generate_info_data {
 	my $running_in = '';
 	my $data_name = $prefix++ . '#Info';
 	my ($b_gcc,%row,$gcc,$index,$ref,$val1);
+	my ($percent,$total,$used) = ('','','');
 	my $client_shell = ($b_irc) ? 'Client' : 'Shell';
 	my $client = $client{'name-print'};
 	my @gccs = get_gcc_data();
@@ -13758,7 +13789,15 @@ sub generate_info_data {
 		# can be tty 0 so test for defined
 		$running_in = $val1 if defined $val1;
 	}
-	my $memory = get_memory_data();
+	my $memory = get_memory_data('splits');
+	if ($memory){
+		my @temp = split /:/, $memory;
+		my @temp2 = get_size($temp[0]);
+		$total = ($temp2[1]) ? $temp2[0] . ' ' . $temp2[1] : $temp2[0];
+		@temp2 = get_size($temp[1]);
+		$used = ($temp2[1]) ? $temp2[0] . ' ' . $temp2[1] : $temp2[0];
+		$used .= " ($temp[2]%)" if $temp[2];
+	}
 	$memory ||= 'N/A';
 	
 	my %data = (
@@ -13766,7 +13805,8 @@ sub generate_info_data {
 		{
 		$num++ . '#Processes' => scalar @ps_aux, 
 		$num++ . '#Uptime' => &get_uptime(),
-		$num++ . '#Memory' => $memory,
+		$num++ . '#Memory' => $total,
+		$num++ . '#used' => $used,
 		},
 	],
 	);
