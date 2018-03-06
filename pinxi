@@ -39,8 +39,8 @@ use Time::HiRes qw(gettimeofday tv_interval);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='2.9.00';
-my $self_date='2018-03-05';
-my $self_patch='348-p';
+my $self_date='2018-03-06';
+my $self_patch='349-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -67,9 +67,9 @@ my @test = (0,0,0,0,0);
 #my $opt_parser = Getopt::Long::Parser->new;
 
 ## Booleans
-my ($b_arm,$b_console_irc,$b_display,$b_dmi,$b_dmidecode_force,$b_gpudata,$b_irc,
-$b_log,$b_log_colors,$b_log_full,$b_mem,$b_pci,$b_root,$b_running_in_display,$b_sysctl,
-$b_usb_check);
+my ($b_arm,$b_console_irc,$b_debug_gz,$b_display,$b_dmi,$b_dmidecode_force,
+$b_gpudata,$b_irc,$b_log,$b_log_colors,$b_log_full,$b_mem,$b_pci,$b_root,
+$b_running_in_display,$b_sysctl,$b_usb_check);
 ## disk checks
 my ($b_partitions,$b_partition_extra,$b_raid);
 my ($b_update,$b_weather) = (1,1);
@@ -1138,7 +1138,8 @@ sub set_debugger {
 		$start = '';
 		if ( $debug >= 20 ){
 			error_handler('not-in-irc', 'debug data generator') if $b_irc;
-			my $option = ( $debug > 21 ) ? 'main-full' : 'main';
+			my $option = ( $debug > 22 ) ? 'main-full' : 'main';
+			$b_debug_gz = 1 if ($debug == 22 || $debug == 24);
 			my $ob_sys = SystemDebugger->new($option);
 			$ob_sys->run_debugger();
 			$ob_sys->upload_file($ftp_alt) if $debug > 20;
@@ -1296,11 +1297,14 @@ sub audio_data {
 	else {
 		$data{'proc-asound-codecs'} = undef;
 	}
+	
 	write_data(\%data,'audio');
 	@files = (
 	'/proc/asound/cards',
 	'/proc/asound/version',
 	);
+	@files2 = main::globber('/proc/asound/*/usbid');
+	@files = (@files,@files2) if @files2;
 	copy_files(\@files,'audio');
 }
 ## NOTE: >/dev/null 2>&1 is sh, and &>/dev/null is bash, fix this
@@ -1859,6 +1863,12 @@ sub upload_file {
 		$ftp->quit;
 		print "Uploaded file successfully!\n";
 		print $ftp->message;
+		if ($b_debug_gz){
+			print "Removing debugger gz file:\n$file_path\n";
+			unlink $file_path or main::error_handler('remove',"$file_path", "$!");
+			print "File removed.\n";
+		}
+		print "Debugger data generation and upload completed. Thank you for your help.\n";
 	}
 	else {
 		main::error_handler('ftp-bad-path', "$file_path");
@@ -3402,7 +3412,7 @@ sub get_options{
 		}},
 	'debug:i' => sub { 
 		my ($opt,$arg) = @_;
-		if ($arg =~ /^[1-3]|[1-2][0-2]$/){
+		if ($arg =~ /^[1-3]|1[0-2]|2[0-4]$/){
 			$debug=$arg;
 		}
 		else {
@@ -3801,7 +3811,9 @@ sub show_options {
 	log data, xrandr, xprop, xdpyinfo, glxinfo etc.; data from dev, disks, 
 	${partition_string}s, etc." ],
 	['2', '21', '', "Upload debugger dataset to $self_name debugger server 
-	automatically." ],
+	automatically, removes debugger data directory, leaves tar.gz debugger file." ],
+	['2', '22', '', "Upload debugger dataset to $self_name debugger server 
+	automatically, removes debugger data directory and debugger tar.gz file." ],
 	['1', '', '--ftp', "Use with --debugger 21 to trigger an alternate FTP server for upload. 
 	Format:^[ftp.xx.xx/yy]. Must include a remote directory to upload to: 
 	Example:^$self_name^--debug^21^--ftp^ftp.myserver.com/incoming" ],
@@ -4217,7 +4229,7 @@ sub clean_characters {
 sub cleaner {
 	my ($item) = @_;
 	return $item if !$item;# handle cases where it was 0 or ''
-	$item =~ s/chipset|components|computing|computer|corporation|communications|electronics|electrical|electric|gmbh|group|incorporation|industrial|international|nee|revision|semiconductor|software|technologies|technology|ltd\.|<ltd>|inc\.|<inc>|intl\.|co\.|<co>|corp\.|<corp>|\(tm\)|\(r\)|®|\(rev ..\)|\'|\"|\sinc\s*$//gi;
+	$item =~ s/chipset|components|computing|computer|corporation|communications|electronics|electrical|electric|gmbh|group|incorporation|industrial|international|nee|revision|semiconductor|software|technologies|technology|ltd\.|<ltd>|inc\.|<inc>|intl\.|co\.|<co>|corp\.|<corp>|\(tm\)|\(r\)|®|\(rev ..\)|\'|\"|\sinc\s*$|\?//gi;
 	$item =~ s/,|\*/ /g;
 	$item =~ s/\s\s+/ /g;
 	$item =~ s/^\s+|\s+$//g;
@@ -4351,6 +4363,7 @@ sub row_defaults {
 	'unmounted-data' => "No unmounted partitions found.",
 	'unmounted-file' => "No /proc/partitions file found.",
 	'usb-data' => "No USB data was found. Server?",
+	'unknown-error' => "ERR:100",
 	'weather-null' => "No $id found. Internet connection working?",
 	);
 	return $unfound{$type};
@@ -4859,7 +4872,7 @@ sub usb_data {
 	if (-d '/proc/asound') {
 		# note: this will double the data, but it's easier this way.
 		# inxi tested for -L in the /proc/asound files, and used only those.
-		my @files = glob('/proc/asound/*/usbid');
+		my @files = main::globber('/proc/asound/*/usbid');
 		foreach (@files){
 			my $id = (main::reader($_))[0];
 			push @ids, $id if ($id && ! grep {/$id/} @ids);
@@ -4871,6 +4884,7 @@ sub usb_data {
 				$b_usb_check = 1;
 			}
 		}
+		main::log_data('dump','@ids',\@ids) if $b_log;
 		return if !@usb;
 		foreach my $id (@ids){
 			$j = scalar @rows;
@@ -4896,6 +4910,7 @@ sub usb_data {
 							}
 						}
 					}
+					$product ||= 'N/A';
 					@data = ({
 					$num++ . "#Card" => $product,
 					$num++ . "#driver" => 'USB Audio',
@@ -8345,7 +8360,7 @@ sub optical_data_linux {
 		if ($show{'optical'} && @info){
 			my $index = 0;
 			foreach my $item (@info){
-				next if /^\s*$/;
+				next if $item =~ /^\s*$/;
 				my @split = split '\s+', $item;
 				if ($item =~ /^drive name:/){
 					foreach my $id (@split){
@@ -8508,7 +8523,7 @@ sub partition_data {
 	@partitions_working = grep {!/^rootfs/} @partitions_working if $roots > 1;
 	foreach (@partitions_working){
 		my @row = split /\s+/, $_;
-		if ($row[0] =~ /^(aufs|cgmfs|devfs|devtmpfs|fdescfs|iso9660|linprocfs|procfs|squashfs|\/sys\/.*|sysfs|tmpfs|type|udev|unionfs)$/ ||
+		if ($row[0] =~ /^(aufs|cggroup|cgmfs|devfs|devtmpfs|fdescfs|iso9660|linprocfs|procfs|squashfs|\/sys\/.*|sysfs|tmpfs|type|udev|unionfs|vartmp)$/ ||
 			$row[0] =~ /^ROOT/i){
 			next;
 		}
@@ -10958,7 +10973,7 @@ sub unmounted_filesystem {
 		$data = (main::grabber("$sudo$file -s /dev/$item 2>/dev/null"))[0];
 		if ($data){
 			foreach (@filesystems){
-				if ($data =~ /$_)[\s,]/i){
+				if ($data =~ /($_)[\s,]/i){
 					$fs = $1;
 					$fs = main::trimmer($fs);
 					last;
@@ -11068,6 +11083,7 @@ sub usb_data {
 				elsif ($row[0] eq '~bInterfaceProtocol'){
 					$protocol = $row[2];
 					$protocol =~ s/none//i if $protocol;
+					last if $class;
 				}
 			}
 			if ( $b_hub ){
@@ -11100,7 +11116,9 @@ sub usb_data {
 				# bInterfaceProtocol:0 but $row[2] undefined
 				#print "pt3:$class:$product\n";
 				# for we want Mass Storage Device instead of Bulk-Only
-				if ($protocol && $class && $class ne $protocol && $protocol ne 'Bulk-Only' ){
+				# we want to filter out certain protocol values that are less 
+				# informative than the class type.
+				if ($protocol && $class && $class ne $protocol && protocol_filter($protocol) ){
 					$class = $protocol;
 				}
 				$class ||= 'N/A';
@@ -11122,6 +11140,13 @@ sub usb_data {
 	#print Data::Dumper::Dumper \@rows;
 	eval $end if $b_log;
 	return @rows;
+}
+sub protocol_filter {
+	eval $start if $b_log;
+	my ($string) = @_;
+	$string =~ s/Bulk-Only|streaming//i if $string;
+	eval $end if $b_log;
+	return $string;
 }
 }
 
@@ -12657,7 +12682,8 @@ sub get_shell_data {
 		$shell =~ s/^.*\///; 
 		my $working = $ENV{'SHELL'};
 		$working =~ s/^.*\///; 
-		if (($shell eq 'sh' || $shell eq 'sudo') && $shell ne $working){
+		# NOTE: su -c "inxi -F" results in shell being su
+		if (($shell eq 'sh' || $shell eq 'sudo' || $shell eq 'su' ) && $shell ne $working){
 			$shell = $working;
 		}
 		#print "shell post: $shell\n";
@@ -12671,7 +12697,12 @@ sub get_shell_data {
 			# guess that it's two and --version
 			else {
 				# we're just guessing at the search phrase and position
-				$client{'version'} = main::program_version($shell,$shell,2,'');
+				if ($shell){
+					$client{'version'} = main::program_version($shell,$shell,2,'');
+				}
+				else {
+					$client{'version'} = row_defaults('unknown-error');
+				}
 			}
 			$client{'version'} =~ s/(\(.*|-release|-version)//;
 		}
@@ -13306,6 +13337,7 @@ sub set_lsusb_data_long {
 				$_ =~ s/^\s\s//;
 				$_ =~ s/^[\s]+/~/g;
 				$_ =~ s/[\s]+$//g;
+				$_ =~ s/None|No Subclass//g;
 				$_ =~ s/\sType/_Type/g;
 				$_ =~ s/^([\S]+)[\s]+(.*)//;
 				$_ = "$1:$2";
@@ -13549,7 +13581,7 @@ sub generate_lines {
 		}
 		if ( $show{'usb'} ){
 			set_usb_data() if !$b_usb_check;
-			%row = line_handler('USB Info','usb');
+			%row = line_handler('USB','usb');
 			assign_data(%row);
 			$b_usb_check = 1;
 		}
