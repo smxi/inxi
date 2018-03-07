@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-03-06';
-my $self_patch='349-p';
+my $self_patch='350-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -4332,6 +4332,7 @@ sub row_defaults {
 	my ($type,$id) = @_;
 	$id ||= '';
 	my %unfound = (
+	'arm-cpu-f' => 'Use -f option to see features',
 	'arm-pci' => "ARM systems do not support PCI data type",
 	'battery-data' => "No battery data found. Is one present?",
 	'battery-data-sys' => "No /sys data found. Old system?",
@@ -5325,7 +5326,7 @@ sub create_output_full {
 		}
 	}
 	$properties{'l2-cache'} ||= 'N/A';
-	$rows[$j]{$num++ . "#L2 cache"} = $properties{'l2-cache'};
+	$rows[$j]{$num++ . "#L2 cache"} = $properties{'l2-cache'} if (!$b_arm || ($b_arm && $properties{'l2-cache'} ne 'N/A'));
 	if ($extra > 0 && !$show{'cpu-flag'}){
 		$j = scalar @rows;
 		@flags = split /\s+/, $cpu{'flags'} if $cpu{'flags'};
@@ -5339,7 +5340,7 @@ sub create_output_full {
 			$flag = join ' ', @flags if @flags;
 		}
 		if ($b_arm && $flag eq 'N/A'){
-			$flag = 'use -f option to see features'
+			$flag = main::row_defaults('arm-cpu-f');
 		}
 		@data = ({
 		$num++ . "#$flag_key" => $flag,
@@ -5477,11 +5478,13 @@ sub data_cpuinfo {
 	my ($file,$type)=  @_;
 	my ($arch,@ids,@line,$b_first,$b_proc_int);
 	# $file = "$ENV{HOME}/bin/scripts/inxi/data/cpu/amd/16-core-32-mt-ryzen.txt";
-	#$file = "$ENV{HOME}/bin/scripts/inxi/data/cpu/arm/arm-4-4-speeds-1.txt";
-	#$file = "$ENV{HOME}/bin/scripts/inxi/data/cpu/intel/core-2-i3.txt";
+	# $file = "$ENV{HOME}/bin/scripts/inxi/data/cpu/arm/arm-4-4-speeds-1.txt";
+	# $file = "$ENV{HOME}/bin/scripts/inxi/data/cpu/intel/core-2-i3.txt";
+	# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/amd/2-core-probook-antix.txt";
+	# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/amd/4-core-jean-antix.txt";
 	#my @cpuinfo = main::reader($file);
 	my %speeds = set_cpu_speeds_sys();
-	# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/amd/2-core-probook-antix.txt";
+	
 	my @cpuinfo = main::reader($file);
 	my ($cache,$die_holder,$die_id,$phys_holder,$phys_id,$proc_count,$speed) = (0,0,0,0,0,0,0);
 	# need to prime for arm cpus, which do not have physical/core ids usually
@@ -5838,6 +5841,7 @@ sub cpu_properties {
 	@processors = @$ref;
 	#print ref $cpu{'processors'}, "\n";
 	my $processors_count = scalar @processors;
+	#print "p count:$processors_count\n";
 	#print Data::Dumper::Dumper \@processors;
 	# $cpu_cores is per physical cpu
 	my ($cpu_layout,$cpu_type,$min_max,$min_max_key,$cache,$core_count,
@@ -5856,11 +5860,26 @@ sub cpu_properties {
 		$cpu{'dies'} = $die_count;
 		foreach my $core_ref (@dies){
 			my @cores = @$core_ref;
-			$core_count += scalar @cores;
+			# NOTE: the counters can be undefined because the index comes from 
+			# core id: which can be 0 skip 1 then 2, which leaves index 1 undefined
+			# arm cpus do not actually show core id so ignore that counter
+			foreach my $id (@cores){
+				$core_count++ if defined $id && !$b_arm;
+			}
 			#print 'cores: ' . $core_count, "\n";
 		}
 	}
-	$cpu_cores = $cpu{'cores'} if $cpu{'cores'}; 
+	# this is an attempt to fix the amd family 15 bug with reported cores vs actual cores
+	# NOTE: amd A6-4400M APU 2 core reports: cores: 1 siblings: 2
+	# NOTE: AMD A10-5800K APU 4 core reports: cores: 2 siblings: 4
+	if ($cpu{'cores'} && ! $core_count || $cpu{'cores'} >= $core_count){
+		$cpu_cores = $cpu{'cores'};
+	}
+	elsif ($core_count > $cpu{'cores'}){
+		$cpu_cores = $core_count;
+	}
+	#print "cpu-c:$cpu_cores\n";
+	#$cpu_cores = $cpu{'cores'}; 
 	# xeon may show wrong core / physical id count, if it does, fix it. A xeon
 	# may show a repeated core id : 0 which gives a fake num_of_cores=1
 	if ($b_xeon && $cpu{'siblings'} > 1){
@@ -5876,8 +5895,7 @@ sub cpu_properties {
 	}
 	# last check, seeing some intel cpus and vms with intel cpus that do not show any
 	# core id data at all, or siblings.
-	# NOTE: amd A6-4400M APU reports cores: 1 when it's dual core, siblings: 2
-	if (( $cpu_cores == 0 || ($cpu_cores == 1 && $cpu{'siblings'} == 2) ) && $processors_count > 0){
+	if ($cpu_cores == 0 && $processors_count > 0){
 		$cpu_cores = $processors_count;
 	}
 	# this happens with BSDs which have very little cpu data available
@@ -7835,7 +7853,8 @@ sub card_data {
 					$rows[$j]{$num++ . "#v"} = $version;
 				}
 				$row[8] ||= 'N/A';
-				$rows[$j]{$num++ . "#port"} = $row[8];
+				# as far as I know, wifi has no port, but in case it does in future, use it
+				$rows[$j]{$num++ . "#port"} = $row[8] if (!$b_wifi || ( $b_wifi && $row[8] ne 'N/A') );
 				$rows[$j]{$num++ . "#bus ID"} = $row[2];
 			}
 			if ($extra > 1){
@@ -7973,8 +7992,8 @@ sub advanced_data_bsd {
 				$rows[$j]{$num++ . "#mac"} = $mac;
 			}
 			if ($show{'ip'}){
-				@row = if_ip($if);
-				@rows = (@rows,@row);
+				@row = if_ip($if) if $if;
+				@rows = (@rows,@row) if @row;
 			}
 		}
 	}
