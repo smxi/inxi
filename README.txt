@@ -17,7 +17,7 @@ release in master branch.
 
 Clone just this branch:
 
-git clone https://github.com/smxi/inxi --branch inxi-Perl --single-branch
+git clone https://github.com/smxi/inxi --branch inxi-perl --single-branch
 
 Install pinxi for testing. Note that the -U option works now so 
 only the initial install is required:
