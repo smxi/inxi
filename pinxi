@@ -40,7 +40,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 my $self_name='pinxi';
 my $self_version='2.9.00';
 my $self_date='2018-03-06';
-my $self_patch='353-p';
+my $self_patch='354-p';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -6297,7 +6297,10 @@ sub speed_cleaner {
 sub cpu_cleaner {
 	my ($cpu) = @_;
 	return if ! $cpu;
-	$cpu =~ s/@|cpu |cpu deca|([0-9]+|single|dual|triple|tri|quad|penta|hepta|hexa|octa|multi)[ -]core|ennea|genuine|multi|processor|single|triple|[0-9\.]+ *[MmGg][Hh][Zz]//ig;
+	my $filters = '@|cpu |cpu deca|([0-9]+|single|dual|two|triple|three|tri|quad|four|';
+	$filters .= 'penta|five|hepta|six|hexa|seven|octa|eight|multi)[ -]core|';
+	$filters .= 'ennea|genuine|multi|processor|single|triple|[0-9\.]+ *[MmGg][Hh][Zz]';
+	$cpu =~ s/$filters//ig;
 	$cpu =~ s/\s\s+/ /g;
 	$cpu =~ s/^\s+|\s+$//g;
 	return $cpu;
@@ -11579,6 +11582,7 @@ sub get {
 		set_info_data();
 	}
 	main::log_data('dump','@desktop', \@desktop) if $b_log;
+	# ($b_xprop,$kde_session_version,$xdg_desktop,@data,@xprop) = undef;
 	return @desktop;
 }
 sub get_kde_data {
@@ -11633,12 +11637,12 @@ sub get_kde_data {
 	elsif ($kde_full_session eq 'true'){
 		@version_data = main::grabber("kded --version 2>/dev/null");
 		$desktop[0] = 'KDE';
-		$desktop[1] = main::awk(\@version_data,'^KDE:',2,'\s+');
+		$desktop[1] = main::awk(\@version_data,'^KDE:',2,'\s+') if @version_data;
 		if (!$desktop[1]){
 			$desktop[1] = '3.5';
 		}
 		if ($extra > 0){
-			$desktop[3] = main::awk(\@version_data,'^Qt:',2,'\s+');
+			$desktop[3] = main::awk(\@version_data,'^Qt:',2,'\s+') if @version_data;
 		}
 	}
 	eval $end if $b_log;
@@ -12881,11 +12885,12 @@ sub set_dmi_data {
 
 sub set_dmidecode_data {
 	eval $start if $b_log;
-	my (@data,@working,$type,$handle);
+	my ($content,@data,@working,$type,$handle);
 	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmidecode/pci-freebsd-8.2-2";
 	#open my $fh, '<', $file or die "can't open $file: $!";
 	#chomp(@data = <$fh>);
-	my $content = qx(dmidecode 2>/dev/null);
+	my $path = check_program('dmidecode'); 
+	$content = qx($path 2>/dev/null) if $path;
 	@data = split /\n/, $content;
 	# we don't need the opener lines of dmidecode output
 	# but we do want to preserve the indentation. Empty lines
@@ -12953,7 +12958,7 @@ sub set_ip_data {
 sub set_ip_addr {
 	eval $start if $b_log;
 	my $program = check_program('ip');
-	my @data = grabber("$program addr 2>/dev/null",'\n','strip');
+	my @data = grabber("$program addr 2>/dev/null",'\n','strip') if $program;
 	#my @data = reader("$ENV{'HOME'}/bin/scripts/inxi/data/if/scope-ipaddr-1.txt",'strip') or die $!;
 	my ($b_skip,$broadcast,$if,$ip,@ips,$scope,$if_id,$type,@temp,@temp2);
 	foreach (@data){
@@ -13005,7 +13010,7 @@ sub set_ip_addr {
 sub set_ifconfig {
 	eval $start if $b_log;
 	my $program = check_program('ifconfig'); # not in user path, sbin
-	my @data = grabber("$program 2>/dev/null",'\n','');
+	my @data = grabber("$program 2>/dev/null",'\n','') if $program;
 	#my @data = reader("$ENV{'HOME'}/bin/scripts/inxi/data/if/vps-ifconfig-1.txt",'') or die $!;
 	my ($b_skip,$broadcast,$if,@ips_bsd,$ip,@ips,$scope,$if_id,$type,@temp,@temp2);
 	my ($state,$speed,$duplex,$mac);
@@ -13126,12 +13131,14 @@ sub set_pci_data {
 # 11 driver_nu [bsd, like: em0 - driver em; nu 0. Used to match IF in -n
 sub set_lspci_data {
 	eval $start if $b_log;
-	my ($busid,$busid_nu,$port,$driver,$modules,$device,$vendor_id,$chip_id,$rev,
-	$type,$type_id,@temp);
+	my ($busid,$busid_nu,$content,$port,$driver,$modules,$device,$vendor_id,$chip_id,$rev,
+	$type,$type_id,@pcis,@temp);
 	# my @pcis = grabber('lspci -nnv','\n','strip');
-	my @pcis = split /\n/, qx(lspci -nnv);
+	my $path = check_program('lspci');
+	$content = qx($path -nnv) if $path;
+	@pcis = split /\n/, $content if $content;
 	#print scalar @pcis;
-	@pcis = map {$_ =~ s/^\s+//; $_} @pcis;
+	@pcis = map {$_ =~ s/^\s+//; $_} @pcis if @pcis;
 	foreach (@pcis){
 		#print "$_\n";
 		if ($device){
@@ -13190,13 +13197,14 @@ sub set_lspci_data {
 #     subclass   = ethernet
 sub set_pciconf_data {
 	eval $start if $b_log;
-	my ($busid,$busid_nu,$port,$driver,$driver_nu,$modules,$device,$vendor,$vendor_id,$chip_id,$rev,
-	$type,$type_id,@data,@temp,@working);
+	my ($busid,$busid_nu,$content,$port,$driver,$driver_nu,$modules,$device,$vendor,
+	$vendor_id,$chip_id,$rev,$type,$type_id,@data,@temp,@working);
 # 	my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/pciconf/pci-freebsd-8.2-2";
 # 	open my $fh, '<', $file or die "can't open $file: $!";
 # 	chomp(@data = <$fh>);
-	my $content = qx(pciconf -lv 2>/dev/null);
-	@data = split /\n/, $content;
+	my $path = check_program('lspci');
+	$content = qx($path -lv 2>/dev/null) if $path;
+	@data = split /\n/, $content if $content;
 	foreach (@data){
 		if ($_ =~ /^[^@]+\@pci/){
 			push @working, '';
