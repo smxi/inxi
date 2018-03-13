@@ -1,10 +1,10 @@
 README for inxi - a command line system information tool
 
-NOTE: there is a feature freeze on inxi 2.3.xx development, except 
-for bug fixes. All current development is on the 2.9.00-xxx-p branch
-which is in alpha or beta states depending on the module being
-worked on. Once I view 2.9.00-xxx-p as feature complete or better 
-vs inxi 2.3.xx, it will become the current master branch of inxi.
+NOTE: there is a feature freeze on inxi 2.3.xx development. All 
+current development is on the 2.9.00-xxx-p branch, which is nearing
+final release state (as of patch -0406-p). Once I view 2.9.00-xxx-p 
+as feature complete or better vs inxi 2.3.xx, it will become the 
+current master branch of inxi.
 
 =====================================================================
 If you do not want to get the full master with gz history data, which
@@ -29,9 +29,7 @@ The one page wiki on github is only a pointer to the real resources.
 
 HTML MAN PAGE: http://smxi.org/docs/inxi-man.htm 
 INXI OPTIONS: http://smxi.org/docs/inxi-options.htm 
-NOTE: both options and man html versions may and probably will lag behind
-current inxi because doing documentation is boring, and the man to html
-converter I tried is really bad, so it's hard to update the man page html.
+NOTE: These may not always be up to date.
 
 ISSUES: https://github.com/smxi/inxi/issues
 No issues accepted for non current inxi releases. See below for more on that.
@@ -44,22 +42,16 @@ DEVELOPER FORUMS: http://techpatterns.com/forums/forum-32.html
 
 SOURCE VERSION CONTROL: https://github.com/smxi/inxi
 MAIN BRANCH: master
-DEVELOPMENT BRANCHES: inxi-perl, one, two, three, android, bsd
+DEVELOPMENT BRANCHES: inxi-perl, one, two, three, android.
 Dev branches are rarely used, but that's where the really hard new features etc
 are debugged and worked out. inxi itself has the built in feature to be able
 to update itself from anywhere, including these branches, which is very useful
 for development and debugging on many user systems.
 
-PULL REQUESTS: inxi is VERY complicated and VERY hard to work on, so unless
-you have already talked to me about contributing, and, more important, shown 
-that you can actually work with this type of logic, please do not spend time 
-trying to work on inxi, unless it's a trivial patch, to the current branch, 
-current version. Please: NEVER even think about looking at or using previous 
+PULL REQUESTS: Please talk to me before starting to work on any patch, unless
+it's a trivial bug fix. Please: NEVER even think about looking at or using previous 
 inxi commits, previous to the current one, as a base for a patch. If you do, 
-your patch / pull request will be rejected immediately, without any discussion.
-
-Note further: no core changes will be accepted until inxi 3.0.0 goes live, 
-since that's just more stuff I have to port over.
+your patch / pull request will be rejected.
 
 inxi has one and only one release, and that is the current one (plus dev releases,
 of course, but those should never be packaged). All previous releases are 
@@ -97,64 +89,49 @@ widely for forum and IRC support, which is I believe it's most common function.
 If you are piping output to paste or post, then make sure to turn off the
 script colors with the -c 0 flag. Script colors in shell are characters.
 
-With some pain, inxi has gotten to the point where some of its hardware
-tools are actually better, more accurate, and astoundingly, faster, than their 
-C version equivalents, but that's not because inxi is great, it's because 
-those other tools just aren't well done in my opinion. inxi should ALWAYS
-show you your current system state, as far as possible, and should be more
-reliable than your own beliefs about what is in your system, ideally. In 
-other words, the goal in inxi is to have it be right more than it is wrong
-about any system that it runs on. And NEVER to rely on non current system
+inxi should always show you your current system state, as far as possible, 
+and should be more reliable than your own beliefs about what is in your system, 
+ideally. In other words, the goal in inxi is to have it be right more than it 
+is wrong about any system that it runs on. And not to rely on non current system
 state data if at all possible. Some things, like memory/ram data, rely on
 radically unreliable system self reporting based on OEM filling out data
 correctly, which doesn't often happen, so in those cases, you want to 
 confirm things like ram capacity with a reputable hardware source, like
 crucial.com, which has the best ram hardware tool I know of.
 
-Tthe absolute core mission of inxi is to always work on all systems all the 
-time. Well, all linux systems with the core tools inxi requires to operate
+The core mission of inxi is to always work on all systems all the time. 
+Well, all linux systems with the core tools inxi requires to operate
 installed. Ie, not android, yet. What this means is this: you can have a 10 
 year old box, or probably 15, not sure, and you can install today's inxi on 
 it, and it will run. It won't run fast, but it will run. I test inxi on a 
 200 MHz  laptop from about 1998 to keep it honest. That's also what was 
 used to optimize the code at some points, since differences appear as seconds,
-not 10ths of seconds.
+not 10ths or 100ths of seconds.
 
-Once inxi has moved to Perl 5.x, from Bash / Gawk, the commitment to always
-work on all hardware no matter how old the OS, with reason, is not changed.
 inxi is being written, and tested, on Perl as old as 5.08, and will work on
-any system that runs Perl 5.08 or later. Pre 3.0.0 inxi will also run on 
-any system no matter how old, within reason, so there should be no difference.
+any system that runs Perl 5.08 or later. Pre 3.0.0 Gawk/Bash inxi will also run 
+on any system no matter how old, within reason, so there should be no difference.
 
 =====================================================================
 BSD SUPPORT
 
-BSD support was, with great pain, added, though it's partial and incomplete.
-BSDs are simply too hard to work with because of their extreme fragmentation, 
-ie, they don't even share one tool you take for granted on GNU/Linux, like
-lspci. Nor do they share common methods of reporting system hardware data.
-Nor does a single BSD, even within itself, like FreeBSD, even maintain standard
-methods across releases. So the BSD support in inxi is basically what it is, 
-if more is wanted, then BSD people have to step up and do the work, always'
-keeping in mind that all patches to inxi must not break existing functionality
-for existing supported platforms, be they BSD or GNU/Linux.
+BSD support is not as complete as GNU/Linux support due to the fact some of
+the data simply is not available, or is structured in a way that makes it 
+unique to each BSD. This fragmentation makes supporting BSDs far more difficult
+than it should be in the 21st century. The BSD support in inxi is an ongoing
+process, with more features being added as new data sources and types are 
+discovered.
 
-I like real BSDs, like OpenBSD, NetBSD, FreeBSD, etc, and prefer that the tools
-in inxi that can be made to work on BSDs, do work, but their refusal to even 
-use the same tools or locations or syntaxes for system info simply makes it 
-too hard for me to do that work. I will always accept patches that are well 
-done however from competent people, if they do not break GNU/Linux, and extend
-BSD support. Keep in mind, all patches must be based on tool/file tests, not 
-BSD version tests. inxi sets initial internal flags to identify that it is a 
-BSD system vs a GNU/Linux system, after that it tests for specific 
-applications and resources.
+I will always accept patches that are well done, if they do not break GNU/Linux, 
+and extend BSD support, or add new BSD features. inxi sets initial internal 
+flags to identify that it is a BSD system vs a GNU/Linux system, after that 
+it tests for specific applications and resources.
 
 inxi will also start on Darwin, OSX's mutated version of a BSD, but my 
-conclusion about darwin is that it is Unix in name only, and I will not spend 
+conclusion about Darwin is that it is Unix in name only, and I will not spend 
 a second of my time adding any further support for that crippled broken 
-corporate pseudo-unix system. Don't ask.
-
-If you want to run unix, then OSX is not unix, in my opinion.
+corporate pseudo-unix system. Don't ask, unless you are willing to pay my
+normal professional wages to get that support made.
 
 =====================================================================
 INXI FEATURES AND FUNCTIONALITY
