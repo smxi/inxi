@@ -1,20 +1,32 @@
 README for inxi - a command line system information tool
 
-NOTE: there is a feature freeze on inxi 2.3.xx development. All 
-current development is on the 2.9.00-xxx-p branch, which is nearing
-final release state (as of patch -0406-p). Once I view 2.9.00-xxx-p 
-as feature complete or better vs inxi 2.3.xx, it will become the 
-current master branch of inxi.
+NOTE: Maintainer alert: Perl inxi 2.9.01 is looking good for maybe early 
+week of 2018-03-19 release. I'm putting the last issue requests on 
+the last forums, so assuming no real further bugs found, expect Perl
+inxi 2.9.01 to hit around Monday or Tuesday. If bugs found, of course,
+those will be fixed before release.
 
 =====================================================================
-If you do not want to get the full master with gz history data, which
-gets bigger every year, you can clone inxi current using the: 
+BASIC GIT BRANCH:
+If you do not want to get the full master branch with gz history data, 
+which gets bigger every year, you can clone inxi current using the: 
 master-plain branch. 
 
 git clone https://github.com/smxi/inxi --branch master-plain --single-branch
 
 The master-plain branch does not have inxi.1.gz or inxi.tar.gz, and 
 so does not suffer from the size inflation that master has. 
+=====================================================================
+LEGACY BRANCH:
+If you'd like to look at or check out the Gawk/Bash version of inxi, 
+you can find it here, at the inxi-legacy branch:
+
+git clone https://github.com/smxi/inxi --branch inxi-legacy --single-branch
+
+This version will not be maintained, and it's unlikely that I will 
+spend any time on it in the future, but it is there in case it's of
+use or interest to anyone.
+
 =====================================================================
 SUPPORT INFO:
 
