@@ -1,22 +1,7 @@
 README for inxi - a command line system information tool
 
-NOTE: Maintainer alert: Perl inxi 2.9.01 will be released 2018-03-20
-barring unexpected huge bugs. All future issues will be handled via
-github as normal inxi issues. I spent 2 weeks fielding issue reports,
-on forums, and got great feedback from 'some', indeed, many distros. 
-Other distros failed to give any feedback, so your issues will take 
-last place in any issue queue because I gave you every opportuntity 
-to do this release right. 
-
-I didn't try all the distros because my time is finite, so if you 
-find glitches in your particular distro, most likely to appear in 
-Repos if I didn't directly test your most current syntax, post 
-issues on github master branch of inxi with whatever debugger data 
-that is requested. Failure to provide debugger data except in very 
-obvious cases will result in putting the issue on hold until it's 
-provided, and closeed if not. No data means wasting my time, to be
-clear, since you're asking me to try to get bits of information
-over days rather than minutes.
+The new Perl inxi is now here! File all issue reports with the master
+branch.
 
 =====================================================================
 BASIC GIT BRANCH:
