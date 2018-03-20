@@ -79,9 +79,6 @@ this, and never will be.
 Man page updates, doc page updates, etc, of course, are easy and will probably
 be accepted, as long as they are done according to the requirements. 
 
-Read below re asking about tagging this rolling software release, short version:
-don't ask.
-
 inxi releases early, and releases often, when under development. 
 
 =====================================================================
@@ -219,60 +216,6 @@ us you run real systems and networks, and your issue shoots to the top of
 the line. As do any real bugs. Failure to supply requested debugger data 
 will lead to a distinct lack of interest on our part to help you with a 
 bug. ie, saying, oh, x doesn't work, doesn't cut it, unless it's obvious why. 
-
-=====================================================================
-TAGS - DO NOT ASK FOR INXI TO BE TAGGED!!
-
-In particular, no issue reports will be accepted relating to tagging inxi 
-releases. Why? Because tagging is a bad idea, that leads to insecure code 
-and packaging practices, and should not be recommended or used by package 
-maintainers. A packager should ALWAYS point to the actual commit they got 
-their code from, not a tag attached to that commit. For what should be 
-obvious reason, you can move tags, delete them, and point to bad code, 
-then good code, all without giving any indication at all that the tag or 
-its destination have been changed. In other words, relying on tagging to 
-identify code releases is identical to relying on fairy tales for security. 
-Point to the release commit ID, if you do, you will be pointing to the 
-code you downloaded for your package, if you do not, you won't be.
-
-Github makes that very easy: 
-https://github.com/smxi/inxi/tarball/[first 7 characters of commit id]
-EXAMPLE: https://github.com/smxi/inxi/tarball/1d37e0d
-(click it, you'll see the tarball download)
-
-This is a real link, to a real tarball, of a real commit. It's not a fiction,
-a fantasy, a misleading and potentially serious security hole, like a tag.
-
-It's also easier to grab that than the somewhat cludgy git method to grab
-a specific git commit id. Apparently with git 2.5, that cludgy method will
-be replaced by a more basic thing, that corresponds to the svn way to grab
-a commit, by commit number, cleanly.
-
-Further, tagging a rolling release code base is absurd, since every packager
-is going to grab the current release of the codebase, unless they are very
-confused or misguided (and the best way for me to encourage this type of
-confusion and misguided action is by tagging any one release, thus suggesting
-it is a static release). Thus I would have to tag every single commit since 
-I could never know when say, the Arch Linux maintainer is going to grab his
-code, or any other distribution maintainer. Further, I would have to go back
-and tag every past commit as well, since each and every one was at the time, 
-the current release of inxi. That's without exception, no commit ever done 
-in the trunk/master branch of inxi has ever not been the current release, by 
-definition.
-
-I shouldn't need to waste time noting something that should be obvious to 
-anyone with even a faint clue about code, or secure practices in terms of 
-having a real pointer to the code you grabbed, in other words not a tag! 
-But I will note it here to avoid being asked again about tagging. A tag 
-is a post-it sticky note, and should never be considered as a valid pointer, 
-just a convenience in some projects that works for some types of programming 
-practices, certainly not mine.
-
-All issue reports opened about tagging will be closed immediately (see issues
-70/74 if you must, you won't get any different answer by repeating the same bad 
-logic again) without comment. File a distro bug report in your distro of choice
-if they insist on asking for this bad idea, that's the right place to handle
-the problem.
 
 =====================================================================
 
