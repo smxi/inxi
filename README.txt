@@ -4,15 +4,13 @@ The new Perl inxi is now here! File all issue reports with the master
 branch.
 
 =====================================================================
-BASIC GIT BRANCH:
-If you do not want to get the full master branch with gz history data, 
-which gets bigger every year, you can clone inxi current using the: 
-master-plain branch. 
+MASTER GIT BRANCH:
 
-git clone https://github.com/smxi/inxi --branch master-plain --single-branch
+git clone https://github.com/smxi/inxi --branch master --single-branch
 
-The master-plain branch does not have inxi.1.gz or inxi.tar.gz, and 
-so does not suffer from the size inflation that master has. 
+NOTE: I have deleted the master-plain branch  to avoid confusion 
+since I've removed the legacy .gz files from the branch, which were 
+only reasons for its existence.
 
 =====================================================================
 DEVELOPMENT BRANCH:
