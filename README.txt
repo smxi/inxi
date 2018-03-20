@@ -13,6 +13,17 @@ git clone https://github.com/smxi/inxi --branch master-plain --single-branch
 
 The master-plain branch does not have inxi.1.gz or inxi.tar.gz, and 
 so does not suffer from the size inflation that master has. 
+
+=====================================================================
+DEVELOPMENT BRANCH:
+All active development is now done on the inxi-perl branch:
+
+git clone https://github.com/smxi/inxi --branch inxi-perl --single-branch
+
+Once new features have been debugged and are stable, they will move 
+to the master branch, which then is mirrored to the master-plain 
+branch.
+
 =====================================================================
 LEGACY BRANCH:
 If you'd like to look at or check out the Gawk/Bash version of inxi, 
