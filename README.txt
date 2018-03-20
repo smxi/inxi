@@ -1,10 +1,22 @@
 README for inxi - a command line system information tool
 
-NOTE: Maintainer alert: Perl inxi 2.9.01 is looking good for maybe early 
-week of 2018-03-19 release. I'm putting the last issue requests on 
-the last forums, so assuming no real further bugs found, expect Perl
-inxi 2.9.01 to hit around Monday or Tuesday. If bugs found, of course,
-those will be fixed before release.
+NOTE: Maintainer alert: Perl inxi 2.9.01 will be released 2018-03-20
+barring unexpected huge bugs. All future issues will be handled via
+github as normal inxi issues. I spent 2 weeks fielding issue reports,
+on forums, and got great feedback from 'some', indeed, many distros. 
+Other distros failed to give any feedback, so your issues will take 
+last place in any issue queue because I gave you every opportuntity 
+to do this release right. 
+
+I didn't try all the distros because my time is finite, so if you 
+find glitches in your particular distro, most likely to appear in 
+Repos if I didn't directly test your most current syntax, post 
+issues on github master branch of inxi with whatever debugger data 
+that is requested. Failure to provide debugger data except in very 
+obvious cases will result in putting the issue on hold until it's 
+provided, and closeed if not. No data means wasting my time, to be
+clear, since you're asking me to try to get bits of information
+over days rather than minutes.
 
 =====================================================================
 BASIC GIT BRANCH:
@@ -133,6 +145,20 @@ unique to each BSD. This fragmentation makes supporting BSDs far more difficult
 than it should be in the 21st century. The BSD support in inxi is an ongoing
 process, with more features being added as new data sources and types are 
 discovered.
+
+All BSD issue reports unless trivial and obvious will require 1 of two things:
+
+1. a full --debug 21 data dump so I don't have to spend days trying to get the 
+information I need to resolve the issue from the issue poster.
+
+2. direct ssh access to at least a comparable live BSD version, that is, if
+the issue is on a laptop, access has to be granted to the laptop, or a similar 
+one. 
+
+I decided I have to adopt this much more strict policy with BSDs after wasting 
+untold hours on trying to get good BSD support, and in the end, I realized, the 
+only BSDs that are well supported are ones that I have had direct access to for 
+bebugging and testing. 
 
 I will always accept patches that are well done, if they do not break GNU/Linux, 
 and extend BSD support, or add new BSD features. inxi sets initial internal 
