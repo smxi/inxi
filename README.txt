@@ -6,11 +6,23 @@ branch.
 =====================================================================
 MASTER GIT BRANCH:
 
+This is the only valid branch, and the current latest release is
+the only supported release.
+
 git clone https://github.com/smxi/inxi --branch master --single-branch
 
 NOTE: I have deleted the master-plain branch  to avoid confusion 
 since I've removed the legacy .gz files from the branch, which were 
 only reasons for its existence.
+
+Every commit is auto-tagged. There ar NO releases, don't even dream 
+of pretending a tagged release holds any significance at all. I only 
+added auto tagging to get the maintainers to stop annoying me about
+tagging. There is NO repeat NO meaning to the fat a commiit is tagged.
+
+Every commit is the active release, all past commits are not 
+supported. Tagging has ZERO meaning, it's purely a formality that 
+certain distros can't figure out how to do without, that's all.
 
 =====================================================================
 DEVELOPMENT BRANCH:
