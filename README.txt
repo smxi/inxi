@@ -18,9 +18,9 @@ only reasons for its existence.
 Every commit is auto-tagged. There ar NO releases, don't even dream 
 of pretending a tagged release holds any significance at all. I only 
 added auto tagging to get the maintainers to stop annoying me about
-tagging. There is NO repeat NO meaning to the fat a commiit is tagged.
+tagging. There is NO repeat NO meaning to the fact a commit is tagged.
 
-Every commit is the active release, all past commits are not 
+Every current commit is the active release, all past commits are not 
 supported. Tagging has ZERO meaning, it's purely a formality that 
 certain distros can't figure out how to do without, that's all.
 
