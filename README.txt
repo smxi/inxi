@@ -31,8 +31,7 @@ All active development is now done on the inxi-perl branch:
 git clone https://github.com/smxi/inxi --branch inxi-perl --single-branch
 
 Once new features have been debugged and are stable, they will move 
-to the master branch, which then is mirrored to the master-plain 
-branch.
+to the master branch.
 
 =====================================================================
 LEGACY BRANCH:
@@ -209,13 +208,6 @@ than current inxi, it's just old, and lacking in bug fixes and features.
 inxi is a rolling release codebase, just like Debian Sid, Gentoo, or Arch 
 Linux are rolling release GNU/Linux distributions, with no 'release points'.
 
-Why this is apparently so difficult for some people to grasp is beyond me,
-particularly with Debian, that has Sid, a rolling release, un-versioned, no
-fixed release point, package pool. All my code is rolling release, some of
-it just happens to roll more slowly than others. inxi moves slowly some months,
-very rapidly others. When it's moving rapidly, it's often wise to wait for it
-to slow down, but you don't have to.
-
 Your distro not updating inxi ever, then failing to show something that is
 fixed in current inxi is not a bug, and please do not post it here. File 
 the issue with your distro, not here. Updating inxi in a package pool will 
@@ -271,6 +263,13 @@ had 2.2.11, you can know with some certainty that inxi has no major new
 features, just fine tunings and bug fixes. And if you see one with 2.3.2, you 
 will know that there is a new feature, almost, but not always, linked to one 
 or more new line output items. Sometimes a fine tuning can be quite 
-significant, sometimes it's a one line code fix.
+significant, sometimes it's a one line code fix. 
+
+A move to a new full version number, like the rewrite of inxi to Perl, would 
+reflect in first version say, 2.9.01, then after a period of testing, where 
+most little glitches are fixed, a move to 3.0.0. These almost never happen. 
+I do not expect for example version 4.0 to ever happen after the 3.0 release 
+of early 2018, unless so many new features are added that it actually hits 3.9, 
+then it would roll over to 4.
 
 ### EOF ###
