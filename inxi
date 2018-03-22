@@ -36,8 +36,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='2.9.02';
-my $self_date='2018-03-20';
+my $self_version='2.9.03';
+my $self_date='2018-03-21';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -71,7 +71,7 @@ my ( %alerts, %client, %colors, %dl, %files, %rows, %system_files, %use );
 my (@app,@dmesg_boot,@dmi,@gpudata,@ifs,@ifs_bsd,@pci,@ps_aux,@ps_cmd,
 @sysctl,@sysctl_battery,@sysctl_sensors,@sysctl_machine,@usb);
 ## Disk arrays 
-my (@dm_boot_disk,@dm_boot_optical,@glabel,@gpart,@labels,@partitions,
+my (@dm_boot_disk,@dm_boot_optical,@glabel,@gpart,@labels,@lsblk,@partitions,
 @raid,@sysctl_disks,@uuids);
 my @test = (0,0,0,0,0);
 
@@ -82,8 +82,8 @@ my ($b_arm,$b_console_irc,$b_debug_gz,$b_display,$b_dmesg_boot_check,$b_dmi,
 $b_dmidecode_force,$b_gpudata,$b_irc,$b_log,$b_log_colors,$b_log_full,$b_man,
 $b_mem,$b_pci,$b_root,$b_running_in_display,$b_sysctl,$b_usb_check);
 ## Disk checks
-my ($b_dm_boot_disk,$b_dm_boot_optical,$b_glabel,$b_partitions,$b_partition_extra,
-$b_raid);
+my ($b_dm_boot_disk,$b_dm_boot_optical,$b_glabel,$b_lsblk,$b_partitions,
+$b_partition_extra,$b_raid);
 my ($b_sysctl_disk,$b_update,$b_weather) = (1,1,1);
 
 ## System
@@ -687,6 +687,10 @@ sub set_colors {
 			}
 		}
 	}
+	# force 0 for | or > output, all others prints to irc or screen
+	if (!$b_irc && ! -t STDOUT){
+		$color_scheme = 0;
+	}
 	set_color_scheme($color_scheme);
 	eval $end if $b_log;
 }
@@ -738,8 +742,8 @@ sub get_configs {
 # args: 0: key; 1: value
 sub get_config_item {
 	my ($key,$val) = @_;
-	if ($key eq 'B_ALLOW_UPDATE') {$b_update = int($val)}
-	elsif ($key eq 'B_ALLOW_WEATHER') {$b_weather = int($val)}
+	if ($key eq 'ALLOW_UPDATE' || $key eq 'B_ALLOW_UPDATE') {$b_update = int($val)}
+	elsif ($key eq 'ALLOW_WEATHER' || $key eq 'B_ALLOW_WEATHER') {$b_weather = int($val)}
 	elsif ($key eq 'CPU_SLEEP') {$cpu_sleep = $val if $val =~ /^[0-9\.]$/}
 	elsif ($key eq 'DL_TIMEOUT') {$dl_timeout = int($val)}
 	elsif ($key eq 'DOWNLOADER') {
@@ -999,10 +1003,10 @@ sub set_config_color_scheme {
 	open( $w_fh, '>', $user_config_file ) or error_handler('open', $user_config_file, $!);
 	foreach ( @file_lines ) { 
 		if ( $_ =~ /^$configs{'variable'}/ ){
-			$_ = "$configs{'variable'}=$value\n";
+			$_ = "$configs{'variable'}=$value";
 			$b_found = 1;
 		}
-		print $w_fh "$_";
+		print $w_fh "$_\n";
 	}
 	if (! $b_found ){
 		print $w_fh "$configs{'variable'}=$value\n";
@@ -1367,6 +1371,14 @@ sub disk_data {
 	['df', '-k -T'],
 	['df', '-k -T -P'],
 	['df', '-P'],
+	['lsblk', '-fs'],
+	['lsblk', '-rfs'],
+	['lsblk', '-a'],
+	['lsblk', '-ra'],
+	['lsblk', '-r --output TYPE,NAME,RM,FSTYPE'],
+	['lsblk', '-r --output TYPE,NAME,RM,FSTYPE,SIZE'],
+	['lsblk', '-br --output TYPE,NAME,RM,FSTYPE,SIZE'],
+	['lsblk', '-Pb --output TYPE,NAME,RM,FSTYPE,SIZE'],
 	['gpart', 'list'],
 	['gpart', 'show'],
 	['gpart', 'status'],
@@ -2252,7 +2264,7 @@ sub check_items {
 			$info_os = 'info-bsd';
 		}
 		else {
-			@data = qw(dig dmidecode file hddtemp ifconfig ip lsusb modinfo 
+			@data = qw(dig dmidecode file hddtemp ifconfig ip lsblk lsusb modinfo 
 			runlevel sensors strings sudo tree uptime);
 		}
 		$b_program = 1;
@@ -2478,7 +2490,7 @@ sub item_data {
 	'rpm' => '',
 	}),
 	'file' => ({
-	'info' => '-o unmounted file system',
+	'info' => '-o unmounted file system (if no lsblk)',
 	'info-bsd' => '-o unmounted file system',
 	'apt' => 'file',
 	'pacman' => 'file',
@@ -2532,6 +2544,13 @@ sub item_data {
 	'apt' => 'iproute',
 	'pacman' => 'iproute2',
 	'rpm' => 'iproute',
+	}),
+	'lsblk' => ({
+	'info' => '-o unmounted file system (best option)',
+	'info-bsd' => '-o unmounted file system',
+	'apt' => 'util-linux',
+	'pacman' => 'util-linux',
+	'rpm' => 'util-linux-ng',
 	}),
 	'lsusb' => ({
 	'info' => '-A usb audio; -N usb networking; --usb',
@@ -3860,8 +3879,8 @@ sub show_options {
 	speed, mac id, state, etc." ],
 	['1', '-N', '--network', "Network card information. With -x, shows PCI BusID, Port number." ],
 	['1', '-o', '--unmounted', "Unmounted $partition_string information (includes UUID and 
-	LABEL if available). Shows file system type if you have file installed, 
-	if you are root OR if you have added to /etc/sudoers (sudo v. 1.7 or 
+	LABEL if available). Shows file system type if you have lsblk installed (GNU/Linux), or for 
+	BSD/Linux: if 'file' installed, if you are root OR if you have added to /etc/sudoers (sudo v. 1.7 or 
 	newer) Example:^<username>^ALL^=^NOPASSWD:^/usr/bin/file^" ],
 	['1', '-p', '--partitions-full', "Full $partition_string information (-P plus all other 
 	detected ${partition_string}s)." ],
@@ -4167,18 +4186,17 @@ sub get_client_name {
 		if (! check_modern_konvi() ){
 			$ppid = getppid();
 			$client_name = (main::grabber("ps -p $ppid"))[1];
-			
-			my @data = split /\s+/, $client_name;
-			if ($bsd_type){
-				$client_name = lc($data[5]);
-			}
-			# gnu/linux uses last value
-			else {
-				$client_name = lc($data[scalar @data - 1]);
-			}
-			$client_name =~ s/.*\|-(|)//;
-			$client_name =~ s/[0-9\.]+$//; # clean things like python2.7
 			if ($client_name){
+				my @data = split /\s+/, $client_name if $client_name;
+				if ($bsd_type){
+					$client_name = lc($data[5]);
+				}
+				# gnu/linux uses last value
+				else {
+					$client_name = lc($data[scalar @data - 1]);
+				}
+				$client_name =~ s/.*\|-(|)//;
+				$client_name =~ s/[0-9\.]+$//; # clean things like python2.7
 				$client{'name'} = $client_name;
 				$client{'native'} = 1;
 				get_client_version();
@@ -7683,6 +7701,9 @@ sub display_server(){
 			if ($drivers[1]){
 				$row[0]{$num++ . "#unloaded"} = $drivers[1];
 			}
+			if ($graphics{'compositor'}){
+				$row[0]{$num++ . "#compositor"} = $graphics{'compositor'};
+			}
 		}
 		if ($resolution){
 			$row[0]{$num++ . "#resolution"} = $resolution;
@@ -9431,7 +9452,7 @@ sub create_output {
 	eval $start if $b_log;
 	my $num = 0;
 	my $j = 0;
-	my (@data,@data2,@rows,$dev,$dev_type);
+	my (@data,@data2,%part,@rows,$dev,$dev_type,$fs);
 	foreach my $ref (@partitions){
 		my %row = %$ref;
 		next if $row{'type'} eq 'secondary' && $show{'partition'};
@@ -9440,7 +9461,7 @@ sub create_output {
 		@data2 = main::get_size($row{'used'}) if (defined $row{'used'});
 		my $used = (@data2) ? $data2[0] . ' ' . $data2[1]: 'N/A';
 		my $percent = (defined $row{'percent-used'}) ? ' (' . $row{'percent-used'} . '%)' : '';
-		my $fs = (defined $row{'fs'})? $row{'fs'}: 'N/A';
+		%part = ();
 		if (defined $row{'dev-base'}){
 			if ($row{'dev-base'} =~ /^non-dev-/){
 				$row{'dev-base'} =~ s/^non-dev-//;
@@ -9463,6 +9484,16 @@ sub create_output {
 		}
 		else {
 			$dev_type = 'dev';
+		}
+		%part = check_lsblk($row{'dev-base'},0) if (@lsblk && $row{'dev-base'} && $dev_type eq 'dev');
+		if (%part){
+			$fs = $part{'fs'};
+		}
+		elsif (defined $row{'fs'}){
+			$fs = $row{'fs'};
+		}
+		else {
+			$fs = 'N/A';
 		}
 		$dev ||= 'N/A';
 		$j = scalar @rows;
@@ -9491,6 +9522,7 @@ sub partition_data {
 	my ($b_fs,$b_load,$cols,$roots) = (1,0,6,0);
 	my ($dev_base,$fs,$id,$label,$percent_used,$size,$type,$uuid,$used);
 	$b_partitions = 1;
+	set_lsblk() if !$bsd_type && !$b_lsblk;
 	# set labels, uuid, gpart
 	main::get_partition_extra_data() if !$b_partition_extra;
 	# most current OS support -T and -k, but -P means different things
@@ -9727,6 +9759,33 @@ sub get_bsd_label_uuid {
 	main::log_data('dump','@data',\@data) if $b_log;
 	eval $end if $b_log;
 	return @data;
+}
+sub set_lsblk {
+	eval $start if $b_log;
+	$b_lsblk = 1;
+	if (my $program = main::check_program('lsblk')){
+		@lsblk = main::grabber("$program -r --output NAME,TYPE,RM,FSTYPE,SIZE 2>/dev/null");
+	}
+	main::log_data('dump','@lsblk',\@lsblk) if $b_log;
+	shift @lsblk if @lsblk; # get rid of row headers
+	eval $end if $b_log;
+}
+sub check_lsblk {
+	eval $start if $b_log;
+	my ($name,$b_size) = @_;
+	my (%part,@row);
+	foreach (@lsblk){
+		@row = split /\s+/, $_;
+		next if ! $row[1];
+		if ($name eq $row[0]){
+			$part{'fs'} = $row[3];
+			$part{'size'} = $row[-1] / 1024 if $b_size && $row[-1];
+			$part{'rm'} = $row[2] if defined $row[2];
+			last;
+		}
+	}
+	eval $start if $b_log;
+	return %part;
 }
 sub get_label {
 	eval $start if $b_log;
@@ -12484,11 +12543,12 @@ sub create_output {
 sub unmounted_data {
 	eval $start if $b_log;
 	my ($file) = @_;
-	my (@data,@unmounted);
+	my ($fs,$size,@data,%part,@unmounted);
 	my @mounted = ('scd[0-9]+','sr[0-9]+','cdrom[0-9]*','cdrw[0-9]*',
 	'dvd[0-9]*','dvdrw[0-9]*','fd[0-9]','ram[0-9]*');
 	my @mounts = main::reader($file,'strip');
 	my $num = 0;
+	PartitionData::set_lsblk() if !$bsd_type && !$b_lsblk;
 	# set labels, uuid, gpart
 	PartitionData::partition_data() if !$b_partitions;
 	main::get_partition_extra_data() if !$b_partition_extra;
@@ -12496,6 +12556,7 @@ sub unmounted_data {
 	@mounted = get_mounted(@mounted);
 	foreach (@mounts){
 		my @working = split /\s+/, $_;
+		($fs,$size) = ('','');
 		# note that size 1 means it is a logical extended partition container
 		# lvm might have dm-1 type syntax
 		# need to exclude loop type file systems, squashfs for example
@@ -12505,12 +12566,18 @@ sub unmounted_data {
 		     $working[-1] !~ /loop/ && !(grep {$working[-1] =~ /$_/} @mounted)){
 		   my $label = PartitionData::get_label("/dev/$working[-1]");
 		   my $uuid = PartitionData::get_uuid("/dev/$working[-1]");
-		   my $fs = unmounted_filesystem($working[-1]);
+		   %part = PartitionData::check_lsblk($working[-1],0) if (@lsblk && $working[-1]);
+			if (%part){
+				$fs = $part{'fs'};
+				$size = $part{'size'} if $part{'size'} && !$working[2];
+			}
+			$size ||= $working[2];
+		   $fs = unmounted_filesystem($working[-1]) if ! $fs;
 			@data = ({
 			'dev-base' => $working[-1],
 			'fs' => $fs,
 			'label' => $label,
-			'size' => $working[2],
+			'size' => $size,
 			'uuid' => $uuid,
 			});
 			@unmounted = (@unmounted,@data);
@@ -12549,7 +12616,7 @@ sub get_mounted {
 sub unmounted_filesystem {
 	eval $start if $b_log;
 	my ($item) = @_;
-	my ($data);
+	my ($data,%part);
 	my ($file,$fs,$path,$sudo) = ('','','','');
 	if ($path = main::check_program('file')) {
 		$file = $path;
@@ -12917,7 +12984,7 @@ sub get_weather {
 			$weather{'pressure'} = $working[1];
 		}
 		elsif ( $working[0] eq 'heat_index_string' ){
-			$weather{'head-index'} = $working[1];
+			$weather{'heat-index'} = $working[1];
 		}
 		elsif ( $working[0] eq 'windchill_string' ){
 			$weather{'windchill'} = $working[1];
@@ -13717,7 +13784,6 @@ sub get_linux_distro {
 				# if so, use lsb-release, if not, then just use the found file
 				# this is for only those distro's with self named release/version files
 				# because Mint does not use such, it must be done as below 
-				## this if statement requires the spaces and * as it is, else it won't work
 				if ($b_lsb && $file =~ /$lsb_good_s/){
 					$distro_file = $lsb_release;
 				}
