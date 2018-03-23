@@ -6,8 +6,9 @@ branch.
 =====================================================================
 MASTER GIT BRANCH:
 
-This is the only valid branch, and the current latest release is
-the only supported release.
+This is the only supported branch, and the current latest commit is
+the only supported 'release'. There are no, and never will be,
+and 'releases' of inxi beyond the current commit to master.
 
 git clone https://github.com/smxi/inxi --branch master --single-branch
 
@@ -17,19 +18,19 @@ only reasons for its existence.
 
 I auto tag commits I that I feel are somewhat complete at that stage
 of the coding. There ar NO releases, don't even dream of pretending 
-a tagged release holds any significance at all. I only added auto tagging 
-to get the maintainers to stop annoying me about tagging. There is 
-NO repeat NO meaning to the fact a commit is tagged. A tag is a pointer
-to a commit, and has no further meaning.
+a tagged release holds any significance at all. I only added auto 
+tagging to get the maintainers to stop annoying me about tagging. 
+There is NO repeat NO meaning to the fact a commit is tagged. A tag 
+is a pointer to a commit, and has no further meaning.
 
 Every current commit is the active release, all past commits are not 
 supported. Tagging has ZERO meaning, it's purely a formality that 
 certain distros can't figure out how to do without, that's all.
 
 NOTE: JUST BECAUSE GITHUB CALLS MY TAGGED COMMITS 'RELEASES' DOES 
-NOT REPEAT NOT MEAN THEY ARE RELEASES!!! Got it? I can't change the 
-words on the tag page. They are tagged commmits, period. I did not 
-want to use tags precisely to avoid the idea that inxi has any release 
+NOT REPEAT NOT MEAN THEY ARE RELEASES!!! I can't change the words 
+on the tag page. They are tagged commmits, period. I did not want 
+to use tags precisely to avoid the idea that inxi has any release 
 that exists that is other than it's current master version, but I 
 decided that it was less pain to add tags than to argue this point 
 any further.
