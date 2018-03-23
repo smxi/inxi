@@ -12,6 +12,9 @@ and 'releases' of inxi beyond the current commit to master.
 
 git clone https://github.com/smxi/inxi --branch master --single-branch
 
+OR direct fast and easy install:
+wget -Nc https://github.com/smxi/inxi/raw/master/inxi
+
 NOTE: I have deleted the master-plain branch  to avoid confusion 
 since I've removed the legacy .gz files from the branch, which were 
 only reasons for its existence.
@@ -41,6 +44,9 @@ All active development is now done on the inxi-perl branch:
 
 git clone https://github.com/smxi/inxi --branch inxi-perl --single-branch
 
+OR direct fast and easy install:
+wget -Nc https://github.com/smxi/inxi/raw/inxi-perl/pinxi
+
 Once new features have been debugged and are stable, they will move 
 to the master branch.
 
@@ -50,6 +56,9 @@ If you'd like to look at or check out the Gawk/Bash version of inxi,
 you can find it here, at the inxi-legacy branch:
 
 git clone https://github.com/smxi/inxi --branch inxi-legacy --single-branch
+
+OR direct fast and easy install:
+wget -Nc https://github.com/smxi/inxi/raw/inxi-legacy/binxi
 
 This version will not be maintained, and it's unlikely that I will 
 spend any time on it in the future, but it is there in case it's of
