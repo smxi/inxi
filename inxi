@@ -36,8 +36,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='2.9.07';
-my $self_date='2018-03-25';
+my $self_version='2.9.08';
+my $self_date='2018-03-26';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -2994,6 +2994,7 @@ sub program_version {
 		if ( $ENV{'KSH_VERSION'} ){
 			my @temp = split /\s+/, $ENV{'KSH_VERSION'};
 			if ($temp[2]){
+				$temp[2] =~ s/^v//i; # trim off leading v
 				log_data('data',"Program *ksh array: @temp version: $temp[2]") if $b_log;
 				return $temp[2];
 			}
@@ -3323,8 +3324,8 @@ sub get_options{
 	eval $start if $b_log;
 	my (@args) = @_;
 	$show{'short'} = 1;
-	my ($b_downloader,$b_no_man,$b_no_man_force,$b_recommends,$b_updater,
-	$b_version,$b_use_man,$help_type,$self_download, $download_id);
+	my ($b_downloader,$b_no_man,$b_no_man_force,$b_recommends,$b_updater,$b_version,
+	$b_use_man,$help_type,$self_download, $download_id);
 	GetOptions (
 	'A|audio' => sub {
 		$show{'short'} = 0;
@@ -3529,7 +3530,7 @@ sub get_options{
 			}
 			if ($arg >= 7 ){
 				$b_downloader = 1 if ! check_program('dig');
-				$show{'flag'} = 1;
+				$show{'cpu-flag'} = 1;
 				$show{'ip'} = 1;
 				$show{'raid-forced'} = 1;
 				$extra = 3;
@@ -3694,7 +3695,7 @@ sub get_options{
 		$help_type = 'standard'; },
 	'H|help-full' => sub {
 		$help_type = 'full'; },
-	'hostname' => sub {
+	'host|hostname' => sub {
 		$show{'host'} = 1 },
 	'indent-min:i' => sub {
 		my ($opt,$arg) = @_;
@@ -3721,10 +3722,10 @@ sub get_options{
 		else {
 			error_handler('bad-arg', $opt, $arg);
 		}},
-	'no-hostname' => sub {
+	'no-host|no-hostname' => sub {
 		$show{'host'} = 0 },
 	'no-man' => sub {
-		$b_no_man_force = 1; },
+		$b_no_man_force = 0; },
 	'no-ssl' => sub {
 		$dl{'no-ssl-opt'}=1 },
 	'output-file:s' => sub {
@@ -4129,7 +4130,7 @@ sub show_options {
 	['1', '', '--downloader', "Force $self_name to use [curl|fetch|perl|wget] for downloads." ],
 	['1', '', '--dmidecode', "Forces use of dmidecode data instead of /sys where 
 	relevant (-M)." ],
-	['1', '', '--hostname', "Turns on hostname in output." ],
+	['1', '', '--host', "Turns on hostname in output." ],
 	['1', '', '--indent-min', "Takes value 80 or greater. Increases or decreases the point 
 	where $self_name autowraps line starters." ],
 	['1', '', '--limit', "[-1 - x] -1 removes limit. Raise or lower max output limit of IP addresses for -i." ],
@@ -4143,7 +4144,7 @@ sub show_options {
 		push @data, @rows;
 	}
 	@rows = (
-	['1', '', '--no-hostname', "Turns off hostname in output. Useful if showing output from 
+	['1', '', '--no-host', "Turns off hostname in output. Useful if showing output from 
 	servers etc." ],
 	['1', '', '--no-ssl', "Skips SSL certificate checks for all downloader activities 
 	(wget/fetch/curl only)." ],
@@ -7623,7 +7624,8 @@ sub display_server(){
 	$server = $ENV{'WAYLAND_DISPLAY'} if (!$server && $ENV{'WAYLAND_DISPLAY'});
 	if ($extra > 1){
 		# initial tests, if wayland, it is certainly a compositor
-		$graphics{'compositor'} = display_compositor(lc($server));
+		$server = lc($server) if $server;
+		$graphics{'compositor'} = display_compositor($server);
 	}
 	if ( $show{'display-data'}){
 		# X vendor and version detection.
@@ -9954,12 +9956,15 @@ sub cpu_processes {
 		$b[2] <=> $a[2] } @ps_aux;
 	# if there's a count limit, for irc, etc, only use that much of the data
 	@rows = splice @rows,0,$count;
-	$cpu_mem = ' - Memory: MiB / % used' if $extra > 0;
+	
 	$j = scalar @rows;
+	# $cpu_mem = ' - Memory: MiB / % used' if $extra > 0;
 	my $throttled = throttled($ps_count,$count,$j);
-	my @data = (
-	{$num++ . "#CPU  % used - Command - pid$cpu_mem - top" => "$count$throttled",},
-	);
+	#my $header = "CPU  % used - Command - pid$cpu_mem - top";
+	#my $header = "Top $count by CPU";
+	my @data = ({
+	$num++ . "#CPU top" => "$count$throttled",
+	},);
 	@processes = (@processes,@data);
 	my $i = 1;
 	foreach (@rows){
@@ -9967,13 +9972,11 @@ sub cpu_processes {
 		$j = scalar @processes;
 		my @row = split /\s+/, $_;
 		my @command = process_starter(scalar @row, $row[10],$row[11]);
-		@data = (
-		{
+		@data = ({
 		$num++ . "#" . $i++ => '',
 		$num++ . "#cpu" => $row[2] . '%',
 		$num++ . "#command" => $command[0],
-		},
-		);
+		},);
 		@processes = (@processes,@data);
 		if ($command[1]) {
 			$processes[$j]{$num++ . "#started by"} = $command[1];
@@ -10002,12 +10005,14 @@ sub mem_processes {
 	@rows = splice @rows,0,$count;
 	#print Data::Dumper::Dumper \@rows;
 	@processes = main::memory_data_full('process') if !$b_mem;
-	$cpu_mem = ' - CPU: % used' if $extra > 0;
 	$j = scalar @rows;
 	my $throttled = throttled($ps_count,$count,$j);
-	@data = (
-	{$num++ . "#Memory MiB/% used - Command - pid$cpu_mem - top" => "$count$throttled",},
-	);
+	#$cpu_mem = ' - CPU: % used' if $extra > 0;
+	#my $header = "Memory MiB/% used - Command - pid$cpu_mem - top";
+	#my $header = "Top $count by Memory";
+	@data = ({
+	$num++ . "#Memory top" => "$count$throttled",
+	},);
 	@processes = (@processes,@data);
 	my $i = 1;
 	foreach (@rows){
@@ -10018,13 +10023,11 @@ sub mem_processes {
 		$mem = ($row[5]) ? sprintf( "%.${decimals}f", $row[5]/1024 ) . ' MiB' : 'N/A';
 		my @command = process_starter(scalar @row, $row[10],$row[11]);
 		$mem .= " (" . $row[3] . "%)"; 
-		@data = (
-		{
+		@data = ({
 		$num++ . "#" . $i++ => '',
 		$num++ . "#mem" => $mem,
 		$num++ . "#command" => $command[0],
-		},
-		);
+		},);
 		@processes = (@processes,@data);
 		if ($command[1]) {
 			$processes[$j]{$num++ . "#started by"} = $command[1];
@@ -10060,7 +10063,7 @@ sub throttled {
 	my ($ps_count,$count,$j) = @_;
 	my $throttled = '';
 	if ($count > $j){
-		$throttled = " (only $j processes)";
+		$throttled = " ( $j processes)";
 	}
 	elsif ($count < $ps_count){
 		$throttled = " (throttled from $ps_count)";
@@ -10677,7 +10680,7 @@ sub create_output {
 					$mod{'manufacturer'} ||= 'N/A';
 					$rows[$j]{$num++ . "#manufacturer"} = $mod{'manufacturer'};
 					$mod{'part-number'} ||= 'N/A';
-					$rows[$j]{$num++ . "#part-nu"} = $mod{'part-number'};
+					$rows[$j]{$num++ . "#part-no"} = $mod{'part-number'};
 				}
 				if ($extra > 2 ){
 					$mod{'serial'} ||= 'N/A';
@@ -11665,6 +11668,27 @@ sub get_repos_bsd {
 		@data = repo_builder($netbsd,'netbsd','^\s*[^#]+$');
 		@rows = (@rows,@data);
 	}
+	# BSDs do not default always to having repo files, so show correct error 
+	# mesage in that case
+	if (!@rows){
+		if ($bsd_type eq 'freebsd'){
+			$key = repo_builder('missing','freebsd-nf');
+		}
+		elsif ($bsd_type eq 'openbsd'){
+			$key = repo_builder('missing','openbsd-nf');
+		}
+		elsif ($bsd_type eq 'netbsd'){
+			$key = repo_builder('missing','netbsd-nf');
+		}
+		else {
+			$key = repo_builder('missing','bsd-nf');
+		}
+		@data = (
+		{$num++ . "#Message" => $key},
+		[()],
+		);
+		@rows = (@rows,@data);
+	}
 	eval $start if $b_log;
 	return @rows;
 }
@@ -11676,15 +11700,19 @@ sub repo_builder {
 	'apk' => 'No active APK repos in',
 	'apt' => 'No active apt repos in',
 	'bsd-package' => 'No enabled BSD pkg servers in',
+	'bsd-nf' => 'No BSD pkg server files found',
 	'eopkg' => 'No active eopkg repos found',
 	'pacman' => 'No active pacman repos in',
 	'pisi' => 'No active pisi repos found',
 	'portage' => 'No enabled portage sources in',
 	'portsnap' => 'No ports servers in',
 	'freebsd' => 'No FreeBSD update servers in',
+	'freebsd-nf' => 'No FreeBSD update server files found',
 	'freebsd-pkg' => 'No FreeBSD default pkg server in',
 	'openbsd' => 'No OpenBSD pkg mirrors in',
+	'openbsd-nf' => 'No OpenBSD pkg mirror files found',
 	'netbsd' => 'No NetBSD pkg servers in',
+	'netbsd-nf' => 'No NetBSD pkg server files found',
 	'slackpkg' => 'No active slackpkg repos in',
 	'slackpkg+' => 'No active slackpkg+ repos in',
 	'yum' => 'No active yum repos in',
@@ -12962,7 +12990,7 @@ sub create_output {
 	if ($extra > 2){
 		if (!$show{'filter'}){
 			$rows[0]{$num++ . "#Location"} = $location[1];
-			$rows[0]{$num++ . "#Altitude"} = $weather{'elevation'};
+			$rows[0]{$num++ . "#altitude"} = $weather{'elevation'};
 		}
 	}
 	$rows[0]{$num++ . "#Time"} = $weather{'date-time'};
@@ -15660,9 +15688,6 @@ sub generate_info_data {
 		$b_gcc = 1;
 	}
 	$gcc ||= 'N/A';
-	if ($extra > 0 && $client{'version'}){
-		$client .= ' ' . $client{'version'};
-	}
 	if (!$b_irc && $extra > 1 ){
 		# bsds don't support -f option to get PPID
 		if ($b_display && !$bsd_type){
@@ -15744,7 +15769,11 @@ sub generate_info_data {
 			$data{$data_name}[$index]{$num++ . '#clang'} = $clang_version;
 		}
 	}
+	
 	$data{$data_name}[$index]{$num++ . '#' . $client_shell} =  $client;
+	if ($extra > 0 && $client{'version'}){
+		$data{$data_name}[$index]{$num++ . '#v'} = $client{'version'};
+	}
 	if ( $running_in ){
 		$data{$data_name}[$index]{$num++ . '#running in'} = $running_in;
 	}
