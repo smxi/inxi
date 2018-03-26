@@ -36,9 +36,9 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='2.9.06';
-my $self_date='2018-03-24';
-my $self_patch='0';
+my $self_version='2.9.07';
+my $self_date='2018-03-25';
+my $self_patch='00';
 ## END INXI INFO ##
 
 ### INITIALIZE VARIABLES ###
@@ -3323,8 +3323,8 @@ sub get_options{
 	eval $start if $b_log;
 	my (@args) = @_;
 	$show{'short'} = 1;
-	my ($b_downloader,$b_recommends,$b_updater,$b_version,$b_use_man,$help_type,
-	$self_download, $download_id);
+	my ($b_downloader,$b_no_man,$b_no_man_force,$b_recommends,$b_updater,
+	$b_version,$b_use_man,$help_type,$self_download, $download_id);
 	GetOptions (
 	'A|audio' => sub {
 		$show{'short'} = 0;
@@ -3723,6 +3723,8 @@ sub get_options{
 		}},
 	'no-hostname' => sub {
 		$show{'host'} = 0 },
+	'no-man' => sub {
+		$b_no_man_force = 1; },
 	'no-ssl' => sub {
 		$dl{'no-ssl-opt'}=1 },
 	'output-file:s' => sub {
@@ -3790,7 +3792,7 @@ sub get_options{
 	set_downloader() if $b_downloader;
 	show_version() if $b_version;
 	show_options($help_type) if $help_type;
-	$b_man = 0 if !$b_use_man;
+	$b_man = 0 if (!$b_use_man || $b_no_man_force);
 	update_me( $self_download, $download_id ) if $b_updater;
 	if ($output_type){
 		if ($output_type ne 'screen' && ! $output_file){
@@ -4131,7 +4133,16 @@ sub show_options {
 	['1', '', '--indent-min', "Takes value 80 or greater. Increases or decreases the point 
 	where $self_name autowraps line starters." ],
 	['1', '', '--limit', "[-1 - x] -1 removes limit. Raise or lower max output limit of IP addresses for -i." ],
-	['1', '', '--man', "Installs correct man versino for dev branch (-U 3) or pinxi using -U." ],
+	);
+	push @data, @rows;
+	if ( $b_update ){
+		@rows = (
+		['1', '', '--man', "Installs correct man version for dev branch (-U 3) or pinxi using -U." ],
+		['1', '', '--no-man', "Disables man install for all updat -U actions." ],
+		);
+		push @data, @rows;
+	}
+	@rows = (
 	['1', '', '--no-hostname', "Turns off hostname in output. Useful if showing output from 
 	servers etc." ],
 	['1', '', '--no-ssl', "Skips SSL certificate checks for all downloader activities 
@@ -4711,9 +4722,10 @@ sub check_output_path {
 	my ($path) = @_;
 	my ($b_good,$dir,$file);
 	$dir = $path;
-	$dir =~ s/([^\/])+$//;
+	$dir =~ s/([^\/]+)$//;
 	$file = $1;
-	$b_good = 1 if (-d $dir && -w $dir && $file && $dir !~ /^\//);
+	# print "file: $file : dir: $dir\n";
+	$b_good = 1 if (-d $dir && -w $dir && $dir =~ /^\// && $file);
 	return $b_good;
 }
 
@@ -7607,10 +7619,12 @@ sub display_server(){
 	my $num = 0;
 	# note: this may not always be set, it won't be out of X, for example
 	my $server = $ENV{'XDG_SESSION_TYPE'};
-	if ($extra > 1){
-		$graphics{'compositor'} = display_compositor();
-	}
+	
 	$server = $ENV{'WAYLAND_DISPLAY'} if (!$server && $ENV{'WAYLAND_DISPLAY'});
+	if ($extra > 1){
+		# initial tests, if wayland, it is certainly a compositor
+		$graphics{'compositor'} = display_compositor(lc($server));
+	}
 	if ( $show{'display-data'}){
 		# X vendor and version detection.
 		# new method added since radeon and X.org and the disappearance of 
@@ -7988,26 +8002,25 @@ sub x_version {
 	eval $end if $b_log;
 	return $version;
 }
-sub display_compositor(){
+# $1 - server: wayland|x11
+sub display_compositor {
 	eval $start if $b_log;
+	my ($server) = @_; 
 	my ($compositor) = ('');
-	# my $compositors = 'mutter|gnome-shell|kwin|moblin|kmscon|sway|grefson|';
-	# $compositors .= 'westford|rustland|fireplace|wayhouse|weston|compton|compiz|swc|dwc';
-# 	foreach (@ps_cmd){
-# 		if (/($compositors)/){
-# 			$compositor = $1;
-# 			last;
-# 		}
-# 	}
 	# NOTE: chains of greps of ps data are VERY expensive, so check for program presence
 	if (main::check_program('mutter') && (grep {/mutter/} @ps_cmd ) ) {
 		$compositor = 'mutter';
 	}
-	elsif (main::check_program('gnome-shell') && (grep {/gnome-shell/} @ps_cmd ) ) {
-		$compositor = 'gnome-shell';
-	}
-	elsif (main::check_program('kwin') && (grep {/kwin/} @ps_cmd ) ) {
+	elsif (main::check_program('kwin') && (grep {/\bkwin\b/} @ps_cmd ) ) {
 		$compositor = 'kwin';
+	}
+	elsif (main::check_program('muffin') && (grep {/muffin/} @ps_cmd ) ) {
+		$compositor = 'muffin';
+	}
+	# Note: other strings have gnome-shell in them, so important to get exact one. Since we 
+	# can't fully trust how this will appear, the pattern should tighten it
+	elsif (main::check_program('gnome-shell') && (grep {/^(\/[\S]+\/)?gnome-shell(\s|$)/} @ps_cmd ) ) {
+		$compositor = 'gnome-shell';
 	}
 	elsif (main::check_program('weston') && (grep {/weston/} @ps_cmd ) ) {
 		$compositor = 'weston';
@@ -8028,7 +8041,7 @@ sub display_compositor(){
 		$compositor = 'kmscon';
 	}
 	# did not find in debian apt
-	elsif (main::check_program('sway') && (grep {/sway/} @ps_cmd ) ) {
+	elsif (main::check_program('sway') && (grep {/\bsway\b/} @ps_cmd ) ) {
 		$compositor = 'sway';
 	}
 	# did not find in debian apt
@@ -8052,11 +8065,11 @@ sub display_compositor(){
 		$compositor = 'wayhouse';
 	}
 	# did not find in debian apt
-	elsif (main::check_program('swc') && (grep {/swc/} @ps_cmd ) ) {
+	elsif (main::check_program('swc') && (grep {/\bswc\b/} @ps_cmd ) ) {
 		$compositor = 'swc';
 	}
 	# did not find in debian apt
-	elsif (main::check_program('dwc') && (grep {/dwc/} @ps_cmd ) ) {
+	elsif (main::check_program('dwc') && (grep {/\bdwc\b/} @ps_cmd ) ) {
 		$compositor = 'dwc';
 	}
 	main::log_data('data',"compositor: $compositor") if $b_log;
@@ -13790,7 +13803,7 @@ sub get_linux_distro {
 	my ($distro_file) = ('');
 	my ($b_osr,@working);
 	my @derived = qw(antix-version aptosid-version kanotix-version knoppix-version 
-	mandrake-release mx-version pardus-release porteus-version sabayon-release 
+	mandrake-release manjaro-release mx-version pardus-release porteus-version sabayon-release 
 	siduction-version sidux-version slitaz-release solusos-release turbolinux-release 
 	zenwalk-version);
 	my $derived_s = join "|", @derived;
@@ -13937,7 +13950,7 @@ sub get_linux_distro {
 }
 sub get_lsb_release {
 	eval $start if $b_log;
-	my ($distro,$id,$release,$codename,$description,) = ('','','','','');
+	my ($distro,$id,$release,$codename,$description) = ('','','','','');
 	my @content = main::reader('/etc/lsb-release');
 	main::log_data('dump','@content',\@content) if $b_log;
 	@content = map {s/,|\*|\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} @content if @content;
@@ -13946,9 +13959,13 @@ sub get_lsb_release {
 		my @working = split /\s*=\s*/, $_;
 		next if !$working[0];
 		if ($working[0] eq 'DISTRIB_ID' && $working[1]){
-			if ($working[1] =~ /^Arch$/i){
-				$id = 'Arch Linux';
+			if ($working[1] =~ /^Manjaro/i){
+				$id = 'Manjaro Linux';
 			}
+			# in the old days, arch used lsb_release
+# 			elsif ($working[1] =~ /^Arch$/i){
+# 				$id = 'Arch Linux';
+# 			}
 			else {
 				$id = $working[1];
 			}
@@ -13972,7 +13989,6 @@ sub get_lsb_release {
 		$distro = "$id $release $codename";
 		$distro =~ s/^\s+|\s\s+|\s+$//g; # get rid of double and trailling spaces 
 	}
-	
 	eval $end if $b_log;
 	return $distro;
 }
