@@ -20,9 +20,9 @@ wget -Nc https://smxi.org/inxi
 
 NOTE: I have deleted the master-plain branch  to avoid confusion 
 since I've removed the legacy .gz files from the branch, which were 
-only reasons for its existence.
+the only reasons for its existence.
 
-I auto tag commits I that I feel are somewhat complete at that stage
+I auto tag commits that I feel are somewhat complete at that stage
 of the coding. There are NO releases, don't even dream of pretending 
 a tagged release holds any significance at all. I only added auto 
 tagging to get the maintainers to stop annoying me about tagging. 
@@ -189,9 +189,9 @@ the issue is on a laptop, access has to be granted to the laptop, or a similar
 one. 
 
 2 is far preferred because in terms of my finite time on this planet of ours, 
-the fact is, if I don't have direct SSH access, I can't get much done, and the 
-little I can get done will take 10 to 1000x longer than it should. That's my
-time spent (and sadly, with BSDs, largely lost), not yours. 
+the fact is, if I don't have direct (or SSH) access, I can't get much done, 
+and the little I can get done will take 10 to 1000x longer than it should. 
+That's my time spent (and sadly, with BSDs, largely lost), not yours. 
 
 I decided I have to adopt this much more strict policy with BSDs after wasting 
 untold hours on trying to get good BSD support, only to see that support break 
