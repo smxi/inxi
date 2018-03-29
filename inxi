@@ -35,9 +35,9 @@ use POSIX qw(uname strftime ttyname);
 # use feature qw(state);
 
 ## INXI INFO ##
-my $self_name='inxi';
-my $self_version='2.9.08';
-my $self_date='2018-03-26';
+my $self_name='pinxi';
+my $self_version='2.9.09';
+my $self_date='2018-03-28';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -341,6 +341,7 @@ sub set_basics {
 	$client{'konvi'} = 0;
 	$client{'name'} = '';
 	$client{'name-print'} = '';
+	$client{'su-start'} = ''; # shows sudo/su
 	$client{'version'} = '';
 	$colors{'default'} = 2;
 	$show{'display-data'} = ( $b_display ) ? 1 : 0;
@@ -392,7 +393,7 @@ sub set_display_width {
 	}
 	# print "tc: $size{'term'} cmc: $size{'console'} cm: $size{'max'}\n";
 }
-
+# NOTE: most tests internally are against !$bsd_type
 sub set_os {
 	my @uname = uname();
 	$os = lc($uname[0]);
@@ -408,7 +409,7 @@ sub set_os {
 			$bsd_type = 'debian-bsd';
 		}
 		else {
-			$bsd_type = 'bsd';
+			$bsd_type = $os;
 		}
 	}
 }
@@ -688,7 +689,7 @@ sub set_colors {
 		}
 	}
 	# force 0 for | or > output, all others prints to irc or screen
-	if (!$b_irc && ! -t STDOUT){
+	if (!$b_irc && ! -t STDOUT ){
 		$color_scheme = 0;
 	}
 	set_color_scheme($color_scheme);
@@ -1253,8 +1254,7 @@ sub create_debug_directory {
 	my $host = main::get_hostname();
 	$host =~ s/ /-/g;
 	$host ||= 'no-host';
-	my $bsd_string = '';
-	my $root_string = '';
+	my ($arm_string,$bsd_string,$root_string) = ('','','');
 	# note: Time::Piece was introduced in perl 5.9.5
 	my ($sec,$min,$hour,$mday,$mon,$year) = localtime;
 	$year = $year+1900;
@@ -1270,10 +1270,9 @@ sub create_debug_directory {
 	if ($b_root){
 		$root_string = '-root';
 	}
-	if ( $bsd_type ){
-		$bsd_string = "-$bsd_type-$os";
-	}
-	$debug_dir = "$self_name$bsd_string-$host-$today$root_string";
+	$bsd_string = "-$bsd_type-$os" if $bsd_type;
+	$arm_string = '-ARM' if $b_arm;
+	$debug_dir = "$self_name$arm_string$bsd_string-$host-$today$root_string";
 	$debug_gz = "$debug_dir.tar.gz";
 	$data_dir = "$user_data_dir/$debug_dir";
 	if ( -d $data_dir ){
@@ -2910,9 +2909,9 @@ sub program_values {
 	'cinnamon' => ['^cinnamon',2,'--version','Cinnamon',0,1],
 	'dwm' => ['^dwm',1,'-v','dwm',0,1],
 	'fluxbox' => ['^fluxbox',2,'--version','Fluxbox',0,1],
-	'fvwm' => ['^fvwm',2,'--version','FVWM',0,1],
+	'fvwm' => ['^fvwm',2,'--version','FVWM',0,0],
 	# command: fvwm
-	'fvwm-crystal' => ['^fvwm',2,'--version','FVWM-Crystal',0,1], 
+	'fvwm-crystal' => ['^fvwm',2,'--version','FVWM-Crystal',0,0], 
 	'gnome-about' => ['gnome',3,'--version','Gnome',0,1],
 	'gnome-shell' => ['gnome',3,'--version','Gnome',0,1],
 	'herbstluftwm' => ['^herbstluftwm',-1,'--version','herbstluftwm',0,1],
@@ -3007,7 +3006,7 @@ sub program_version {
 		$app = check_program($app);
 	}
 	# note, some wm/apps send version info to stderr instead of stdout
-	if ( $app =~ /\/(dwm|kvirc|scrotwm)$/ ) {
+	if ( $app =~ /\/(dwm|fvwm|kvirc|scrotwm)$/ ) {
 		$cmd = "$app $version 2>&1";
 	}
 # 	elsif ( $app eq 'csh' ){
@@ -3060,6 +3059,7 @@ sub program_version {
 sub reader {
 	eval $start if $b_log;
 	my ($file,$strip) = @_;
+	return if ! $file;
 	open( my $fh, '<', $file ) or error_handler('open', $file, $!);
 	chomp(my @rows = <$fh>);
 	if ($strip && @rows){
@@ -4047,6 +4047,8 @@ sub show_options {
 	line output, not short form):" ],
 	['2', '-B', '', "chemistry, cycles, location (if available)." ],
 	['2', '-D', '', "Firmware rev. if available." ],
+	['2', '-I', '', "For 'Shell:' adds ([su|sudo|login]) to shell name if present; for 
+	'running in:' adds (SSH) if SSH session." ],
 	['2', '-m', '', "Width of memory bus, data and total (if present and greater 
 	than data); Detail, if present, for Type; module voltage, if available; Serial number." ],
 	['2', '-R', '', "zfs-raid: Shows portion allocated (used) by RAID devices/arrays. md-raid: 
@@ -14480,6 +14482,7 @@ sub get_shell_data {
 		$working =~ s/^.*\///; 
 		# NOTE: su -c "inxi -F" results in shell being su
 		if (($shell eq 'sh' || $shell eq 'sudo' || $shell eq 'su' ) && $shell ne $working){
+			$client{'su-start'} = $shell if ($shell eq 'sudo' || $shell eq 'su');
 			$shell = $working;
 		}
 		#print "shell post: $shell\n";
@@ -14508,6 +14511,7 @@ sub get_shell_data {
 		$client{'name'} = 'shell';
 		$client{'name-print'} = 'Unknown Shell';
 	}
+	$client{'su-start'} = 'sudo' if (!$client{'su-start'} && $ENV{'SUDO_USER'});
 	eval $end if $b_log;
 }
 sub get_shell_source {
@@ -14519,6 +14523,7 @@ sub get_shell_source {
 	#print "self parent: $self_parent ppid: $ppid\n";
 	if ($self_parent){
 		$shell_parent = get_shell_parent($self_parent);
+		$client{'su-start'} = $shell_parent if ($shell_parent eq 'su' && !$client{'su-start'});
 		#print "shell parent 1: $shell_parent\n";
 		# in case sudo starts inxi, parent is shell (or perl inxi if run by debugger)
 		if ( $shell_parent && ( $shell_parent eq 'su' || 
@@ -14572,6 +14577,23 @@ sub get_shell_parent {
 	my $shell_parent = awk(\@data, "$parent",-1,'\s+');
 	eval $end if $b_log;
 	return $shell_parent;
+}
+# this will test against default IP like: (:0) vs full IP to determine 
+# ssh status. Surprisingly easy test? Cross platform
+sub get_ssh_status {
+	eval $start if $b_log;
+	my ($b_ssh,$ssh);
+	# fred   pts/10       2018-03-24 16:20 (:0.0)
+	# fred-remote pts/1        2018-03-27 17:13 (43.43.43.43)
+	if (my $program = check_program('who')){
+		$ssh = (grabber("$program am i 2>/dev/null"))[0];
+		# crude IP validation
+		if ($ssh && $ssh =~ /\(([:0-9a-f]{8,}|[1-9][\.0-9]{6,})\)$/){
+			$b_ssh = 1;
+		}
+	}
+	eval $end if $b_log;
+	return $b_ssh;
 }
 
 sub get_tty_console_irc {
@@ -14678,7 +14700,7 @@ sub get_usb_path {
 		if (-e $working && (main::reader($working))[0] eq $vendor && 
 		    -e $working2 && (main::reader($working2))[0] eq $chip){
 			$path = $_;
-			#print "$_\n";
+			print "$_\n";
 			last;
 		}
 	}
@@ -15675,8 +15697,8 @@ sub generate_info_data {
 	my $gcc_alt = '';
 	my $running_in = '';
 	my $data_name = $prefix++ . '#Info';
-	my ($b_gcc,%row,$gcc,$index,$ref,$val1);
-	my ($percent,$total,$used) = ('','','');
+	my ($b_gcc,%row,$gcc,$index,$ref);
+	my ($parent,$percent,$total,$used) = ('','','','');
 	my $client_shell = ($b_irc) ? 'Client' : 'Shell';
 	my $client = $client{'name-print'};
 	my @gccs = get_gcc_data();
@@ -15691,17 +15713,22 @@ sub generate_info_data {
 	if (!$b_irc && $extra > 1 ){
 		# bsds don't support -f option to get PPID
 		if ($b_display && !$bsd_type){
-			$val1 = get_shell_source();
+			$parent = get_shell_source();
 		}
 		else {
-			$val1 = get_tty_number();
-			$val1 = "tty $val1" if $val1 ne '';
+			$parent = get_tty_number();
+			$parent = "tty $parent" if $parent ne '';
 		}
-		if ($val1 eq 'login'){
-			$val1 = undef;
+		if ($parent eq 'login'){
+			$client{'su-start'} = $parent if !$client{'su-start'};
+			$parent = undef;
 		}
+		
 		# can be tty 0 so test for defined
-		$running_in = $val1 if defined $val1;
+		$running_in = $parent if defined $parent;
+		if ($extra > 2 && $running_in && get_ssh_status() ){
+			$running_in .= ' (SSH)';
+		}
 	}
 	my $memory = get_memory_data('splits');
 	if ($memory){
@@ -15715,14 +15742,12 @@ sub generate_info_data {
 	$memory ||= 'N/A';
 	
 	my %data = (
-	$data_name => [
-		{
+	$data_name => [{
 		$num++ . '#Processes' => scalar @ps_aux, 
 		$num++ . '#Uptime' => &get_uptime(),
 		$num++ . '#Memory' => $total,
 		$num++ . '#used' => $used,
-		},
-	],
+		},],
 	);
 	$index = scalar(@{ $data{$data_name} } ) - 1;
 	if ( !$show{'display-data'} || $extra > 0 ){
@@ -15769,7 +15794,9 @@ sub generate_info_data {
 			$data{$data_name}[$index]{$num++ . '#clang'} = $clang_version;
 		}
 	}
-	
+	if ($extra > 2 && $client{'su-start'}){
+		$client .= " ($client{'su-start'})";
+	}
 	$data{$data_name}[$index]{$num++ . '#' . $client_shell} =  $client;
 	if ($extra > 0 && $client{'version'}){
 		$data{$data_name}[$index]{$num++ . '#v'} = $client{'version'};
