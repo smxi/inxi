@@ -35,9 +35,9 @@ use POSIX qw(uname strftime ttyname);
 # use feature qw(state);
 
 ## INXI INFO ##
-my $self_name='pinxi';
-my $self_version='2.9.09';
-my $self_date='2018-03-28';
+my $self_name='inxi';
+my $self_version='2.9.10';
+my $self_date='2018-03-30';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -4634,9 +4634,22 @@ sub memory_data_full {
 }
 
 sub pci_cleaner {
-	my ($string) = @_;
-	$string =~ s/\[[^\]]+\]$|compatible\scontroller|device|controller|multimedia|\([^)]+\)//g;
+	my ($string,$type) = @_;
+	#print "st1 $type:$string\n";
+	my $filter = 'compatible\scontroller|\b(device|controller|multimedia)\b|\([^)]+\)';
+	# \[[^\]]+\]$| not trimming off ending [...] initial type filters removes end
+	$filter = '\[[^\]]+\]$|' . $filter if $type eq 'pci';
+	$string =~ s/$filter//ig;
 	$string =~ s/^\s+|\s+$//g;
+	#print "st2 $type:$string\n";
+	return $string;
+}
+
+sub pci_long_filter {
+	my ($string) = @_;
+	if ($string =~ /\[AMD(\/ATI)?\]/){
+		$string =~ s/Advanced\sMicro\sDevices\s\[AMD(\/ATI)?\]/AMD/;
+	}
 	return $string;
 }
 
@@ -5241,7 +5254,8 @@ sub card_data {
 			my $driver = $row[9];
 			$driver ||= 'N/A';
 			my $card = $row[4];
-			$card ||= 'N/A';
+			$card = ($card) ? main::pci_cleaner($card,'output') : 'N/A';
+			#$card ||= 'N/A';
 			@data = ({
 			$num++ . "#Card" => $card,
 			$num++ . "#driver" => $driver,
@@ -5976,6 +5990,7 @@ sub data_cpuinfo {
 	# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/arm/armv7-new-format-model-name-single-core.txt";
 	# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/arm/arm-2-die-96-core-rk01.txt";
 	# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/amd/16-core-32-mt-ryzen.txt";
+	# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/amd/2-16-core-epyc-abucodonosor.txt";
 	# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/amd/2-core-probook-antix.txt";
 	# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/amd/4-core-jean-antix.txt";
 	# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/intel/2-core-ht-atom-bruh.txt";
@@ -6326,11 +6341,17 @@ sub data_sysctl {
 sub cpu_properties {
 	my (%cpu) = @_;
 	my $b_xeon = ($cpu{'model_name'} && $cpu{'model_name'} =~ /Xeon/i) ? 1 : 0;
-	my $b_ht = 0;
-	my $b_ryzen = 0;
-	if ( ($cpu{'type'} && $cpu{'type'} eq 'amd' && $cpu{'family'} && $cpu{'family'} eq '17' ) || 
-	     $cpu{'model_name'} && $cpu{'model_name'} =~ /Ryzen/i){
-		$b_ryzen = 1;
+	my ($b_amd_zen,$b_epyc,$b_ht,$b_ryzen);
+	if ( $cpu{'type'} && $cpu{'type'} eq 'amd' && $cpu{'family'} && $cpu{'family'} eq '17' ) {
+		$b_amd_zen = 1;
+		if ($cpu{'model_name'} ){
+			if ($cpu{'model_name'} =~ /Ryzen/i ){ 
+				$b_ryzen = 1;
+			}
+			elsif ($cpu{'model_name'} =~ /EPYC/i){
+				$b_epyc = 1;
+			}
+		}
 	}
 	#my @dies = $phys[0][0];
 	my $ref = $cpu{'ids'};
@@ -6406,6 +6427,11 @@ sub cpu_properties {
 		my @temp = split /\./, $working;
 		$cpu{'dies'} = ($temp[1] && $temp[1] > 0) ? $temp[0]++ : $temp[0];
 	}
+	# these always have 4 dies
+	elsif ($b_epyc) {
+		$cpu_cores = $cpu{'cores'}; 
+		$cpu{'dies'} = 4;
+	}
 	# final check, override the num of cores value if it clearly is wrong
 	# and use the raw core count and synthesize the total instead of real count
 	if ( $cpu_cores == 0 && ($cpu{'cores'} * $phyical_count > 1)){
@@ -6419,7 +6445,7 @@ sub cpu_properties {
 	# this happens with BSDs which have very little cpu data available
 	if ( $processors_count == 0 && $cpu_cores > 0 ){
 		$processors_count = $cpu_cores;
-		if ($bsd_type && ($b_ht || $b_ryzen) && $cpu_cores > 2 ){
+		if ($bsd_type && ($b_ht || $b_amd_zen) && $cpu_cores > 2 ){
 			$cpu_cores = $cpu_cores/2;;
 		}
 		my $count = $processors_count;
@@ -6484,13 +6510,13 @@ sub cpu_properties {
 		$cpu_type = 'UP';
 	}
 	if ($phyical_count > 1){
-		$cpu_layout = "$phyical_count ";
+		$cpu_layout = $phyical_count . 'x ';
 	}
 	if (!$bsd_type){
+		$cpu_layout .= count_alpha($cpu_cores) . 'Core';
 		if ($cpu{'dies'} > 1){
-			$cpu_layout .= count_alpha($cpu{'dies'}) . ' Die ';
+			$cpu_layout .= ' (' . $cpu{'dies'}. '-Die)';
 		}
-		$cpu_layout .= count_alpha($cpu_cores) . ' Core';
 	}
 	else {
 		$cpu_layout .= count_alpha($cpu_cores) . ' Core';
@@ -6852,7 +6878,12 @@ sub count_alpha {
 	my ($count) = @_;
 	#print "$count\n";
 	my @alpha = qw(Single Dual Triple Quad);
-	$count = $alpha[$count-1] if $count > 0 && $count < 5;
+	if ($count > 4){
+		$count .= '-';
+	}
+	else {
+		$count = $alpha[$count-1] . ' ' if $count > 0;
+	}
 	return $count;
 }
 sub set_cpu_data {
@@ -7588,9 +7619,16 @@ sub card_data {
 			$j = scalar @rows;
 			$driver = $row[9];
 			$driver ||= 'N/A';
+			my $card = main::trimmer($row[4]);
+			$card = ($card) ? main::pci_cleaner($card,'output') : 'N/A';
+			#$card ||= 'N/A';
+			# have seen absurdly verbose card descriptions, with non related data etc
+			if (length($card) > 85 || $size{'max'} < 110){
+				$card = main::pci_long_filter($card);
+			}
 			@data = (
 			{
-			$num++ . "#Card" => main::trimmer($row[4]),
+			$num++ . "#Card" => $card,
 			$num++ . "#driver" => $driver,
 			},
 			);
@@ -8688,10 +8726,13 @@ sub card_data {
 			}
 			# first check if it's a known wifi id'ed card, if so, no print of duplex/speed
 			$b_wifi = check_wifi($row[4]);
+			my $card = $row[4];
+			$card = ($card) ? main::pci_cleaner($card,'output') : 'N/A';
+			#$card ||= 'N/A';
 			$driver ||= 'N/A';
 			@data = (
 			{
-			$num++ . "#Card" => $row[4],
+			$num++ . "#Card" => $card,
 			$num++ . "#driver" => $driver,
 			},
 			);
@@ -10107,6 +10148,7 @@ sub create_output {
 	@sizes,@spare,@temp);
 	my ($allocated,$available,$blocks_avail,$chunk_raid,$component_string,$raid,
 	$ref2,$ref3,$report_size,$size,$status);
+	my ($b_row_1_sizes);
 	my ($i,$j,$num,$status_id) = (0,0,0,0);
 	#print Data::Dumper::Dumper \@raid;
 	if ($extra > 2 && $raid[0]{'system-supported'}){
@@ -10118,6 +10160,7 @@ sub create_output {
 	foreach my $ref (@raid){
 		$j = scalar @rows;
 		my %row = %$ref;
+		$b_row_1_sizes = 0;
 		next if !%row;
 		@data = ({
 		$num++ . '#Device' => $row{'id'},
@@ -10158,17 +10201,23 @@ sub create_output {
 		if (($row{'type'} eq 'mdraid' && $extra == 0 ) || !defined $arrays[0]{'raid'} ){
 			$raid = (defined $arrays[0]{'raid'}) ? $arrays[0]{'raid'}: 'no-raid';
 			$rows[$j]{$num++ . "#raid"} = $raid;
+			
 		}
 		if ( ( $row{'type'} eq 'zfs' || ($row{'type'} eq 'mdraid' && $extra == 0 ) ) && $size){
+			#print "here 0\n";
 			$rows[$j]{$num++ . "#$report_size"} = $size;
+			$size = '';
+			$b_row_1_sizes = 1;
 		}
 		if ( $row{'type'} eq 'zfs' && $available){
 			$rows[$j]{$num++ . "#$blocks_avail"} = $available;
+			$available = '';
+			$b_row_1_sizes = 1;
 		}
 		if ( $row{'type'} eq 'zfs' && $allocated){
 			$rows[$j]{$num++ . "#$chunk_raid"} = $allocated;
+			$allocated = '';
 		}
-		($allocated,$available,$size) = ('','','');
 		$i = 0;
 		my $count = scalar @arrays;
 		foreach $ref3 (@arrays){
@@ -10190,19 +10239,20 @@ sub create_output {
 				@rows = (@rows,@data);
 			}
 			# items like cache may have one component, with a size on that component
-			elsif ($row{'type'} eq 'zfs' && !$size){
+			elsif (!$b_row_1_sizes && $row{'type'} eq 'zfs'){
+				#print "here $count\n";
 				@sizes = ($row2{'size'}) ? main::get_size($row2{'size'}) : ();
 				$size = (@sizes) ? "$sizes[0] $sizes[1]" : '';
 				@sizes = ($row2{'free'}) ? main::get_size($row2{'free'}) : ();
 				$available = (@sizes) ? "$sizes[0] $sizes[1]" : '';
 				$rows[$j]{$num++ . "#size"} = $size;
 				$rows[$j]{$num++ . "#free"} = $available;
-			}
-			if ($row{'type'} eq 'zfs' && $extra > 2){
-				@sizes = ($row{'allocated'}) ? main::get_size($row2{'allocated'}) : ();
-				$allocated = (@sizes) ? "$sizes[0] $sizes[1]" : '';
-				if ($allocated){
-					$rows[$j]{$num++ . "#$chunk_raid"} = $allocated;
+				if ($extra > 2){
+					@sizes = ($row{'allocated'}) ? main::get_size($row2{'allocated'}) : ();
+					$allocated = (@sizes) ? "$sizes[0] $sizes[1]" : '';
+					if ($allocated){
+						$rows[$j]{$num++ . "#$chunk_raid"} = $allocated;
+					}
 				}
 			}
 			$ref3 = $row2{'components'};
@@ -10306,6 +10356,7 @@ sub mdraid_data {
 	#$mdstat = "$ENV{'HOME'}/bin/scripts/inxi/data/raid/md-4-device-1.txt";
 	#$mdstat = "$ENV{'HOME'}/bin/scripts/inxi/data/raid/md-rebuild-1.txt";
 	#$mdstat = "$ENV{'HOME'}/bin/scripts/inxi/data/raid/md-2-mirror-fserver2-1.txt";
+	#$mdstat = "$ENV{'HOME'}/bin/scripts/inxi/data/raid/md-2-raid10-abucodonosor.txt";
 	my @working = main::reader($mdstat,'strip');
 	#print Data::Dumper::Dumper \@working;
 	my (@data,@mdraid,@temp,$b_found,$system,$unused);
@@ -10330,7 +10381,7 @@ sub mdraid_data {
 			my $raid = $4;
 			my $component_string = $5;
 			@temp = ();
-			$raid =~ s/^raid1/mirror/;
+			$raid =~ s/^raid1$/mirror/;
 			$raid =~ s/^raid/raid-/;
 			$raid = 'mirror' if $raid eq '1';
 			# remember, these include the [x] id, so remove that for disk/unmounted
@@ -10355,7 +10406,8 @@ sub mdraid_data {
 			$mdraid[$j]{'arrays'}[0]{'raid'} = $raid;
 			$mdraid[$j]{'arrays'}[0]{'components'} = \@components;
 		}
-		if ($_ =~ /^\s*([0-9]+)\sblocks/){
+		#print "$_\n";
+		if ($_ =~ /^([0-9]+)\sblocks/){
 			$mdraid[$j]{'blocks'} = $1;
 		}
 		if ($_ =~ /super\s([0-9\.]+)\s/){
@@ -10371,7 +10423,7 @@ sub mdraid_data {
 		if ($_ =~ /resync=([\S]+)/){
 			$mdraid[$j]{'resync'} = $1;
 		}
-		if ($_ =~ /([0-9]+[km])\schunk/){
+		if ($_ =~ /([0-9]+[km])\schunk/i){
 			$mdraid[$j]{'chunk-size'} = $1;
 		}
 		if ($_ =~ /(\[[=]*>[\.]*\]).*(resync|recovery)\s*=\s*([0-9\.]+%)?(\s\(([0-9\/]+)\))?/){
@@ -10401,6 +10453,7 @@ sub zfs_data {
 	my ($allocated,$free,$ref,$size,$status);
 	my $b_v = 1;
 	my ($i,$j,$k) = (0,0,0);
+	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/raid/zpool-list-1-mirror-main-solestar.txt";
 	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/raid/zpool-list-2-mirror-main-solestar.txt";
 	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/raid/zpool-list-v-tank-1.txt";
 	#my @working = main::reader($file);$zpool = '';
@@ -10524,6 +10577,7 @@ sub zfs_status {
 		my %row = %$ref;
 		$i = 0;
 		$k = 0;
+		#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/raid/zpool-status-1-mirror-main-solestar.txt";
 		#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/raid/zpool-status-2-mirror-main-solestar.txt";
 		#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/raid/zpool-status-tank-1.txt";
 		#@pool_status = main::reader($file,'strip');
@@ -15059,7 +15113,7 @@ sub set_lspci_data {
 			$working[0] =~ /\[([^\]]+)\]$/;
 			$type_id = $1;
 			$type = lc($type);
-			$type = pci_cleaner($type);
+			$type = pci_cleaner($type,'pci');
 			$type =~ s/\s+$//;
 			$port = '';
 			$driver = '';
