@@ -78,7 +78,7 @@ SUPPORT INFO:
 
 Do not ask for basic help that reading the inxi -h / --help menus, or 
 man page would show you, and do not ask for features to be added that
-inxi already has. Also do not ask for support if your distro refuses to
+inxi already has. Also do not ask for support if your distro won't 
 update its inxi version, some are bad about that.
 
 DOCUMENTATION: http://smxi.org/docs/inxi.htm 
