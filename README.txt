@@ -90,7 +90,7 @@ Contains specific Perl inxi documentation, of interest to developers
 mostly. Includes internal inxi tools, values, configuration items.
 Also has useful information about Perl version support, including the 
 list of Core modules that _should_ be included in a distribution's
-core modules, but which are not always unfortunately. 
+core modules, but which are not always, unfortunately. 
 
 HTML MAN PAGE: http://smxi.org/docs/inxi-man.htm 
 INXI OPTIONS: http://smxi.org/docs/inxi-options.htm 
