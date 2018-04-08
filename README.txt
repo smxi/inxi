@@ -286,7 +286,7 @@ bug. ie, saying, oh, x doesn't work, doesn't cut it, unless it's obvious why.
 
 INXI VERSION NUMBERING:
 
-inxi uses fairly classic version numbering, where the version numbers actually
+inxi uses 'semantic' version numbering, where the version numbers actually
 mean something.
 
 The version number follows these guidelines:
