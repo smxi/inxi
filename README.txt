@@ -18,7 +18,7 @@ wget -Nc https://github.com/smxi/inxi/raw/master/inxi
 OR easy to remember shortcut (which redirects to github):
 wget -Nc https://smxi.org/inxi
 
-NOTE: I have deleted the master-plain branch  to avoid confusion 
+NOTE: I have deleted the master-plain branch to avoid confusion 
 since I've removed the legacy .gz files from the branch, which were 
 the only reasons for its existence.
 
@@ -174,7 +174,7 @@ Well, all linux systems with the core tools inxi requires to operate
 installed. Ie, not android, yet. What this means is this: you can have a 10 
 year old box, or probably 15, not sure, and you can install today's inxi on 
 it, and it will run. It won't run fast, but it will run. I test inxi on a 
-200 MHz  laptop from about 1998 to keep it honest. That's also what was 
+200 MHz laptop from about 1998 to keep it honest. That's also what was 
 used to optimize the code at some points, since differences appear as seconds,
 not 10ths or 100ths of seconds on old systems like that.
 
