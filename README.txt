@@ -98,11 +98,11 @@ NOTE: These may not always be up to date, but generally track the most
 recent inxi commits.
 
 ISSUES: https://github.com/smxi/inxi/issues
-No issues accepted for non current inxi releases. See below for more on that.
-Unfortunately as of 2.9, no support or issues can be accepted for older 
-inxi's because inxi 2.9 and newer is a full rewrite, and legacy inxi is
-not being supported since my time is finite (plus of course, one reason
-for the rewrite was to never have to work with Gawk->Bash again!)
+No issues accepted for non current inxi releases. See below for more on 
+that. Unfortunately as of 2.9, no support or issues can be accepted for 
+older inxi's because inxi 2.9 (Perl) and newer is a full rewrite, and 
+legacy inxi is not being supported since my time is finite (plus of course, 
+one reason for the rewrite was to never have to work with Gawk->Bash again!)
 
 SUPPORT FORUMS: http://techpatterns.com/forums/forum-33.html
 This is the best place to place support issues that may be complicated.
@@ -113,17 +113,19 @@ DEVELOPER FORUMS: http://techpatterns.com/forums/forum-32.html
 SOURCE VERSION CONTROL: https://github.com/smxi/inxi
 MAIN BRANCH: master
 DEVELOPMENT BRANCHES: inxi-perl, one, two, three, android.
-Dev branches are rarely used, but that's where the really hard new features etc
-are debugged and worked out. inxi itself has the built in feature to be able
-to update itself from anywhere, including these branches, which is very useful
-for development and debugging on many user systems.
+inxi-perl is the dev branch, the others are rarely if ever used. inxi itself 
+has the built in feature to be able to update itself from anywhere, including 
+these branches, which is very useful for development and debugging on various
+user systems.
 
-PULL REQUESTS: Please talk to me before starting to work on any patch, unless
-it's a trivial bug fix. Please: NEVER even think about looking at or using previous 
-inxi commits, previous to the current one, as a base for a patch. If you do, 
-your patch / pull request will probably be rejected. Developers, get your version 
-from the inxi-perl branch, pinxi, otherwise you may not be current to actual 
-development. inxi-perl pinxi is always equal to or ahead of master branch inxi.
+PULL REQUESTS: Please talk to me before starting to work on patches of any 
+reasonable complexity. inxi is hard to work on, and you have to understand how it
+works before submitting patches, unless it's a trivial bug fix. Please: 
+NEVER even think about looking at or using previous inxi commits, previous to 
+the current master version, as a base for a patch. If you do, your patch / pull 
+request will probably be rejected. Developers, get your version from the 
+inxi-perl branch, pinxi, otherwise you may not be current to actual development 
+versions. inxi-perl pinxi is always equal to or ahead of master branch inxi.
 
 inxi has one and only one release, and that is the current one (plus dev releases,
 of course, but those should never be packaged). All previous releases are 
@@ -179,7 +181,7 @@ used to optimize the code at some points, since differences appear as seconds,
 not 10ths or 100ths of seconds on old systems like that.
 
 inxi is being written, and tested, on Perl as old as 5.08, and will work on
-any system that runs Perl 5.08 or later. Pre 3.0.0 Gawk/Bash inxi will also run 
+any system that runs Perl 5.08 or later. Pre 2.9.0 Gawk/Bash inxi will also run 
 on any system no matter how old, within reason, so there should be no difference.
 
 =====================================================================
@@ -212,19 +214,20 @@ untold hours on trying to get good BSD support, only to see that support break
 a few years down the road as the data inxi relied in changed structure or syntax,
 or the tools changed, or whatever else makes the BSDs such a challenge to support.
 In the end, I realized, the only BSDs that are well supported are ones that I have 
-had direct access to for bebugging and testing. 
+had direct access to for debugging and testing. 
 
 I will always accept patches that are well done, if they do not break GNU/Linux, 
-and extend BSD support, or add new BSD features, and aren't too long. inxi sets 
-initial internal flags to identify that it is a BSD system vs a GNU/Linux system, 
-and preloads some data structures for BSD use, so make sure you understand what
-inxi is doing before you get into it.
+and extend BSD support, or add new BSD features, and follow the internal inxi 
+logic, and aren't too long. inxi sets initial internal flags to identify that 
+it is a BSD system vs a GNU/Linux system, and preloads some data structures 
+for BSD use, so make sure you understand what inxi is doing before you get 
+into it.
 
 inxi will also start on Darwin, OSX's mutated version of a BSD, but my 
 conclusion about Darwin is that it is Unix in name only, and I will not spend 
 a second of my time adding any further support for that crippled broken 
 corporate pseudo-unix system. Don't ask, unless you are willing to pay my
-normal professional wages to get that support made.
+normal professional wages.
 
 =====================================================================
 INXI FEATURES AND FUNCTIONALITY
@@ -258,7 +261,8 @@ will NEVER require new tools to run. New tools may be required for a new
 feature, but that will always be handled internally by inxi, and will not cause
 any operational failures. This is a promise, and I will never as long as I run
 this project violate that core inxi requirement. Old inxi is NOT more stable 
-than current inxi, it's just old, and lacking in bug fixes and features.
+than current inxi, it's just old, and lacking in bug fixes and features. For 
+pre 2.9 releases, it's also significantly slower, and with fewer features.
 
 inxi is a rolling release codebase, just like Debian Sid, Gentoo, or Arch 
 Linux are rolling release GNU/Linux distributions, with no 'release points'.
