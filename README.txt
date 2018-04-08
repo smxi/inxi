@@ -85,12 +85,24 @@ DOCUMENTATION: http://smxi.org/docs/inxi.htm
 (smxi.org/docs/ is easier to remember, and is one click away from inxi.htm)
 The one page wiki on github is only a pointer to the real resources.
 
+https://github.com/smxi/inxi/tree/inxi-perl/docs
+Contains specific Perl inxi documentation, of interest to developers
+mostly. Includes internal inxi tools, values, configuration items.
+Also has useful information about Perl version support, including the 
+list of Core modules that _should_ be included in a distribution's
+core modules, but which are not always unfortunately. 
+
 HTML MAN PAGE: http://smxi.org/docs/inxi-man.htm 
 INXI OPTIONS: http://smxi.org/docs/inxi-options.htm 
-NOTE: These may not always be up to date.
+NOTE: These may not always be up to date, but generally track the most 
+recent inxi commits.
 
 ISSUES: https://github.com/smxi/inxi/issues
 No issues accepted for non current inxi releases. See below for more on that.
+Unfortunately as of 2.9, no support or issues can be accepted for older 
+inxi's because inxi 2.9 and newer is a full rewrite, and legacy inxi is
+not being supported since my time is finite (plus of course, one reason
+for the rewrite was to never have to work with Gawk->Bash again!)
 
 SUPPORT FORUMS: http://techpatterns.com/forums/forum-33.html
 This is the best place to place support issues that may be complicated.
@@ -109,7 +121,9 @@ for development and debugging on many user systems.
 PULL REQUESTS: Please talk to me before starting to work on any patch, unless
 it's a trivial bug fix. Please: NEVER even think about looking at or using previous 
 inxi commits, previous to the current one, as a base for a patch. If you do, 
-your patch / pull request will probably be rejected.
+your patch / pull request will probably be rejected. Developers, get your version 
+from the inxi-perl branch, pinxi, otherwise you may not be current to actual 
+development. inxi-perl pinxi is always equal to or ahead of master branch inxi.
 
 inxi has one and only one release, and that is the current one (plus dev releases,
 of course, but those should never be packaged). All previous releases are 
@@ -184,9 +198,9 @@ All BSD issue reports unless trivial and obvious will require 1 of two things:
 the information I need to resolve the issue file by painful file from the 
 issue poster.
 
-2. direct ssh access to at least a comparable live BSD version, that is, if
-the issue is on a laptop, access has to be granted to the laptop, or a similar 
-one. 
+2. direct ssh access to at least a comparable live BSD version/system, 
+that is, if the issue is on a laptop, access has to be granted to the laptop,
+or a similar one. 
 
 2 is far preferred because in terms of my finite time on this planet of ours, 
 the fact is, if I don't have direct (or SSH) access, I can't get much done, 
