@@ -36,8 +36,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='2.9.12';
-my $self_date='2018-04-06';
+my $self_version='3.0.00';
+my $self_date='2018-04-09';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -79,8 +79,8 @@ my @test = (0,0,0,0,0);
 
 ## Booleans
 my ($b_arm,$b_console_irc,$b_debug_gz,$b_display,$b_dmesg_boot_check,$b_dmi,
-$b_dmidecode_force,$b_gpudata,$b_irc,$b_log,$b_log_colors,$b_log_full,$b_man,
-$b_mem,$b_pci,$b_root,$b_running_in_display,$b_sysctl,$b_usb_check);
+$b_dmidecode_force,$b_force_display,$b_gpudata,$b_irc,$b_log,$b_log_colors,
+$b_log_full,$b_man,$b_mem,$b_pci,$b_root,$b_running_in_display,$b_sysctl,$b_usb_check);
 ## Disk checks
 my ($b_dm_boot_disk,$b_dm_boot_optical,$b_glabel,$b_lsblk,$b_partitions,
 $b_partition_extra,$b_raid);
@@ -215,29 +215,6 @@ sub check_tools {
 		);
 		%alerts = (%alerts, %hash);
 	}
-	if ( $show{'graphic'} ){
-		foreach ( qw(xrandr xdpyinfo glxinfo) ){
-			$action = 'use';
-			if (check_program($_)) {
-				if (!$b_display && !defined $display){
-					if (!defined $display){$action = 'in-console' }
-				}
-			}
-			else {
-				$action = 'missing';
-				# --display out of x override happens before this, so we need to retain that switch
-				$show{'display-data'} = ( !$b_display && $show{'display-data'} == 2 ) ? 1 : 0;
-			}
-			%hash = (
-			$_ => {
-			'action' => $action,
-			'missing' => "Missing: $_ - continuing in non desktop mode. Check --recommends",
-			'in-console' => 'See --display option to get advanced graphics data',
-			},
-			);
-			%alerts = (%alerts, %hash);
-		}
-	}
 	# note: gnu/linux has sysctl so it may be used that for something if present
 	# there is lspci for bsds so doesn't hurt to check it
 	if ($b_pci || $b_sysctl){
@@ -326,7 +303,7 @@ sub set_basics {
 	$ENV{'LANG'}='C';
 	$ENV{'LC_ALL'}='C';
 	# remember, perl uses the opposite t/f return as shell!!!
-	$b_irc = ( system('tty>/dev/null') ) ? 1 : 0;
+	$b_irc = ( system('tty >/dev/null') ) ? 1 : 0;
 	# print "birc: $b_irc\n";
 	$b_display = ( $ENV{'DISPLAY'} ) ? 1 : 0;
 	$b_root = ( $ENV{'HOME'} eq '/root' ) ? 1 : 0;
@@ -344,7 +321,6 @@ sub set_basics {
 	$client{'su-start'} = ''; # shows sudo/su
 	$client{'version'} = '';
 	$colors{'default'} = 2;
-	$show{'display-data'} = ( $b_display ) ? 1 : 0;
 }
 
 # args: $1 - default OR override default cols max integer count. $_[0]
@@ -1047,7 +1023,7 @@ sub get_config_item {
 #### DEBUGGERS
 #### -------------------------------------------------------------------
 
-# called in the initial -@ 10 script args setting so we can get logging 
+# called in the initial -@ 10 program args setting so we can get logging 
 # as soon as possible # will have max 3 files, inxi.log, inxi.1.log, 
 # inxi.2.log
 sub begin_logging {
@@ -1362,11 +1338,6 @@ sub disk_data {
 	['btrfs', 'filesystem show'],
 	['btrfs', 'filesystem show --mounted'],
 	# ['btrfs', 'filesystem show --all-devices'],
-	# NOTE: the --excludes are not used any more to keep compat with bsds
-	['df', '-P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 '],
-	['df', '-h -T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs '],
-	['df', '-T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs'],
-	['df', '-T -P --exclude-type=aufs --exclude-type=squashfs --exclude-type=unionfs --exclude-type=devtmpfs --exclude-type=tmpfs --exclude-type=iso9660 --exclude-type=devfs --exclude-type=linprocfs --exclude-type=sysfs --exclude-type=fdescfs --total'],
 	['df', '-h -T'],
 	['df', '-h'],
 	['df', '-k'],
@@ -1601,6 +1572,7 @@ sub system_data {
 	['hciconfig','-a'],
 	['initctl','list'],
 	['ipmi-sensors',''],
+	['ipmi-sensors','--output-sensor-thresholds'],
 	['ipmitool','sensor'],
 	['lscpu',''],
 	['lspci','-k'],
@@ -2244,6 +2216,8 @@ sub basic_data {
 		$default_shell = $ENV{'SHELL'};
 		$default_shell =~ s/.*\///;
 	}
+	my $sh = main::check_program('sh');
+	my $sh_real = Cwd::abs_path($sh);
 	@rows = (
 	['0', '', '', "$self_name will now begin checking for the programs it needs 
 	to operate."],
@@ -2256,6 +2230,7 @@ sub basic_data {
 	['0', '', '', "Perl version: ^$]" ],
 	['0', '', '', "Current shell: " . $client ],
 	['0', '', '', "Default shell: " . $default_shell ],
+	['0', '', '', "sh links to: $sh_real" ],
 	);
 	return @rows;
 }
@@ -3690,8 +3665,8 @@ sub get_options{
 			$display=$arg;
 			$display ||= ':0';
 			$display = ":$display" if $display !~ /^:/;
-			$b_display = 1;
-			$show{'display-data'} = 2;
+			$b_display = ($b_root) ? 0 : 1;
+			$b_force_display = 1;
 			$display_opt = "-display $display";
 		}
 		else {
@@ -3877,6 +3852,7 @@ sub show_options {
 	my $color_scheme_count = get_color_scheme('count') - 1; 
 	my $partition_string='partition';
 	my $partition_string_u='Partition';
+	my $flags = ($b_arm) ? 'features' : 'flags' ;
 	if ( $bsd_type ){
 		$partition_string='slice';
 		$partition_string_u='Slice';
@@ -3886,30 +3862,26 @@ sub show_options {
 		$line = $line . '- ';
 	}
 	@rows = (
-	['0', '', '', "$self_name supports the following options. You can combine 
-	them, or list them one by one. Examples: $self_name^-v4^-c6 OR 
-	$self_name^-bDc^6. If you start $self_name with no arguments, it will show 
-	the short form." ],
+	['0', '', '', "$self_name supports the following options. You can combine
+	these or list them one by one. For more detailed information, see man^$self_name.
+	Examples:^$self_name^-v4^-c6 OR 
+	$self_name^-bDc^6. If you start $self_name with no arguments, it will display 
+	a short system summary." ],
 	[0, '', '', '' ],
-	['0', '', '', "The following options if used without -F, -b, or -v will show 
-	just option line(s): A, B, C, D, G, I, M, N, P, R, S, f, i, m, n, o, p, l, 
-	u, r, s, t - you can use these alone or together to show just the line(s) 
-	you want to see. If you use them with -v^[level], -b or -F, it will show the 
-	full output for that line along with the output for the chosen verbosity level." ],
+	['0', '', '', "The following options, if used without -F, -b, or -v, will 
+	show option line(s): A, B, C, D, G, I, M, N, P, R, S, W, d, f, i, l, m, n, 
+	o, p, r, s, t, u, w, --slots, --usb - you can use these alone or together 
+	to show just the line(s) you want to see. If you use them with -v [level], 
+	-b or -F, $self_name will combine the outputs." ],
 	['0', '', '', $line ],
 	['0', '', '', "Output Control Options:" ],
-	['1', '-A', '--audio', "Audio/sound card information." ],
-	['1', '-b', '--basic', "Basic output, short form. Like $self_name^-v^2, only minus hard 
-	disk names." ],
-	['1', '-B', '--battery', "Battery info, shows charge, condition, plus extra information 
-	(if battery present)." ],
-	['1', '-c', '--color', "Color schemes. Scheme number is required. Color selectors run a 
-	color selector option prior to $self_name starting which lets you set the 
-	config file value for the selection." ],
-	['1', '', '', "Supported color schemes: 0-$color_scheme_count 
-	Example:^$self_name^-c^11" ],
-	['1', '', '', "Color selectors for each type display (NOTE: irc and global only 
-	show safe color set):" ],
+	['1', '-A', '--audio', "Audio/sound card(s), driver, sound server." ],
+	['1', '-b', '--basic', "Basic output, short form. Same as $self_name^-v^2." ],
+	['1', '-B', '--battery', "Battery info, including charge and condition, plus 
+	extra info (if battery present)." ],
+	['1', '-c', '--color', "Set color scheme (0-42). Example:^$self_name^-c^11" ],
+	['1', '', '', "Color selectors let you set the config file value for the 
+	selection (NOTE: IRC and global only show safe color set)" ],
 	['2', '94', '', "Console, out of X" ],
 	['2', '95', '', "Terminal, running in X - like xTerm" ],
 	['2', '96', '', "Gui IRC, running in X - like Xchat, Quassel, Konversation etc." ],
@@ -3917,239 +3889,234 @@ sub show_options {
 	['2', '98', '', "Console IRC not in  X" ],
 	['2', '99', '', "Global - Overrides/removes all settings. Setting specific 
 	removes global." ],
-	['1', '-C', '--cpu', "CPU output, including per CPU clockspeed and max CPU speed 
-	(if available)." ],
-	['1', '-d', '--disk-full, --optical', "Adds optical drive data (and floppy disks, if present). Same as -Dd. 
-	See also -x and -xx." ],
-	['1', '-D', '--disk', "Full hard Disk info, not only model, ie: /dev/sda ST380817AS 
-	80.0GB. See also -x and -xx. Disk total used percentage includes swap 
-	partition size(s)." ],
-	['1', '-f', '--flags', "All cpu flags, triggers -C. Not shown with -F to avoid spamming. 
-	ARM cpus show 'features'." ],
-	['1', '-F', '--full', "Full output for $self_name. Includes all Upper Case line letters, 
-	plus -s and -n. Does not show extra verbose options like 
-	-d -f -l -m -o -p -r -t -u -x" ],
-	['1', '-G', '--graphics', "Graphic card information (card, display server type/version, 
-	resolution, renderer, OpenGL version)." ],
-	['1', '-i', '--ip', "Wan IP address, and shows local interfaces (requires ifconfig 
-	network tool). Same as -Nni. Not shown with -F for user security reasons, 
-	you shouldn't paste your local/wan IP." ],
-	['1', '-I', '--info', "Information: processes, uptime, memory, irc client (or shell type),
-	$self_name version." ],
-	['1', '-l', '--label', "$partition_string_u labels. Default: short $partition_string -P. 
-	For full -p output, use: -pl (or -plu)." ],
-	['1', '-m', '--memory', "Memory (RAM) data. Requires root. Physical system memory array(s), capacity, 
-	how many devices (slots) supported, and individual memory devices 
-	(sticks of memory etc). For devices, shows device locator, size, speed, 
-	type (like: DDR3). If neither -I nor -tm are selected, also shows 
-	ram used/total. Also see -x, -xx, -xxx" ],
-	['1', '-M', '--machine', "Machine data. Device type (desktop, server, laptop, VM etc.), 
-	Motherboard, Bios, and if present, System Builder (Like Lenovo). 
-	Shows UEFI/BIOS/UEFI [Legacy]. Older systems/kernels without the 
-	required /sys data can use dmidecode instead, run as root. 
-	Dmidecode can be forced with -! 33" ],
-	['1', '-n', '--network-advanced', "Advanced Network card information. Same as -Nn. Shows interface, 
-	speed, mac id, state, etc." ],
-	['1', '-N', '--network', "Network card information. With -x, shows PCI BusID, Port number." ],
-	['1', '-o', '--unmounted', "Unmounted $partition_string information (includes UUID and 
-	LABEL if available). Shows file system type if you have lsblk installed (GNU/Linux), or for 
-	BSD/Linux: if 'file' installed, if you are root OR if you have added to /etc/sudoers (sudo v. 1.7 or 
-	newer) Example:^<username>^ALL^=^NOPASSWD:^/usr/bin/file^" ],
+	['1', '-C', '--cpu', "CPU output, including per CPU clock speed and max 
+	CPU speed (if available)." ],
+	['1', '-d', '--disk-full, --optical', "Optical drive data (and floppy disks, 
+	if present). Triggers -D." ],
+	['1', '-D', '--disk', "Hard Disk info, including total storage and details 
+	for each disk. Disk total used percentage includes swap partition size(s)." ],
+	['1', '-f', '--flags', "All CPU $flags. Triggers -C. Not shown with -F to 
+	avoid spamming." ],
+	['1', '-F', '--full', "Full output. Includes all Upper Case line letters 
+	except -W, plus -s and -n. Does not show extra verbose options such 
+	as -d -f -i -l -m -o -p -r -t -u -x, unless specified." ],
+	['1', '-G', '--graphics', "Graphics info (card(s), driver, display server 
+	type/version, resolution, renderer, OpenGL version)." ],
+	['1', '-i', '--ip', "WAN IP address and local interfaces (requires ifconfig 
+	or ip network tool). Triggers -n. Not shown with -F for user security reasons. 
+	You shouldn't paste your local/WAN IP." ],
+	['1', '-I', '--info', "General info, including processes, uptime, memory, 
+	IRC client or shell type, $self_name version." ],
+	['1', '-l', '--label', "$partition_string_u labels. Triggers -P. 
+	For full -p output, use -pl." ],
+	['1', '-m', '--memory', "Memory (RAM) data. Requires root. Numbers of 
+	devices (slots) supported and individual memory devices (sticks of memory etc). 
+	For devices, shows device locator, size, speed, type (e.g. DDR3). 
+	If neither -I nor -tm are selected, also shows RAM used/total." ],
+	['1', '-M', '--machine', "Machine data. Device type (desktop, server, laptop, 
+	VM etc.), motherboard, BIOS and, if    present, system builder (e.g. Lenovo). 
+	Shows UEFI/BIOS/UEFI [Legacy]. Older systems/kernels without the required /sys 
+	data can use dmidecode instead, run as root. Dmidecode can be forced with --dmidecode" ],
+	['1', '-n', '--network-advanced', "Advanced Network card info. Triggers -N. Shows 
+	interface, speed, MAC id, state, etc. " ],
+	['1', '-N', '--network', "Network card(s), driver." ],
+	['1', '-o', '--unmounted', "Unmounted $partition_string info (includes UUID 
+	and Label if available). Shows file system type if you have lsblk installed 
+	(Linux) or, for BSD/GNU Linux, if 'file' installed and you are root or if 
+	you have added to /etc/sudoers (sudo v. 1.7 or newer)." ],
+	['1', '', '', "Example: ^<username>^ALL^=^NOPASSWD:^/usr/bin/file^" ],
 	['1', '-p', '--partitions-full', "Full $partition_string information (-P plus all other 
 	detected ${partition_string}s)." ],
-	['1', '-P', '--partitions', "Basic $partition_string information (shows what -v^4 would 
-	show, but without extra data). Shows, if detected: 
-	/ /boot /home /opt /tmp /usr /var /var/log /var/tmp . 
-	Use -p to see all mounted ${partition_string}s." ],
-	['1', '-r', '--repos', "Distro repository data. Supported repo types: APK; APT; EOPKG; PACMAN; 
-	PISI; PORTAGE; PORTS (BSDs); SLACKPKG; URPMQ; YUM; ZYPP." ],
-	['1', '-R', '--raid', "RAID data. Shows RAID devices, states, levels, and components, 
-	and extra data with -x/-xx. md-raid: If device is resyncing, shows resync 
-	progress line as well." ],
-	['1', '-s', '--sensors', "Sensors output (if sensors installed/configured): mobo/cpu/gpu temp; 
-	detected fan speeds. Gpu temp only for Fglrx/Nvidia drivers. Nvidia shows 
-	screen number for > 1 screens. IPMI sensors if present." ],
-	['1', '', '--slots', "Show PCI slots, type, speed, status. Requires root. " ],
-	['1', '-S', '--system', "System information: host name, kernel, desktop environment 
-	(if in X), distro" ],
-	['1', '-t', '--processes', "Processes. Default cm. Options: c^(cpu) m^(memory) cm^(cpu+memory). 
-	If followed by numbers 1-X, shows that number of processes for each type 
-	(default:^$ps_count; if in irc, max:^5): -t^cm10" ],
-	['1', '', '', "Make sure to have no space between letters and numbers 
-	(-t^cm10 - right, -t^cm^10 - wrong)." ],
-	['1', '', '--usb', "Show USB data; Hubs and Devices attached." ],
-	['1', '-u', '--uuid', "$partition_string_u UUIDs. Default: short $partition_string -P. 
-	For full -p output, use: -pu (or -plu)." ],
-	['1', '-v', '--verbosity', "Script verbosity levels. Verbosity level number is required. 
-	Should not be used with -b or -F" ],
-	['1', '', '', "Supported levels: 0-8 Example: $self_name^-v^4" ],
-	['2', '0', '', "Short output, same as: $self_name" ],
+	['1', '-P', '--partitions', "Basic $partition_string info. Shows, if detected: 
+	/ /boot /home /opt /tmp /usr /var /var/log /var/tmp. Use -p to see all 
+	mounted ${partition_string}s." ],
+	['1', '-r', '--repos', "Distro repository data. Supported repo types: APK, 
+	APT, EOPKG, PACMAN, PACMAN-G2, PISI, PORTAGE, PORTS (BSDs), SLACKPKG, 
+	URPMQ, YUM/ZYPP." ],
+	['1', '-R', '--raid', "RAID data. Shows RAID devices, states, levels, 
+	and components. md-raid: If device is resyncing, also shows resync progress line." ],
+	['1', '-s', '--sensors', "Sensors output (if sensors installed/configured): 
+	mobo/CPU/GPU temp; detected fan speeds. GPU temp only for Fglrx/Nvidia drivers. 
+	Nvidia shows screen number for > 1 screen. IPMI sensors if present." ],
+	['1', '', '--slots', "PCI slots: type, speed, status. Requires root." ],
+	['1', '-S', '--system', "System info: host name, kernel, desktop environment 
+	(if in X/Wayland), distro." ],
+	['1', '-t', '--processes', "Processes. Requires extra options: c (CPU), m 
+	(memory), cm (CPU+memory). If followed by numbers 1-x, shows that number 
+	of processes for each type (default: 5; if in IRC, max: 5). " ],
+	['1', '', '', "Make sure that there is no space between letters and 
+	numbers (e.g. write as^-t^cm10)." ],
+	['1', '', '--usb', "Show USB data: Hubs and Devices." ],
+	['1', '-u', '--uuid', "$partition_string_u UUIDs. Triggers -P. For full -p 
+	output, use -pu." ],
+	['1', '-v', '--verbosity', "Set $self_name verbosity level (0-8). 
+	Should not be used with -b or -F. Example: $self_name^-v^4" ],
+	['2', '0', '', "Same as: $self_name" ],
 	['2', '1', '', "Basic verbose, -S + basic CPU + -G + basic Disk + -I." ],
-	['2', '2', '', "Networking card (-N), Machine (-M) data, if present, Battery (-B), 
-	basic hard disk data (names only), and, if present, basic raid (devices only, 
-	and if inactive, notes that). similar to: $self_name^-b" ],
-	['2', '3', '', "Advanced CPU (-C), battery, network (-n) data, and switches on 
-	-x advanced data option." ],
-	['2', '4', '', "$partition_string_u size/filled data (-P) for (if present): /, 
-	/home, /var/, /boot. Shows full disk data (-D)." ],
-	['2', '5', '', "Audio card (-A); sensors^(-s), memory/ram^(-m), 
-	$partition_string label^(-l) and UUID^(-u), short form of optical drives, 
-	standard raid data (-R)." ],
+	['2', '2', '', "Networking card (-N), Machine (-M), Battery (-B; if present), 
+	and, if present, basic RAID (devices only; notes if inactive). 
+	Same as $self_name^-b" ],
+	['2', '3', '', "Advanced CPU (-C), battery (-B), network (-n); 
+	triggers -x. " ],
+	['2', '4', '', "$partition_string_u size/used data (-P) for 
+	(if present) /, /home, /var/, /boot. Shows full disk data (-D). " ],
+	['2', '5', '', "Audio card (-A), sensors (-s), memory/RAM (-m), 
+	$partition_string label^(-l), UUID^(-u), short form of optical drives, 
+	standard RAID data (-R). " ],
 	['2', '6', '', "Full $partition_string (-p), unmounted $partition_string (-o), 
-	optical drive (-d), USB (--usb), full raid; triggers -xx." ],
+	optical drive (-d), USB (--usb), full RAID; triggers -xx." ],
 	['2', '7', '', "Network IP data (-i); triggers -xxx."],
-	['2', '8', '', "Everything available. repos (-r), processes (-tcm), PCI slots (--slots), and anything else added."],
+	['2', '8', '', "Everything available, including repos (-r), processes 
+	(-tcm), PCI slots (--slots)."],
 	);
 	push @data, @rows;
 	# if distro maintainers don't want the weather feature disable it
 	if ( $b_weather ){
 		@rows = (
-		['1', '-w', '--weather', "Local weather data/time. To check an alternate location, 
-		see: -W^<location>. For extra weather data options see -x, -xx, and -xxx."],
-		['1', '-W', '--weather-location', "<location> Supported options for <location>: postal code; 
-		city, state/country; latitude, longitude. Only use if you want the weather 
-		somewhere other than the machine running $self_name. Use only ascii 
-		characters, replace spaces in city/state/country names with '+'. 
+		['1', '-w', '--weather', "Local weather data/time. To check an alternate
+		location, see -W."],
+		['1', '-W', '--weather-location', "<location> Supported options for 
+		<location>: postal code; city, state/country; latitude, longitude. 
+		Only use if you want the weather somewhere other than the machine running
+		$self_name. Use only ASCII characters, replace spaces in city/state/country names with '+'. 
 		Example:^$self_name^-W^new+york,ny"]
 		);
 		push @data, @rows;
 	}
 	@rows = (
-	['1', '-x', '-extra', "Adds the following extra data (only works with verbose or line 
-	output, not short form):" ],
-	['2', '-B', '', "Vendor/model, status (if available)" ],
-	['2', '-C', '', "CPU Flags, Bogomips on Cpu;CPU microarchitecture / revision if 
-	found, like: (Sandy Bridge rev.2)" ],
-	['2', '-d', '', "Extra optical drive data; adds rev version to optical drive." ],
-	['2', '-D', '', "Hdd temp with disk data if you have hddtemp installed, if you are 
-	root OR if you have added to /etc/sudoers (sudo v. 1.7 or newer) 
-	Example:^<username>^ALL^=^NOPASSWD:^/usr/sbin/hddtemp" ],
-	['2', '-G', '', "Direct rendering status for Graphics (in X)." ],
-	['2', '-G', '', "(for single gpu, nvidia driver) screen number gpu is running on." ],
-	['2', '-i', '', "For IPv6, show additional IP v6 scope addresses: Global, Site, 
+	['1', '-x', '-extra', "Adds the following extra data (only works with 
+	verbose or line output, not short form):" ],
+	['2', '-B', '', "Vendor/model, status (if available)." ],
+	['2', '-C', '', "CPU $flags, Bogomips on CPU; CPU microarchitecture + 
+	revision (if found)." ],
+	['2', '-d', '', "Extra optical drive features data; adds rev version to 
+	optical drive." ],
+	['2', '-D', '', "HDD temp with disk data if you have hddtemp installed, if 
+	you are root, or if you have added to /etc/sudoers (sudo v. 1.7 or newer). 
+   Example:^<username>^ALL^=^NOPASSWD:^/usr/sbin/hddtemp" ],
+	['2', '-G', '', "Direct rendering status (in X); Screen number GPU is 
+	running on (Nvidia only)." ],
+	['2', '-i', '', "For IPv6, show additional scope addresses: Global, Site, 
 	Temporary, Unknown. See --limit for large counts of IP addresses." ],
-	['2', '-I', '', "System GCC, default. With -xx, also show other installed 
-	GCC versions. If running in console, not in IRC client, shows shell 
-	version number, if detected. Init/RC Type and runlevel (if available)." ],
-	['2', '-m', '', "Max memory module size (if available)." ],
-	['2', '-N -A', '', "Version/port(s)/driver version (if available) for Network/Audio;" ],
-	['2', '-N -A -G', '', "Network, audio, graphics, shows PCI Bus ID/Usb ID 
-	number of card." ],
-	['2', '-R', '', "md-raid: Resync line, shows blocks synced/total blocks." ],
-	['2', '-S', '', "Desktop toolkit if available (GNOME/XFCE/KDE only); Kernel 
-	gcc version" ],
-	['2', '-t', '', "Add memory use output to cpu (-xt c), and cpu use to memory 
-	(-xt m)." ],
-	['2', '--usb', '', "For Devices, show USB speed." ],
+	['2', '-I', '', "Default system GCC. With -xx, also shows other installed 
+	GCC versions. If running in shell, not in IRC client, shows shell version 
+	number, if detected. Init/RC type and runlevel (if available)." ],
+	['2', '-m', '', "Max memory module size (if available), device type." ],
+	['2', '-N -A', '', "Version/port(s)/driver version (if available)." ],
+	['2', '-N -A -G', '', "PCI Bus ID/USB ID number of card." ],
+	['2', '-R', '', "md-raid: second RAID Info line with extra data: 
+	blocks, chunk size, bitmap (if present). Resync line, shows blocks 
+	synced/total blocks." ],
+	['2', '-S', '', "Desktop toolkit, if available (GNOME/Xfce/KDE only); 
+	Kernel gcc version" ],
+	['2', '-t', '', "Adds memory use output to CPU (-xt c), and CPU use to 
+	memory (-xt m)." ],
+	['2', '--usb', '', "For Devices, shows USB version/speed." ],
 	);
 	push @data, @rows;
 	if ( $b_weather ){
-		@rows = (['2', '-w -W', '', "Wind speed, humidity, pressusre, and time zone (-w only)." ]);
+		@rows = (['2', '-w -W', '', "Wind speed and direction, humidity, pressure, 
+		and (-w only) time zone." ]);
 		push @data, @rows;
 	}
 	@rows = (
 	['1', '-xx', '--extra 2', "Show extra, extra data (only works with verbose 
 	or line output, not short form):" ],
 	['2', '-A', '', "Chip vendor:product ID for each audio device." ],
-	['2', '-B', '', "serial number, voltage (if available)." ],
+	['2', '-B', '', "Serial number, voltage (if available)." ],
 	['2', '-C', '', "Minimum CPU speed, if available." ],
 	['2', '-D', '', "Disk serial number." ],
-	['2', '-G', '', "Chip vendor:product ID for each video card; (mir/wayland only) 
-	compositor (alpha test); OpenGL compatibility version, if free drivers and 
-	available." ],
+	['2', '-G', '', "Chip vendor:product ID for each video card; OpenGL 
+	compatibility version, if free drivers and available. (Mir/Wayland only) 
+	compositor (experimental)." ],
 	['2', '-I', '', "Other detected installed gcc versions (if present). System 
-	default runlevel. Adds parent program (or tty) for shell info if not in IRC
-	(like Konsole or Gterm). Adds Init/RC (if found) version number." ],
-	['2', '-m', '', "Manufacturer, part number; Single/double bank (if found)." ],
-	['2', '-M', '', "Chassis information, bios rom size (dmidecode only), if data for 
-	either is available." ],
-	['2', '-N', '', "Chip vendor:product ID for each nic." ],
-	['2', '-R', '', "md-raid: Superblock (if present); algorithm. Adds 
-	system info line (kernel support,read ahead, raid events). If resync, 
+	default runlevel. Adds parent program (or tty) for shell info if not in 
+	IRC. Adds Init version number, RC (if found)." ],
+	['2', '-m', '', "Manufacturer, part number; single/double bank (if found)." ],
+	['2', '-M', '', "Chassis info, BIOS ROM size (dmidecode only), if available." ],
+	['2', '-N', '', "Chip vendor:product ID for each NIC." ],
+	['2', '-R', '', "md-raid: Superblock (if present), algorithm. If resync, 
 	shows progress bar." ],
-	['2', '-S', '', "Display manager (dm) in desktop output, if in X 
-	(like kdm, gdm3, lightdm)." ],
-	['2', '--slots', '', "Show slot length." ],
-	['2', '--usb', '', "Show vendor:chip id." ],
+	['2', '-S', '', "Display manager (dm) in desktop output if in X (e.g. kdm, 
+	gdm3, lightdm)." ],
+	['2', '--slots', '', "Slot length." ],
+	['2', '--usb', '', "Vendor:chip ID." ],
 	);
 	push @data, @rows;
 	if ( $b_weather ){
-		@rows = (['2', '-w -W', '', "Shows windchill, dew poinnt, heat index, if available." ]);
+		@rows = (['2', '-w -W', '', "Wind chill, dew point, heat index, if available." ]);
 		push @data, @rows;
 	}
 	@rows = (
-	['1', '-xxx', '--extra 3', "Show extra, extra, extra data (only works with verbose or 
-	line output, not short form):" ],
-	['2', '-B', '', "chemistry, cycles, location (if available)." ],
-	['2', '-D', '', "Firmware rev. if available; Partition scheme, in some cases." ],
-	['2', '-I', '', "For 'Shell:' adds ([su|sudo|login]) to shell name if present; for 
-	'running in:' adds (SSH) if SSH session." ],
+	['1', '-xxx', '--extra 3', "Show extra, extra, extra data (only works 
+	with verbose or line output, not short form):" ],
+	['2', '-B', '', "Chemistry, cycles, location (if available)." ],
+	['2', '-D', '', "Firmware rev. if available; partition scheme, in some cases." ],
+	['2', '-I', '', "For 'Shell:' adds ([su|sudo|login]) to shell name if present; 
+	for 'running in:' adds (SSH) if SSH session." ],
 	['2', '-m', '', "Width of memory bus, data and total (if present and greater 
-	than data); Detail, if present, for Type; module voltage, if available; Serial number." ],
-	['2', '-R', '', "zfs-raid: Shows portion allocated (used) by RAID devices/arrays. md-raid: 
-	Adds system mdraid support types (kernel support,read ahead, raid events)" ],
-	['2', '-S', '', "Panel/shell information in desktop output, if in X 
-	(like gnome-shell, cinnamon, mate-panel); if available, dm version number." ]
+	than data); Detail for Type, if present; module voltage, if available; serial number." ],
+	['2', '-R', '', "zfs-raid: portion allocated (used) by RAID devices/arrays. 
+	md-raid: system md-raid support types (kernel support, read ahead, RAID events)." ],
+	['2', '-S', '', "Panel/shell info in desktop output, if in X (like gnome-shell, 
+	cinnamon, mate-panel); if available, dm version number." ]
 	);
 	push @data, @rows;
 	if ( $b_weather ){
-		@rows = (['2', '-w -W', '', "Location (uses -z/irc filter), weather 
-		observation time, altitude (shows extra lines for data where relevant)." ] );
+		@rows = (['2', '-w -W', '', "Location (uses -z/irc filter), weather observation 
+		time, altitude (shows extra lines for data where relevant)." ] );
 		push @data, @rows;
 	}
 	@rows = (
-	['1', '-y', '--width', "Required extra option: integer, 80 or greater (-1 removes width limit). 
-	Set the output line width max. Overrides IRC/Terminal settings or actual widths. 
-	Example:^inxi^-y^130" ],
-	['1', '-z', '--filter', "Security filters for IP/Mac addresses, location, user home 
-	directory name. Default on for irc clients." ],
-	['1', '-Z', '--filter-override', "Absolute override for output filters. Useful for debugging 
-	networking issues in irc for example." ],
+	['1', '-y', '--width', "Output line width max (integer >= 80). Overrides IRC/Terminal 
+	settings or actual widths. Example:^inxi^-y^130" ],
+	['1', '-z', '--filter', "Adds security filters for IP/MAC addresses, serial numbers, 
+	location (-w), user home directory name. Default on for IRC clients." ],
+	['1', '-Z', '--filter-override', "Absolute override for output filters. Useful for 
+	debugging networking issues in IRC, for example." ],
 	[0, '', '', "$line" ],
 	[0, '', '', "Additional Options:" ],
 	['1', '-h', '--help', "This help menu." ],
  	['1', '', '--recommends', "Checks $self_name application dependencies + recommends, 
-	and directories, then shows what package(s) you need to install to add support 
-	for that feature. " ]
+ 	and directories, then shows what package(s) you need to install to add support 
+ 	for that feature." ]
 	);
 	push @data, @rows;
 	if ( $b_update ){
 		@rows = (
-		['1', '-U', '--update', "Auto-update script. Will also install/update man page. 
-		Note: if you installed as root, you must be root to update, otherwise user 
-		is fine. Man page installs require root user mode. No arguments downloads from main 
-		$self_name git repo." ],
+		['1', '-U', '--update', "Auto-update $self_name. Will also install/update man 
+		page. Note: if you installed as root, you must be root to update, otherwise 
+		user is fine. Man page installs require root. No arguments downloads from 
+		main $self_name git repo." ],
 		['1', '', '', "Use alternate sources for updating $self_name" ],
 		['2', '1', '', "Get the git branch one version." ],
 		['2', '2', '', "Get the git branch two version." ],
 		['3', '3', '', "Get the dev server (smxi.org) version." ],
-		['2', '<http>', '', "Get a version of $self_name from your own server if you want, 
-		put the full download path, like: $self_name -U https://myserver.com/inxi" ]
+		['2', '<http>', '', "Get a version of $self_name from your own server; 
+		use the full download path, e.g.^$self_name^-U^https://myserver.com/inxi" ]
 		);
 		push @data, @rows;
 	}
 	@rows = (
-	['1', '-V', '--version', "$self_name version information. Prints information 
-	then exits." ],
+	['1', '-V', '--version', "Prints $self_name version info then exits." ],
 	[0, '', '', "$line" ],
 	[0, '', '', "Debugging Options:" ],
 	['1', '', '--debug', "Triggers debugging modes." ],
-	['2', '1-3', '', "On screen $self_name debugger output" ],
-	['2', '10', '', "Basic $self_name logging." ],
-	['2', '11', '', "Full file/system info logging" ],
-	['2', '12', '', "Plus Color logging." ],
-	['1', '', ,'', "The following create a tar.gz file of system data, plus collecting 
-	the $self_name output to file. To automatically upload debugger data tar.gz file 
+	['2', '1-3', '', "On screen debugger output." ],
+	['2', '10', '', "Basic logging." ],
+	['2', '11', '', "Full file/system info logging." ],
+	['1', '', ,'', "The following create a tar.gz file of system data, plus $self_name 
+	output. To automatically upload debugger data tar.gz file 
 	to ftp.techpatterns.com: $self_name^--debug^21" ],
-	['2', '20', '', "Full system data collection: /sys; xorg conf and 
-	log data, xrandr, xprop, xdpyinfo, glxinfo etc.; data from dev, disks, 
+	['2', '20', '', "Full system data collection: /sys; xorg conf and log data, xrandr, 
+	xprop, xdpyinfo, glxinfo etc.; data from dev, disks,  
 	${partition_string}s, etc." ],
 	['2', '21', '', "Upload debugger dataset to $self_name debugger server 
 	automatically, removes debugger data directory, leaves tar.gz debugger file." ],
 	['2', '22', '', "Upload debugger dataset to $self_name debugger server 
 	automatically, removes debugger data directory and debugger tar.gz file." ],
 	['1', '', '--ftp', "Use with --debugger 21 to trigger an alternate FTP server for upload. 
-	Format:^[ftp.xx.xx/yy]. Must include a remote directory to upload to: 
+	Format:^[ftp.xx.xx/yy]. Must include a remote directory to upload to. 
 	Example:^$self_name^--debug^21^--ftp^ftp.myserver.com/incoming" ],
 	[0, '', '', "$line" ],
 	[0, '', '', "Advanced Options:" ],
@@ -4160,40 +4127,47 @@ sub show_options {
 	['2', '43', '', "Bypass Wget as a downloader option." ],
 	['2', '44', '', "Bypass Curl, Fetch, and Wget as downloader options. Forces 
 	Perl if HTTP::Tiny present." ],
-	['1', '', '--display', "Will try to get display data out of X. Default gets it from display 0. 
-	If you use this format: --display 1 it would get it from display 1 instead, or any 
-	display you specify" ],
+	['1', '', '--display', "[:[0-9]] Try to get display data out of X (default: display 0)." ],
+	['1', '', '--dmidecode', "Force use of dmidecode data instead of /sys where relevant 
+	(e.g. -M, -B)." ],
 	['1', '', '--downloader', "Force $self_name to use [curl|fetch|perl|wget] for downloads." ],
-	['1', '', '--dmidecode', "Forces use of dmidecode data instead of /sys where 
-	relevant (-M)." ],
-	['1', '', '--host', "Turns on hostname in output." ],
-	['1', '', '--indent-min', "Takes value 80 or greater. Increases or decreases the point 
-	where $self_name autowraps line starters." ],
-	['1', '', '--limit', "[-1 - x] -1 removes limit. Raise or lower max output limit of IP addresses for -i." ],
+	['1', '', '--host', "Turn on hostname for -S." ],
+	['1', '', '--indent-min', "Set point where $self_name autowraps line starters." ],
+	['1', '', '--limit', "[-1; 1-x] Set max output limit of IP addresses for -i 
+	(default 10; -1 removes limit)." ],
 	);
 	push @data, @rows;
 	if ( $b_update ){
 		@rows = (
-		['1', '', '--man', "Installs correct man version for dev branch (-U 3) or pinxi using -U." ],
-		['1', '', '--no-man', "Disables man install for all updat -U actions." ],
+		['1', '', '--man', "Install correct man version for dev branch (-U 3) or pinxi using -U." ],
 		);
 		push @data, @rows;
 	}
 	@rows = (
-	['1', '', '--no-host', "Turns off hostname in output. Useful if showing output from 
-	servers etc." ],
-	['1', '', '--no-ssl', "Skips SSL certificate checks for all downloader activities 
-	(wget/fetch/curl only)." ],
-	['1', '', '--output', "Change data output type. Options: [json|screen|xml]. Requires --output-file [path|print]." ],
-	['1', '', '--output-file', "[Full path for output file|print] for --output." ],
-	['1', '', '--sleep', "[0-x.x] - Usually in decimals. Change CPU sleep time for -C (current: $cpu_sleep). Sleep is used to let system catch up and show a more accurate CPU use. Example:^$self_name^-Cxxx^--sleep^0.15" ],
+	['1', '', '--no-host', "Turn off hostname for -S. Useful if showing output from servers etc." ],
+	);
+	push @data, @rows;
+	if ( $b_update ){
+		@rows = (
+		['1', '', '--no-man', "Disable man install for all -U update actions." ],
+		);
+		push @data, @rows;
+	}
+	@rows = (
+	['1', '', '--no-ssl', "Skip SSL certificate checks for all downloader actions 
+	(Wget/Fetch/Curl only)." ],
+	['1', '', '--output', "[json|screen|xml] Change data output type. Requires --output-file 
+	if not screen." ],
+	['1', '', '--output-file', "[Full filepath|print] Output file to be used for --output." ],
+	['1', '', '--sleep', "[0-x.x] Change CPU sleep time, in seconds, for -C 
+	(default:^$cpu_sleep). Allows system to catch up and show a more accurate CPU 
+	use. Example:^$self_name^-Cxxx^--sleep^0.15" ],
 	['0', '', '', $line ],
 	);
 	push @data, @rows;
 	print_basic(@data); 
 	exit 1;
 }
-
 
 sub show_version {
 	require Cwd;
@@ -4468,7 +4442,7 @@ sub perl_python_client {
 	eval $start if $b_log;
 	return 1 if $client{'version'};
 	# this is a hack to try to show konversation if inxi is running but started via /cmd
-	# OR via script shortcuts, both cases in fact now
+	# OR via program shortcuts, both cases in fact now
 	# main::print_line("konvi: " . scalar grep { $_ =~ /konversation/ } @ps_cmd);
 	if ( $b_display && main::check_program('konversation') && ( scalar grep { $_ =~ /konversation/ } @ps_cmd ) > 0){
 		@app = main::program_values('konversation');
@@ -4777,7 +4751,7 @@ sub row_defaults {
 	'display-root' => 'Advanced graphics data unavailable in console for root.',
 	'display-root-x' => 'Advanced graphics data unavailable for root. Old System?',
 	'display-server' => "No display server data found. Headless server?",
-	'display-tool' => "Unable to show advanced data. Required tool $id missing.",
+	'glxinfo-missing' => "Unable to show advanced data. Required tool glxinfo missing.",
 	'display-try' => 'Advanced graphics data unavailable in console. Try -G --display',
 	'dev' => 'Feature under development',
 	'dmesg-boot-permissions' => 'dmesg.boot permissions',
@@ -4807,6 +4781,7 @@ sub row_defaults {
 	'unknown-dev' => "ERR-102",
 	'unknown-shell' => "ERR-100",
 	'weather-null' => "No $id found. Internet connection working?",
+	'xdpyinfo-missing' => '<xdpyinfo missing>',
 	);
 	return $unfound{$type};
 }
@@ -5625,7 +5600,7 @@ sub create_output {
 					$volts = "$battery{$key}{'voltage_now'}/$battery{$key}{'voltage_min_design'}";
 				}
 				$volts ||= 'N/A';
-				$rows[$j]{main::key($num++,'volts')} = $volts;
+				$rows[$j]{main::key($num++,'volts now/min')} = $volts;
 			}
 			if ($battery{$key}{'manufacturer'} || $battery{$key}{'model_name'}) {
 				if ($battery{$key}{'manufacturer'} && $battery{$key}{'model_name'}){
@@ -7519,7 +7494,7 @@ sub partition_table {
 		# Type:               dos
 		if (!$b_root){
 			if ($program = main::check_program('udevadm')){
-				$return[0] = "$program  info -q property -n ";
+				$return[0] = "$program info -q property -n ";
 			}
 		}
 		if (!$return[0] && $b_root && -e "/lib/udev/udisks-part-id") {
@@ -7532,7 +7507,8 @@ sub partition_table {
 	if ($return[0] ne 'na'){
 		$cmd = "$return[0]$id 2>/dev/null";
 		@data = main::grabber($cmd);
-		$return[1] = main::awk(\@data,'^UDISKS_PARTITION_TABLE_SCHEME',2,'=');
+		$return[1] = main::awk(\@data,'^(UDISKS_PARTITION_TABLE_SCHEME|ID_PART_TABLE_TYPE)',2,'=');
+		$return[1] = 'mbr' if $return[1] eq 'dos';
 	}
 	eval $end if $b_log;
 	return @return;
@@ -7756,7 +7732,6 @@ sub card_data {
 		}
 		#print "$row[0]\n";
 	}
-	
 	#my $ref = $pci[-1];
 	#print $$ref[0],"\n";
 	eval $end if $b_log;
@@ -7776,7 +7751,7 @@ sub display_server(){
 		$server = lc($server) if $server;
 		$graphics{'compositor'} = display_compositor($server);
 	}
-	if ( $show{'display-data'}){
+	if ( $b_display){
 		# X vendor and version detection.
 		# new method added since radeon and X.org and the disappearance of 
 		# <X server name> version : ...etc. Later on, the normal textual version string 
@@ -7850,6 +7825,9 @@ sub display_server(){
 			else {
 				$graphics{'tty'} = tty_data();
 			}
+		}
+		else {
+			$graphics{'screens'} = ([main::row_defaults('xdpyinfo-missing')]);
 		}
 	}
 	else {
@@ -7929,8 +7907,8 @@ sub gl_data(){
 	eval $start if $b_log;
 	my $num = 0;
 	my (@row,$arg);
-	#print ("$show{'display-data'} : $b_root\n");
-	if ( $show{'display-data'} == 1 || (!$b_root && $show{'display-data'} == 2)){
+	#print ("$b_display : $b_root\n");
+	if ( $b_display){
 		if (my $program = main::check_program('glxinfo')){
 			# NOTE: glxinfo -B is not always available, unforunately
 			my @glxinfo = main::grabber("$program $display_opt 2>/dev/null");
@@ -7939,7 +7917,7 @@ sub gl_data(){
 				if ($b_root){
 					$type = 'display-root-x';
 				}
-				elsif ($show{'display-data'} == 1){
+				else {
 					$type = 'display-null';
 				}
 				@row = ({
@@ -8017,25 +7995,25 @@ sub gl_data(){
 		}
 		else {
 			@row = ({
-			main::key($num++,'Message') => main::row_defaults('display-tool','glxinfo'),
+			main::key($num++,'Message') => main::row_defaults('glxinfo-missing'),
 			});
 		}
 	}
 	else {
 		my $type = 'display-console';
-		my $ref = $alerts{'glxinfo'};
-		if ($$ref{'action'} eq 'missing'){
-			$type = 'display-tool';
-			$arg = 'glxinfo';
+		if (!main::check_program('glxinfo')){
+			$type = 'glxinfo-missing';
 		}
-		elsif ($b_root){
-			$type = 'display-root';
-		}
-		elsif ($show{'display-data'} == 0){
-			$type = 'display-try';
+		else {
+			if ($b_root){
+				$type = 'display-root';
+			}
+			else {
+				$type = 'display-try';
+			}
 		}
 		@row = ({
-		main::key($num++,'Message') => main::row_defaults($type,$arg),
+		main::key($num++,'Message') => main::row_defaults($type),
 		});
 	}
 	eval $end if $b_log;
@@ -16091,7 +16069,7 @@ sub generate_info_data {
 	$gcc ||= 'N/A';
 	if (!$b_irc && $extra > 1 ){
 		# bsds don't support -f option to get PPID
-		if ($b_display && !$bsd_type){
+		if (($b_display && !$b_force_display) && !$bsd_type){
 			$parent = get_shell_source();
 		}
 		else {
@@ -16102,7 +16080,6 @@ sub generate_info_data {
 			$client{'su-start'} = $parent if !$client{'su-start'};
 			$parent = undef;
 		}
-		
 		# can be tty 0 so test for defined
 		$running_in = $parent if defined $parent;
 		if ($extra > 2 && $running_in && get_ssh_status() ){
@@ -16119,7 +16096,6 @@ sub generate_info_data {
 		$used .= " ($temp[2]%)" if $temp[2];
 	}
 	$memory ||= 'N/A';
-	
 	my %data = (
 	$data_name => [{
 		main::key($num++,'Processes') => scalar @ps_aux, 
@@ -16129,7 +16105,7 @@ sub generate_info_data {
 		},],
 	);
 	$index = scalar(@{ $data{$data_name} } ) - 1;
-	if ( !$show{'display-data'} || $extra > 0 ){
+	if ( (!$b_display || $b_force_display) || $extra > 0 ){
 		my %init = get_init_data();
 		my $init_type = ($init{'init-type'}) ? $init{'init-type'}: 'N/A';
 		$data{$data_name}[$index]{main::key($num++,'Init')} = $init_type;
