@@ -202,7 +202,7 @@ to get the information I need to resolve the issue file by painful
 file from the issue poster. This is only the start of the process, 
 and realistically requires 2. to complete it.
 
-2. direct ssh access to at least a comparable live BSD version/system, 
+2. direct SSH access to at least a comparable live BSD version/system, 
 that is, if the issue is on a laptop, access has to be granted to the 
 laptop, or a similar one. 
 
