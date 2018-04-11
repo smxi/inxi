@@ -104,7 +104,7 @@ DEVELOPER FORUMS: http://techpatterns.com/forums/forum-32.html
 
 SOURCE VERSION CONTROL: https://github.com/smxi/inxi
 MAIN BRANCH: master
-DEVELOPMENT BRANCHES: inxi-perl, one, two, three, android.
+DEVELOPMENT BRANCHES: inxi-perl, one, two
 inxi-perl is the dev branch, the others are rarely if ever used. inxi 
 itself has the built in feature to be able to update itself from 
 anywhere, including these branches, which is very useful for development 
