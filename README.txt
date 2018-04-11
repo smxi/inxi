@@ -19,18 +19,13 @@ OR easy to remember shortcut (which redirects to github):
 wget -Nc https://smxi.org/inxi
 wget -Nc smxi.org/inxi
 
-NOTE: I have deleted the master-plain branch to avoid confusion 
-since I've removed the legacy .gz files from the branch, which were 
-the only reasons for its existence.
+Every current master branch commit is the active release, all past 
+commits are not supported. Tagging is purely a formality that certain 
+distros can't figure out how to do without, that's all. A tag is a 
+pointer to a commit, and has no further meaning. 
 
-A tag is a pointer to a commit, and has no further meaning. 
-
-Every current commit is the active release, all past commits are not 
-supported. Tagging is purely a formality that certain distros can't 
-figure out how to do without, that's all. 
-
-NOTE: JUST BECAUSE GITHUB CALLS MY TAGGED COMMITS 'RELEASES' DOES 
-NOT MEAN THEY ARE RELEASES!!! I can't change the words on the tag page. 
+NOTE: JUST BECAUSE GITHUB CALLS TAGGED COMMITS 'RELEASES' DOES NOT 
+MEAN THEY ARE RELEASES!!! I can't change the words on the tag page. 
 They are tagged commmits, period. I did not want to use tags precisely 
 to avoid the idea that inxi has any release that exists that is other 
 than it's current master version, but I decided that it was less pain 
