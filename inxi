@@ -31,7 +31,7 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.0.01';
+my $self_version='3.0.02';
 my $self_date='2018-04-12';
 my $self_patch='00';
 ## END INXI INFO ##
@@ -2234,12 +2234,12 @@ sub check_items {
 	}
 	elsif ($type eq 'recommended system programs'){
 		if ($bsd_type){
-			@data = qw(camcontrol dig dmidecode file glabel gpart ifconfig ipmi-sensors 
+			@data = qw(camcontrol dig dmidecode fdisk file glabel gpart ifconfig ipmi-sensors 
 			ipmitool lsusb sudo smartctl sysctl tree uptime usbdevs);
 			$info_os = 'info-bsd';
 		}
 		else {
-			@data = qw(dig dmidecode file hddtemp ifconfig ip ipmitool ipmi-sensors
+			@data = qw(dig dmidecode fdisk file hddtemp ifconfig ip ipmitool ipmi-sensors
 			lsblk lsusb modinfo runlevel sensors strings sudo tree uptime);
 		}
 		$b_program = 1;
@@ -2458,6 +2458,13 @@ sub item_data {
 	'apt' => 'dmidecode',
 	'pacman' => 'dmidecode',
 	'rpm' => 'dmidecode',
+	}),
+	'fdisk' => ({
+	'info' => '-D partition scheme (fallback)',
+	'info-bsd' => '-D partition scheme',
+	'apt' => 'fdisk',
+	'pacman' => 'util-linux',
+	'rpm' => 'util-linux',
 	}),
 	'fetch' => ({
 	'info' => '',
@@ -7215,7 +7222,7 @@ sub proc_data_advanced {
 	my ($i) = (0);
 	my (@data,@rows,@scsi,@temp,@working);
 	my ($pt_cmd) = ('unset');
-	my ($block_type,$file,$firmware,$model,$path,$partition_table,
+	my ($block_type,$file,$firmware,$model,$path,$partition_scheme,
 	$serial,$vendor,$working_path);
 	@by_id = main::globber('/dev/disk/by-id/*');
 	@by_path = main::globber('/dev/disk/by-path/*');
@@ -7238,10 +7245,10 @@ sub proc_data_advanced {
 	#print 'drives:', Data::Dumper::Dumper \@drives;
 	for ($i = 1; $i < scalar @drives; $i++){
 		#next if $drives[$i]{'id'} =~ /^hd[a-z]/;
-		($block_type,$firmware,$model,$partition_table,
+		($block_type,$firmware,$model,$partition_scheme,
 		$serial,$vendor,$working_path) = ('','','','','','','');
 		if ($extra > 2){
-			@data = partition_table($pt_cmd,$drives[$i]{'id'});
+			@data = partition_scheme($pt_cmd,$drives[$i]{'id'});
 			$pt_cmd = $data[0];
 			$drives[$i]{'partition-table'} = uc($data[1]) if $data[1];
 		}
@@ -7475,7 +7482,7 @@ sub peripheral_data {
 	eval $end if $b_log;
 	return $type;
 }
-sub partition_table {
+sub partition_scheme {
 	eval $start if $b_log;
 	my ($set_cmd,$id) = @_;
 	my ($cmd,$pt,$program,@data,@return);
@@ -7494,15 +7501,35 @@ sub partition_table {
 		if (!$return[0] && $b_root && -e "/lib/udev/udisks-part-id") {
 			$return[0] = "/lib/udev/udisks-part-id /dev/";
 		}
-		elsif (!$return[0]) {
+		elsif (!$return[0] && $b_root && ($program = main::check_program('fdisk'))) {
+			$return[0] = "$program -l /dev/";
+		}
+		if (!$return[0]) {
 			$return[0] = 'na'
 		}
 	}
 	if ($return[0] ne 'na'){
-		$cmd = "$return[0]$id 2>/dev/null";
+		$cmd = "$return[0]$id 2>&1";
 		main::log_data('cmd',$cmd) if $b_log;
 		@data = main::grabber($cmd);
-		$return[1] = main::awk(\@data,'^(UDISKS_PARTITION_TABLE_SCHEME|ID_PART_TABLE_TYPE)',2,'=');
+		# for pre ~ 2.30 fdisk did not show gpt, but did show gpt scheme error, so
+		# if no gpt match, it's dos = mbr
+		if ($cmd =~ /fdisk/){
+			foreach (@data){
+				if (/^WARNING:\s+GPT/){
+					$return[1] = 'gpt';
+					last;
+				}
+				elsif (/^Disklabel\stype:\s*(.+)/i){
+					$return[1] = $1;
+					last;
+				}
+			}
+			$return[1] = 'dos' if !$return[1];
+		}
+		else {
+			$return[1] = main::awk(\@data,'^(UDISKS_PARTITION_TABLE_SCHEME|ID_PART_TABLE_TYPE)',2,'=');
+		}
 		$return[1] = 'mbr' if $return[1] eq 'dos';
 	}
 	eval $end if $b_log;
