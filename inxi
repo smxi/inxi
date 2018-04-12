@@ -20,24 +20,19 @@ use warnings;
 use 5.008;
 
 use Cwd qw(abs_path); # qw(abs_path);#abs_path realpath getcwd
-# use Data::Dump qw(dump); # damn, not in core modules
 use Data::Dumper qw(Dumper); # print_r
-# use File::Basename;
 use File::Find;
-# use Getopt::Long qw(GetOptionsFromArray); # :config no_ignore_case bundling_values
 use Getopt::Long qw(GetOptions);
 # Note: default auto_abbrev is enabled, that's fine
 Getopt::Long::Configure ('bundling', 'no_ignore_case', 
 'no_getopt_compat', 'no_auto_abbrev','pass_through');
-# use Path::Class; # maybe use, maybe not, for ls /sys
 use POSIX qw(uname strftime ttyname);
-# use Time::HiRes qw(gettimeofday tv_interval);
 # use feature qw(state);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.0.00';
-my $self_date='2018-04-09';
+my $self_version='3.0.01';
+my $self_date='2018-04-12';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -53,16 +48,9 @@ my ($b_hires,$t1,$t2,$t3) = (0,0,0,0);
 # NOTE: redhat removed HiRes from Perl Core Modules. Why? who knows.
 if (eval {require Time::HiRes}){
 	Time::HiRes->import('gettimeofday','tv_interval','usleep');
-#  import Time::HiRes::gettimeofday();
-#  import Time::HiRes::tv_interval();
-#  import Time::HiRes::usleep();
 	$b_hires = 1;
 }
-#print "result:$@\n";
-#$b_hires = 1 if defined Time::HiRes::gettimeofday();
 @t0 = eval 'Time::HiRes::gettimeofday()' if $b_hires; # let's start it right away
-# print "t0: @t0\n";
-# print "result:$@\n";
 ## Hashes
 my ( %alerts, %client, %colors, %dl, %files, %rows, %system_files, %use );
 
@@ -74,8 +62,6 @@ my (@app,@dmesg_boot,@dmi,@gpudata,@ifs,@ifs_bsd,@pci,@ps_aux,@ps_cmd,
 my (@dm_boot_disk,@dm_boot_optical,@glabel,@gpart,@labels,@lsblk,@partitions,
 @raid,@sysctl_disks,@uuids);
 my @test = (0,0,0,0,0);
-
-#my $opt_parser = Getopt::Long::Parser->new;
 
 ## Booleans
 my ($b_arm,$b_console_irc,$b_debug_gz,$b_display,$b_dmesg_boot_check,$b_dmi,
@@ -1241,6 +1227,7 @@ sub create_debug_directory {
 	my ($arm_string,$bsd_string,$root_string) = ('','','');
 	# note: Time::Piece was introduced in perl 5.9.5
 	my ($sec,$min,$hour,$mday,$mon,$year) = localtime;
+	my $version = substr($self_version,0,3);
 	$year = $year+1900;
 	$mon += 1;
 	if (length($sec)  == 1) {$sec = "0$sec";}
@@ -1256,7 +1243,7 @@ sub create_debug_directory {
 	}
 	$bsd_string = "-$bsd_type-$os" if $bsd_type;
 	$arm_string = '-ARM' if $b_arm;
-	$debug_dir = "$self_name$arm_string$bsd_string-$host-$today$root_string";
+	$debug_dir = "$self_name$arm_string$bsd_string-$host-$today$root_string-$version";
 	$debug_gz = "$debug_dir.tar.gz";
 	$data_dir = "$user_data_dir/$debug_dir";
 	if ( -d $data_dir ){
@@ -1455,7 +1442,8 @@ sub display_data {
 	['nvidia-smi','-q'],
 	['nvidia-smi','-q -x'],
 	['plasmashell','--version'],
-	['weston-info',''],
+	['weston-info',''], 
+	['wmctrl','-m'],
 	['weston','--version'],
 	['xdpyinfo',''],
 	['Xorg','-version'],
@@ -2261,11 +2249,11 @@ sub check_items {
 	}
 	elsif ($type eq 'recommended display information programs'){
 		if ($bsd_type){
-			@data = qw(glxinfo xdpyinfo xprop xrandr);
+			@data = qw(glxinfo wmctrl xdpyinfo xprop xrandr);
 			$info_os = 'info-bsd';
 		}
 		else {
-			@data = qw(glxinfo xdpyinfo xprop xrandr);
+			@data = qw(glxinfo wmctrl xdpyinfo xprop xrandr);
 		}
 		$b_program = 1;
 		$item = 'Program';
@@ -2646,6 +2634,13 @@ sub item_data {
 	'apt' => 'mesa-utils',
 	'pacman' => 'mesa-demos',
 	'rpm' => 'glx-utils (openSUSE 12.3 and later Mesa-demo-x)',
+	}),
+	'wmctrl' => ({
+	'info' => '-S active window manager (not all wm)',
+	'info-bsd' => '-S active window managerr (not all wm)',
+	'apt' => 'wmctrl',
+	'pacman' => 'wmctrl',
+	'rpm' => 'wmctrl',
 	}),
 	'xdpyinfo' => ({
 	'info' => '-G multi screen resolution',
@@ -3900,8 +3895,8 @@ sub show_options {
 	['1', '-F', '--full', "Full output. Includes all Upper Case line letters 
 	except -W, plus -s and -n. Does not show extra verbose options such 
 	as -d -f -i -l -m -o -p -r -t -u -x, unless specified." ],
-	['1', '-G', '--graphics', "Graphics info (card(s), driver, display server 
-	type/version, resolution, renderer, OpenGL version)." ],
+	['1', '-G', '--graphics', "Graphics info (card(s), driver, display protocol 
+	(if available), display server, resolution, renderer, OpenGL version)." ],
 	['1', '-i', '--ip', "WAN IP address and local interfaces (requires ifconfig 
 	or ip network tool). Triggers -n. Not shown with -F for user security reasons. 
 	You shouldn't paste your local/WAN IP." ],
@@ -4059,7 +4054,7 @@ sub show_options {
 	['2', '-R', '', "zfs-raid: portion allocated (used) by RAID devices/arrays. 
 	md-raid: system md-raid support types (kernel support, read ahead, RAID events)." ],
 	['2', '-S', '', "Panel/shell info in desktop output, if in X (like gnome-shell, 
-	cinnamon, mate-panel); if available, dm version number." ]
+	cinnamon, mate-panel); (if available) dm version number, active window manager." ]
 	);
 	push @data, @rows;
 	if ( $b_weather ){
@@ -7506,6 +7501,7 @@ sub partition_table {
 	}
 	if ($return[0] ne 'na'){
 		$cmd = "$return[0]$id 2>/dev/null";
+		main::log_data('cmd',$cmd) if $b_log;
 		@data = main::grabber($cmd);
 		$return[1] = main::awk(\@data,'^(UDISKS_PARTITION_TABLE_SCHEME|ID_PART_TABLE_TYPE)',2,'=');
 		$return[1] = 'mbr' if $return[1] eq 'dos';
@@ -7668,7 +7664,7 @@ sub get {
 			@rows = (@rows,@data);
 		}
 	}
-	@data = display_server();
+	@data = display_data();
 	@rows = (@rows,@data);
 	@data = gl_data();
 	@rows = (@rows,@data);
@@ -7737,19 +7733,27 @@ sub card_data {
 	eval $end if $b_log;
 	return @rows;
 }
-sub display_server(){
+sub display_data(){
 	eval $start if $b_log;
 	my (%graphics,@row);
 	my @xdpyinfo;
 	my $num = 0;
-	# note: this may not always be set, it won't be out of X, for example
-	my $server = $ENV{'XDG_SESSION_TYPE'};
-	
-	$server = $ENV{'WAYLAND_DISPLAY'} if (!$server && $ENV{'WAYLAND_DISPLAY'});
+	my ($protocol,$server) = ('','');
+	# note: these may not always be set, they won't be out of X, for example
+	$protocol = $ENV{'XDG_SESSION_TYPE'} if $ENV{'XDG_SESSION_TYPE'};
+	$protocol = $ENV{'WAYLAND_DISPLAY'} if (!$protocol && $ENV{'WAYLAND_DISPLAY'});
+	# need to confirm that there's a point to this test, I believe no, fails out of x
+# 	if (!$protocol && $b_display && !$b_force_display && $ENV{'XDG_SESSION_ID'}){
+# 		if (my $program = main::check_program('loginctl')){
+# 			my $temp = (main::grabber("$program show-session $ENV{'XDG_SESSION_ID'} -p Type --no-pager 2>/dev/null"))[0];
+# 			$temp =~ s/Type=// if $temp;
+# 			$protocol = $temp;
+# 		}
+# 	}
 	if ($extra > 1){
 		# initial tests, if wayland, it is certainly a compositor
-		$server = lc($server) if $server;
-		$graphics{'compositor'} = display_compositor($server);
+		$protocol = lc($protocol) if $protocol;
+		$graphics{'compositor'} = display_compositor($protocol);
 	}
 	if ( $b_display){
 		# X vendor and version detection.
@@ -7846,12 +7850,7 @@ sub display_server(){
 		my $server_string = '';
 		if ($graphics{'vendor'}){
 			my $version = ($graphics{'version'}) ? " $graphics{'version'}" : '';
-			if ($server){
-				$server_string = "$server ($graphics{'vendor'}$version)";
-			}
-			else {
-				$server_string = "$graphics{'vendor'}$version";
-			}
+			$server_string = "$graphics{'vendor'}$version";
 		}
 		elsif ($graphics{'version'}) {
 			$server_string = "X.org $graphics{'version'}";
@@ -7866,10 +7865,11 @@ sub display_server(){
 			}
 		}
 		my @drivers = x_drivers();
-		if (!$server_string && !$graphics{'vendor'} && !@drivers){
+		if (!$protocol && !$server_string && !$graphics{'vendor'} && !@drivers){
 			$server_string = main::row_defaults('display-server');
 			@row = ({
-			main::key($num++,'Display Server') => $server_string,
+			main::key($num++,'Display') => '',
+			main::key($num++,'server') => $server_string,
 			});
 		}
 		else {
@@ -7879,7 +7879,8 @@ sub display_server(){
 			# those come from lscpi kernel drivers so there should be no xorg/wayland issues.
 			$driver = ($drivers[0]) ? $drivers[0]: $driver;
 			@row = ({
-			main::key($num++,'Display Server') => $server_string,
+			main::key($num++,'Display') => $protocol,
+			main::key($num++,'server') => $server_string,
 			main::key($num++,'driver') => $driver,
 			});
 			if ($drivers[2]){
@@ -8131,10 +8132,10 @@ sub x_version {
 	eval $end if $b_log;
 	return $version;
 }
-# $1 - server: wayland|x11
+# $1 - protocol: wayland|x11
 sub display_compositor {
 	eval $start if $b_log;
-	my ($server) = @_; 
+	my ($protocol) = @_; 
 	my ($compositor) = ('');
 	# NOTE: chains of greps of ps data are VERY expensive, so check for program presence
 	if (main::check_program('mutter') && (grep {/mutter/} @ps_cmd ) ) {
@@ -8627,6 +8628,7 @@ sub get_device_sys {
 	my ($chasis_id) = @_;
 	my ($device) = ('');
 	my @chassis;
+	# https://www.dmtf.org/sites/default/files/standards/documents/DSP0134_2.8.0.pdf
 	$chassis[2] = 'unknown';
 	# note: 13 is all-in-one which we take as a mac type system
 	$chassis[3] = 'desktop';
@@ -13612,6 +13614,7 @@ sub get_compiler_version_linux {
 # 2 - toolkit
 # 3 - toolkit version
 # 4 - info extra desktop data
+# 5 - wm
 {
 package DesktopEnvironment;
 my ($b_xprop,$kde_session_version,$xdg_desktop,@desktop,@data,@xprop);
@@ -13635,6 +13638,9 @@ sub get {
 	}
 	if ($extra > 2 && @desktop){
 		set_info_data();
+	}
+	if ($b_display && !$b_force_display && $extra > 2){
+		get_wm();
 	}
 	main::log_data('dump','@desktop', \@desktop) if $b_log;
 	# ($b_xprop,$kde_session_version,$xdg_desktop,@data,@xprop) = undef;
@@ -13982,6 +13988,16 @@ sub get_ps_de_data {
 		@data = main::program_values('afterstep');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('afterstep',$data[0],$data[1],$data[2],$data[5]);
+	}
+	eval $end if $b_log;
+}
+
+sub get_wm {
+	eval $start if $b_log;
+	if ( my $program =  main::check_program('wmctrl') ){
+		my $cmd = "$program -m 2>/dev/null";
+		my @data = main::grabber($cmd,'','strip');
+		$desktop[5] = main::awk(\@data,'^Name',2,'\s*:\s*');
 	}
 	eval $end if $b_log;
 }
@@ -16170,7 +16186,7 @@ sub generate_system_data {
 	my $num = 0;
 	my (%row,$ref,$index,$val1);
 	my $data_name = main::key($prefix++,'System');
-	my ($desktop,$desktop_info,$desktop_key) = ('','','Desktop');
+	my ($desktop,$desktop_info,$desktop_key,$toolkit,$wm) = ('','','Desktop','','');
 	my (@desktop_data,$desktop_version);
 	
 	my %data = (
@@ -16204,11 +16220,15 @@ sub generate_system_data {
 		$desktop_version = $desktop_data[1] if $desktop_data[1];
 		$desktop .= ' ' . $desktop_version if $desktop_version;
 		if ($extra > 0 && $desktop_data[3]){
-			$desktop .= ' (' . $desktop_data[2];
-			$desktop .= ( $desktop_data[3] ) ? ' ' . $desktop_data[3] . ')' : ')';
+			#$desktop .= ' (' . $desktop_data[2];
+			#$desktop .= ( $desktop_data[3] ) ? ' ' . $desktop_data[3] . ')' : ')';
+			$toolkit = "$desktop_data[2] $desktop_data[3]";
 		}
 		if ($extra > 2 && $desktop_data[4]){
 			$desktop_info = $desktop_data[4];
+		}
+		if ($desktop_data[5]){
+			$wm = $desktop_data[5];
 		}
 	}
 	if (!$b_display || ( ! $desktop && $b_root)) {
@@ -16225,9 +16245,15 @@ sub generate_system_data {
 	}
 	$desktop ||= 'N/A';
 	$data{$data_name}[$index]{main::key($num++,$desktop_key)} = $desktop;
+	if ($toolkit){
+		$data{$data_name}[$index]{main::key($num++,'tk')} = $toolkit;
+	}
 	if ($extra > 2){
 		if ($desktop_info){
 			$data{$data_name}[$index]{main::key($num++,'info')} = $desktop_info;
+		}
+		if ($wm){
+			$data{$data_name}[$index]{main::key($num++,'wm')} = $wm;
 		}
 	}
 	if ($extra > 1){
