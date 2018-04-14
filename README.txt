@@ -1,14 +1,31 @@
 README for inxi - a command line system information tool
 
 The new Perl inxi is now here! File all issue reports with the master
-branch.
+branch. All support for versions prior to 2.9 is now ended, sorry. 
+
+Make sure to update to the current inxi from the master branch before 
+filing any issue reports. The code in pre 2.9 versions literally no 
+longer exists in inxi 3. 3.0 was a full rewrite of inxi. Bugs from
+earlier versions cannot be solved in the new version since the the 
+pre 2.9 and the 2.9 and later versions are completely different 
+internally.
+
+inxi strives to support the widest range of operating systems and 
+hardware, from the most simple consumer desktops, to the most advanced
+professional hardware and servers, and various platforms. 
+
+The issues you post help maintain or expand that support, and are 
+always appreciated since user data and feedback is what keeps inxi 
+working and supporting the latest or not so latest hardware and 
+operating systems. See the BSD section below for qualifications re 
+BSDs and OSX.
 
 =====================================================================
-MASTER GIT BRANCH:
+MASTER BRANCH:
 
 This is the only supported branch, and the current latest commit is
-the only supported 'release'. There are NO 'releases' of inxi beyond 
-the current commit to master.
+the only supported 'release'. There are no 'releases' of inxi beyond 
+the current commit to master. All past commits are not supported. 
 
 git clone https://github.com/smxi/inxi --branch master --single-branch
 
@@ -19,13 +36,12 @@ OR easy to remember shortcut (which redirects to github):
 wget -Nc https://smxi.org/inxi
 wget -Nc smxi.org/inxi
 
-Every current master branch commit is the active release, all past 
-commits are not supported. Tagging is purely a formality that certain 
-distros can't figure out how to do without, that's all. A tag is a 
-pointer to a commit, and has no further meaning. 
+'Tagging' is purely a formality that certain distros can't figure out 
+how to do without, that's all. A tag is a pointer to a commit, and has 
+no further meaning. 
 
-NOTE: JUST BECAUSE GITHUB CALLS TAGGED COMMITS 'RELEASES' DOES NOT 
-MEAN THEY ARE RELEASES!!! I can't change the words on the tag page. 
+NOTE: Just because github calls tagged commits 'Releases' does not 
+mean they are releases! I can't change the words on the tag page. 
 They are tagged commmits, period. I did not want to use tags precisely 
 to avoid the idea that inxi has any release that exists that is other 
 than it's current master version, but I decided that it was less pain 
@@ -59,8 +75,8 @@ wget -Nc https://github.com/smxi/inxi/raw/inxi-legacy/binxi
 OR easy to remember shortcut (which redirects to github):
 wget -Nc https://smxi.org/binxi
 
-This version will not be maintained, and it's unlikely that I will 
-spend any time on it in the future, but it is there in case it's of
+This version will not be maintained, and it's unlikely that any time
+will be spent on it in the future, but it is there in case it's of
 use or interest to anyone.
 
 =====================================================================
@@ -84,7 +100,7 @@ list of Core modules that _should_ be included in a distribution's
 core modules, but which are unfortunately sometimes removed. 
 
 HTML MAN PAGE: http://smxi.org/docs/inxi-man.htm 
-INXI OPTIONS: http://smxi.org/docs/inxi-options.htm 
+INXI OPTIONS PAGE: http://smxi.org/docs/inxi-options.htm 
 NOTE: These may not always be up to date, but generally track the most 
 recent inxi commits.
 
@@ -92,9 +108,9 @@ ISSUES: https://github.com/smxi/inxi/issues
 No issues accepted for non current inxi releases. See below for more on 
 that. Unfortunately as of 2.9, no support or issues can be accepted for 
 older inxi's because inxi 2.9 (Perl) and newer is a full rewrite, and 
-legacy inxi is not being supported since my time is finite (plus of 
-course, one reason for the rewrite was to never have to work with 
-Gawk->Bash again!)
+legacy inxi is not being supported since our time here on earth is 
+finite (plus of course, one reason for the rewrite was to never have 
+to work with Gawk->Bash again!).
 
 SUPPORT FORUMS: http://techpatterns.com/forums/forum-33.html
 This is the best place to place support issues that may be complicated.
