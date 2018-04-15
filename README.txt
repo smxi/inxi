@@ -137,7 +137,7 @@ you may not be current to actual development versions. inxi-perl pinxi
 is always equal to or ahead of master branch inxi.
 
 Man page updates, doc page updates, etc, of course, are easy and will 
-probably be accepted, as long as they are done properly formatted and 
+probably be accepted, as long as they are properly formatted and 
 logically coherent. 
 
 inxi releases early, and releases often, when under development. 
