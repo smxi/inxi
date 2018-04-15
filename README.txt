@@ -5,14 +5,13 @@ branch. All support for versions prior to 2.9 is now ended, sorry.
 
 Make sure to update to the current inxi from the master branch before 
 filing any issue reports. The code in pre 2.9 versions literally no 
-longer exists in inxi 3. 3.0 was a full rewrite of inxi. Bugs from
-earlier versions cannot be solved in the new version since the the 
-pre 2.9 and the 2.9 and later versions are completely different 
-internally.
+longer exists in inxi 3. Bugs from earlier versions cannot be solved 
+in the new version since the pre 2.9 and the 2.9 and later versions 
+are completely different internally.
 
 inxi strives to support the widest range of operating systems and 
 hardware, from the most simple consumer desktops, to the most advanced
-professional hardware and servers, and various platforms. 
+professional hardware and servers. 
 
 The issues you post help maintain or expand that support, and are 
 always appreciated since user data and feedback is what keeps inxi 
@@ -58,6 +57,7 @@ wget -Nc https://github.com/smxi/inxi/raw/inxi-perl/pinxi
 
 OR easy to remember shortcut (which redirects to github):
 wget -Nc https://smxi.org/pinxi
+wget -Nc smxi.org/pinxi
 
 Once new features have been debugged, tested, and are stable, they 
 will move to the master branch.
@@ -87,7 +87,7 @@ man page would show you, and do not ask for features to be added that
 inxi already has. Also do not ask for support if your distro won't 
 update its inxi version, some are bad about that.
 
-DOCUMENTATION: http://smxi.org/docs/inxi.htm 
+DOCUMENTATION: https://smxi.org/docs/inxi.htm 
 (smxi.org/docs/ is easier to remember, and is one click away from 
 inxi.htm). The one page wiki on github is only a pointer to the real 
 resources.
@@ -99,7 +99,7 @@ Also has useful information about Perl version support, including the
 list of Core modules that _should_ be included in a distribution's
 core modules, but which are unfortunately sometimes removed. 
 
-HTML MAN PAGE: http://smxi.org/docs/inxi-man.htm 
+HTML MAN PAGE: https://smxi.org/docs/inxi-man.htm 
 INXI OPTIONS PAGE: http://smxi.org/docs/inxi-options.htm 
 NOTE: These may not always be up to date, but generally track the most 
 recent inxi commits.
@@ -112,11 +112,11 @@ legacy inxi is not being supported since our time here on earth is
 finite (plus of course, one reason for the rewrite was to never have 
 to work with Gawk->Bash again!).
 
-SUPPORT FORUMS: http://techpatterns.com/forums/forum-33.html
+SUPPORT FORUMS: https://techpatterns.com/forums/forum-33.html
 This is the best place to place support issues that may be complicated.
 
 If you are developer, use:
-DEVELOPER FORUMS: http://techpatterns.com/forums/forum-32.html
+DEVELOPER FORUMS: https://techpatterns.com/forums/forum-32.html
 
 SOURCE VERSION CONTROL: https://github.com/smxi/inxi
 MAIN BRANCH: master
@@ -144,8 +144,7 @@ inxi releases early, and releases often, when under development.
 
 PACKAGERS: inxi has one and only one 'release', and that is the current 
 commit to master branch (plus pinxi inxi-perl branch, of course, but 
-those should never be packaged). All previous commits are immediately 
-obsolete on the commit of every new commit. 
+those should never be packaged). 
 
 =====================================================================
 ABOUT INXI - CORE COMMITMENT TO LONG TERM STABILITY
@@ -186,13 +185,13 @@ confirm things like ram capacity with a reputable hardware source,
 like crucial.com, which has the best ram hardware tool I know of.
 
 The core mission of inxi is to always work on all systems all the 
-time. Well, all linux systems with the core tools inxi requires to 
-operate installed. Ie, not android, yet. What this means is this: 
-you can have a 10 year old box, or probably 15, not sure, and you 
-can install today's inxi on it, and it will run. It won't run fast, 
-but it will run. I test inxi on a 200 MHz laptop from about 1998 
-to keep it honest. That's also what was used to optimize the code at 
-some points, since differences appear as seconds, not 10ths or 100ths 
+time. Well, all systems with the core tools inxi requires to operate 
+installed. Ie, not Android, yet. What this means is this: you can 
+have a 10 year old box, or probably 15, not sure, and you can install 
+today's inxi on it, and it will run. It won't run fast, but it will 
+run. I test inxi on a 200 MHz laptop from about 1998 to keep it 
+honest. That's also what was used to optimize the code at some 
+points, since differences appear as seconds, not 10ths or 100ths 
 of seconds on old systems like that.
 
 inxi is being written, and tested, on Perl as old as 5.08, and will 
@@ -268,91 +267,101 @@ platform, etc.
 =====================================================================
 INXI RELEASE/SUPPORT/ISSUES/BUGS INFORMATION:
 
-Important: the only version of inxi that is supported is the latest current 
-master branch release. No issue reports or bug reports will be accepted for 
-anything other than current master branch. No merges, attempts to patch old code
-from old releases, will be considered or accepted. If you are not updated to
-the latest inxi, do not file a bug report since it's probably been fixed ages
-ago. If your distro isn't packaging a current inxi, then file a bug report 
-with them, not here. The only valid working code base for inxi is the current 
+Important: the only version of inxi that is supported is the latest 
+current master branch release. No issue reports or bug reports will be 
+accepted for anything other than current master branch. No merges, 
+attempts to patch old code from old releases, will be considered or 
+accepted. If you are not updated to the latest inxi, do not file a 
+bug report since it's probably been fixed ages ago. If your distro 
+isn't packaging a current inxi, then file a bug report with them, not 
+here. The only valid working code base for inxi is the current 
 release of inxi. 
 
-Distributions should never feel any advantage comes from using old inxi 
-releases because inxi has as a core promise to you, the end user, that it 
-will NEVER require new tools to run. New tools may be required for a new
-feature, but that will always be handled internally by inxi, and will not cause
-any operational failures. This is a promise, and I will never as long as I run
-this project violate that core inxi requirement. Old inxi is NOT more stable 
-than current inxi, it's just old, and lacking in bug fixes and features. For 
-pre 2.9 releases, it's also significantly slower, and with fewer features.
+Distributions should never feel any advantage comes from using old 
+inxi releases because inxi has as a core promise to you, the end user, 
+that it will NEVER require new tools to run. New tools may be required 
+for a new feature, but that will always be handled internally by inxi, 
+and will not cause any operational failures. This is a promise, and I 
+will never as long as I run this project violate that core inxi 
+requirement. Old inxi is NOT more stable than current inxi, it's just 
+old, and lacking in bug fixes and features. For pre 2.9 releases, it's 
+also significantly slower, and with fewer features.
 
-inxi is a rolling release codebase, just like Debian Sid, Gentoo, or Arch 
-Linux are rolling release GNU/Linux distributions, with no 'release points'.
+inxi is a rolling release codebase, just like Debian Sid, Gentoo, or 
+Arch Linux are rolling release GNU/Linux distributions, with no 
+'release points'.
 
-Your distro not updating inxi ever, then failing to show something that is
-fixed in current inxi is not a bug, and please do not post it here. File 
-the issue with your distro, not here. Updating inxi in a package pool will 
-NEVER make anything break or fail, period. It has no version based 
-dependencies, just software, like Perl 5.xx, lspci, etc. There is never a valid 
-reason to not update inxi in a package pool of any distro in the world (with
-one single known exception, the Slackware based Puppy Linux release, which 
-ships without the full Perl language. The Debian based one works fine).
+Your distro not updating inxi ever, then failing to show something 
+that is fixed in current inxi is not a bug, and please do not post it 
+here. File the issue with your distro, not here. Updating inxi in a 
+package pool will NEVER make anything break or fail, period. It has no 
+version based dependencies, just software, like Perl 5.xx, lspci, etc. 
+There is never a valid reason to not update inxi in a package pool of 
+any distro in the world (with one single known exception, the Slackware 
+based Puppy Linux release, which ships without the full Perl language. 
+The Debian based one works fine).
 
-Sys Admin type inxi users always get the first level of support. ie, convince 
-us you run real systems and networks, and your issue shoots to the top of 
-the line. As do any real bugs. Failure to supply requested debugger data 
-will lead to a distinct lack of interest on our part to help you with a 
-bug. ie, saying, oh, x doesn't work, doesn't cut it, unless it's obvious why. 
+Sys Admin type inxi users always get the first level of support. ie, 
+convince us you run real systems and networks, and your issue shoots 
+to the top of the line. As do any real bugs. Failure to supply 
+requested debugger data will lead to a distinct lack of interest on 
+our part to help you with a bug. ie, saying, oh, x doesn't work, 
+doesn't cut it, unless it's obvious why. 
 
 =====================================================================
 
 INXI VERSION NUMBERING:
 
-inxi uses 'semantic' version numbering, where the version numbers actually
-mean something.
+inxi uses 'semantic' version numbering, where the version numbers 
+actually mean something.
 
 The version number follows these guidelines:
 Using example 3.2.28-6
 
-The first digit(s), "3", is a major version, and almost never changes. Only 
-a huge milestone, or if inxi reaches 3.9.xx, when it will simply move up to 
-4.0.0 just to keep it clean, would cause a change. 
+The first digit(s), "3", is a major version, and almost never changes. 
+Only a huge milestone, or if inxi reaches 3.9.xx, when it will simply 
+move up to 4.0.0 just to keep it clean, would cause a change. 
 
-The second digit(s), "2", means a new real feature has been added. Not a 
-tweaked existing feature, an actual new feature, which usually also has a new 
-argument option letter attached. The second number goes from 0 to 9, and then
-rolls over the first after 9. It could also be adding a very complicated 
-expansion of existing features, like Wayland. It depends.
+The second digit(s), "2", means a new real feature has been added. 
+Not a tweaked existing feature, an actual new feature, which usually 
+also has a new argument option letter attached. The second number goes 
+from 0 to 9, and then rolls over the first after 9. It could also be 
+adding a very complicated expansion of existing features, like Wayland. 
+It depends.
 
-The third, "28", is for everything small, can cover bug fixes, tweaks to 
-existing features to add support for something, pretty much anything where you
-want the end user to know that they are not up to date. The third goes from 0 
-to 99, then rolls over the second.
+The third, "28", is for everything small, can cover bug fixes, tweaks 
+to existing features to add support for something, pretty much anything 
+where you want the end user to know that they are not up to date. The 
+third goes from 0 to 99, then rolls over the second.
 
-The fourth, "6", is extra information about certain types of inxi updates. 
-I don't usually use this last one in master branch, but you will see it 
-in branches one,two, inxi-perl, inxi-legacy since that is used to confirm 
-remote test system patch version updates.
+The fourth, "6", is extra information about certain types of inxi 
+updates. I don't usually use this last one in master branch, but you 
+will see it in branches one,two, inxi-perl, inxi-legacy since that is 
+used to confirm remote test system patch version updates.
 
-The fourth number, when used, will be alpha-numeric, a common version would be,
-in say, branch one: 2.2.28-b1-02, in other words, a branch 1 release, version 2.
+The fourth number, when used, will be alpha-numeric, a common version 
+would be, in say, branch one: 2.2.28-b1-02, in other words, a branch 1 
+release, version 2.
 
-In the past, now and then the 4th, or 'patch', number, was used in trunk/master
-branches of inxi, but I've pretty much stopped doing that because it's confusing.
+In the past, now and then the 4th, or 'patch', number, was used in 
+trunk/master branches of inxi, but I've pretty much stopped doing that 
+because it's confusing.
 
-inxi does not use the fiction of date based versioning because that imparts no
-useful information to the end user, when you look at say, 2.2.28, and you last
-had 2.2.11, you can know with some certainty that inxi has no major new 
-features, just fine tunings and bug fixes. And if you see one with 2.3.2, you 
-will know that there is a new feature, almost, but not always, linked to one 
-or more new line output items. Sometimes a fine tuning can be quite 
-significant, sometimes it's a one line code fix. 
+inxi does not use the fiction of date based versioning because that 
+imparts no useful information to the end user, when you look at say, 
+2.2.28, and you last had 2.2.11, you can know with some certainty that 
+inxi has no major new features, just fine tunings and bug fixes. And 
+if you see one with 2.3.2, you will know that there is a new feature, 
+almost, but not always, linked to one or more new line output items. 
+Sometimes a fine tuning can be quite significant, sometimes it's a 
+one line code fix. 
 
-A move to a new full version number, like the rewrite of inxi to Perl, would 
-reflect in first version say, 2.9.01, then after a period of testing, where 
-most little glitches are fixed, a move to 3.0.0. These almost never happen. 
-I do not expect for example version 4.0 to ever happen after the 3.0 release 
-of early 2018, unless so many new features are added that it actually hits 3.9, 
-then it would roll over to 4.
+A move to a new full version number, like the rewrite of inxi to Perl,
+would reflect in first version say, 2.9.01, then after a period of 
+testing, where most little glitches are fixed, a move to 3.0.0. These 
+almost never happen. I do not expect for example version 4.0 to ever 
+happen after the 3.0 release of early 2018, unless so many new 
+features are added that it actually hits 3.9, then it would roll 
+over to 4.
 
 ### EOF ###
