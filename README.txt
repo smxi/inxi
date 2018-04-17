@@ -19,7 +19,7 @@ working and supporting the latest or not so latest hardware and
 operating systems. 
 
 See the BSD section below for qualifications re BSDs, and OSX in 
-particular.
+particular. 
 
 =====================================================================
 MASTER BRANCH:
@@ -246,11 +246,16 @@ preloads some data structures for BSD use, so make sure you understand
 what inxi is doing before you get into it.
 
 OSX:
-If you want me to donate my time supporting OSX, you have to pay me, 
-because Apple is all about money, not freedom (that's what the 'free'
-in 'free software' is referring to). OSX is also the least Unix-like 
-operating system I've ever seen that pretends to be a Unix, its tools 
-are mutated, it's data randomly and non-standardly organized. 
+Do not insult real BSDs by calling OSX a BSD. OSX is the least 
+Unix-like operating system I've ever seen that claims to be a Unix, 
+its tools are mutated, it's data randomly and non-standardly organized,
+and it totally fails to respect the 'spirit' of Unix, even though it 
+might pass some random tests that certify a system as a 'Unix'. 
+
+If you want me to use my time on OSX features or issues, you have to 
+pay me, because Apple is all about money, not freedom (that's what 
+the 'free' in 'free software' is referring to, not cost), and I'm not 
+donating my finite time in support of non-free operating systems. 
 
 =====================================================================
 INXI FEATURES AND FUNCTIONALITY
