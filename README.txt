@@ -16,8 +16,10 @@ professional hardware and servers.
 The issues you post help maintain or expand that support, and are 
 always appreciated since user data and feedback is what keeps inxi 
 working and supporting the latest or not so latest hardware and 
-operating systems. See the BSD section below for qualifications re 
-BSDs and OSX.
+operating systems. 
+
+See the BSD section below for qualifications re BSDs, and OSX in 
+particular.
 
 =====================================================================
 MASTER BRANCH:
@@ -202,6 +204,7 @@ so there should be no difference.
 =====================================================================
 BSD SUPPORT
 
+Real BSDs:
 BSD support is not as complete as GNU/Linux support due to the fact 
 some of the data simply is not available, or is structured in a way 
 that makes it unique to each BSD. This fragmentation makes supporting 
@@ -242,9 +245,12 @@ flags to identify that it is a BSD system vs a GNU/Linux system, and
 preloads some data structures for BSD use, so make sure you understand 
 what inxi is doing before you get into it.
 
-inxi will also start on Darwin, OSX's mutated version of a BSD, but 
-my conclusion about Darwin is that it is Unix in name only, and I will 
-not spend any of my finite time adding any further support for OSX.
+OSX:
+If you want me to donate my time supporting OSX, you have to pay me, 
+because Apple is all about money, not freedom (that's what the 'free'
+in 'free software' is referring to). OSX is also the least Unix-like 
+operating system I've ever seen that pretends to be a Unix, its tools 
+are mutated, it's data randomly and non-standardly organized. 
 
 =====================================================================
 INXI FEATURES AND FUNCTIONALITY
