@@ -1,7 +1,7 @@
 README for inxi - a command line system information tool
 
 The new Perl inxi is now here! File all issue reports with the master
-branch. All support for versions prior to 2.9 is now ended, sorry. 
+branch. All support for versions prior to 3.0 is now ended, sorry. 
 
 Make sure to update to the current inxi from the master branch before 
 filing any issue reports. The code in pre 2.9 versions literally no 
@@ -244,9 +244,7 @@ what inxi is doing before you get into it.
 
 inxi will also start on Darwin, OSX's mutated version of a BSD, but 
 my conclusion about Darwin is that it is Unix in name only, and I will 
-not spend a second of my time adding any further support for that 
-crippled broken corporate pseudo-unix system. Don't ask, unless you 
-are willing to pay my normal professional wages.
+not spend any of my finite time adding any further support for OSX.
 
 =====================================================================
 INXI FEATURES AND FUNCTIONALITY
