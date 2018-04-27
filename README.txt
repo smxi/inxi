@@ -14,7 +14,7 @@ hardware and servers.
 
 The issues you post help maintain or expand that support, and are always
 appreciated since user data and feedback is what keeps inxi working and
-supporting the latest or not so latest hardware and operating systems. 
+supporting the latest (or not so latest) hardware and operating systems. 
 
 See the BSD section below for qualifications re BSDs, and OSX in particular. 
 
