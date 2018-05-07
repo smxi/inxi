@@ -292,8 +292,7 @@ for anything other than current master branch. No merges, attempts to patch old
 code from old versions, will be considered or accepted. If you are not updated 
 to the latest inxi, do not file a bug report since it's probably been fixed 
 ages ago. If your distro isn't packaging a current inxi, then file a bug report 
-with them, not here. The only valid working code base for inxi is the current 
-master branch commit of inxi. 
+with them, not here. 
 
 Distributions should never feel any advantage comes from using old inxi 
 versions because inxi has as a core promise to you, the end user, that it will 
