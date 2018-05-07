@@ -72,10 +72,7 @@ meaning.
 
 NOTE: Just because github calls tagged commits 'Releases' does not mean they 
 are releases! I can't change the words on the tag page. They are tagged 
-commmits, period. I did not want to use tags precisely to avoid the idea that 
-inxi has any 'release' that exists that is other than the current master 
-version, but I decided that it was less pain to add tags than to argue this 
-point any further. 
+commmits, period. 
 
 -------------------------------------------------------------------------------
 DEVELOPMENT BRANCH:
