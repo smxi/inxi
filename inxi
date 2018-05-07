@@ -31,8 +31,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.0.07';
-my $self_date='2018-04-17';
+my $self_version='3.0.08';
+my $self_date='2018-05-06';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -52,7 +52,7 @@ if (eval {require Time::HiRes}){
 }
 @t0 = eval 'Time::HiRes::gettimeofday()' if $b_hires; # let's start it right away
 ## Hashes
-my ( %alerts, %client, %colors, %dl, %files, %rows, %system_files, %use );
+my ( %alerts,%client,%colors,%dl,%files,%rows,%system_files,%use );
 
 ## Arrays
 # ps_aux is full output, ps_cmd is only the last 10 to last
@@ -65,11 +65,12 @@ my @test = (0,0,0,0,0);
 
 ## Booleans
 my ($b_arm,$b_console_irc,$b_debug_gz,$b_display,$b_dmesg_boot_check,$b_dmi,
-$b_dmidecode_force,$b_force_display,$b_gpudata,$b_irc,$b_log,$b_log_colors,
-$b_log_full,$b_man,$b_mem,$b_pci,$b_root,$b_running_in_display,$b_sysctl,$b_usb_check);
+$b_dmidecode_force,$b_fake_bsd,$b_force_display,$b_gpudata,$b_irc,$b_log,
+$b_log_colors,$b_log_full,$b_man,$b_mem,$b_pci,$b_root,$b_running_in_display,
+$b_sudo,$b_sysctl,$b_usb_check);
 ## Disk checks
-my ($b_dm_boot_disk,$b_dm_boot_optical,$b_glabel,$b_lsblk,$b_partitions,
-$b_partition_extra,$b_raid);
+my ($b_dm_boot_disk,$b_dm_boot_optical,$b_glabel,$b_label_uuid,$b_lsblk,
+$b_partitions,$b_raid);
 my ($b_sysctl_disk,$b_update,$b_weather) = (1,1,1);
 
 ## System
@@ -80,7 +81,7 @@ my ($bits_sys);
 
 ## Tools
 my ($display,$ftp_alt,$tty_session);
-my $display_opt = '';
+my ($display_opt,$sudo) = ('','');
 
 ## Output
 my $extra = 0;# supported values: 0-3
@@ -279,7 +280,22 @@ sub check_tools {
 		%alerts = (%alerts, %hash);
 	}
 	# print Dumper \%alerts;
+	# only use sudo if not root, -n option requires sudo -V 1.7 or greater. 
+	# for some reason sudo -n with < 1.7 in Perl does not print to stderr
+	# sudo will just error out which is the safest course here for now,
+	# otherwise that interactive sudo password thing is too annoying
+	# important: -n makes it non interactive, no prompt for password
+	if (!$b_root && $b_sudo && (my $path = main::check_program('sudo') )) {
+		my @data = program_values('sudo');
+		my $version = program_version($path,$data[0],$data[1],$data[2],$data[5]);
+		$version =~ s/^([0-9]+\.[0-9]+).*/$1/;
+		$sudo = "$path -n " if $version >= 1.7;
+	}
 }
+
+# args: 1 - desktop/app command for --version; 2 - search string; 
+# 3 - space print number; 4 - [optional] version arg: -v, version, etc
+# 5 - [optional] exit first find 0/1; 6 - [optional] 0/1 stderr output
 sub set_basics {
 	### LOCALIZATION - DO NOT CHANGE! ###
 	# set to default LANG to avoid locales errors with , or .
@@ -353,6 +369,7 @@ sub set_display_width {
 	}
 	# print "tc: $size{'term'} cmc: $size{'console'} cm: $size{'max'}\n";
 }
+
 # NOTE: most tests internally are against !$bsd_type
 sub set_os {
 	@uname = uname();
@@ -380,6 +397,7 @@ sub set_os {
 		}
 	}
 }
+
 # This data is hard set top of program but due to a specific project's
 # foolish idea that ignoring the FSH totally is somehow a positive step
 # forwards for free software, we also have to padd the results with PATH.
@@ -464,6 +482,7 @@ sub set_user_paths {
 	#system 'echo', "$ENV{'HOME'}/.$self_name/* $user_data_dir";
 	# print "scd: $user_config_dir sdd: $user_data_dir \n";
 }
+
 # args: 1: set|hash key to return either null or path
 sub system_files {
 	my ($file) = @_;
@@ -502,6 +521,7 @@ sub system_files {
 		return $system_files{$file};
 	}
 }
+
 ########################################################################
 #### UTILITIES
 ########################################################################
@@ -1051,6 +1071,7 @@ sub begin_logging {
 	
 	print $fh_l $data;
 }
+
 # NOTE: no logging available until get_parameters is run, since that's what 
 # sets logging # in order to trigger earlier logging manually set $b_log
 # to true in top variables.
@@ -1348,7 +1369,8 @@ sub disk_data {
 	['lsblk', '-r'],
 	['lsblk', '-r --output NAME,PKNAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,MOUNTPOINT'],
 	['lsblk', '-rb --output NAME,PKNAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,MOUNTPOINT'],
-	['lsblk', '-Pb --output NAME,PKNAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,MOUNTPOINT'],
+	['lsblk', '-Pb --output NAME,PKNAME,TYPE,RM,FSTYPE,SIZE'],
+	['lsblk', '-Pb --output NAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,SERIAL,MOUNTPOINT'],
 	['gpart', 'list'],
 	['gpart', 'show'],
 	['gpart', 'status'],
@@ -1513,7 +1535,7 @@ sub system_data {
 	my %data = (
 	'cc' => $ENV{'CC'},
 	# @(#)MIRBSD KSH R56 2018/03/09: ksh and mksh
-	'ksh-version' => $ENV{'KSH_VERSION'},
+	'ksh-version' => system('echo -n $KSH_VERSION'), # shell, not env, variable
 	'manpath' => $ENV{'MANPATH'},
 	'path' => $ENV{'PATH'},
 	'xdg-config-home' => $ENV{'XDG_CONFIG_HOME'},
@@ -2149,6 +2171,7 @@ sub error_handler {
 	}
 	exit 0;
 }
+
 sub error_defaults {
 	my ($type,$one) = @_;
 	$one ||= '';
@@ -2789,6 +2812,7 @@ sub awk {
 	eval $end if $b_log;
 	return $result;
 }
+
 # $1 - Perl module to check
 sub check_module {
 	my ($module) = @_;
@@ -2797,6 +2821,7 @@ sub check_module {
 	$b_present = 1 if !$@;
 	return $b_present;
 }
+
 # arg: 1 - string or path to search gneerated @paths data for.
 # note: a few nano seconds are saved by using raw $_[0] for program
 sub check_program {
@@ -2861,6 +2886,7 @@ sub globber {
 	eval $end if $b_log;
 	return @files;
 }
+
 # gets array ref, which may be undefined, plus join string
 # this helps avoid debugger print errors when we are printing arrays
 # which we don't know are defined or not null.
@@ -2973,7 +2999,7 @@ sub program_values {
 	'clang' => ['clang',3,'--version','Clang',1,0,0],
 	'gcc' => ['^gcc',3,'--version','GCC',1,0,0],
 	'gcc-apple' => ['Apple[[:space:]]LLVM',2,'--version','LLVM',1,0,0],
-	'sudo' => ['^Sudo',3,'--version','Sudo',1,0,0],
+	'sudo' => ['^Sudo',3,'-V','Sudo',1,1,0], # sudo pre 1.7 does not have --version
 	);
 	if ( defined $data{$app} ){
 		my $ref = $data{$app};
@@ -2983,6 +3009,7 @@ sub program_values {
 	main::log_data('dump',"Client Data",\@client_data) if $b_log;
 	return @client_data;
 }
+
 # args: 1 - desktop/app command for --version; 2 - search string; 
 # 3 - space print number; 4 - [optional] version arg: -v, version, etc
 # 5 - [optional] exit first find 0/1; 6 - [optional] 0/1 stderr output
@@ -3000,10 +3027,11 @@ sub program_version {
 	# mksh: @(#)MIRBSD KSH R56 2018/03/09
 	# loksh: @(#)PD KSH v5.2.14 99/07/13.2
 	# --version opens a new ksh, sigh... This so far does not work
-	# because the ENV variable is not visible internally
+	# because the ENV/Shell variable is not visible in subshells
 	if ($search eq 'ksh'){
-		if ( $ENV{'KSH_VERSION'} ){
-			my @temp = split /\s+/, $ENV{'KSH_VERSION'};
+		my $ksh = system('echo -n $KSH_VERSION');
+		if ( $ksh ){
+			my @temp = split /\s+/, $ksh;
 			if ($temp[2]){
 				$temp[2] =~ s/^v//i; # trim off leading v
 				log_data('data',"Program *ksh array: @temp version: $temp[2]") if $b_log;
@@ -3087,6 +3115,7 @@ sub reader {
 	eval $end if $b_log;
 	return @rows;
 }
+
 # args: 1 - the file to create if not exists
 sub toucher {
 	my $file = shift;
@@ -3105,12 +3134,14 @@ sub trimmer {
 	#eval $end if $b_log;
 	return $str;
 }
+
 # args: 1 - hash
 # send array, assign to hash, return array, uniq values only.
 sub uniq {
 	my %seen;
 	grep !$seen{$_}++, @_;
 }
+
 # arg: 1 file full  path to write to; 2 - arrayof data to write. 
 # note: turning off strict refs so we can pass it a scalar or an array reference.
 sub writer {
@@ -3155,6 +3186,7 @@ sub get_defaults {
 		error_handler('bad-arg-int', $type);
 	}
 }
+
 # args: 1 - download url, not including file name; 2 - string to print out
 # 3 - update type option
 # note that 1 must end in / to properly construct the url path
@@ -3646,6 +3678,7 @@ sub get_options{
 		my ($opt,$arg) = @_;
 		if ($arg =~ /^(darwin|dragonfly|freebsd|openbsd|netbsd)$/i){
 			$bsd_type = lc($arg);
+			$b_fake_bsd = 1;
 		}
 		else {
 			error_handler('bad-arg', $opt, $arg);
@@ -3837,6 +3870,7 @@ sub get_options{
 	if ($show{'filter-override'}){
 		$show{'filter'} = 0;
 	}
+	$b_sudo = 1 if ( $show{'unmounted'} || ($extra > 0 && $show{'disk'}) );
 	# override for things like -b or -v2 to -v3
 	$show{'cpu-basic'} = 0 if $show{'cpu'};
 	$show{'optical-basic'} = 0 if $show{'optical'};
@@ -4015,7 +4049,7 @@ sub show_options {
 	['2', '-R', '', "md-raid: second RAID Info line with extra data: 
 	blocks, chunk size, bitmap (if present). Resync line, shows blocks 
 	synced/total blocks." ],
-	['2', '-s', '', "Basic voltages (ipmi only): 12v, 5v, 3.3v, vbat." ],
+	['2', '-s', '', "Basic voltages (ipmi, lm-sensors if present): 12v, 5v, 3.3v, vbat." ],
 	['2', '-S', '', "Desktop toolkit, if available (GNOME/Xfce/KDE only); 
 	Kernel gcc version" ],
 	['2', '-t', '', "Adds memory use output to CPU (-xt c), and CPU use to 
@@ -4611,8 +4645,17 @@ sub clean_characters {
 sub cleaner {
 	my ($item) = @_;
 	return $item if !$item;# handle cases where it was 0 or ''
-	$item =~ s/chipset|components|computing|computer|corporation|communications|electronics|electrical|electric|gmbh|group|incorporation|industrial|international|nee|revision|semiconductor|software|technologies|technology|ltd\.|<ltd>|\bltd\b|inc\.|<inc>|\binc\b|intl\.|co\.|<co>|corp\.|<corp>|\(tm\)|\(r\)|®|\(rev ..\)|\'|\"|\sinc\s*$|\?//gi;
+	$item =~ s/chipset|company|components|computing|computer|corporation|communications|electronics|electrical|electric|gmbh|group|incorporation|industrial|international|nee|revision|semiconductor|software|technologies|technology|ltd\.|<ltd>|\bltd\b|inc\.|<inc>|\binc\b|intl\.|co\.|<co>|corp\.|<corp>|\(tm\)|\(r\)|®|\(rev ..\)|\'|\"|\sinc\s*$|\?//gi;
 	$item =~ s/,|\*/ /g;
+	$item =~ s/\s\s+/ /g;
+	$item =~ s/^\s+|\s+$//g;
+	return $item;
+}
+
+sub disk_cleaner {
+	my ($item) = @_;
+	return $item if !$item;
+	$item =~ s/vendor.*|product.*|O\.?E\.?M\.?//gi;
 	$item =~ s/\s\s+/ /g;
 	$item =~ s/^\s+|\s+$//g;
 	return $item;
@@ -4632,6 +4675,7 @@ sub dmi_cleaner {
 	$string = remove_duplicates($string) if $string;
 	return $string;
 }
+
 sub remove_duplicates {
 	my ($string) = @_;
 	return if ! $string;
@@ -4695,6 +4739,7 @@ sub increment_starters {
 	}
 	return $result;
 }
+
 sub memory_data_full {
 	eval $start if $b_log;
 	my ($source) = @_;
@@ -4795,6 +4840,7 @@ sub row_defaults {
 	);
 	return $unfound{$type};
 }
+
 # convert string passed to KB, based on GB/MB/TB id
 # NOTE: K 1024 KB 1000
 sub translate_size {
@@ -4853,6 +4899,7 @@ sub output_handler {
 		generate_xml(%data);
 	}
 }
+
 # NOTE: file has already been set and directory verified
 sub generate_json {
 	eval $start if $b_log;
@@ -4889,6 +4936,7 @@ sub generate_json {
 	}
 	eval $end if $b_log;
 }
+
 # NOTE: So far xml is substantially more difficult than json, so 
 # using a crude dumper rather than making a nice xml file, but at
 # least xml has some output now.
@@ -5006,6 +5054,7 @@ sub print_basic {
 		}
 	}
 }
+
 # this has to get a hash of hashes, at least for now.
 # because perl does not retain insertion order, I use a prefix for each
 # hash key to force sorts. 
@@ -6276,7 +6325,7 @@ sub data_sysctl {
 			$line[1] = main::cleaner($line[1]);
 			$line[1] = cpu_cleaner($line[1]);
 			if ( $line[1] =~ /([0-9]+)[\-[:space:]]*([KM]B)\s+L2 cache/) {
-				my $multiplier = ($2 eq 'KB') ? 1024: 1;
+				my $multiplier = ($2 eq 'MB') ? 1024: 1;
 				$cpu{'l2-cache'} = $1 * $multiplier;
 			}
 			if ( $line[1] =~ /([^0-9\.][0-9\.]+)[\-[:space:]]*[MG]Hz/) {
@@ -6998,8 +7047,8 @@ sub cpu_cleaner {
 ## DiskData
 {
 package DiskData;
-my ($b_hddtemp,$b_nvme,$b_sudo);
-my ($hddtemp,$nvme,$sudo) = ('','','');
+my ($b_hddtemp,$b_nvme);
+my ($hddtemp,$nvme) = ('','');
 my (@by_id,@by_path);
 
 sub get {
@@ -7051,7 +7100,7 @@ sub get {
 		@data = OpticalData::get();
 		@rows = (@rows,@data);
 	}
-	($b_hddtemp,$b_nvme,$b_sudo,$hddtemp,$nvme,$sudo) = (undef,undef,undef,undef,undef,undef);
+	($b_hddtemp,$b_nvme,$hddtemp,$nvme) = (undef,undef,undef,undef,undef);
 	(@by_id,@by_path) = (undef,undef);
 	eval $end if $b_log;
 	return @rows;
@@ -7120,6 +7169,9 @@ sub create_output {
 			@rows = (@rows,@data);
 			if ($row{'type'}){
 				$rows[$j]{main::key($num++,'type')} = $row{'type'},
+			}
+			if ($row{'vendor'}){
+				$rows[$j]{main::key($num++,'vendor')} = $row{'vendor'},
 			}
 			$rows[$j]{main::key($num++,'model')} = $model;
 			$rows[$j]{main::key($num++,'size')} = $size;
@@ -7214,9 +7266,9 @@ sub proc_data {
 		# }
 		# special case from this data: 8     0  156290904 sda
 		# 43        0   48828124 nbd0
-		# note: known starters: vm: 252/253/254; grsec: 202; nvme: 259
-		if ( $row[0] =~ /^(3|8|22|33|43|202|252|253|254|259)$/ && 
-		     $row[-1] =~ /(n[b]?d[0-9]+|nvme[0-9]+n[0-9]+|[hsv]d[a-z]+)$/ && 
+		# note: known starters: vm: 252/253/254; grsec: 202; nvme: 259 mmcblk: 179
+		if ( $row[0] =~ /^(3|8|22|33|43|179|202|252|253|254|259)$/ && 
+		     $row[-1] =~ /(mmcblk[0-9]+|n[b]?d[0-9]+|nvme[0-9]+n[0-9]+|[hsv]d[a-z]+)$/ && 
 		     ( $row[1] % 16 == 0 || $row[1] % 16 == 8 ) ) {
 			$size += $row[2];
 		}
@@ -7242,11 +7294,18 @@ sub proc_data_advanced {
 	eval $start if $b_log;
 	my ($b_hdx,@drives) = @_;
 	my ($i) = (0);
-	my (@data,@rows,@scsi,@temp,@working);
+	my (@data,@disk_data,@rows,@scsi,@temp,@working);
 	my ($pt_cmd) = ('unset');
 	my ($block_type,$file,$firmware,$model,$path,$partition_scheme,
 	$serial,$vendor,$working_path);
 	@by_id = main::globber('/dev/disk/by-id/*');
+	# these do not contain any useful data, no serial or model name
+	# wwn-0x50014ee25fb50fc1 and nvme-eui.0025385b71b07e2e 
+	# scsi-SATA_ST980815A_ simply repeats ata-ST980815A_; same with scsi-0ATA_WDC_WD5000L31X
+	# we also don't need the partition items
+	my $pattern = '^\/dev\/disk\/by-id\/(md-|lvm-|dm-|wwn-|nvme-eui|raid-|scsi-([0-9]ATA|SATA))|-part[0-9]+$';
+	@by_id = grep {!/$pattern/} @by_id if @by_id;
+	# print join "\n", @by_id, "\n";
 	@by_path = main::globber('/dev/disk/by-path/*');
 	## check for all ide type drives, non libata, only do it if hdx is in array
 	## this is now being updated for new /sys type paths, this may handle that ok too
@@ -7264,7 +7323,7 @@ sub proc_data_advanced {
 	if ($file = main::system_files('scsi')){
 		@scsi = scsi_data($file);
 	}
-	#print 'drives:', Data::Dumper::Dumper \@drives;
+	# print 'drives:', Data::Dumper::Dumper \@drives;
 	for ($i = 1; $i < scalar @drives; $i++){
 		#next if $drives[$i]{'id'} =~ /^hd[a-z]/;
 		($block_type,$firmware,$model,$partition_scheme,
@@ -7275,6 +7334,8 @@ sub proc_data_advanced {
 			$drives[$i]{'partition-table'} = uc($data[1]) if $data[1];
 		}
 		#print "$drives[$i]{'id'}\n";
+		@disk_data = disk_data_by_id("/dev/$drives[$i]{'id'}");
+		main::log_data('dump','@disk_data', \@disk_data) if $b_log;
 		if ($drives[$i]{'id'} =~ /[sv]d[a-z]/){
 			$block_type = 'sdx';
 			$working_path = "/sys/block/$drives[$i]{'id'}/device/";
@@ -7292,55 +7353,60 @@ sub proc_data_advanced {
 			$working_path =~ s/nvme[^\/]*$//;
 		}
 		main::log_data('data',"working path: $working_path") if $b_log;
-		if ($block_type){
+		if ($block_type && @scsi && @by_id && ! -e "${working_path}model" && ! -e "${working_path}name"){
+			## ok, ok, it's incomprehensible, search /dev/disk/by-id for a line that contains the
+			# discovered disk name AND ends with the correct identifier, sdx
+			# get rid of whitespace for some drive names and ids, and extra data after - in name
+			SCSI:
+			foreach my $ref (@scsi){
+				my %row = %$ref;
+				if ($row{'model'}){
+					# $row{'model'} =~ s/\s/_/g;
+					$row{'model'} = (split /\s*-\s*/,$row{'model'})[0];
+					foreach my $id (@by_id){
+						if ($id =~ /$row{'model'}/ && "/dev/$drives[$i]{'id'}" eq Cwd::abs_path($id)){
+							$drives[$i]{'firmware'} = $row{'firmware'};
+							$drives[$i]{'model'} = $row{'model'};
+							$drives[$i]{'vendor'} = $row{'vendor'};
+							last SCSI;
+						}
+					}
+				}
+			}
+		}
+		# note: an entire class of model names gets truncated by /sys so that should be the last 
+		# in priority re tests.
+		elsif ( (!@disk_data || !$disk_data[0] ) && $block_type){
 			# NOTE: while path ${working_path}vendor exists, it contains junk value, like: ATA
 			$path = "${working_path}model";
 			if ( -e $path){
 				$model = (main::reader($path,'strip'))[0];
 				if ($model){
-					$model =~ s/\s/_/g;
-					#@temp = split /-/, $model;
-					#$drives[$i]{'model'} = $temp[0];
 					$drives[$i]{'model'} = $model;
 				}
 			}
 			elsif ($block_type eq 'mmc' && -e "${working_path}name"){
 				$path = "${working_path}name";
-				if ( -e $path){
-					$model = (main::reader($path,'strip'))[0];
-					if ($model){
-						$model =~ s/\s/_/g;
-						#@temp = split /-/, $model;
-						#$drives[$i]{'model'} = $temp[0];
-						$drives[$i]{'model'} = $model;
-					}
+				$model = (main::reader($path,'strip'))[0];
+				if ($model){
+					$drives[$i]{'model'} = $model;
 				}
 			}
-			elsif (@scsi && @by_id){
-				## ok, ok, it's incomprehensible, search /dev/disk/by-id for a line that contains the
-				# discovered disk name AND ends with the correct identifier, sdx
-				# get rid of whitespace for some drive names and ids, and extra data after - in name
-				foreach my $ref (@scsi){
-					my %row = %$ref;
-					if ($row{'model'}){
-						$row{'model'} =~ s/\s/_/g;
-						$row{'model'} = (split /-/,$row{'model'})[0];
-						foreach my $id (@by_id){
-							if ($id =~ /$row{'model'}/ && "/dev/$drives[$i]{'id'}" eq Cwd::abs_path($id)){
-								$drives[$i]{'firmware'} = $row{'firmware'};
-								$drives[$i]{'model'} = $row{'model'};
-								$drives[$i]{'vendor'} = $row{'vendor'};
-								last;
-							}
-						}
-					}
-				}
-			}
+		}
+		if (!$drives[$i]{'model'} && @disk_data){
+			$drives[$i]{'model'} = $disk_data[0] if $disk_data[0];
+			$drives[$i]{'vendor'} = $disk_data[1] if $disk_data[1];
+		}
+		# maybe rework logic if find good scsi data example, but for now use this
+		elsif ($drives[$i]{'model'} && !$drives[$i]{'vendor'}) {
+			$drives[$i]{'model'} = main::disk_cleaner($drives[$i]{'model'});
+			my @device_data = device_vendor($drives[$i]{'model'},'');
+			$drives[$i]{'model'} = $device_data[1] if $device_data[1];
+			$drives[$i]{'vendor'} = $device_data[0] if $device_data[0];
+		}
+		if ($working_path){
 			$path = "${working_path}removable";
-			if (-e $path){
-				my $b_removable = (main::reader($path,'strip'))[0]; # 0/1 value
-				$drives[$i]{'type'} = 'Removable' if $b_removable;
-			}
+			$drives[$i]{'type'} = 'Removable' if -e $path && (main::reader($path,'strip'))[0]; # 0/1 value
 		}
 		my $peripheral = peripheral_data($drives[$i]{'id'});
 		# note: we only want to update type if we found a peripheral, otherwise preserve value
@@ -7349,24 +7415,24 @@ sub proc_data_advanced {
 		if ($extra > 0){
 			$drives[$i]{'temp'} = hdd_temp("/dev/$drives[$i]{'id'}");
 			if ($extra > 1){
-				$path = "${working_path}serial";
-				if ( -e $path){
-					$serial = (main::reader($path,'strip'))[0];
-					if ($serial){
-						$drives[$i]{'serial'} = $serial;
-					}
+				if (@disk_data && $disk_data[2]){
+					$drives[$i]{'serial'} = $disk_data[2];
 				}
 				else {
-					$drives[$i]{'serial'} = disk_serial_by_id("/dev/$drives[$i]{'id'}");
-				}
-				if ($extra > 2){
-					$path = "${working_path}rev";
+					$path = "${working_path}serial";
 					if ( -e $path){
-						$drives[$i]{'firmware'} = (main::reader($path,'strip'))[0];
+						$serial = (main::reader($path,'strip'))[0];
+						$drives[$i]{'serial'} = $serial if $serial;
 					}
-					$path = "${working_path}fwrev";
-					if ( !$drives[$i]{'firmware'} && -e $path){
-						$drives[$i]{'firmware'} = (main::reader($path,'strip'))[0];
+				}
+				if ($extra > 2 && !$drives[$i]{'firmware'} ){
+					my @fm = ('rev','fmrev','firmware_rev'); # 0 ~ default; 1 ~ mmc; 2 ~ nvme
+					foreach my $firmware (@fm){
+						$path = "${working_path}$firmware";
+						if ( -e $path){
+							$drives[$i]{'firmware'} = (main::reader($path,'strip'))[0];
+							last;
+						}
 					}
 				}
 			}
@@ -7442,6 +7508,10 @@ sub dmesg_boot_data {
 					$drives[$i]{'speed'} =~ s/\.[0-9]+// if $drives[$i]{'speed'};
 				}
 			}
+			$drives[$i]{'model'} = main::disk_cleaner($drives[$i]{'model'});
+			my @device_data = device_vendor($drives[$i]{'model'},'');
+			$drives[$i]{'vendor'} = $device_data[0] if $device_data[0];
+			$drives[$i]{'model'} = $device_data[1] if $device_data[1];
 		}
 		if (!$size){
 			$size = main::row_defaults('data-bsd');
@@ -7552,7 +7622,7 @@ sub partition_scheme {
 		else {
 			$return[1] = main::awk(\@data,'^(UDISKS_PARTITION_TABLE_SCHEME|ID_PART_TABLE_TYPE)',2,'=');
 		}
-		$return[1] = 'mbr' if $return[1] eq 'dos';
+		$return[1] = 'mbr' if $return[1] && $return[1] eq 'dos';
 	}
 	eval $end if $b_log;
 	return @return;
@@ -7587,22 +7657,144 @@ sub scsi_data {
 	eval $end if $b_log;
 	return @scsi;
 }
-
-sub disk_serial_by_id {
+# @b_id has already been cleaned of partitions, wwn-, nvme-eui
+sub disk_data_by_id {
 	eval $start if $b_log;
 	my ($device) = @_;
-	my ($serial) = ('');
+	my ($model,$serial,$vendor) = ('','','');
+	my (@disk_data);
 	foreach (@by_id){
 		if ($device eq Cwd::abs_path($_)){
 			my @data = split /_/, $_;
-			$serial = $data[-1];
+			my @device_data = ();
+			last if scalar @data < 2; # scsi-3600508e000000000876995df43efa500
+			$serial = pop @data if @data;
+			# usb-PNY_USB_3.0_FD_3715202280-0:0
 			$serial =~ s/-[0-9]+:[0-9]+$//;
-			# print $device, ' ', Cwd::abs_path($_),' ', $serial,"\n";
+			$model = join ' ', @data;
+			# get rid of the ata-|nvme-|mmc- etc
+			$model =~ s/^\/dev\/disk\/by-id\/([^-]+-)?//;
+			$model = main::disk_cleaner($model);
+			@device_data = device_vendor($model,$serial);
+			$vendor = $device_data[0] if $device_data[0];
+			$model = $device_data[1] if $device_data[1];
+			# print $device, '::', Cwd::abs_path($_),'::', $model, '::', $vendor, '::', $serial, "\n";
+			(@disk_data) = ($model,$vendor,$serial);
 			last;
 		}
 	}
 	eval $end if $b_log;
-	return $serial;
+	return @disk_data;
+}
+# receives space separated string that may or may not contain vendor data
+sub device_vendor {
+	eval $start if $b_log;
+	my ($model,$serial) = @_;
+	my ($vendor) = ('');
+	my (@data);
+	return if !$model;
+	# 0 - match pattern; 1 - replace pattern; 2 - vendor print; 3 - serial pattern
+	# https://elinux.org/RPi_SD_cards
+	# https://sd2snes.de/blog/card-list
+	# https://www.superbiiz.com # lists by real part numbers
+	my @vendors = (
+	# these go first because they are the most likely and common 
+	['^INTEL','^INTEL','Intel',''],
+	# must come befroe samsung MU. NOTE: toshiba can have: TOSHIBA_MK6475GSX: mush: MKNSSDCR120GB_
+	['^(MKN|Mushkin)','^Mushkin','Mushkin',''], # MKNS
+	# MU = Multiple_Flash_Reader
+	['^(SAMSUNG|M[UZ][^L]|MCG[0-9]+GC)','^SAMSUNG','Samsung',''], # maybe ^SM
+	# NOTE: F[MNETU] not reliable, g.skill starts with FM too: 
+	['^(STT)','','Super Talent',''], # must be before seagate, _may_ start with F
+	['^(ST|[S]?SEAGATE|X[AFP])','^[S]?SEAGATE','Seagate',''], # real, SSEAGATE Backup+; XP1600HE30002
+	['^WD','^(WDC|WD\s)','Western Digital',''],
+	# then better known ones
+	['^(A-DATA|ADATA)','^(A-DATA|ADATA)','A-Data',''],
+	['^ADTRON','^(ADTRON)','Adtron',''],
+	['^ASUS','^ASUS','ASUS',''],
+	['^ATP','^ATP[\s\-]','ATP',''],
+	['^Corsair','^Corsair','Corsair',''],
+	['(^Crucial|^CT|-CT|^M4-)','^Crucial','Crucial',''],
+	['^(FUJITSU|MP)','^FUJITSU','Fujitsu',''],
+	# note: 2012:  wdc bought hgst
+	['^(Hitachi|HGST|IC|HT|HU)','^Hitachi','Hitachi',''], # HGST HUA
+	['^(HP[\s\-])','^HP[\s\-]','HP',''], # vb: VB0250EAVER but clases with vbox
+	['^(KINGSTON|SMS|SHS|SUV)','^KINGSTON','Kingston',''], # maybe SHS: SHSS37A SKC SUV
+	['^(LSD|Lexar)','^Lexar','Lexar',''], # mmc-LEXAR_0xb016546c
+	# OCZSSD2-2VTXE120G is OCZ-VERTEX2_3.5
+	['^(OCZ|APOC|D2|DEN|DEN|DRSAK|EC188|FTNC|GFGC|MANG|MMOC|NIMC|NIMR|PSIR|TALOS2|TMSC|TRSAK)','^OCZ[\s\-]','OCZ',''],
+	['^OWC','^OWC[\s\-]','OWC',''],
+	['^Philips','^Philips','Philips',''],
+	['^PIONEER','^PIONEER','Pioneer',''],
+	['^PNY','^PNY\s','PNY','','^PNY'],
+	['^(SanDisk|SDS[S]?[DQ]|SL([0-9]+)G|AFGCE)','^SanDisk','SanDisk',''],
+	# note: get rid of: M[DGK] becasue mushkin starts with MK
+	['^([S]?TOS|THN)','^[S]?TOSHIBA','Toshiba',''], # scsi-STOSHIBA_STOR.E_EDITION_
+	# these go last because they are short and could lead to false ID or are unlikely
+	['^Android','^Android','Android',''],
+	# must come before AP|Apacer
+	['^APPLE','','^APPLE','Apple'],
+	['^(AP|Apacer)','^Apacer','Apacer',''],
+	['^BUFFALO','^BUFFALO','Buffalo',''],
+	['^EXCELSTOR','^EXCELSTOR( TECHNOLOGY)?','Excelstor',''],
+	['^Generic','^Generic','Generic',''],
+	['^GOODRAM','^GOODRAM','GOODRAM',''],
+	# supertalent also has FM: |FM
+	['^(G[\.]?SKILL)','^G[\.]?SKILL','G.SKILL',''],
+	['^HUAWEI','^HUAWEI','Huawei',''],
+	['^(IBM|DT)','^IBM','IBM',''], 
+	['^Imation','^Imation(\sImation)?','Imation',''], # Imation_ImationFlashDrive
+	['^(InnoDisk|Innolite)','^InnoDisk( Corp.)?','InnoDisk',''],
+	['^Innostor','^Innostor','Innostor',''],
+	['^Intenso','^Intenso','Intenso',''],
+	['^(LITE[\-]?ON[\s\-]?IT)','^LITE[\-]?ON[\s\-]?IT','LITE-ON IT',''], # LITEONIT_LSS-24L6G
+	['^(LITE[\-]?ON|PH6)','^LITE[\-]?ON','LITE-ON',''], # PH6-CE240-L
+	['^M-Systems','^M-Systems','M-Systems',''],
+	['^MAXTOR','^MAXTOR','Maxtor',''],
+	['^(MT|M5|Micron)','^Micron','Micron',''],
+	['^MARVELL','^MARVELL','Marvell',''],
+	['^Medion','^Medion','Medion',''],
+	['^Motorola','^Motorola','Motorola',''],
+	['^(PS[8F]|Patriot)','^Patriot','Patriot',''],
+	['^PIX[\s]?JR','^PIX[\s]?JR','Disney',''],
+	['^(PLEXTOR|PX-)','^PLEXTOR','Plextor',''],
+	['(^Quantum|Fireball)','^Quantum','Quantum',''],
+	['^R3','','AMD Radeon',''], # ssd 
+	['^RENICE','^RENICE','Renice',''],
+	['^RIM[\s]','^RIM','RIM',''],
+	['^(SK HYNIX|SKHYNIX|HFS)','^(SK HYNIX|SKHYNIX)','SK Hynix',''], # HFS128G39TND-N210A
+	['^(SMART( Storage Systems)?|TX)','^(SMART( Storage Systems)?)','Smart Storage Systems',''],
+	['^STEK','^STEK','sTec',''], # wd bought this one
+	['^STORFLY','^STORFLY','StorFly',''],
+	['^SigmaTel','^SigmaTel','SigmaTel',''],
+	['^SPPC','','Silicon Power',''],
+	['^SH','','Smart Modular Tech.',''],
+	['^(S[FR]-|Sony)','^Sony','Sony',''],
+	['^(SF|Swissbit)','^Swissbit','Swissbit',''],
+	# ['^(SUPERSPEED)','^SUPERSPEED','SuperSpeed',''], # superspeed is a generic term
+	['^TANDBERG','^TANDBERG','Tanberg',''],
+	['^TEAC','^TEAC','TEAC',''],
+	['^(TS|Transcend|JetFlash)','^Transcend','Transcend',''],
+	['^TrekStor','^TrekStor','TrekStor',''],
+	['^(UG|Unigen)','^Unigen','Unigen',''],
+	['^VBOX','','VirtualBox',''],
+	['^Verbatim','^Verbatim','Verbatim',''],
+	['^VISIONTEK','^VISIONTEK','VisionTek',''],
+	['^VMware','^VMware','VMware',''],
+	['^(Vseky|Vaseky)','^Vaseky','Vaseky',''], # ata-Vseky_V880_350G_
+	);
+	foreach my $ref (@vendors){
+		my @row = @$ref;
+		if ($model =~ /$row[0]/i || ($row[3] && $serial && $serial =~ /$row[3]/)){
+			$vendor = $row[2];
+			$model =~ s/$row[1]//i if $row[1] && lc($model) ne lc($row[1]);
+			$model =~ s/^[\s\-_]+|[\s\-_]+$//g;
+			@data = ($vendor,$model);
+			last;
+		}
+	}
+	eval $end if $b_log;
+	return @data;
 }
 # Normally hddtemp requires root, but you can set user rights in /etc/sudoers.
 # args: $1 - /dev/<disk> to be tested for
@@ -7611,12 +7803,6 @@ sub hdd_temp {
 	my ($device) = @_;
 	my ($path) = ('');
 	my (@data,$hdd_temp);
-	if (!$b_sudo){
-		$b_sudo = 1;
-		if (!$b_root && ($path = main::check_program('sudo') )) {
-			$sudo = "$path -n ";
-		}
-	}
 	if ($device =~ /nvme/i){
 		if (!$b_nvme){
 			$b_nvme = 1;
@@ -7869,11 +8055,12 @@ sub display_data(){
 						my @xrandr = main::grabber("$program $display_opt 2>/dev/null",'','strip');
 						foreach (@xrandr){
 							my @working = split /\s+/,$_;
-							#print join "$_\n";
+							# print join "$_\n";
 							if ($working[1] =~ /\*/){
 								$working[1] =~ s/\*|\+//g;
-								$working[1] = sprintf("%0.0f",$working[1]);
-								my $screen = "$working[0]~$working[1]Hz";
+								$working[1] = sprintf("%.0f",$working[1]);
+								$working[1] =  ($working[1]) ? "$working[1]Hz" : 'N/A';
+								my $screen = "$working[0]~$working[1]";
 								if ($graphics{'screens'}){
 									$graphics{'screens'} = ([@{$graphics{'screens'}},$screen]);
 								}
@@ -9750,16 +9937,7 @@ sub create_output {
 		else {
 			$dev_type = 'dev';
 		}
-		%part = check_lsblk($row{'dev-base'},0) if (@lsblk && $row{'dev-base'} && $dev_type eq 'dev');
-		if (%part && $part{'fs'}){
-			$fs = lc($part{'fs'});
-		}
-		elsif ($row{'fs'}){
-			$fs = lc($row{'fs'});
-		}
-		else {
-			$fs = 'N/A';
-		}
+		$fs = ($row{'fs'}) ? lc($row{'fs'}): 'N/A';
 		$dev ||= 'N/A';
 		$j = scalar @rows;
 		@data = ({
@@ -9784,14 +9962,14 @@ sub create_output {
 sub partition_data {
 	eval $start if $b_log;
 	#return if $bsd_type && $bsd_type eq 'darwin'; # darwin has muated output, of course
-	my (@data,@rows,@mapper,@mount,@partitions_working);
+	my (@data,@rows,@mapper,@mount,@partitions_working,%part);
 	my ($b_fake_map,$b_fs,$b_load,$cols,$roots) = (0,1,0,6,0);
 	my ($back_size,$back_used) = (4,3);
 	my ($dev_base,$fs,$id,$label,$percent_used,$size,$type,$uuid,$used);
 	$b_partitions = 1;
 	set_lsblk() if !$bsd_type && !$b_lsblk;
 	# set labels, uuid, gpart
-	main::get_partition_extra_data() if !$b_partition_extra;
+	set_label_uuid() if !$b_label_uuid;
 	# most current OS support -T and -k, but -P means different things
 	# in freebsd. However since most use is from linux, we make that default
 	if (!$bsd_type){
@@ -9847,6 +10025,7 @@ sub partition_data {
 		$label = '';
 		$size = 0;
 		$used = 0;
+		%part = ();
 		$percent_used = 0;
 		$type = '';
 		$uuid = '';
@@ -9867,6 +10046,7 @@ sub partition_data {
 			}
 			$dev_base = $row[0];
 			$dev_base =~ s/^\/dev\///;
+			%part = check_lsblk($dev_base,0) if @lsblk;
 		}
 		# this handles zfs type devices/partitions, which do not start with / but contain /
 		# note: Main/jails/transmission_1 path can be > 1 deep 
@@ -9886,20 +10066,35 @@ sub partition_data {
 			$type = 'secondary';
 		}
 		if ($b_load){
-			if ($show{'label'} && @labels){
-				$label = get_label($row[0]);
-			}
-			if ($show{'uuid'} && @uuids){
-				$uuid = get_uuid($row[0]);
-			}
-			if ($bsd_type && @gpart && ($show{'label'} || $show{'uuid'} ) ){
-				my @extra = get_bsd_label_uuid("$dev_base");
-				if (@extra){
-					$label = $extra[0];
-					$uuid = $extra[1];
+			if (!$bsd_type){
+				$fs = (%part && $part{'fs'}) ? $part{'fs'} : $row[1];
+				if ($show{'label'}) {
+					if (%part && $part{'label'}) {
+						$label = $part{'label'};
+					}
+					elsif ( @labels){
+						$label = get_label($row[0]);
+					}
+				}
+				if ($show{'uuid'}) {
+					if (%part && $part{'uuid'}) {
+						$uuid = $part{'uuid'};
+					}
+					elsif ( @uuids){
+						$uuid = get_uuid($row[0]);
+					}
 				}
 			}
-			$fs = ($b_fs) ? $row[1]: get_bsd_fs($row[0],@mount);
+			else {
+				$fs = ($b_fs) ? $row[1]: get_bsd_fs($row[0],@mount);
+				if (@gpart && ($show{'label'} || $show{'uuid'} ) ){
+					my @extra = get_bsd_label_uuid("$dev_base");
+					if (@extra){
+						$label = $extra[0];
+						$uuid = $extra[1];
+					}
+				}
+			}
 			$id = join ' ', @row[$cols .. $#row];
 			$id =~ s/\/home\/[^\/]+\/(.*)/\/home\/$filter_string\/$1/ if $show{'filter'};
 			$size = $row[$cols - $back_size];
@@ -9998,7 +10193,7 @@ sub get_bsd_fs {
 	# linux: /dev/sdb6 on /var/www/m type ext4 (rw,relatime,data=ordered)
 	# bsd: /dev/ada0s1a on / (ufs, local, soft-updates)
 	foreach (@mount){
-		if ($_ =~ /^$item\son.*\(([^,\s]+)[,\s].*/){
+		if ($_ =~ /^$item\son.*\(([^,\s\)]+)[,\s]*.*\)/){
 			$fs = $1;
 			last;
 		}
@@ -10038,21 +10233,46 @@ sub get_bsd_label_uuid {
 	eval $end if $b_log;
 	return @data;
 }
+sub set_label_uuid {
+	eval $start if $b_log;
+	$b_label_uuid = 1;
+	if ( $show{'unmounted'} || $show{'label'} || $show{'uuid'} ){
+		if (!$bsd_type){
+			if (-d '/dev/disk/by-label'){
+				@labels = main::globber('/dev/disk/by-label/*');
+			}
+			if (-d '/dev/disk/by-uuid'){
+				@uuids = main::globber('/dev/disk/by-uuid/*');
+			}
+		}
+		else {
+			if ( my $path = main::check_program('gpart')){
+				@gpart = main::grabber("$path list 2>/dev/null",'strip');
+			}
+		}
+	}
+	eval $end if $b_log;
+}
 sub set_lsblk {
 	eval $start if $b_log;
 	$b_lsblk = 1;
 	my (@temp,@working);
 	if (my $program = main::check_program('lsblk')){
-		@working = main::grabber("$program -bP --output NAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,MOUNTPOINT 2>/dev/null");
+		@working = main::grabber("$program -bP --output NAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,SERIAL,MOUNTPOINT 2>/dev/null");
 		foreach (@working){
-			my ($name,$type,$rm,$fstype,$size) = ('','','','',''); 
-			if (/NAME="([^"]*)"\s+TYPE="([^"]*)"\s+RM="([^"]*)"\s+FSTYPE="([^"]*)"\s+SIZE="([^"]*)"/){
+			if (/NAME="([^"]*)"\s+TYPE="([^"]*)"\s+RM="([^"]*)"\s+FSTYPE="([^"]*)"\s+SIZE="([^"]*)"\s+LABEL="([^"]*)"\s+UUID="([^"]*)"\s+SERIAL="([^"]*)"\s+MOUNTPOINT="([^"]*)"/){
+				my $size = ($5) ? $5/1024: 0;
+				# some versions of lsblk do not return serial, fs, uuid, or label
 				my @temp = ({
 				'name' => $1, 
 				'type' => $2,
 				'rm' => $3, 
 				'fs' => $4, 
-				'size' => $5
+				'size' => $size,
+				'label' => $6,
+				'uuid' => $7,
+				'serial' => $8,
+				'mount' => $9,
 				});
 				@lsblk = (@lsblk,@temp);
 			}
@@ -10070,12 +10290,11 @@ sub check_lsblk {
 		my %row = %$ref;
 		next if ! $row{'name'};
 		if ($name eq $row{'name'}){
-			$part{'fs'} = $row{'fs'};
-			$part{'size'} = $row{'size'}/ 1024 if $b_size && $row{'size'};
-			$part{'rm'} = $row{'rm'} if $row{'rm'};
+			%part = %row;
 			last;
 		}
 	}
+	# print Data::Dumper::Dumper \%part;
 	main::log_data('dump','%part',\%part) if $b_log;
 	eval $end if $b_log;
 	return %part;
@@ -11866,6 +12085,7 @@ sub get_repos_bsd {
 	my $freebsd_pkg = '/etc/pkg/FreeBSD.conf';
 	my $netbsd = '/usr/pkg/etc/pkgin/repositories.conf';
 	my $openbsd = '/etc/pkg.conf';
+	my $openbsd2 = '/etc/installurl';
 	my $portsnap =  '/etc/portsnap.conf';
 	if ( -f $portsnap || -f $freebsd || -d $bsd_pkg){
 		if ( -f $portsnap ) {
@@ -11928,9 +12148,15 @@ sub get_repos_bsd {
 			}
 		}
 	}
-	elsif (-f $openbsd) {
-		@data = repo_builder($openbsd,'openbsd','^installpath','\s*=\s*',1);
-		@rows = (@rows,@data);
+	elsif (-f $openbsd || -f $openbsd2) {
+		if (-f $openbsd){
+			@data = repo_builder($openbsd,'openbsd','^installpath','\s*=\s*',1);
+			@rows = (@rows,@data);
+		}
+		if (-f $openbsd2){
+			@data = repo_builder($openbsd2,'openbsd','^(http|ftp)','',1);
+			@rows = (@rows,@data);
+		}
 	}
 	elsif (-f $netbsd){
 		# not an empty row, and not a row starting with #
@@ -12191,8 +12417,8 @@ sub create_output {
 				$rows[$j]{main::key($num++,'sodimm')} = $fan_main[$i];
 			}
 			elsif ($i > 4){
-				$fan_number = $i - 3;
-				$rows[$j]{main::key($num++,"sys-$fan_number")} = $fan_main[$i];
+				$fan_number = $i - 4;
+				$rows[$j]{main::key($num++,"case-$fan_number")} = $fan_main[$i];
 			}
 		}
 	}
@@ -12229,20 +12455,21 @@ sub create_output {
 			}
 		}
 	}
-	if ($extra > 0 && $source eq 'ipmi'){
+	if ($extra > 0 && ($source eq 'ipmi' || 
+	   ($sensors{'volts-12'} || $sensors{'volts-5'} || $sensors{'volts-3.3'} || $sensors{'volts-vbat'}))){
 		$j = scalar @rows;
 		$sensors{'volts-12'} ||= 'N/A';
 		$sensors{'volts-5'} ||= 'N/A';
 		$sensors{'volts-3.3'} ||= 'N/A';
-		$sensors{'volts-dimm-p1'} ||= 'N/A';
-		$sensors{'volts-dimm-p2'} ||= 'N/A';
 		$sensors{'volts-vbat'} ||= 'N/A';
 		$rows[$j]{main::key($num++,'Voltages')} = $data_source;
 		$rows[$j]{main::key($num++,'12v')} = $sensors{'volts-12'};
 		$rows[$j]{main::key($num++,'5v')} = $sensors{'volts-5'};
 		$rows[$j]{main::key($num++,'3.3v')} = $sensors{'volts-3.3'};
 		$rows[$j]{main::key($num++,'vbat')} = $sensors{'volts-vbat'};
-		if ($extra > 1){
+		if ($extra > 1 && $source eq 'ipmi' ){
+			$sensors{'volts-dimm-p1'} ||= 'N/A';
+			$sensors{'volts-dimm-p2'} ||= 'N/A';
 			$rows[$j]{main::key($num++,'dimm-p1')} = $sensors{'volts-dimm-p1'} if $sensors{'volts-dimm-p1'};
 			$rows[$j]{main::key($num++,'dimm-p2')} = $sensors{'volts-dimm-p2'} if $sensors{'volts-dimm-p2'};
 			$rows[$j]{main::key($num++,'soc-p1')} = $sensors{'volts-soc-p1'} if $sensors{'volts-soc-p1'};
@@ -12299,7 +12526,7 @@ sub ipmi_data {
 			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 		}
 		# for temp1/2 only use temp1/2 if they are null or greater than the last ones
-		if ($row[$i_key] =~ /^Temp 1$/i) {
+		elsif ($row[$i_key] =~ /^Temp 1$/i) {
 			$temp_working = int($row[$i_value]);
 			$working_unit = $row[$i_unit];
 			$working_unit =~ s/degrees\s// if $b_ipmitool; 
@@ -12308,7 +12535,7 @@ sub ipmi_data {
 			}
 			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 		}
-		if ($row[$i_key] =~ /^Temp 2$/i) {
+		elsif ($row[$i_key] =~ /^Temp 2$/i) {
 			$temp_working = int($row[$i_value]);
 			$working_unit = $row[$i_unit];
 			$working_unit =~ s/degrees\s// if $b_ipmitool; 
@@ -12318,7 +12545,7 @@ sub ipmi_data {
 			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 		}
 		# temp3 is only used as an absolute override for systems with all 3 present
-		if ($row[$i_key] =~ /^Temp 3$/i) {
+		elsif ($row[$i_key] =~ /^Temp 3$/i) {
 			$temp_working = int($row[$i_value]);
 			$working_unit = $row[$i_unit];
 			$working_unit =~ s/degrees\s// if $b_ipmitool; 
@@ -12328,14 +12555,14 @@ sub ipmi_data {
 			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 		}
 		# note: can be cpu fan:, cpu fan speed:, etc.
-		if ($row[$i_key] =~ /^(CPU|Processor)\sFan/i) {
+		elsif ($row[$i_key] =~ /^(CPU|Processor)\sFan/i) {
 			$sensors{'fan-main'} = () if !$sensors{'fan-main'};
 			$sensors{'fan-main'}[1] = int($row[$i_value]);
 		}
 		# note that the counters are dynamically set for fan numbers here
 		# otherwise you could overwrite eg aux fan2 with case fan2 in theory
 		# note: cpu/mobo/ps are 1/2/3
-		if ($row[$i_key] =~ /^FAN([0-9A-F]+)/i) {
+		elsif ($row[$i_key] =~ /^FAN([0-9A-F]+)/i) {
 			$sys_fan_nu = hex($1);
 			next if $row[$i_value] !~ /^[0-9\.]+$/;
 			$fan_working = int($row[$i_value]);
@@ -12396,6 +12623,7 @@ sub sensors_data {
 	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/amdgpu-w-fan-speed-stretch-k10.txt";
 	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/peci-tin-geggo.txt";
 	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-w-other-biker.txt";
+	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-asus-chassis-1.txt";
 	#@sensors_data = main::reader($file);
 	@sensors_data = main::grabber(main::check_program('sensors') . " 2>/dev/null");
 	#print @sensors_data;
@@ -12424,7 +12652,7 @@ sub sensors_data {
 		# note that because of charset issues, no "°" degree sign used, but it is required 
 		# in testing regex to avoid error. It might be because I got that data from a forum post,
 		# note directly via debugger.
-		if (/^(AMBIENT|M\/B|MB|SIO|SYS).*:([0-9\.]+)[\s°]*(C|F)/i) {
+		if ($_ =~ /^(AMBIENT|M\/B|MB|SIO|SYS).*:([0-9\.]+)[\s°]*(C|F)/i) {
 			$sensors{'mobo-temp'} = $2;
 			$working_unit = $3;
 			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
@@ -12436,29 +12664,29 @@ sub sensors_data {
 		# which is the maximum CPU temperature reported as critical temperature by coretemp"
 		# NOTE: I've seen an inexplicable case where: CPU:52.0°C fails to match with [\s°] but 
 		# does match with: [\s°]*. I can't account for this, but that's why the * is there
-		if (/^CPU.*:([0-9\.]+)[\s°]*(C|F)/i) {
+		elsif (!$sensors{'cpu-temp'} && $_ =~ /^CPU.*:([0-9\.]+)[\s°]*(C|F)/i) {
 			$sensors{'cpu-temp'} = $1;
 			$working_unit = $2;
 			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 		}
-		if (/^PECI\sAgent\s0.*:([0-9\.]+)[\s°]*(C|F)/i) {
+		elsif ($_ =~ /^PECI\sAgent\s0.*:([0-9\.]+)[\s°]*(C|F)/i) {
 			$sensors{'cpu-peci-temp'} = $1;
 			$working_unit = $2;
 			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 		}
-		if (/^(P\/S|Power).*:([0-9\.]+)[\s°]*(C|F)/i) {
+		elsif ($_ =~ /^(P\/S|Power).*:([0-9\.]+)[\s°]*(C|F)/i) {
 			$sensors{'psu-temp'} = $2;
 			$working_unit = $3;
 			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 		}
-		if (/^SODIMM.*:([0-9\.]+)[\s°]*(C|F)/i) {
+		elsif ($_ =~ /^SODIMM.*:([0-9\.]+)[\s°]*(C|F)/i) {
 			$sensors{'sodimm-temp'} = $1;
 			$working_unit = $2;
 			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 			
 		}
 		# for temp1/2 only use temp1/2 if they are null or greater than the last ones
-		if (/^temp1:([0-9\.]+)[\s°]*(C|F)/i) {
+		elsif ($_ =~ /^temp1:([0-9\.]+)[\s°]*(C|F)/i) {
 			$temp_working = $1;
 			$working_unit = $2;
 			if ( !$sensors{'temp1'} || ( defined $temp_working && $temp_working > 0 ) ) {
@@ -12466,7 +12694,7 @@ sub sensors_data {
 			}
 			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 		}
-		if (/^temp2:([0-9\.]+)[\s°]*(C|F)/i) {
+		elsif ($_ =~ /^temp2:([0-9\.]+)[\s°]*(C|F)/i) {
 			$temp_working = $1;
 			$working_unit = $2;
 			if ( !$sensors{'temp2'} || ( defined $temp_working && $temp_working > 0 ) ) {
@@ -12475,7 +12703,7 @@ sub sensors_data {
 			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 		}
 		# temp3 is only used as an absolute override for systems with all 3 present
-		if (/^temp3:([0-9\.]+)[\s°]*(C|F)/i) {
+		elsif ($_ =~ /^temp3:([0-9\.]+)[\s°]*(C|F)/i) {
 			$temp_working = $1;
 			$working_unit = $2;
 			if ( !$sensors{'temp3'} || ( defined $temp_working && $temp_working > 0 ) ) {
@@ -12485,7 +12713,7 @@ sub sensors_data {
 		}
 		# final fallback if all else fails, funtoo user showed sensors putting
 		# temp on wrapped second line, not handled
-		if (/^(core0|core 0|Physical id 0)(.*):([0-9\.]+)[\s°]*(C|F)/i) {
+		elsif ($_ =~ /^(core0|core 0|Physical id 0)(.*):([0-9\.]+)[\s°]*(C|F)/i) {
 			$temp_working = $3;
 			$working_unit = $4;
 			if ( !$sensors{'core-0-temp'} || ( defined $temp_working && $temp_working > 0 ) ) {
@@ -12494,54 +12722,42 @@ sub sensors_data {
 			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 		}
 		# note: can be cpu fan:, cpu fan speed:, etc.
-		if (/^(CPU|Processor).*:([0-9]+)[\s]RPM/i) {
+		elsif (!$sensors{'fan-main'}[1] && $_ =~ /^(CPU|Processor).*:([0-9]+)[\s]RPM/i) {
 			$sensors{'fan-main'} = () if !$sensors{'fan-main'};
 			$sensors{'fan-main'}[1] = $2;
 		}
-		if (/^(M\/B|MB|SYS).*:([0-9]+)[\s]RPM/i) {
+		elsif (!$sensors{'fan-main'}[2] && $_ =~ /^(M\/B|MB|SYS).*:([0-9]+)[\s]RPM/i) {
 			$sensors{'fan-main'} = () if !$sensors{'fan-main'};
 			$sensors{'fan-main'}[2] = $2;
 		}
-		if (/(Power|P\/S|POWER).*:([0-9]+)[\s]RPM/i) {
+		elsif (!$sensors{'fan-main'}[3] && $_ =~ /(Power|P\/S|POWER).*:([0-9]+)[\s]RPM/i) {
 			$sensors{'fan-main'} = () if !$sensors{'fan-main'};
 			$sensors{'fan-main'}[3] = $2;
 		}
-		if (/(SODIMM).*:([0-9]+)[\s]RPM/i) {
+		elsif (!$sensors{'fan-main'}[4] && $_ =~ /(SODIMM).*:([0-9]+)[\s]RPM/i) {
 			$sensors{'fan-main'} = () if !$sensors{'fan-main'};
 			$sensors{'fan-main'}[4] = $2;
 		}
 		# note that the counters are dynamically set for fan numbers here
 		# otherwise you could overwrite eg aux fan2 with case fan2 in theory
-		# note: cpu/mobo/ps are 1/2/3
-		if (/^(AUX[1]? |CASE[1]? |CHASSIS[1]? ).*:([0-9]+)[\s]RPM/i) {
-			$temp_working = $2;
-			$sensors{'fan-main'} = () if !$sensors{'fan-main'};
-			for ( my $i = 5; $i < 7; $i++ ){
-				next if defined $sensors{'fan-main'}[$i];
-				if ( !defined $sensors{'fan-main'}[$i] ){
-					$sensors{'fan-main'}[$i] = $temp_working;
-					last;
-				}
-			}
-		}
-		if (/^(AUX[2-9] |CASE[2-9] |CHASSIS[2-9] ).*:([0-9]+)[\s]RPM/i) {
+		# note: cpu/mobo/ps/sodimm are 1/2/3/4
+		elsif ($_ =~ /^(AUX|CASE|CHASSIS).*:([0-9]+)[\s]RPM/i) {
 			$temp_working = $2;
 			$sensors{'fan-main'} = () if !$sensors{'fan-main'};
 			for ( my $i = 5; $i < 30; $i++ ){
 				next if defined $sensors{'fan-main'}[$i];
 				if ( !defined $sensors{'fan-main'}[$i] ){
-					$sys_fan_nu = $i;
 					$sensors{'fan-main'}[$i] = $temp_working;
 					last;
 				}
 			}
 		}
 		# in rare cases syntax is like: fan1: xxx RPM
-		if (/^FAN(1)?:([0-9]+)[\s]RPM/i) {
+		elsif ($_ =~ /^FAN(1)?:([0-9]+)[\s]RPM/i) {
 			$sensors{'fan-default'} = () if !$sensors{'fan-default'};
 			$sensors{'fan-default'}[1] = $2;
 		}
-		if (/^FAN([2-9]|1[0-9]).*:([0-9]+)[\s]RPM/i) {
+		elsif ($_ =~ /^FAN([2-9]|1[0-9]).*:([0-9]+)[\s]RPM/i) {
 			$fan_working = $2;
 			$sys_fan_nu = $1;
 			$sensors{'fan-default'} = () if !$sensors{'fan-default'};
@@ -12555,6 +12771,21 @@ sub sensors_data {
 				else {
 					$sensors{'fan-default'}[$sys_fan_nu] = $fan_working;
 				}
+			}
+		}
+		if ($extra > 0){
+			if ($_ =~ /^[+]?(12 Volt|12V).*:([0-9\.]+)\sV/i) {
+				$sensors{'volts-12'} = $2;
+			}
+			# note: 5VSB is a field name
+			elsif ($_ =~ /^[+]?(5 Volt|5V):([0-9\.]+)\sV/i) {
+				$sensors{'volts-5'} = $2;
+			}
+			elsif ($_ =~ /^[+]?(3\.3 Volt|3\.3V).*:([0-9\.]+)\sV/i) {
+				$sensors{'volts-3.3'} = $2;
+			}
+			elsif ($_ =~ /^(Vbat).*:([0-9\.]+)\sV/i) {
+				$sensors{'volts-vbat'} = $2;
 			}
 		}
 	}
@@ -12794,7 +13025,8 @@ sub data_processor {
 		$cpu3_temp = $sensors{'cpu3-temp'} if $sensors{'cpu3-temp'};
 		$cpu4_temp = $sensors{'cpu4-temp'} if $sensors{'cpu4-temp'};
 		# so far only for ipmi, sensors data is junk for volts
-		if ($extra > 0 && $sensors{'volts-12'} ){
+		if ($extra > 0 && 
+		    ($sensors{'volts-12'} || $sensors{'volts-5'} || $sensors{'volts-3.3'} || $sensors{'volts-vbat'}) ){
 			$v_12 = $sensors{'volts-12'} if $sensors{'volts-12'};
 			$v_5 = $sensors{'volts-5'} if $sensors{'volts-5'};
 			$v_3_3 = $sensors{'volts-3.3'} if  $sensors{'volts-3.3'};
@@ -12821,7 +13053,7 @@ sub data_processor {
 		if ($sodimm_temp){
 			$sensors{'sodimm-temp'} = $sodimm_temp;
 		}
-		if ($extra > 0 && ($v_12 || $v_5 || $v_3_3) ){
+		if ($extra > 0 && ($v_12 || $v_5 || $v_3_3 || $v_vbat) ){
 			$sensors{'volts-12'} = $v_12;
 			$sensors{'volts-5'} = $v_5;
 			$sensors{'volts-3.3'} = $v_3_3;
@@ -13123,7 +13355,7 @@ sub create_output {
 sub unmounted_data {
 	eval $start if $b_log;
 	my ($file) = @_;
-	my ($fs,$size,@data,%part,@unmounted);
+	my ($fs,$label,$size,$uuid,@data,%part,@unmounted);
 	my @mounted = ('scd[0-9]+','sr[0-9]+','cdrom[0-9]*','cdrw[0-9]*',
 	'dvd[0-9]*','dvdrw[0-9]*','fd[0-9]','ram[0-9]*');
 	my @mounts = main::reader($file,'strip');
@@ -13131,12 +13363,12 @@ sub unmounted_data {
 	PartitionData::set_lsblk() if !$bsd_type && !$b_lsblk;
 	# set labels, uuid, gpart
 	PartitionData::partition_data() if !$b_partitions;
-	main::get_partition_extra_data() if !$b_partition_extra;
+	PartitionData::set_label_uuid() if !$b_label_uuid;
 	RaidData::raid_data() if !$b_raid;
 	@mounted = get_mounted(@mounted);
 	foreach (@mounts){
 		my @working = split /\s+/, $_;
-		($fs,$size) = ('','');
+		($fs,$label,$uuid,$size) = ('','','','');
 		# note that size 1 means it is a logical extended partition container
 		# lvm might have dm-1 type syntax
 		# need to exclude loop type file systems, squashfs for example
@@ -13144,15 +13376,17 @@ sub unmounted_data {
 		if ( $working[-1] !~ /^nvme[0-9]+n[0-9]+$/ && 
 		     $working[-1] =~ /[a-z][0-9]+$|dm-[0-9]+$/ && $working[2] != 1 && 
 		     $working[-1] !~ /loop/ && !(grep {$working[-1] =~ /$_/} @mounted)){
-		   my $label = PartitionData::get_label("/dev/$working[-1]");
-		   my $uuid = PartitionData::get_uuid("/dev/$working[-1]");
-		   %part = PartitionData::check_lsblk($working[-1],0) if (@lsblk && $working[-1]);
+			%part = PartitionData::check_lsblk($working[-1],0) if (@lsblk && $working[-1]);
 			if (%part){
 				$fs = $part{'fs'};
+				$label = $part{'label'};
+				$uuid = $part{'uuid'};
 				$size = $part{'size'} if $part{'size'} && !$working[2];
 			}
 			$size ||= $working[2];
-		   $fs = unmounted_filesystem($working[-1]) if ! $fs;
+		   $fs = unmounted_filesystem($working[-1]) if !$fs;
+		   $label = PartitionData::get_label("/dev/$working[-1]") if !$label;
+			$uuid = PartitionData::get_uuid("/dev/$working[-1]") if !$uuid;
 			@data = ({
 			'dev-base' => $working[-1],
 			'fs' => $fs,
@@ -13178,6 +13412,8 @@ sub get_mounted {
 	foreach my $ref (@raid){
 		my %row = %$ref;
 		my $ref2 = $row{'arrays'};
+		# we want to not show md0 etc in unmounted report
+		push @mounted, $row{'id'} if $row{'id'}; 
 		my @arrays = (ref $ref2 eq 'ARRAY' ) ? @$ref2 : ();
 		@arrays = grep {defined $_} @arrays;
 		foreach my $array (@arrays){
@@ -13197,7 +13433,7 @@ sub unmounted_filesystem {
 	eval $start if $b_log;
 	my ($item) = @_;
 	my ($data,%part);
-	my ($file,$fs,$path,$sudo) = ('','','','');
+	my ($file,$fs,$path) = ('','','');
 	if ($path = main::check_program('file')) {
 		$file = $path;
 	}
@@ -13207,13 +13443,6 @@ sub unmounted_filesystem {
 	'ffs','hammer','hfs\+','hfs\splus','hfs\sextended\sversion\s[1-9]','hfsj',
 	'hfs','jfs','nss','reiserfs','reiser4','ufs2','ufs','xfs','zfs');
 	if ($file){
-		# only use sudo if not root, -n option requires sudo -V 1.7 or greater. 
-		# sudo will just error out which is the safest course here for now,
-		# otherwise that interactive sudo password thing is too annoying
-		# important: -n makes it non interactive, no prompt for password
-		if (!$b_root && ($path = main::check_program('sudo') )) {
-			$sudo = "$path -n ";
-		}
 		# this will fail if regular user and no sudo present, but that's fine, it will just return null
 		# note the hack that simply slices out the first line if > 1 items found in string
 		# also, if grub/lilo is on partition boot sector, no file system data is available
@@ -13713,6 +13942,7 @@ sub get_compiler_version {
 	eval $end if $b_log;
 	return @compiler;
 }
+
 sub get_compiler_version_bsd {
 	eval $start if $b_log;
 	my (@compiler,@working);
@@ -13739,6 +13969,7 @@ sub get_compiler_version_bsd {
 	eval $end if $b_log;
 	return @compiler;
 }
+
 sub get_compiler_version_linux {
 	eval $start if $b_log;
 	my ($file) = @_;
@@ -14318,6 +14549,7 @@ sub get_display_manager {
 	eval $end if $b_log;
 	return join ',', @found if @found;
 }
+
 ## Get DistroData
 {
 package DistroData;
@@ -14589,6 +14821,7 @@ sub get_os_release {
 	return $distro;
 }
 }
+
 sub get_gcc_data {
 	eval $start if $b_log;
 	my ($gcc,@data,@gccs,@temp);
@@ -14618,6 +14851,7 @@ sub get_gcc_data {
 	eval $end if $b_log;
 	return @gccs;
 }
+
 sub get_hostname {
 	eval $start if $b_log;
 	my $hostname = '';
@@ -14640,6 +14874,7 @@ sub get_hostname {
 	eval $end if $b_log;
 	return $hostname;
 }
+
 sub get_init_data {
 	eval $start if $b_log;
 	my $runlevel = get_runlevel_data();
@@ -14725,6 +14960,7 @@ sub get_init_data {
 	eval $end if $b_log;
 	return %init;
 }
+
 sub get_kernel_data {
 	eval $start if $b_log;
 	my ($kernel,$ksplice) = ('','');
@@ -14745,6 +14981,7 @@ sub get_kernel_data {
 	eval $end if $b_log;
 	return $kernel;
 }
+
 sub get_kernel_bits {
 	eval $start if $b_log;
 	my $bits = '';
@@ -14756,6 +14993,7 @@ sub get_kernel_bits {
 	eval $end if $b_log;
 	return $bits;
 }
+
 sub get_memory_data {
 	eval $start if $b_log;
 	my ($type) = @_;
@@ -14769,6 +15007,7 @@ sub get_memory_data {
 	eval $end if $b_log;
 	return $memory;
 }
+
 sub get_memory_data_linux {
 	eval $start if $b_log;
 	my ($type,$file) = @_;
@@ -14797,6 +15036,7 @@ sub get_memory_data_linux {
 	eval $end if $b_log;
 	return $memory;
 }
+
 # openbsd/linux
 # procs    memory       page                    disks    traps          cpu
 # r b w    avm     fre  flt  re  pi  po  fr  sr wd0 wd1  int   sys   cs us sy id
@@ -14916,26 +15156,7 @@ sub get_module_version {
 	eval $end if $b_log;
 	return $version;
 }
-sub get_partition_extra_data {
-	eval $start if $b_log;
-	$b_partition_extra = 1;
-	if ( $show{'unmounted'} || $show{'label'} || $show{'uuid'} ){
-		if (!$bsd_type){
-			if (-d '/dev/disk/by-label'){
-				@labels = main::globber('/dev/disk/by-label/*');
-			}
-			if (-d '/dev/disk/by-uuid'){
-				@uuids = main::globber('/dev/disk/by-uuid/*');
-			}
-		}
-		else {
-			if ( my $path = main::check_program('gpart')){
-				@gpart = main::grabber("$path list 2>/dev/null",'strip');
-			}
-		}
-	}
-	eval $end if $b_log;
-}
+
 # # check? /var/run/nologin for bsds?
 sub get_runlevel_data {
 	eval $start if $b_log;
@@ -14948,6 +15169,7 @@ sub get_runlevel_data {
 	eval $end if $b_log;
 	return $runlevel;
 }
+
 # note: it appears that at least as of 2014-01-13, /etc/inittab is going 
 # to be used for default runlevel in upstart/sysvinit. systemd default is 
 # not always set so check to see if it's linked.
@@ -14981,6 +15203,7 @@ sub get_runlevel_default {
 	eval $end if $b_log;
 	return $default;
 }
+
 sub get_self_version {
 	eval $start if $b_log;
 	my $patch = $self_patch;
@@ -14992,6 +15215,7 @@ sub get_self_version {
 	eval $end if $b_log;
 	return $self_version . $patch;
 }
+
 sub get_shell_data {
 	eval $start if $b_log;
 	my ($ppid) = @_;
@@ -15042,6 +15266,7 @@ sub get_shell_data {
 	$client{'su-start'} = 'sudo' if (!$client{'su-start'} && $ENV{'SUDO_USER'});
 	eval $end if $b_log;
 }
+
 sub get_shell_source {
 	eval $start if $b_log;
 	my (@data);
@@ -15096,6 +15321,7 @@ sub get_shell_source {
 	eval $end if $b_log;
 	return $shell_parent;
 }
+
 # utilities for get_shell_source 
 # arg: 1 - parent id
 sub get_start_parent {
@@ -15110,6 +15336,7 @@ sub get_start_parent {
 	eval $end if $b_log;
 	return $self_parent;
 }
+
 # arg: 1 - parent id
 sub get_shell_parent {
 	eval $start if $b_log;
@@ -15122,6 +15349,7 @@ sub get_shell_parent {
 	eval $end if $b_log;
 	return $shell_parent;
 }
+
 # this will test against default IP like: (:0) vs full IP to determine 
 # ssh status. Surprisingly easy test? Cross platform
 sub get_ssh_status {
@@ -15151,6 +15379,7 @@ sub get_tty_console_irc {
 	eval $end if $b_log;
 	return $tty_session;
 }
+
 sub get_tty_number {
 	eval $start if $b_log;
 	my $tty = POSIX::ttyname(1);
@@ -15161,6 +15390,7 @@ sub get_tty_number {
 	eval $end if $b_log;
 	return $tty;
 }
+
 # 2:58PM  up 437 days,  8:18, 3 users, load averages: 2.03, 1.72, 1.77
 # 04:29:08 up  3:18,  3 users,  load average: 0,00, 0,00, 0,00
 # 10:23PM  up 5 days, 16:17, 1 user, load averages: 0.85, 0.90, 1.00
@@ -15192,6 +15422,7 @@ sub get_uptime {
 	eval $end if $b_log;
 	return $uptime;
 }
+
 # NOTE: annoyingly, /sys does NOT actually use the id, it uses 
 # the count of physical devices, starting at 0 for hub, on the bus.
 # args: $1 - $bus number; $2 - vendor:chip id
@@ -15244,6 +15475,7 @@ sub get_usb_drivers {
 	eval $end if $b_log;
 	return @temp;
 }
+
 sub get_usb_path {
 	eval $start if $b_log;
 	my ($vendor,$chip,$glob) = @_;
@@ -15317,6 +15549,7 @@ sub set_dmesg_boot_data {
 	#print Dumper \@dmesg_boot if $test[9];
 	eval $end if $b_log;
 }
+
 # note, all actual tests have already been run in check_tools so if we
 # got here, we're good. 
 sub set_dmi_data {
@@ -15399,6 +15632,7 @@ sub set_ip_data {
 	}
 	eval $end if $b_log;
 }
+
 sub set_ip_addr {
 	eval $start if $b_log;
 	my $program = check_program('ip');
@@ -15451,6 +15685,7 @@ sub set_ip_addr {
 	print Dumper \@ifs if $test[3];
 	eval $end if $b_log;
 }
+
 sub set_ifconfig {
 	eval $start if $b_log;
 	my $program = check_program('ifconfig'); # not in user path, sbin
@@ -15484,19 +15719,27 @@ sub set_ifconfig {
 			}
 			$b_skip = 0;
 		}
-		elsif (!$b_skip && $bsd_type && /^\s+(ether|media|status)/){
+		# lladdr openbsd
+		elsif (!$b_skip && $bsd_type && /^\s+(ether|media|status|lladdr)/){
 			$_ =~ s/^\s+//;
 			# media: Ethernet 100baseTX <full-duplex> freebsd 7.3 
 			# media: Ethernet autoselect (1000baseT <full-duplex>) Freebsd 8.2
 			# 
 			if (/^media/){
-				$_ =~ /<([^>]+)>/;
-				$duplex = $1;
-				$_ =~ /[\s\(]([1-9][\S]+\s)/;
+				# openbsd: media: Ethernet autoselect (1000baseT full-duplex)
+				if ($bsd_type && $bsd_type eq 'openbsd'){
+					$_ =~ /\s\([\S]+\s([\S]+)\)/;
+					$duplex = $1;
+				}
+				else {
+					$_ =~ /<([^>]+)>/;
+					$duplex = $1;
+				}
+				$_ =~ /\s\(([1-9][\S]+\s)/;
 				$speed = $1;
 				$speed =~ s/\s+$// if $speed;
 			}
-			elsif (/^ether/){
+			elsif (!$mac && /^ether|lladdr/){
 				$mac = (split /\s+/, $_)[1];
 			}
 			elsif (/^status/){
@@ -15561,6 +15804,7 @@ sub set_pci_data {
 	}
 	eval $end if $b_log;
 }
+
 # 0 type
 # 1 type_id
 # 2 bus_id
@@ -15634,6 +15878,7 @@ sub set_lspci_data {
 	main::log_data('dump','@pci',\@pci) if $b_log;
 	eval $end if $b_log;
 }
+
 # em0@pci0:6:0:0:	class=0x020000 card=0x10d315d9 chip=0x10d38086 rev=0x00 hdr=0x00
 #     vendor     = 'Intel Corporation'
 #     device     = 'Intel 82574L Gigabit Ethernet Controller (82574L)'
@@ -15716,6 +15961,7 @@ sub set_pciconf_data {
 	main::log_data('dump','@pci',\@pci) if $b_log;
 	eval $end if $b_log;
 }
+
 sub set_ps_aux {
 	eval $start if $b_log;
 	@ps_aux = split "\n",qx(ps aux);;
@@ -15764,6 +16010,7 @@ sub set_sysctl_data {
 	}
 	eval $end if $b_log;
 }
+
 # http://www.usb.org/developers/defined_class
 sub set_usb_data {
 	eval $start if $b_log;
@@ -15815,6 +16062,7 @@ sub set_lsusb_data_short {
 	main::log_data('dump','@usb: short',\@usb) if $b_log;
 	eval $end if $b_log;
 }
+
 sub set_lsusb_data_long {
 	eval $start if $b_log;
 	my ($content,@data,@working,$bus_id,$device_id,$id,$b_skip);
@@ -15895,6 +16143,7 @@ sub set_lsusb_data_long {
 	main::log_data('dump','@usb: long',\@usb) if $b_log;
 	eval $end if $b_log;
 }
+
 # Controller /dev/usb2:
 # addr 1: full speed, self powered, config 1, UHCI root hub(0x0000), Intel(0x8086), rev 1.00
 #  port 1 addr 2: full speed, power 98 mA, config 1, USB Receiver(0xc52b), Logitech(0x046d), rev 12.01
@@ -15986,6 +16235,7 @@ sub assign_data {
 		%rows = (%rows,%row);
 	}
 }
+
 sub generate_lines {
 	eval $start if $b_log;
 	my (%row,$b_pci_check,$b_dmi_check);
@@ -16120,6 +16370,7 @@ sub generate_lines {
 	}
 	eval $end if $b_log;
 }
+
 sub line_handler {
 	eval $start if $b_log;
 	my ($key,$sub,$arg) = @_;
