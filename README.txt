@@ -1,12 +1,38 @@
 README for inxi - a command line system information tool
 
-The new Perl inxi is now here! File all issue reports with the master branch.
-All support for versions prior to 3.0 is now ended, sorry. 
+The new faster, more powerful Perl inxi is here! File all issue reports 
+with the master branch. All support for versions prior to 3.0 is now ended, 
+sorry. 
 
 Make sure to update to the current inxi from the master branch before filing
 any issue reports. The code in pre 2.9 versions literally no longer exists in
-inxi 3. Bugs from earlier versions cannot be solved in the new version since
-the pre 2.9 and the 2.9 and later versions are completely different internally.
+inxi 3. Bugs from earlier versions cannot usually be solved in the new version 
+since the pre 2.9 and the 2.9 and later versions are completely different 
+internally.
+
+===============================================================================
+Help inxi development! Submit a user debugger dataset. 
+
+This is easy to do, and only takes a few seconds, but these datasets really 
+help the project add and debug features.
+
+For inxi versions 2.9/3 and newer, run: inxxi --debug 22
+For inxi versions 2.3 and older, run: inxi -xx@14
+
+Note that for inxi 3, the following options are present for --debug:
+
+1. --debug 20 - creates a local gz version of the debugger dataset 
+2. --debug 21 - creates gz dataset, uploads it, leaves gz on your system 
+3. --debug 22 - creates gz dataset, uploads it, deletes gz file
+
+You can run these as regular user, or root/sudo, which will gather a bit more 
+data, like from dmidecode, and other tools that need superuser permissions
+to run.
+
+ARM and BSD datasets are particularly appreciated.
+
+===============================================================================
+Make inxi better! Get more support, fix broken items!
 
 inxi strives to support the widest range of operating systems and hardware,
 from the most simple consumer desktops, to the most advanced professional
@@ -19,6 +45,8 @@ supporting the latest (or not so latest) hardware and operating systems.
 See the BSD section below for qualifications re BSDs, and OSX in particular. 
 
 ===============================================================================
+BRANCHES
+-------------------------------------------------------------------------------
 MASTER BRANCH:
 
 This is the only supported branch, and the current latest commit/version is
@@ -45,7 +73,7 @@ inxi has any 'release' that exists that is other than the current master
 version, but I decided that it was less pain to add tags than to argue this 
 point any further. 
 
-===============================================================================
+-------------------------------------------------------------------------------
 DEVELOPMENT BRANCH:
 All active development is now done on the inxi-perl branch (pinxi):
 
@@ -61,7 +89,7 @@ wget -Nc smxi.org/pinxi
 Once new features have been debugged, tested, and are stable, they will move 
 to the master branch.
 
-===============================================================================
+-------------------------------------------------------------------------------
 LEGACY BRANCH:
 If you'd like to look at or check out the Gawk/Bash version of inxi, you can
 find it here, at the inxi-legacy branch (binxi):
