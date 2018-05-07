@@ -16,7 +16,7 @@ Help inxi development! Submit a user debugger dataset.
 This is easy to do, and only takes a few seconds, but these datasets really 
 help the project add and debug features.
 
-For inxi versions 2.9/3 and newer, run: inxxi --debug 22
+For inxi versions 2.9/3 and newer, run: inxi --debug 22
 For inxi versions 2.3 and older, run: inxi -xx@14
 
 Note that for inxi 3, the following options are present for --debug:
