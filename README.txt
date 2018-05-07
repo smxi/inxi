@@ -13,23 +13,27 @@ internally.
 ===============================================================================
 Help inxi development! Submit a user debugger dataset. 
 
-This is easy to do, and only takes a few seconds, but these datasets really 
-help the project add and debug features.
+This is easy to do, and only takes a few seconds. These datasets really help 
+the project add and debug features. You will generally also be asked to provide 
+this data for non trivial issue reports.
 
-For inxi versions 2.9/3 and newer, run: inxi --debug 22
-For inxi versions 2.3 and older, run: inxi -xx@14
+Note that the following options are present:
 
-Note that for inxi 3, the following options are present for --debug:
-
-1. --debug 20 - creates a local gz version of the debugger dataset 
-2. --debug 21 - creates gz dataset, uploads it, leaves gz on your system 
-3. --debug 22 - creates gz dataset, uploads it, deletes gz file
+1. Generate local gz'ed debugger dataset. Leaves gz on your system:
+ inxi version 3: inxi --debug 20 
+ inxi version <= 2.3: inxi -@14
+2. Generate, upload gz'ed debugger dataset. Leaves gz on your system:
+ inxi version 3: inxi --debug 21
+ inxi version <= 2.3: inxi -xx@14
+3. Generate, upload, delete gz'ed debugger dataset:
+ inxi version 3 only: inxi --debug 22
 
 You can run these as regular user, or root/sudo, which will gather a bit more 
 data, like from dmidecode, and other tools that need superuser permissions
 to run.
 
-ARM and BSD datasets are particularly appreciated.
+ARM and BSD datasets are particularly appreciated because we simply do not 
+have enough of those.
 
 ===============================================================================
 Make inxi better! Get more support, fix broken items!
