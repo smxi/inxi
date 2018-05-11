@@ -31,8 +31,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.0.08';
-my $self_date='2018-05-06';
+my $self_version='3.0.09';
+my $self_date='2018-05-11';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -65,9 +65,10 @@ my @test = (0,0,0,0,0);
 
 ## Booleans
 my ($b_arm,$b_console_irc,$b_debug_gz,$b_display,$b_dmesg_boot_check,$b_dmi,
-$b_dmidecode_force,$b_fake_bsd,$b_force_display,$b_gpudata,$b_irc,$b_log,
-$b_log_colors,$b_log_full,$b_man,$b_mem,$b_pci,$b_root,$b_running_in_display,
-$b_sudo,$b_sysctl,$b_usb_check);
+$b_dmidecode_force,$b_fake_bsd,$b_fake_dboot,$b_fake_pciconf,$b_fake_sysctl,
+$b_fake_usbdevs,$b_force_display,$b_gpudata,$b_irc,$b_log,$b_log_colors,
+$b_log_full,$b_man,$b_mem,$b_pci,$b_root,$b_running_in_display,$b_sudo,
+$b_sysctl,$b_usb_check);
 ## Disk checks
 my ($b_dm_boot_disk,$b_dm_boot_optical,$b_glabel,$b_label_uuid,$b_lsblk,
 $b_partitions,$b_raid);
@@ -75,9 +76,10 @@ my ($b_sysctl_disk,$b_update,$b_weather) = (1,1,1);
 
 ## System
 my ($bsd_type,$language,$os) = ('','','');
+my ($bits_sys);
 my ($cpu_sleep,$dl_timeout,$limit,$ps_count,$usb_level) = (0.35,4,10,5,0);
 my $sensors_cpu_nu = 0;
-my ($bits_sys);
+my $weather_unit='cf';
 
 ## Tools
 my ($display,$ftp_alt,$tty_session);
@@ -291,6 +293,7 @@ sub check_tools {
 		$version =~ s/^([0-9]+\.[0-9]+).*/$1/;
 		$sudo = "$path -n " if $version >= 1.7;
 	}
+	set_fake_tools() if $b_fake_bsd;
 }
 
 # args: 1 - desktop/app command for --version; 2 - search string; 
@@ -368,6 +371,20 @@ sub set_display_width {
 		$size{'max'}=$width;
 	}
 	# print "tc: $size{'term'} cmc: $size{'console'} cm: $size{'max'}\n";
+}
+
+# only for dev/debugging BSD 
+sub set_fake_tools {
+	$system_files{'dmesg-boot'} = '/var/run/dmesg.boot' if $b_fake_dboot;
+	$alerts{'pciconf'} = ({'action' => 'use'}) if $b_fake_pciconf;
+	$alerts{'sysctl'} = ({'action' => 'use'}) if $b_fake_sysctl;
+	if ($b_fake_usbdevs ){
+		$alerts{'usbdevs'} = ({'action' => 'use'});
+		$alerts{'lsusb'} = ({
+		'action' => 'missing',
+		'missing' => 'Required program lsusb not available',
+		});
+	}
 }
 
 # NOTE: most tests internally are against !$bsd_type
@@ -1007,6 +1024,7 @@ sub get_config_item {
 	elsif ($key eq 'PS_COUNT') {$ps_count = int($val) }
 	elsif ($key eq 'SENSORS_CPU_NO') {$sensors_cpu_nu = int($val)}
 	elsif ($key eq 'SHOW_HOST' || $key eq 'B_SHOW_HOST') { $show{'host'} = int($val)}
+	elsif ($key eq 'WEATHER_UNIT') { $weather_unit = lc($val) if $val =~ /^(c|f|cf|fc)$/i}
 	# layout
 	elsif ($key eq 'CONSOLE_COLOR_SCHEME') {$colors{'console'} = int($val)}
 	elsif ($key eq 'GLOBAL_COLOR_SCHEME') {$colors{'global'} = int($val)}
@@ -3085,7 +3103,9 @@ sub program_version {
 				# breaks version detection. A quick fix attempt is to just add 1 to $num 
 				# to get the next value.
 				$version_nu = $data[$num+1] if $data[$num+1] && $version_nu =~ /version/i;
-				$version_nu =~ s/(\([^)]+\)|,|dwm-|wmii2-|wmii-|v|V|\||\(|\))//g if $version_nu;
+				$version_nu =~ s/(\([^)]+\)|,|dwm-|wmii2-|wmii-|\||\(|\))//g if $version_nu;
+				# trim off leading v but only when followed by a number
+				$version_nu =~ s/^v([0-9])/$1/i if $version_nu; 
 				# print "$version_nu\n";
 				last;
 			}
@@ -3155,7 +3175,7 @@ sub writer {
 	else {
 		$content = scalar $ref_content;
 	}
-	open(my $fh, '>', $path) or error_handler('open',"$path", "$!");
+	open(my $fh, ">", $path) or error_handler('open',"$path", "$!");
 	print $fh $content;
 	close $fh;
 }
@@ -3628,6 +3648,16 @@ sub get_options{
 		else {
 			error_handler('distro-block', $opt);
 		} },
+	'weather-unit:s' => sub {
+		my ($opt,$arg) = @_;
+		$arg ||= '';
+		$arg =~ s/\s//g;
+		if ($arg && $arg =~ /^(cf|fc|f|c)$/i){
+			$weather_unit = lc($arg);
+		}
+		else {
+			error_handler('bad-arg',$opt,$arg);
+		} },
 	'x|extra:i' => sub {
 		my ($opt,$arg) = @_;
 		if ($arg > 0){
@@ -3679,6 +3709,18 @@ sub get_options{
 		if ($arg =~ /^(darwin|dragonfly|freebsd|openbsd|netbsd)$/i){
 			$bsd_type = lc($arg);
 			$b_fake_bsd = 1;
+		}
+		else {
+			error_handler('bad-arg', $opt, $arg);
+		}
+	},
+	'bsd-data:s' => sub { 
+		my ($opt,$arg) = @_;
+		if ($arg =~ /^(dboot|pciconf|sysctl|usbdevs)$/i){
+			$b_fake_dboot = 1 if $arg eq 'dboot';
+			$b_fake_pciconf = 1 if $arg eq 'pciconf';
+			$b_fake_sysctl = 1 if $arg eq 'sysctl';
+			$b_fake_usbdevs = 1 if $arg eq 'usbdevs';
 		}
 		else {
 			error_handler('bad-arg', $opt, $arg);
@@ -3863,8 +3905,8 @@ sub get_options{
 		# to detect wan/lan, we have to use long form to get as much data as possible
 		$usb_level = ($show{'usb'} || $show{'network'}) ? 2 : 1;
 	}
-	if ($bsd_type && ($show{'short'} || $show{'cpu'} || $show{'cpu-basic'} || $show{'machine'} || 
-	 $show{'info'} || $show{'process'} || $show{'ram'} ) ){
+	if ($bsd_type && ($show{'short'} || $show{'battery'} || $show{'cpu'} || $show{'cpu-basic'} || 
+	   $show{'info'} || $show{'machine'} || $show{'process'} || $show{'ram'}  || $show{'sensor'} ) ){
 		$b_sysctl = 1;
 	}
 	if ($show{'filter-override'}){
@@ -4021,7 +4063,9 @@ sub show_options {
 		<location>: postal code; city, state/country; latitude, longitude. 
 		Only use if you want the weather somewhere other than the machine running
 		$self_name. Use only ASCII characters, replace spaces in city/state/country names with '+'. 
-		Example:^$self_name^-W^new+york,ny"]
+		Example:^$self_name^-W^new+york,ny"],
+		['1', '', '--weather-unit', "Set weather units to metric (m), imperial (f), 
+		metric/imperial (cf), or imperial/metric (fc)."],
 		);
 		push @data, @rows;
 	}
@@ -4645,7 +4689,8 @@ sub clean_characters {
 sub cleaner {
 	my ($item) = @_;
 	return $item if !$item;# handle cases where it was 0 or ''
-	$item =~ s/chipset|company|components|computing|computer|corporation|communications|electronics|electrical|electric|gmbh|group|incorporation|industrial|international|nee|revision|semiconductor|software|technologies|technology|ltd\.|<ltd>|\bltd\b|inc\.|<inc>|\binc\b|intl\.|co\.|<co>|corp\.|<corp>|\(tm\)|\(r\)|®|\(rev ..\)|\'|\"|\sinc\s*$|\?//gi;
+	# note: |nee trips engineering, but I don't know why nee was filtered
+	$item =~ s/chipset|company|components|computing|computer|corporation|communications|electronics|electrical|electric|gmbh|group|incorporation|industrial|international|\bnee\b|revision|semiconductor|software|technologies|technology|ltd\.|<ltd>|\bltd\b|inc\.|<inc>|\binc\b|intl\.|co\.|<co>|corp\.|<corp>|\(tm\)|\(r\)|®|\(rev ..\)|\'|\"|\sinc\s*$|\?//gi;
 	$item =~ s/,|\*/ /g;
 	$item =~ s/\s\s+/ /g;
 	$item =~ s/^\s+|\s+$//g;
@@ -4813,8 +4858,9 @@ sub row_defaults {
 	'dmesg-boot-missing' => 'dmesg.boot not found',
 	'IP' => "No $id data found. Connected to the web? SSL issues?",
 	'machine-data' => "No machine data: try newer kernel.",
-	'machine-data-alt-33' => "No machine data: try newer kernel. Is dmidecode installed? Try -M --dmidecode.",
-	'machine-data-dmidecode' => "No machine data: try newer kernel, or install dmidecoce.",
+	'machine-data-bsd' => "No machine data: Is dmidecode installed? Try -M --dmidecode.",
+	'machine-data-dmidecode' => "No machine data: try newer kernel. Is dmidecode installed? Try -M --dmidecode.",
+	'machine-data-force-dmidecode' => "No machine data: try newer kernel. Is dmidecode installed? Try -M --dmidecode.",
 	'optical-data' => "No Optical or Floppy data was found.",
 	'optical-data-bsd' => "No floppy or optical data found for this BSD system.",
 	'output-limit' => "Output throttled. IPs: $id; Limit: $limit; Override: --limit [1-x;-1 all]",
@@ -5759,6 +5805,9 @@ sub battery_data_sys {
 				elsif ($file eq 'model_name'){
 					$value = main::dmi_cleaner($value);
 				}
+			}
+			elsif ($b_root && -e $path && ! -r $path ){
+				$value = main::row_defaults('root-required');
 			}
 			$battery{$id}{$file} = $value;
 			# print "$battery{$id}{$file}\n";
@@ -6801,10 +6850,7 @@ sub cpu_flags_bsd {
 	my ($flags,$sep) = ('','');
 	# this will be null if it was not readable
 	my $file = main::system_files('dmesg-boot');
-	if ( $file && ! -r $file ){
-		$flags = main::row_defaults('dmesg-boot-permissions');
-	}
-	else {
+	if ( @dmesg_boot){
 		foreach (@dmesg_boot){
 			if ( /Features/ || ( $bsd_type eq "openbsd" && /^cpu0:\s*[a-z0-9]{2,3}(\s|,)[a-z0-9]{2,3}(\s|,)/i ) ) {
 				my @line = split /:\s*/, lc($_);
@@ -6825,6 +6871,11 @@ sub cpu_flags_bsd {
 		if ($flags){
 			$flags =~ s/\s+/ /g;
 			$flags =~ s/^\s+|\s+$//g;
+		}
+	}
+	else {
+		if ( $file && ! -r $file ){
+			$flags = main::row_defaults('dmesg-boot-permissions');
 		}
 	}
 	eval $end if $b_log;
@@ -7066,10 +7117,10 @@ sub get {
 			if ( $bsd_type && !@dm_boot_disk && $type eq 'standard' && $show{'disk'} ){
 				$key1 = 'Drive Report';
 				my $file = main::system_files('dmesg-boot');
-				if ( $file && ! -r $file ){
+				if ( $file && ! -r $file){
 					$val1 = main::row_defaults('dmesg-boot-permissions');
 				}
-				elsif (! -e $file){
+				elsif (!$file){
 					$val1 = main::row_defaults('dmesg-boot-missing');
 				}
 				else {
@@ -7519,7 +7570,7 @@ sub dmesg_boot_data {
 	elsif ( $file && ! -r $file ){
 		$size = main::row_defaults('dmesg-boot-permissions');
 	}
-	elsif (! -f $file ){
+	elsif (!$file ){
 		$size = main::row_defaults('dmesg-boot-missing');
 	}
 	@data = ({
@@ -7697,17 +7748,15 @@ sub device_vendor {
 	# https://sd2snes.de/blog/card-list
 	# https://www.superbiiz.com # lists by real part numbers
 	my @vendors = (
-	# these go first because they are the most likely and common 
+	## These go first because they are the most likely and common ##
 	['^INTEL','^INTEL','Intel',''],
 	# must come before samsung MU. NOTE: toshiba can have: TOSHIBA_MK6475GSX: mush: MKNSSDCR120GB_
 	['^(MKN|Mushkin)','^Mushkin','Mushkin',''], # MKNS
 	# MU = Multiple_Flash_Reader too risky: |M[UZ][^L]
 	['^(SAMSUNG|MCG[0-9]+GC)','^SAMSUNG','Samsung',''], # maybe ^SM
-	# NOTE: F[MNETU] not reliable, g.skill starts with FM too: 
-	['^(STT)','','Super Talent',''], # must be before seagate, _may_ start with F
-	['^(ST|[S]?SEAGATE|X[AFP])','^[S]?SEAGATE','Seagate',''], # real, SSEAGATE Backup+; XP1600HE30002
+	['^(ST[^T]|[S]?SEAGATE|X[AFP])','^[S]?SEAGATE','Seagate',''], # real, SSEAGATE Backup+; XP1600HE30002
 	['^WD','^(WDC|WD\s)','Western Digital',''],
-	# then better known ones
+	## Then better known ones ##
 	['^(A-DATA|ADATA)','^(A-DATA|ADATA)','A-Data',''],
 	['^ADTRON','^(ADTRON)','Adtron',''],
 	['^ASUS','^ASUS','ASUS',''],
@@ -7729,7 +7778,7 @@ sub device_vendor {
 	['^(SanDisk|SDS[S]?[DQ]|SL([0-9]+)G|AFGCE)','^SanDisk','SanDisk',''],
 	# note: get rid of: M[DGK] becasue mushkin starts with MK
 	['^([S]?TOS|THN)','^[S]?TOSHIBA','Toshiba',''], # scsi-STOSHIBA_STOR.E_EDITION_
-	# these go last because they are short and could lead to false ID or are unlikely
+	## These go last because they are short and could lead to false ID, or are unlikely ##
 	['^Android','^Android','Android',''],
 	# must come before AP|Apacer
 	['^APPLE','','^APPLE','Apple'],
@@ -7769,6 +7818,9 @@ sub device_vendor {
 	['^(S[FR]-|Sony)','^Sony','Sony',''],
 	['^STE[CK]','^STE[CK]','sTec',''], # wd bought this one
 	['^STORFLY','^STORFLY','StorFly',''],
+	# NOTE: F[MNETU] not reliable, g.skill starts with FM too: 
+	# Seagate ST skips STT. 
+	['^(STT)','','Super Talent',''], 
 	['^(SF|Swissbit)','^Swissbit','Swissbit',''],
 	# ['^(SUPERSPEED)','^SUPERSPEED','SuperSpeed',''], # superspeed is a generic term
 	['^TANDBERG','^TANDBERG','Tanberg',''],
@@ -8466,7 +8518,14 @@ sub get {
 	eval $start if $b_log;
 	my (%arm_machine,@data,@rows,$key1,$val1,$which);
 	my $num = 0;
-	if ($bsd_type || $b_dmidecode_force){
+	if ($bsd_type && @sysctl_machine && !$b_dmidecode_force ){
+		@data = machine_data_sysctl();
+		if (!@data && !$key1){
+			$key1 = 'Message';
+			$val1 = main::row_defaults('machine-data-force-dmidecode','');
+		}
+	}
+	elsif ($bsd_type || $b_dmidecode_force){
 		my $ref = $alerts{'dmidecode'};
 		if ( $$ref{'action'} ne 'use'){
 			$key1 = $$ref{'action'};
@@ -8498,7 +8557,7 @@ sub get {
 		}
 		if (!@data){
 			$key1 = 'Message';
-			$val1 = main::row_defaults('machine-data-alt-33','');
+			$val1 = main::row_defaults('machine-data-force-dmidecode','');
 		}
 	}
 	# if error case, null data, whatever
@@ -8577,7 +8636,8 @@ sub create_output {
 					$chassis_type = $data{'chassis_type'};
 				}
 				if ($data{'chassis_version'}){
-					$chassis_version = $data{'chassis_version'}
+					$chassis_version = $data{'chassis_version'};
+					$chassis_version =~ s/^v([0-9])/$1/i;
 				}
 				$chassis_serial = main::apply_filter($data{'chassis_serial'});
 				$chassis_vendor ||= '';
@@ -8604,14 +8664,16 @@ sub create_output {
 	$bios_vendor = ($data{'bios_vendor'}) ? main::cleaner($data{'bios_vendor'}) : 'N/A';
 	if ($data{'bios_version'}){
 		$bios_version = $data{'bios_version'};
+		$bios_version =~ s/^v([0-9])/$1/i;
 		if ($data{'bios_rev'}){
 			$bios_rev = $data{'bios_rev'};
 		}
-		$bios_version ||= 'N/A';
 	}
+	$bios_version ||= 'N/A';
 	if ($data{'bios_date'}){
 		$bios_date = $data{'bios_date'};
 	}
+	$bios_date ||= 'N/A';
 	if ($extra > 1 && $data{'bios_romsize'}){
 		$bios_romsize = $data{'bios_romsize'};
 	}
@@ -8621,6 +8683,9 @@ sub create_output {
 		$rows[$j]{main::key($num++,'v')} = $mobo_version;
 	}
 	$rows[$j]{main::key($num++,'serial')} = $mobo_serial;
+	if ($extra > 2 && $data{'board_uuid'}){
+		$rows[$j]{main::key($num++,'uuid')} = $data{'board_uuid'};
+	}
 	$rows[$j]{main::key($num++,$firmware)} = $bios_vendor;
 	$rows[$j]{main::key($num++,'v')} = $bios_version;
 	if ($bios_rev){
@@ -8696,6 +8761,9 @@ sub machine_data_sys {
 			$data{$_} = (main::reader($path))[0];
 			$data{$_} = ($data{$_}) ? main::dmi_cleaner($data{$_}) : '';
 		}
+		elsif (!$b_root && -e $path && !-r $path ){
+			$data{$_} = main::row_defaults('root-required');
+		}
 		else {
 			$data{$_} = '';
 		}
@@ -8766,7 +8834,7 @@ sub machine_data_arm {
 # product_serial: 
 # product_uuid: 
 # product_version: 
-# sys_uuid: dmi only
+# sys_uuid: dmi/sysctl only
 # sys_vendor:
 sub machine_data_dmi {
 	eval $start if $b_log;
@@ -8868,6 +8936,53 @@ sub machine_data_dmi {
 # 		print "$_: $data{$_}\n";
 # 	}
 	main::log_data('dump','%data',\%data) if $b_log;
+	my @rows = create_output(\%data);
+	eval $end if $b_log;
+	return @rows;
+}
+# As far as I know, only OpenBSD supports this method.
+# it uses hw. info from sysctl -a and bios info from dmesg.boot
+sub machine_data_sysctl {
+	eval $start if $b_log;
+	my (%data,$vm);
+	# ^hw\.(vendor|product|version|serialno|uuid)
+	foreach (@sysctl_machine){
+		next if ! $_;
+		my @item = split /:/, $_;
+		next if ! $item[1];
+		if ($item[0] eq 'hw.vendor'){
+			$data{'board_vendor'} = main::dmi_cleaner($item[1]);
+		}
+		elsif ($item[0] eq 'hw.product'){
+			$data{'board_name'} = main::dmi_cleaner($item[1]);
+		}
+		elsif ($item[0] eq 'hw.version'){
+			$data{'board_version'} = $item[1];
+		}
+		elsif ($item[0] eq 'hw.serialno'){
+			$data{'board_serial'} = $item[1];
+		}
+		elsif ($item[0] eq 'hw.serial'){
+			$data{'board_serial'} = $item[1];
+		}
+		elsif ($item[0] eq 'hw.uuid'){
+			$data{'board_uuid'} = $item[1];
+		}
+		# bios0:at mainbus0: AT/286+ BIOS, date 06/30/06, BIOS32 rev. 0 @ 0xf2030, SMBIOS rev. 2.4 @ 0xf0000 (47 entries)
+		# bios0:vendor Phoenix Technologies, LTD version "3.00" date 06/30/2006
+		elsif ($item[0] =~ /^bios[0-9]/){
+			if ($_ =~ /^^bios[0-9]:at\s.*\srev\.\s([\S]+)\s@.*/){
+				$data{'bios_rev'} = $1;
+				$data{'firmware'} = 'BIOS' if $_ =~ /BIOS/;
+			}
+			elsif ($item[1] =~ /^vendor\s(.*)\sversion\s"?([\S]+)"?\sdate\s([\S]+)/ ){
+				$data{'bios_vendor'} = $1;
+				$data{'bios_version'} = $2;
+				$data{'bios_date'} = $3;
+				$data{'bios_version'} =~ s/^v//i if $data{'bios_version'} && $data{'bios_version'} !~ /vi/i;
+			}
+		}
+	}
 	my @rows = create_output(\%data);
 	eval $end if $b_log;
 	return @rows;
@@ -9559,7 +9674,7 @@ sub get {
 			if ( $file && ! -r $file ){
 				$val1 = main::row_defaults('dmesg-boot-permissions');
 			}
-			elsif (! -e $file){
+			elsif (!$file){
 				$val1 = main::row_defaults('dmesg-boot-missing');
 			}
 			else {
@@ -13682,39 +13797,39 @@ sub create_output {
 		main::key($num++,'Message') => main::row_defaults('weather-null','weather data'),
 		});
 	}
-	if ($weather{'temp'} && $weather{'weather'} ){
-		$conditions = "$weather{'temp'} - $weather{'weather'}";
-	}
-	elsif ($weather{'temp'}){
-		$conditions = $weather{'temp'};
-	}
-	elsif ($weather{'weather'}) {
-		$conditions = $weather{'weather'};
-	}
+	$conditions = "$weather{'weather'}";
+	my $temp = unit_output($weather{'temp'},$weather{'temp-c'},'C',$weather{'temp-f'},'F');
 	@data = ({
+	main::key($num++,'Temperature') => $temp,
 	main::key($num++,'Conditions') => $conditions,
 	},);
 	@rows = (@rows,@data);
 	if ($extra > 0){
-		$rows[0]{main::key($num++,'Wind')} = $weather{'wind'};
+		my $pressure = unit_output($weather{'pressure'},$weather{'pressure-mb'},'mb',$weather{'pressure-in'},'in');
+		my $wind = wind_output($weather{'wind'},$weather{'wind-direction'},$weather{'wind-mph'},$weather{'wind-ms'},
+		$weather{'wind-gust-mph'},$weather{'wind-gust-ms'});
+		$rows[0]{main::key($num++,'Wind')} = $wind;
 		$rows[0]{main::key($num++,'Humidity')} = $weather{'humidity'};
-		$rows[0]{main::key($num++,'Pressure')} = $weather{'pressure'};
+		$rows[0]{main::key($num++,'Pressure')} = $pressure;
 	}
 	if ($extra > 1){
 		if ($weather{'heat-index'}){
-			$rows[0]{main::key($num++,'Heat Index')} = $weather{'heat-index'};
+			my $heat = unit_output($weather{'heat-index'},$weather{'heat-index-c'},'C',$weather{'heat-index-f'},'F');
+			$rows[0]{main::key($num++,'Heat Index')} = $heat;
 		}
 		if ($weather{'windchill'}){
-			$rows[0]{main::key($num++,'Wind Chill')} = $weather{'windchill'};
+			my $chill = unit_output($weather{'windchill'},$weather{'windchill-c'},'C',$weather{'windchill-f'},'F');
+			$rows[0]{main::key($num++,'Wind Chill')} = $chill ;
 		}
 		if ($weather{'dewpoint'}){
-			$rows[0]{main::key($num++,'Dew Point')} = $weather{'dewpoint'};
+			my $dew = unit_output($weather{'dewpoint'},$weather{'dewpoint-c'},'C',$weather{'dewpoint-f'},'F');
+			$rows[0]{main::key($num++,'Dew Point')} = $dew;
 		}
 	}
 	if ($extra > 2){
 		if (!$show{'filter'}){
 			$rows[0]{main::key($num++,'Location')} = $location[1];
-			$rows[0]{main::key($num++,'altitude')} = $weather{'elevation'};
+			$rows[0]{main::key($num++,'altitude')} = elevation_output($weather{'elevation-m'},$weather{'elevation-ft'});
 		}
 	}
 	$rows[0]{main::key($num++,'Time')} = $weather{'date-time'};
@@ -13723,6 +13838,115 @@ sub create_output {
 	}
 	eval $end if $b_log;
 	return @rows;
+}
+sub elevation_output {
+	eval $start if $b_log;
+	my ($meters,$feet) = @_;
+	my ($result,$i_unit,$m_unit) = ('','ft','m');
+	$feet = sprintf("%.0f", 3.28 * $meters) if defined $meters && !$feet;
+	$meters = sprintf("%.1f", $feet / 3.28 ) if defined $feet && !$meters;
+	$meters = sprintf("%.0f", $meters) if $meters;
+	if ( defined $meters  && $weather_unit eq 'cf' ){
+		$result = "$meters $m_unit ($feet $i_unit)";
+	}
+	elsif (defined $meters && $weather_unit eq 'fc' ){
+		$result = "$feet $i_unit ($meters $m_unit)";
+	}
+	elsif (defined $meters && $weather_unit eq 'c' ){
+		$result = "$meters $m_unit";
+	}
+	elsif (defined $feet && $weather_unit eq 'f' ){
+		$result = "$feet $i_unit";
+	}
+	else {
+		$result = 'N/A';
+	}
+	eval $end if $b_log;
+	return $result;
+}
+sub unit_output {
+	eval $start if $b_log;
+	my ($primary,$metric,$m_unit,$imperial,$i_unit) = @_;
+	my $result = '';
+	if ($metric && $imperial && $weather_unit eq 'cf' ){
+		$result = "$metric $m_unit ($imperial $i_unit)";
+	}
+	elsif ($metric && $imperial && $weather_unit eq 'fc' ){
+		$result = "$imperial $i_unit ($metric $m_unit)";
+	}
+	elsif ($metric && $weather_unit eq 'c' ){
+		$result = "$metric $m_unit";
+	}
+	elsif ($imperial && $weather_unit eq 'f' ){
+		$result = "$imperial $i_unit";
+	}
+	elsif ($primary){
+		$result = $primary;
+	}
+	else {
+		$result = 'N/A';
+	}
+	eval $end if $b_log;
+	return $result;
+}
+sub wind_output {
+	eval $start if $b_log;
+	my ($primary,$direction,$mph,$ms,$gust_mph,$gust_ms) = @_;
+	my ($result,$gust_kmh,$kmh,$i_unit,$m_unit,$km_unit) = ('','','','mph','m/s','km/h');
+	# get rid of possible gust values if they are the same as wind values
+	$gust_mph = undef if $gust_mph && $mph && $mph eq $gust_mph;
+	$gust_ms = undef if $gust_ms && $ms && $ms eq $gust_ms;
+	# calculate and round, order matters so that rounding only happens after math done
+	$ms = 0.44704 * $mph if $mph && !$ms;
+	$mph = $ms * 2.23694 if $ms && !$mph;
+	$kmh = sprintf("%.0f",  18 * $ms / 5) if $ms;
+	$ms = sprintf("%.0f", $ms ) if  $ms;
+	$mph = sprintf("%.0f", $mph) if $mph;
+	$gust_ms = 0.44704 * $gust_mph if $gust_mph && !$gust_ms;
+	$gust_kmh = 18 * $gust_ms / 5 if $gust_ms;
+	$gust_mph = $gust_ms * 2.23694 if $gust_ms && !$gust_mph;
+	$gust_mph = sprintf("%.0f", $gust_mph) if $gust_mph;
+	$gust_kmh = sprintf("%.0f", $gust_kmh) if $gust_kmh;
+	$gust_ms = sprintf("%.0f", $gust_ms ) if  $gust_ms;
+	if (!$mph && $primary){
+		$result = $primary;
+	}
+	elsif ($mph && $direction ){
+		if ( $weather_unit eq 'cf' ){
+			$result = "from $direction at $ms $m_unit ($kmh $km_unit; $mph $i_unit)";
+		}
+		elsif ( $weather_unit eq 'fc' ){
+			$result = "from $direction at $mph $i_unit ($ms $m_unit; $kmh $km_unit)";
+		}
+		elsif ( $weather_unit eq 'c' ){
+			$result = "from $direction at $ms $m_unit ($kmh $km_unit)";
+		}
+		elsif ( $weather_unit eq 'f' ){
+			$result = "from $direction at $mph $i_unit";
+		}
+		if ($gust_mph){
+			if ( $weather_unit eq 'cf' ){
+				$result .= ". Gusting to $ms $m_unit ($kmh $km_unit; $mph $i_unit)";
+			}
+			elsif ( $weather_unit eq 'fc' ){
+				$result .= ". Gusting to $mph $i_unit ($ms $m_unit; $kmh $km_unit)";
+			}
+			elsif ( $weather_unit eq 'c' ){
+				$result .= ". Gusting to $ms $m_unit ($kmh $km_unit)";
+			}
+			elsif ( $weather_unit eq 'f' ){
+				$result .= ". Gusting to $mph $i_unit";
+			}
+		}
+	}
+	elsif ($primary){
+		$result = $primary;
+	}
+	else {
+		$result = 'N/A';
+	}
+	eval $end if $b_log;
+	return $result;
 }
 sub get_weather {
 	eval $start if $b_log;
@@ -13738,7 +13962,8 @@ sub get_weather {
 		$freshness = (split /\^\^/, $weather_data[0])[1];
 		#print "$now:$freshness\n";
 	}
-	if (!$freshness || $freshness < $now - 90) {
+	if (!$freshness || $freshness < ($now - 90) ) {
+		@weather_data = (); # reset so we don't write the previous data to file!!
 		my $url = "http://api.wunderground.com/auto/wui/geo/WXCurrentObXML/index.xml?query=$location[0]";
  		my $temp;
 # 		{
@@ -13768,53 +13993,127 @@ sub get_weather {
 		#print "$file_cached: download/cleaned\n";
 	}
 	#print join "\n", @weather_data, "\n";
-	
+	# NOTE: because temps can be 0, we can't do if value tests
 	foreach (@weather_data){
 		my @working = split /\s*\^\^\s*/,$_;
-		if ( $working[0] eq 'local_time' ){
-			$weather{'local-time'} = $working[1];
+		next if ! defined $working[1] || $working[1] eq '';
+		if ( $working[0] eq 'dewpoint_string' ){
+			$weather{'dewpoint'} = $working[1];
+			$working[1] =~ /^([0-9\.]+)\sF\s\(([0-9\.]+)\sC\)/;
+			$weather{'dewpoint-c'} = $2;;
+			$weather{'dewpoint-f'} = $1;;
 		}
-		elsif ( $working[0] eq 'weather' ){
-			$weather{'weather'} = $working[1];
+		elsif ( $working[0] eq 'dewpoint_c' ){
+			$weather{'dewpoint-c'} = $working[1];
 		}
-		elsif ( $working[0] eq 'temperature_string' ){
-			$weather{'temp'} = $working[1];
-# 			$weather{'temp'} =~ s/\sF/\xB0 F/; # B0
-# 			$weather{'temp'} =~ s/\sF/\x{2109}/;
-# 			$weather{'temp'} =~ s/\sC/\x{2103}/;
+		elsif ( $working[0] eq 'dewpoint_f' ){
+			$weather{'dewpoint-f'} = $working[1];
+		}
+		# there are two elevations, we want the first one
+		elsif (!$weather{'elevation-m'} && $working[0] eq 'elevation'){
+			# note: bug in source data uses ft for meters, not 100% of time, but usually
+			$weather{'elevation-m'} = $working[1];
+			$weather{'elevation-m'} =~ s/\s*(ft|m).*$//;
+		}
+		elsif ( $working[0] eq 'heat_index_string' ){
+			$weather{'heat-index'} = $working[1];
+			$working[1] =~ /^([0-9\.]+)\sF\s\(([0-9\.]+)\sC\)/;
+			$weather{'heat-index-c'} = $2;;
+			$weather{'heat-index-f'} = $1;
+		}
+		elsif ( $working[0] eq 'heat_index_c' ){
+			$weather{'heat-index-c'} = $working[1];
+		}
+		elsif ( $working[0] eq 'heat_index_f' ){
+			$weather{'heat-index-f'} = $working[1];
 		}
 		elsif ( $working[0] eq 'relative_humidity' ){
 			$weather{'humidity'} = $working[1];
 		}
-		elsif ( $working[0] eq 'wind_string' ){
-			$weather{'wind'} = $working[1];
+		elsif ( $working[0] eq 'local_time' ){
+			$weather{'local-time'} = $working[1];
 		}
-		elsif ( $working[0] eq 'pressure_string' ){
-			$weather{'pressure'} = $working[1];
-		}
-		elsif ( $working[0] eq 'heat_index_string' ){
-			$weather{'heat-index'} = $working[1];
-		}
-		elsif ( $working[0] eq 'windchill_string' ){
-			$weather{'windchill'} = $working[1];
-		}
-		elsif ( $working[0] eq 'dewpoint_string' ){
-			$weather{'dewpoint'} = $working[1];
+		elsif ( $working[0] eq 'local_epoch' ){
+			$weather{'local-epoch'} = $working[1];
 		}
 		elsif ( $working[0] eq 'observation_time_rfc822' ){
 			$weather{'observation-time-gmt'} = $working[1];
 		}
-		elsif ( $working[0] eq 'observation_time_rfc822' ){
-			$weather{'observation-time-gmt'} = $working[1];
+		elsif ( $working[0] eq 'observation_epoch' ){
+			$weather{'observation-epoch'} = $working[1];
 		}
 		elsif ( $working[0] eq 'observation_time' ){
 			$weather{'observation-time-local'} = $working[1];
 			$weather{'observation-time-local'} =~ s/Last Updated on //;
 		}
-		elsif (!$weather{'elevation'} && $working[0] eq 'elevation'){
-			# note: bug in source data uses ft for meters, not 100% of time, but usually
-			$weather{'elevation'} = $working[1];
-			$weather{'elevation'} =~ s/ft/m/;
+		elsif ( $working[0] eq 'pressure_string' ){
+			$weather{'pressure'} = $working[1];
+		}
+		elsif ( $working[0] eq 'pressure_mb' ){
+			$weather{'pressure-mb'} = $working[1];
+		}
+		elsif ( $working[0] eq 'pressure_in' ){
+			$weather{'pressure-in'} = $working[1];
+		}
+		elsif ( $working[0] eq 'temperature_string' ){
+			$weather{'temp'} = $working[1];
+			$working[1] =~ /^([0-9\.]+)\sF\s\(([0-9\.]+)\sC\)/;
+			$weather{'temp-c'} = $2;;
+			$weather{'temp-f'} = $1;
+# 			$weather{'temp'} =~ s/\sF/\xB0 F/; # B0
+# 			$weather{'temp'} =~ s/\sF/\x{2109}/;
+# 			$weather{'temp'} =~ s/\sC/\x{2103}/;
+		}
+		elsif ( $working[0] eq 'temp_f' ){
+			$weather{'temp-f'} = $working[1];
+		}
+		elsif ( $working[0] eq 'temp_c' ){
+			$weather{'temp-c'} = $working[1];
+		}
+		elsif ( $working[0] eq 'visibility' ){
+			$weather{'visibility'} = $working[1];
+		}
+		elsif ( $working[0] eq 'visibility_km' ){
+			$weather{'visibility-km'} = $working[1];
+		}
+		elsif ( $working[0] eq 'visibility_mi' ){
+			$weather{'visibility-mi'} = $working[1];
+		}
+		elsif ( $working[0] eq 'weather' ){
+			$weather{'weather'} = $working[1];
+		}
+		elsif ( $working[0] eq 'wind_degrees' ){
+			$weather{'wind-degrees'} = $working[1];
+		}
+		elsif ( $working[0] eq 'wind_dir' ){
+			$weather{'wind-direction'} = $working[1];
+		}
+		elsif ( $working[0] eq 'wind_mph' ){
+			$weather{'wind-mph'} = $working[1];
+		}
+		elsif ( $working[0] eq 'wind_gust_mph' ){
+			$weather{'wind-gust-mph'} = $working[1];
+		}
+		elsif ( $working[0] eq 'wind_gust_ms' ){
+			$weather{'wind-gust-ms'} = $working[1];
+		}
+		elsif ( $working[0] eq 'wind_ms' ){
+			$weather{'wind-ms'} = $working[1];
+		}
+		elsif ( $working[0] eq 'wind_string' ){
+			$weather{'wind'} = $working[1];
+		}
+		elsif ( $working[0] eq 'windchill_string' ){
+			$weather{'windchill'} = $working[1];
+			$working[1] =~ /^([0-9\.]+)\sF\s\(([0-9\.]+)\sC\)/;
+			$weather{'windchill-c'} = $2;
+			$weather{'windchill-f'} = $1;
+		}
+		elsif ( $working[0] eq 'windchill_c' ){
+			$weather{'windchill-c'} = $working[1];
+		}
+		elsif ( $working[0] eq 'windchill_f' ){
+			$weather{'windchill_f'} = $working[1];
 		}
 	}
 	if ($show{'weather-location'}){
@@ -13830,6 +14129,10 @@ sub get_weather {
 		$date_time = POSIX::strftime "%c", localtime;
 		$tz = ( $location[2] ) ? " ($location[2])" : ''; 
 		$weather{'date-time'} = $date_time . $tz;
+	}
+	# we get the wrong time using epoch for remote -W location
+	if ( !$show{'weather-location'} && $weather{'observation-epoch'}){
+		$weather{'observation-time-local'} = POSIX::strftime "%c", localtime($weather{'observation-epoch'});
 	}
 	return %weather;
 	eval $end if $b_log;
@@ -15507,12 +15810,18 @@ sub set_dmesg_boot_data {
 	my ($file,@temp);
 	my ($counter) = (0);
 	$b_dmesg_boot_check = 1;
-	$file = system_files('dmesg-boot');
-	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmesg-boot/bsd-disks-diabolus.txt";
-	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmesg-boot/freebsd-disks-solestar.txt";
-	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmesg-boot/freebsd-enceladus-1.txt";
-	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmesg-boot/openbsd-5.6-dmesg.boot-1.txt";
-	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmesg-boot/openbsd-dmesg.boot-1.txt";
+	if (!$b_fake_dboot){
+		$file = system_files('dmesg-boot');
+	}
+	else {
+		#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmesg-boot/bsd-disks-diabolus.txt";
+		#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmesg-boot/freebsd-disks-solestar.txt";
+		#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmesg-boot/freebsd-enceladus-1.txt";
+		## matches: toshiba: openbsd-5.6-sysctl-2.txt
+		#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmesg-boot/openbsd-5.6-dmesg.boot-1.txt";
+		## matches: compaq: openbsd-5.6-sysctl-1.txt"
+		$file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmesg-boot/openbsd-dmesg.boot-1.txt";
+	}
 	if ($file){
 		return if ! -r $file;
 		@dmesg_boot = reader($file);
@@ -15530,6 +15839,9 @@ sub set_dmesg_boot_data {
 			$_ =~ s/\s\s/ /g;
 			$_ =~ s/^(\S+)\sat\s/$1:at /; # ada0 at ahcich0
 			push @temp, $_;
+			if (/^bios[0-9]:(at|vendor)/){
+				push @sysctl_machine, $_;
+			}
 		}
 		@dmesg_boot = @temp;
 		# FreeBSD: 'da*' is a USB device 'ada*' is a SATA device 'mmcsd*' is an SD card
@@ -15983,9 +16295,21 @@ sub set_ps_aux {
 sub set_sysctl_data {
 	eval $start if $b_log;
 	return if $alerts{'sysctl'}{'action'} ne 'use';
+	my (@temp);
 	# darwin sysctl has BOTH = and : separators, and repeats data. Why? 
-	my $program = check_program('sysctl');
-	my @temp = grabber("$program -a 2>/dev/null");
+	if (!$b_fake_sysctl){
+		my $program = check_program('sysctl');
+		@temp = grabber("$program -a 2>/dev/null");
+	}
+	else {
+		#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sysctl/obsd_6.1_sysctl_soekris6501_root.txt";
+		#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sysctl/obsd_6.1sysctl_lenovot500_user.txt";
+		## matches: compaq: openbsd-dmesg.boot-1.txt
+		my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sysctl/openbsd-5.6-sysctl-1.txt"; 
+		## matches: toshiba: openbsd-5.6-dmesg.boot-1.txt
+		#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sysctl/openbsd-5.6-sysctl-2.txt"; 
+		@temp = reader($file);
+	}
 	foreach (@temp){
 		$_ =~ s/\s*=\s*|:\s+/:/;
 		$_ =~ s/\"//g;
@@ -16150,10 +16474,9 @@ sub set_lsusb_data_long {
 sub set_usbdevs_data {
 	eval $start if $b_log;
 	my (@data,@working,$class,$bus_id,$addr_id,$id,$speed,$protocol);
-	my $b_live = 1;
 	my $j = 0;
 	my $ports = 0;
-	if ($b_live){
+	if (!$b_fake_usbdevs){
 		my $program = check_program('usbdevs');
 		my $content = qx($program -v 2>/dev/null);
 		@data = split /\n/, $content;
@@ -16247,9 +16570,7 @@ sub generate_lines {
 		main::log_data('dump','@ps_cmd',\@ps_cmd);
 	}
 	if ( $show{'short'} ){
-		if ($bsd_type && !$b_dmesg_boot_check){
-			set_dmesg_boot_data();
-		}
+		set_dmesg_boot_data() if ($bsd_type && !$b_dmesg_boot_check);
 		%row = generate_short_data();
 		assign_data(%row);
 	}
@@ -16263,9 +16584,7 @@ sub generate_lines {
 				set_dmi_data() ; 
 				$b_dmi_check = 1;
 			}
-			if ($bsd_type && !$b_dmesg_boot_check){
-				set_dmesg_boot_data();
-			}
+			set_dmesg_boot_data() if ($bsd_type && !$b_dmesg_boot_check);
 			%row = line_handler('Machine','machine');
 			assign_data(%row);
 		}
@@ -16290,9 +16609,7 @@ sub generate_lines {
 			assign_data(%row);
 		}
 		if ( $show{'cpu'} || $show{'cpu-basic'} ){
-			if ($bsd_type && !$b_dmesg_boot_check){
-				set_dmesg_boot_data();
-			}
+			set_dmesg_boot_data() if ($bsd_type && !$b_dmesg_boot_check);
 			my $arg = ($show{'cpu-basic'}) ? 'basic' : 'full' ;
 			%row = line_handler('CPU','cpu',$arg);
 			assign_data(%row);
@@ -16319,9 +16636,7 @@ sub generate_lines {
 			assign_data(%row);
 		}
 		if ( $show{'disk'} || $show{'disk-basic'} || $show{'disk-total'} || $show{'optical'} ){
-			if ($bsd_type && !$b_dmesg_boot_check){
-				set_dmesg_boot_data();
-			}
+			set_dmesg_boot_data() if ($bsd_type && !$b_dmesg_boot_check);
 			%row = line_handler('Drives','disk');
 			assign_data(%row);
 		}
