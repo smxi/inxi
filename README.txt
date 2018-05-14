@@ -66,13 +66,9 @@ OR easy to remember shortcut (which redirects to github):
 wget -Nc https://smxi.org/inxi
 wget -Nc smxi.org/inxi
 
-'Tagging' is purely a formality that certain distros can't figure out how to 
-do without, that's all. A tag is a pointer to a commit, and has no further 
-meaning. 
-
 NOTE: Just because github calls tagged commits 'Releases' does not mean they 
 are releases! I can't change the words on the tag page. They are tagged 
-commmits, period. 
+commmits, period. A tag is a pointer to a commit, and has no further meaning. 
 
 -------------------------------------------------------------------------------
 DEVELOPMENT BRANCH:
@@ -87,8 +83,11 @@ OR easy to remember shortcut (which redirects to github):
 wget -Nc https://smxi.org/pinxi
 wget -Nc smxi.org/pinxi
 
-Once new features have been debugged, tested, and are stable, they will move 
-to the master branch.
+Once new features have been debugged, tested, and are reasonably stable, pinxi 
+is copied to inxi in the master branch.
+
+It's a good idea to check with pinxi if you want to make sure your issue has 
+not been corrected, since pinxi is always equal to or ahead of inxi.
 
 -------------------------------------------------------------------------------
 LEGACY BRANCH:
