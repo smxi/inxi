@@ -31,8 +31,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.0.09';
-my $self_date='2018-05-11';
+my $self_version='3.0.10';
+my $self_date='2018-05-21';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -79,7 +79,7 @@ my ($bsd_type,$language,$os) = ('','','');
 my ($bits_sys);
 my ($cpu_sleep,$dl_timeout,$limit,$ps_count,$usb_level) = (0.35,4,10,5,0);
 my $sensors_cpu_nu = 0;
-my $weather_unit='cf';
+my $weather_unit='mi';
 
 ## Tools
 my ($display,$ftp_alt,$tty_session);
@@ -176,17 +176,32 @@ sub check_tools {
 	if ( $b_dmi ){
 		$action = 'use';
 		if ($program = check_program('dmidecode')) {
-			my $result = system("$program -t chassis >/dev/null 2>&1");
-			if (!$result){
+			@data = grabber("$program -t chassis -t baseboard -t processor 2>&1");
+			if (scalar @data < 15){
 				if ($b_root) {
-					@data = grabber("$program --type chassis");
-					if ( grep { $_ =~ /No SMBIOS/i } @data ){
-						$action = 'smbios';
+					foreach (@data){
+						if ($_ =~ /No SMBIOS/i){
+							$action = 'smbios';
+							last;
+						}
+						elsif ($_ =~ /^\/dev\/mem: Operation/i){
+							$action = 'no-data';
+							last;
+						}
+						else {
+							$action = 'unknown-error';
+							last;
+						}
 					}
 				}
-			}
-			elsif ($result){
-				$action = 'permissions';
+				else {
+					if (grep { $_ =~ /^\/dev\/mem: Permission/i } @data){
+						$action = 'permissions';
+					}
+					else {
+						$action = 'unknown-error';
+					}
+				}
 			}
 		}
 		else {
@@ -198,6 +213,8 @@ sub check_tools {
 		'missing' => 'Required program dmidecode not available',
 		'permissions' => 'Unable to run dmidecode. Are you root?',
 		'smbios' => 'No SMBIOS data for dmidecode to process',
+		'no-data' => 'dmidecode is not allowed to read /dev/mem',
+		'unknown-error' => 'dmidecode was unable to generate data',
 		},
 		);
 		%alerts = (%alerts, %hash);
@@ -1024,7 +1041,14 @@ sub get_config_item {
 	elsif ($key eq 'PS_COUNT') {$ps_count = int($val) }
 	elsif ($key eq 'SENSORS_CPU_NO') {$sensors_cpu_nu = int($val)}
 	elsif ($key eq 'SHOW_HOST' || $key eq 'B_SHOW_HOST') { $show{'host'} = int($val)}
-	elsif ($key eq 'WEATHER_UNIT') { $weather_unit = lc($val) if $val =~ /^(c|f|cf|fc)$/i}
+	elsif ($key eq 'WEATHER_UNIT') { 
+		$val = lc($val) if $val;
+		if ($val && $val =~ /^(c|f|cf|fc|i|m|im|mi)$/){
+			my %units = ('c'=>'m','f'=>'i','cf'=>'mi','fc'=>'im');
+			$val = $units{$val} if defined $units{$val};
+			$weather_unit = $val;
+		}
+	}
 	# layout
 	elsif ($key eq 'CONSOLE_COLOR_SCHEME') {$colors{'console'} = int($val)}
 	elsif ($key eq 'GLOBAL_COLOR_SCHEME') {$colors{'global'} = int($val)}
@@ -1267,11 +1291,10 @@ sub run_debugger {
 sub create_debug_directory {
 	my $host = main::get_hostname();
 	$host =~ s/ /-/g;
-	$host ||= 'no-host';
+	$host = 'no-host' if !$host || $host eq 'N/A';
 	my ($arm_string,$bsd_string,$root_string) = ('','','');
 	# note: Time::Piece was introduced in perl 5.9.5
 	my ($sec,$min,$hour,$mday,$mon,$year) = localtime;
-	my $version = substr($self_version,0,3);
 	$year = $year+1900;
 	$mon += 1;
 	if (length($sec)  == 1) {$sec = "0$sec";}
@@ -1287,7 +1310,7 @@ sub create_debug_directory {
 	}
 	$bsd_string = "-BSD-$bsd_type" if $bsd_type;
 	$arm_string = '-ARM' if $b_arm;
-	$debug_dir = "$self_name$arm_string$bsd_string-$host-$today$root_string-$version";
+	$debug_dir = "$self_name$arm_string$bsd_string-$host-$today$root_string-$self_version";
 	$debug_gz = "$debug_dir.tar.gz";
 	$data_dir = "$user_data_dir/$debug_dir";
 	if ( -d $data_dir ){
@@ -3652,8 +3675,11 @@ sub get_options{
 		my ($opt,$arg) = @_;
 		$arg ||= '';
 		$arg =~ s/\s//g;
-		if ($arg && $arg =~ /^(cf|fc|f|c)$/i){
-			$weather_unit = lc($arg);
+		$arg = lc($arg) if $arg;
+		if ($arg && $arg =~ /^(c|f|cf|fc|i|m|im|mi)$/){
+			my %units = ('c'=>'m','f'=>'i','cf'=>'mi','fc'=>'im');
+			$arg = $units{$arg} if defined $units{$arg};
+			$weather_unit = $arg;
 		}
 		else {
 			error_handler('bad-arg',$opt,$arg);
@@ -4064,8 +4090,8 @@ sub show_options {
 		Only use if you want the weather somewhere other than the machine running
 		$self_name. Use only ASCII characters, replace spaces in city/state/country names with '+'. 
 		Example:^$self_name^-W^new+york,ny"],
-		['1', '', '--weather-unit', "Set weather units to metric (m), imperial (f), 
-		metric/imperial (cf), or imperial/metric (fc)."],
+		['1', '', '--weather-unit', "Set weather units to metric (m), imperial (i), 
+		metric/imperial (mi), or imperial/metric (im)."],
 		);
 		push @data, @rows;
 	}
@@ -4077,9 +4103,9 @@ sub show_options {
 	revision (if found)." ],
 	['2', '-d', '', "Extra optical drive features data; adds rev version to 
 	optical drive." ],
-	['2', '-D', '', "HDD temp with disk data if you have hddtemp installed, if 
-	you are root, or if you have added to /etc/sudoers (sudo v. 1.7 or newer). 
-   Example:^<username>^ALL^=^NOPASSWD:^/usr/sbin/hddtemp" ],
+	['2', '-D', '', "HDD temp with disk data if you have hddtemp installed, 
+	if you are root, or if you have added 	to /etc/sudoers (sudo v. 1.7 or newer). 
+	Example:^<username>^ALL^=^NOPASSWD:^/usr/sbin/hddtemp" ],
 	['2', '-G', '', "Direct rendering status (in X); Screen number GPU is 
 	running on (Nvidia only)." ],
 	['2', '-i', '', "For IPv6, show additional scope addresses: Global, Site, 
@@ -4112,7 +4138,7 @@ sub show_options {
 	['2', '-A', '', "Chip vendor:product ID for each audio device." ],
 	['2', '-B', '', "Serial number, voltage now/minimum (if available)." ],
 	['2', '-C', '', "Minimum CPU speed, if available." ],
-	['2', '-D', '', "Disk serial number." ],
+	['2', '-D', '', "Disk transfer speed; NVMe lanes; Disk serial number." ],
 	['2', '-G', '', "Chip vendor:product ID for each video card; OpenGL 
 	compatibility version, if free drivers and available; compositor (experimental)." ],
 	['2', '-I', '', "Other detected installed gcc versions (if present). System 
@@ -4700,6 +4726,7 @@ sub cleaner {
 sub disk_cleaner {
 	my ($item) = @_;
 	return $item if !$item;
+	# <?unknown>?|
 	$item =~ s/vendor.*|product.*|O\.?E\.?M\.?//gi;
 	$item =~ s/\s\s+/ /g;
 	$item =~ s/^\s+|\s+$//g;
@@ -5873,7 +5900,6 @@ sub battery_data_dmi {
 				elsif ($value[0] eq 'Design Capacity') {
 					$value[1] =~ s/\s*mwh$//i;
 					$battery{$id}{'energy_full_design'} = sprintf( "%.1f", $value[1]/1000);
-					
 				}
 				elsif ($value[0] eq 'Design Voltage') {
 					$value[1] =~ s/\s*mv$//i;
@@ -7226,8 +7252,9 @@ sub create_output {
 			}
 			$rows[$j]{main::key($num++,'model')} = $model;
 			$rows[$j]{main::key($num++,'size')} = $size;
-			if ($extra > 0 && $row{'speed'}){
+			if ($extra > 1 && $row{'speed'}){
 				$rows[$j]{main::key($num++,'speed')} = $row{'speed'};
+				$rows[$j]{main::key($num++,'lanes')} = $row{'lanes'} if $row{'lanes'};
 			}
 			if ($extra > 1){
 				my $serial = main::apply_filter($row{'serial'});
@@ -7465,6 +7492,9 @@ sub proc_data_advanced {
 		if ($extra > 0){
 			$drives[$i]{'temp'} = hdd_temp("/dev/$drives[$i]{'id'}");
 			if ($extra > 1){
+				my @speed_data = device_speed($drives[$i]{'id'});
+				$drives[$i]{'speed'} = $speed_data[0] if $speed_data[0];
+				$drives[$i]{'lanes'} = $speed_data[1] if $speed_data[1];
 				if (@disk_data && $disk_data[2]){
 					$drives[$i]{'serial'} = $disk_data[2];
 				}
@@ -7889,6 +7919,69 @@ sub hdd_temp {
 	eval $end if $b_log;
 	return $hdd_temp;
 }
+sub device_speed {
+	eval $start if $b_log;
+	my ($device) = @_;
+	my ($b_nvme,$lanes,$speed,@data);
+	my $working = Cwd::abs_path("/sys/class/block/$device");
+	#print "$working\n";
+	if ($working){
+		my ($id);
+		# slice out the ata id:
+		# /sys/devices/pci0000:00:11.0/ata1/host0/target0:
+		if ($working =~ /^.*\/ata([0-9]+)\/.*/){
+			$id = $1;
+		}
+		# /sys/devices/pci0000:00/0000:00:05.0/virtio1/block/vda
+		elsif ($working =~ /^.*\/virtio([0-9]+)\/.*/){
+			$id = $1;
+		}
+		# /sys/devices/pci0000:10/0000:10:01.2/0000:13:00.0/nvme/nvme0/nvme0n1
+		elsif ($working =~ /^.*\/(nvme[0-9]+)\/.*/){
+			$id = $1;
+			$b_nvme = 1;
+		}
+		# do host last because the strings above might have host as well as their search item
+		# 0000:00:1f.2/host3/target3: increment by 1 sine ata starts at 1, but host at 0
+		elsif ($working =~ /^.*\/host([0-9]+)\/.*/){
+			$id = $1 + 1 if defined $1;
+		}
+		# print "$working $id\n";
+		if (defined $id){
+			if ($b_nvme){
+				$working = "/sys/class/nvme/$id/device/max_link_speed";
+				$speed = (main::reader($working))[0] if -f $working;
+				if ($speed =~ /([0-9\.]+)\sGT\/s/){
+					$speed = $1;
+					# pcie1: 2.5 GT/s; pcie2: 5.0 GT/s; pci3: 8 GT/s
+					# NOTE: PCIe 3 stopped using the 8b/10b encoding but a sample pcie3 nvme has 
+					# rated speed of GT/s * .8 anyway. GT/s * (128b/130b)
+					$speed = ($speed <= 5 ) ? $speed * .8 : $speed * 128/130; 
+					$speed = sprintf("%.1f",$speed) if $speed;
+					$working = "/sys/class/nvme/$id/device/max_link_width";
+					$lanes = (main::reader($working))[0] if -f $working;
+					$lanes = 1 if !$lanes;
+					# https://www.edn.com/electronics-news/4380071/What-does-GT-s-mean-anyway-
+					# https://www.anandtech.com/show/2412/2
+					# http://www.tested.com/tech/457440-theoretical-vs-actual-bandwidth-pci-express-and-thunderbolt/
+					# PCIe 1,2 use “8b/10b” encoding: eight bits are encoded into a 10-bit symbol
+					# PCIe 3,4,5 use "128b/130b" encoding: 128 bits are encoded into a 130 bit symbol
+					$speed = ($speed * $lanes) . " Gb/s";
+				}
+			}
+			else {
+				$working = "/sys/class/ata_link/link$id/sata_spd";
+				$speed = (main::reader($working))[0] if -f $working;
+				$speed = main::disk_cleaner($speed) if $speed;
+				$speed =~ s/Gbps/Gb\/s/ if $speed;
+			}
+		}
+	}
+	@data = ($speed,$lanes);
+	#print "$working $speed\n";
+	eval $end if $b_log;
+	return @data;
+}
 # gptid/c5e940f1-5ce2-11e6-9eeb-d05099ac4dc2     N/A  ada0p1
 sub match_glabel {
 	eval $start if $b_log;
@@ -8035,7 +8128,7 @@ sub display_data(){
 			# $id = $ENV{'XDG_SESSION_ID'}; # returns tty session in console
 			my @data = main::grabber("$program --no-pager --no-legend 2>/dev/null",'','strip');
 			foreach (@data){
-				next if /tty[0-6]$/;
+				next if /tty[v]?[0-6]$/; # freebsd: ttyv3
 				$id = (split /\s+/, $_)[0];
 				last; # multiuser? too bad, we'll go for the first one
 			}
@@ -9165,8 +9258,10 @@ sub card_data {
 	foreach (@pci){
 		$num = 1;
 		my @row = @$_;
-		#print "$row[0] $row[3]\n";
-		if ($row[0] eq 'network' || $row[0] eq 'ethernet' ){
+		#print "$row[0] $row[3]\n"; 
+		# NOTE: class 06 subclass 80 
+		# https://www-s.acm.illinois.edu/sigops/2007/roll_your_own/7.c.1.html
+		if ($row[0] eq 'network' || $row[0] eq 'ethernet' || $row[1] eq '0680' ){
 			#print "$row[0] $row[3]\n";
 			$j = scalar @rows;
 			my $driver = $row[9];
@@ -9184,12 +9279,10 @@ sub card_data {
 			$card = ($card) ? main::pci_cleaner($card,'output') : 'N/A';
 			#$card ||= 'N/A';
 			$driver ||= 'N/A';
-			@data = (
-			{
+			@data = ({
 			main::key($num++,'Card') => $card,
 			main::key($num++,'driver') => $driver,
-			},
-			);
+			},);
 			@rows = (@rows,@data);
 			if ($extra > 0){
 				if ($row[9] && !$bsd_type){
@@ -10123,14 +10216,14 @@ sub partition_data {
 		}
 	}
 	@partitions_working = grep {!/^rootfs/} @partitions_working if $roots > 1;
-	my $filters = '^(aufs|cgroup.*|cgmfs|configfs|debugfs|\/dev|dev|\/dev/loop[0-9]*|devfs|devtmpfs|';
-	$filters .= 'fdescfs|iso9660|linprocfs|none|procfs|\/run(\/.*)?|run|squashfs|sys|\/sys\/.*|sysfs|';
-	$filters .= 'tmpfs|type|udev|unionfs|vartmp)$';
+	my $filters = '^(aufs|cgroup.*|cgmfs|configfs|debugfs|\/dev|dev|\/dev/loop[0-9]*|';
+	$filters .= 'devfs|devtmpfs|fdescfs|iso9660|linprocfs|none|procfs|\/run(\/.*)?|';
+	$filters .= 'run|shm|squashfs|sys|\/sys\/.*|sysfs|tmpfs|type|udev|unionfs|vartmp)$';
 	foreach (@partitions_working){
 		# stupid apple bullshit
 		$_ =~ s/^map\s+([\S]+)/map:\/$1/ if $b_fake_map;
 		my @row = split /\s+/, $_;
-		if ($row[0] =~ /$filters/ || $row[0] =~ /^ROOT/i){
+		if ($row[0] =~ /$filters/ || $row[0] =~ /^ROOT/i || ($b_fs && $row[1] eq 'tmpfs')){
 			next;
 		}
 		$dev_base = '';
@@ -13846,16 +13939,16 @@ sub elevation_output {
 	$feet = sprintf("%.0f", 3.28 * $meters) if defined $meters && !$feet;
 	$meters = sprintf("%.1f", $feet / 3.28 ) if defined $feet && !$meters;
 	$meters = sprintf("%.0f", $meters) if $meters;
-	if ( defined $meters  && $weather_unit eq 'cf' ){
+	if ( defined $meters  && $weather_unit eq 'mi' ){
 		$result = "$meters $m_unit ($feet $i_unit)";
 	}
-	elsif (defined $meters && $weather_unit eq 'fc' ){
+	elsif (defined $meters && $weather_unit eq 'im' ){
 		$result = "$feet $i_unit ($meters $m_unit)";
 	}
-	elsif (defined $meters && $weather_unit eq 'c' ){
+	elsif (defined $meters && $weather_unit eq 'm' ){
 		$result = "$meters $m_unit";
 	}
-	elsif (defined $feet && $weather_unit eq 'f' ){
+	elsif (defined $feet && $weather_unit eq 'i' ){
 		$result = "$feet $i_unit";
 	}
 	else {
@@ -13868,16 +13961,16 @@ sub unit_output {
 	eval $start if $b_log;
 	my ($primary,$metric,$m_unit,$imperial,$i_unit) = @_;
 	my $result = '';
-	if ($metric && $imperial && $weather_unit eq 'cf' ){
+	if ($metric && $imperial && $weather_unit eq 'mi' ){
 		$result = "$metric $m_unit ($imperial $i_unit)";
 	}
-	elsif ($metric && $imperial && $weather_unit eq 'fc' ){
+	elsif ($metric && $imperial && $weather_unit eq 'im' ){
 		$result = "$imperial $i_unit ($metric $m_unit)";
 	}
-	elsif ($metric && $weather_unit eq 'c' ){
+	elsif ($metric && $weather_unit eq 'm' ){
 		$result = "$metric $m_unit";
 	}
-	elsif ($imperial && $weather_unit eq 'f' ){
+	elsif ($imperial && $weather_unit eq 'i' ){
 		$result = "$imperial $i_unit";
 	}
 	elsif ($primary){
@@ -13897,10 +13990,10 @@ sub wind_output {
 	$gust_mph = undef if $gust_mph && $mph && $mph eq $gust_mph;
 	$gust_ms = undef if $gust_ms && $ms && $ms eq $gust_ms;
 	# calculate and round, order matters so that rounding only happens after math done
-	$ms = sprintf("%.1f", $ms ) if  $ms; # very low mph speeds yield 0, which is wrong
+	$ms = 0.44704 * $mph if $mph && !$ms;
 	$mph = $ms * 2.23694 if $ms && !$mph;
 	$kmh = sprintf("%.0f",  18 * $ms / 5) if $ms;
-	$ms = sprintf("%.0f", $ms ) if  $ms;
+	$ms = sprintf("%.1f", $ms ) if  $ms; # very low mph speeds yield 0, which is wrong
 	$mph = sprintf("%.0f", $mph) if $mph;
 	$gust_ms = 0.44704 * $gust_mph if $gust_mph && !$gust_ms;
 	$gust_kmh = 18 * $gust_ms / 5 if $gust_ms;
@@ -13912,29 +14005,29 @@ sub wind_output {
 		$result = $primary;
 	}
 	elsif ($mph && $direction ){
-		if ( $weather_unit eq 'cf' ){
+		if ( $weather_unit eq 'mi' ){
 			$result = "from $direction at $ms $m_unit ($kmh $km_unit, $mph $i_unit)";
 		}
-		elsif ( $weather_unit eq 'fc' ){
+		elsif ( $weather_unit eq 'im' ){
 			$result = "from $direction at $mph $i_unit ($ms $m_unit, $kmh $km_unit)";
 		}
-		elsif ( $weather_unit eq 'c' ){
+		elsif ( $weather_unit eq 'm' ){
 			$result = "from $direction at $ms $m_unit ($kmh $km_unit)";
 		}
-		elsif ( $weather_unit eq 'f' ){
+		elsif ( $weather_unit eq 'i' ){
 			$result = "from $direction at $mph $i_unit";
 		}
 		if ($gust_mph){
-			if ( $weather_unit eq 'cf' ){
+			if ( $weather_unit eq 'mi' ){
 				$result .= ". Gusting to $ms $m_unit ($kmh $km_unit, $mph $i_unit)";
 			}
-			elsif ( $weather_unit eq 'fc' ){
+			elsif ( $weather_unit eq 'im' ){
 				$result .= ". Gusting to $mph $i_unit ($ms $m_unit, $kmh $km_unit)";
 			}
-			elsif ( $weather_unit eq 'c' ){
+			elsif ( $weather_unit eq 'm' ){
 				$result .= ". Gusting to $ms $m_unit ($kmh $km_unit)";
 			}
-			elsif ( $weather_unit eq 'f' ){
+			elsif ( $weather_unit eq 'i' ){
 				$result .= ". Gusting to $mph $i_unit";
 			}
 		}
@@ -14809,28 +14902,38 @@ sub set_xprop {
 
 sub get_display_manager {
 	eval $start if $b_log;
-	my (@data,@found,$temp,$working);
+	my (@data,@found,$temp,$working,$b_run,$b_vrun,$b_vrunrc);
 	# ldm - LTSP display manager. Note that sddm does not appear to have a .pid 
 	# extension in Arch note: to avoid positives with directories, test for -f 
 	# explicitly, not -e
 	my @dms = qw(entranced.pid gdm.pid gdm3.pid kdm.pid ldm.pid 
-	lightdm.pid lxdm.pid mdm.pid nodm.pid sddm.pid sddm slim.lock 
-	tint2.pid wdm.pid xdm.pid xenodm.pid);
+	lightdm.pid lxdm.pid mdm.pid nodm.pid pcdm.pid 
+	sddm.pid slim.lock tint2.pid wdm.pid xdm.pid xenodm.pid);
 	# this is the only one I know of so far that has --version
 	# lightdm outputs to stderr, so it has to be redirected
 	my @dms_version = qw(lightdm);
+	$b_run = 1 if -d "/run";
+	# in most linux, /var/run is a sym link to /run, so no need to check it twice
+	if ( -d "/var/run" ){
+		my $rdlink = readlink('/var/run');
+		$b_vrun = 1 if $rdlink && $rdlink ne '/run';
+		$b_vrunrc = 1 if -d "/var/run/rc.d";
+	}
 	foreach my $id (@dms){
-		# note: ${dm_id%.*}/$dm_id will create a dir name out of the dm id, then 
+		# note: $working will create a dir name out of the dm $id, then 
 		# test if pid is in that note: sddm, in an effort to be unique and special, 
 		# do not use a pid/lock file, but rather a random string inside a directory 
 		# called /run/sddm/ so assuming the existence of the pid inside a directory named
 		# from the dm. Hopefully this change will not have negative results.
 		$working = $id;
 		$working =~ s/\.\S+$//;
-		# note: there's always been an issue with duplicated dm's in inxi, this should now correct it
-		if ( ( -f "/run/$id" || -d "/run/$working" || -f "/var/run/$id" ) && ! grep {/$working/} @found ){
-			if ($extra > 2 && awk( \@dms_version, $working) ){
-				@data = main::grabber("$working --version 2>&1");
+		# note: there were issues with duplicated dm's in inxi, checking @found corrects it
+		if ( ( ( $b_run && ( -f "/run/$id" || -d "/run/$working" ) ) || 
+		   ( $b_vrun && ( -f "/var/run/$id" || -d "/var/run/$working" ) ) || 
+		   ( $b_vrunrc && ( -f "/var/run/rc.d/$working" || -d "/var/run/rc.d/$id" ) ) ) && 
+		   ! grep {/$working/} @found ){
+			if ($extra > 2 && awk( \@dms_version, $working) && (my $path = main::check_program($working)) ){
+				@data = main::grabber("$path --version 2>&1");
 				$temp = awk(\@data,'\S',2,'\s+');
 				$working .= ' ' . $temp if $temp;
 			}
@@ -15706,7 +15809,7 @@ sub get_uptime {
 		$uptime = trimmer($uptime);
 		#$uptime = '05:36:47 up 3 min,  4 users,  load average: 1,88, 0,98, 0,62';
 		if ($uptime && 
-		 $uptime =~ /[\S]+\s+up\s+(([0-9]+)\s+day[s]?,\s+)?(([0-9]{1,2}):([0-9]{1,2})|([0-9]+)\smin),\s+[0-9]+\s+user/){
+		 $uptime =~ /[\S]+\s+up\s+(([0-9]+)\s+day[s]?,\s+)?(([0-9]{1,2}):([0-9]{1,2})|([0-9]+)\smin[s]?),\s+[0-9]+\s+user/){
 			$days = $2 . 'd' if $2;
 			$days .= ' ' if ($days && ($4 || $6));
 			if ($4 && $5){
@@ -16136,6 +16239,8 @@ sub set_lspci_data {
 	my $path = check_program('lspci');
 	$content = qx($path -nnv 2>/dev/null) if $path;
 	@pcis = split /\n/, $content if $content;
+	#my $file = "$ENV{HOME}/bin/scripts/inxi/data/lspci/racermach-1-knnv.txt";
+	#@pcis = reader($file);
 	#print scalar @pcis;
 	@pcis = map {$_ =~ s/^\s+//; $_} @pcis if @pcis;
 	foreach (@pcis){
