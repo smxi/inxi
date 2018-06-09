@@ -36,7 +36,7 @@ ARM and BSD datasets are particularly appreciated because we simply do not
 have enough of those.
 
 ===============================================================================
-Make inxi better! Get more support, fix broken items!
+Make inxi better! Expand supported hardware and OS data, fix broken items!
 
 inxi strives to support the widest range of operating systems and hardware,
 from the most simple consumer desktops, to the most advanced professional
