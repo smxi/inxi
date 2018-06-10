@@ -291,7 +291,16 @@ for anything other than current master branch. No merges, attempts to patch old
 code from old versions, will be considered or accepted. If you are not updated 
 to the latest inxi, do not file a bug report since it's probably been fixed 
 ages ago. If your distro isn't packaging a current inxi, then file a bug report 
-with them, not here. 
+with your packager, not here. 
+
+Sys Admin type inxi users always get the first level of support. ie, convince 
+us you run real systems and networks, and your issue shoots to the top of the 
+line. As do any real bugs. Failure to supply requested debugger data will lead 
+to a distinct lack of interest on our part to help you with a bug. ie, saying, 
+oh, it doesn't work, doesn't cut it, unless it's obvious why. 
+
+inxi is 'rolling release' software, just like Debian Sid, Gentoo, or Arch Linux 
+are rolling release GNU/Linux distributions, with no 'release points'.
 
 Distributions should never feel any advantage comes from using old inxi 
 versions because inxi has as a core promise to you, the end user, that it will 
@@ -302,9 +311,6 @@ project violate that core inxi requirement. Old inxi is NOT more stable than
 current inxi, it's just old, and lacking in bug fixes and features. For pre 2.9 
 versions, it's also significantly slower, and with fewer features.
 
-inxi is 'rolling release' software, just like Debian Sid, Gentoo, or Arch Linux 
-are rolling release GNU/Linux distributions, with no 'release points'.
-
 Your distro not updating inxi ever, then failing to show something that is 
 fixed in current inxi is not a bug, and please do not post it here. File the 
 issue with your distro, not here. Updating inxi in a package pool will NEVER 
@@ -313,12 +319,6 @@ software, like Perl 5.xx, lspci, etc. There is never a valid reason to not
 update inxi in a package pool of any distro in the world (with one single known 
 exception, the Slackware based Puppy Linux release, which ships without the 
 full Perl language. The Debian based one works fine).
-
-Sys Admin type inxi users always get the first level of support. ie, convince 
-us you run real systems and networks, and your issue shoots to the top of the 
-line. As do any real bugs. Failure to supply requested debugger data will lead 
-to a distinct lack of interest on our part to help you with a bug. ie, saying, 
-oh, it doesn't work, doesn't cut it, unless it's obvious why. 
 
 ===============================================================================
 
