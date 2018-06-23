@@ -31,8 +31,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.0.12';
-my $self_date='2018-06-05';
+my $self_version='3.0.13';
+my $self_date='2018-06-23';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -45,7 +45,7 @@ my ($self_path, $user_config_dir, $user_config_file,$user_data_dir);
 my $debug=0;
 my (@t0,$end,$start,$fh_l,$log_file); # log file handle, file
 my ($b_hires,$t1,$t2,$t3) = (0,0,0,0);
-# NOTE: redhat removed HiRes from Perl Core Modules. Why? who knows.
+# NOTE: redhat removed HiRes from Perl Core Modules. 
 if (eval {require Time::HiRes}){
 	Time::HiRes->import('gettimeofday','tv_interval','usleep');
 	$b_hires = 1;
@@ -56,22 +56,24 @@ my ( %alerts,%client,%colors,%dl,%files,%rows,%system_files,%use );
 
 ## Arrays
 # ps_aux is full output, ps_cmd is only the last 10 to last
-my (@app,@dmesg_boot,@dmi,@gpudata,@ifs,@ifs_bsd,@paths,@pci,@ps_aux,@ps_cmd,
-@sysctl,@sysctl_battery,@sysctl_sensors,@sysctl_machine,@uname,@usb);
+my (@app,@dmesg_boot,@dmi,@gpudata,@ifs,@ifs_bsd,@paths,@pci,@ps_aux,
+@ps_cmd,@sysctl,@sysctl_battery,@sysctl_sensors,@sysctl_machine,
+@uname,@usb);
 ## Disk arrays 
-my (@dm_boot_disk,@dm_boot_optical,@glabel,@gpart,@labels,@lsblk,@partitions,
-@raid,@sysctl_disks,@uuids);
+my (@dm_boot_disk,@dm_boot_optical,@glabel,@gpart,@hardware_raid,@labels,
+@lsblk,@partitions,@raid,@sysctl_disks,@uuids);
 my @test = (0,0,0,0,0);
 
 ## Booleans
-my ($b_admin,$b_arm,$b_console_irc,$b_debug_gz,$b_display,$b_dmesg_boot_check,
-$b_dmi,$b_dmidecode_force,$b_fake_bsd,$b_fake_dboot,$b_fake_pciconf,$b_fake_sysctl,
-$b_fake_usbdevs,$b_force_display,$b_gpudata,$b_irc,$b_log,$b_log_colors,
-$b_log_full,$b_man,$b_mem,$b_pci,$b_root,$b_running_in_display,$b_sudo,
-$b_sysctl,$b_usb_check);
+my ($b_admin,$b_arm,$b_arm_audio,$b_arm_gfx,$b_arm_net,$b_console_irc,
+$b_debug_gz,$b_display,$b_dmesg_boot_check,$b_dmi,$b_dmidecode_force,
+$b_fake_bsd,$b_fake_dboot,$b_fake_pciconf,$b_fake_sysctl,$b_fake_usbdevs,
+$b_force_display,$b_gpudata,$b_irc,$b_log,$b_log_colors,$b_log_full,
+$b_man,$b_mem,$b_pci,$b_pci_tool,$b_proc_debug,$b_root,
+$b_running_in_display,$b_slot_tool,$b_sudo,$b_sysctl,$b_usb_check);
 ## Disk checks
-my ($b_dm_boot_disk,$b_dm_boot_optical,$b_glabel,$b_label_uuid,$b_lsblk,
-$b_partitions,$b_raid);
+my ($b_dm_boot_disk,$b_dm_boot_optical,$b_glabel,$b_hardware_raid,
+$b_label_uuid,$b_lsblk,$b_partitions,$b_raid);
 my ($b_sysctl_disk,$b_update,$b_weather) = (1,1,1);
 
 ## System
@@ -1273,14 +1275,17 @@ sub run_debugger {
 	print $line3;
 	if (!$b_debug){
 		if ( -d '/sys' && main::count_dir_files('/sys') ){
-			sys_tree();
+			build_tree('sys');
 			sys_traverse_data();
 		}
 		else {
 			print "Skipping /sys data collection. /sys not present, or empty.\n";
 		}
 		print $line3;
-		if ( -d '/proc' && main::count_dir_files('/proc') ){
+		# note: proc has some files that are apparently kernel processes, I've tried 
+		# filtering them out but more keep appearing, so only run proc debugger if not root
+		if ( (!$b_root || $b_proc_debug ) && -d '/proc' && main::count_dir_files('/proc') ){
+			build_tree('proc');
 			proc_traverse_data();
 		}
 		else {
@@ -1429,10 +1434,19 @@ sub disk_data {
 	['ls', '-l /dev/disk/by-wwn'],
 	['ls', '-l /dev/disk/by-path'],
 	['ls', '-l /dev/mapper'],
+	# LSI raid https://hwraid.le-vert.net/wiki/LSIMegaRAIDSAS
+	['megacli', '-AdpAllInfo -aAll'],
+	['megacli', '-LDInfo -L0 -a0'],
+	['megacli', '-PDList -a0'],
+	['megaclisas-status', ''],
+	['megaraidsas-status', ''],
+	['megasasctl', ''],
 	['mount', ''],
 	['nvme', 'present'],
 	['readlink', '/dev/root'],
 	['swapon', '-s'],
+	# 3ware-raid
+	['tw-cli', 'info'],
 	['zfs', 'list'],
 	['zpool', 'list'],
 	['zpool', 'list -v'],
@@ -1636,18 +1650,19 @@ sub system_data {
 	['ipmi-sensors','--output-sensor-thresholds'],
 	['ipmitool','sensor'],
 	['lscpu',''],
+	['lspci',''],
 	['lspci','-k'],
-	['lspci','-knn'],
-	['lspci','-knnv'],# returns ports
 	['lspci','-n'],
 	['lspci','-nn'],
 	['lspci','-nnk'],
+	['lspci','-nnkv'],# returns ports
+	['lspci','-nnv'],
 	['lspci','-mm'],
 	['lspci','-mmk'],
 	['lspci','-mmkv'],
+	['lspci','-mmv'],
 	['lspci','-mmnn'],
 	['lspci','-v'],
-	['lspci',''],
 	['lsusb',''],
 	['lsusb','-v'],
 	['ps','aux'],
@@ -1682,7 +1697,7 @@ sub system_files {
 	@files = RepoData::get($data_dir);
 	copy_files(\@files, 'repo');
 	# chdir "/etc";
-	@files = main::globber("/etc/*[-_]{[rR]elease,[vV]ersion}");
+	@files = main::globber('/etc/*[-_]{[rR]elease,[vV]ersion,issue}*');
 	push (@files, '/etc/issue');
 	push (@files, '/etc/lsb-release');
 	push (@files, '/etc/os-release');
@@ -1710,7 +1725,18 @@ sub system_files {
 	);
 	copy_files(\@files,'system-bsd');
 }
+## SELF EXECUTE FOR LOG/OUTPUT
+sub run_self {
+	print "Creating $self_name output file now. This can take a few seconds...\n";
+	print "Starting $self_name from: $self_path\n";
+	my $i = ($option eq 'main-full')? ' -i' : '';
+	my $cmd = "$self_path/$self_name -FRfrploudmxxx$i -c 0 --usb --slots --debug 10 -y 120 > $data_dir/$self_name-FRfrploudmxxxyusbslots120.txt 2>&1";
+	system($cmd);
+	copy($log_file, "$data_dir") or main::error_handler('copy-failed', "$log_file", "$!");
+	system("$self_path/$self_name --recommends -y 120 > $data_dir/$self_name-recommends-120.txt 2>&1");
+}
 
+## UTILITIES COPY/CMD/WRITE
 sub copy_files {
 	my ($files_ref,$type,$alt_dir) = @_;
 	my ($absent,$error,$good,$name,$unreadable);
@@ -1740,7 +1766,6 @@ sub copy_files {
 		}
 	}
 }
-
 sub run_commands {
 	my ($cmds,$type) = @_;
 	my $holder = '';
@@ -1796,20 +1821,11 @@ sub write_data {
 		}
 	}
 }
-
-sub run_self {
-	print "Creating $self_name output file now. This can take a few seconds...\n";
-	print "Starting $self_name from: $self_path\n";
-	my $i = ($option eq 'main-full')? ' -i' : '';
-	my $cmd = "$self_path/$self_name -FRfrploudmxxx$i -c 0 --usb --slots --debug 10 -y 120 > $data_dir/$self_name-FRfrploudmxxxyusbslots120.txt 2>&1";
-	system($cmd);
-	copy($log_file, "$data_dir") or main::error_handler('copy-failed', "$log_file", "$!");
-	system("$self_path/$self_name --recommends -y 120 > $data_dir/$self_name-recommends-120.txt 2>&1");
-}
-
-sub sys_tree {
-	print "Constructing /sys tree data...\n";
-	if ( main::check_program('tree') ){
+## TOOLS FOR DIRECTORY TREE/LS/TRAVERSE; UPLOADER
+sub build_tree {
+	my ($which) = @_;
+	if ( $which eq 'sys' && main::check_program('tree') ){
+		print "Constructing /$which tree data...\n";
 		my $dirname = '/sys';
 		my $cmd;
 		system("tree -a -L 10 /sys > $data_dir/sys-data-tree-full-10.txt");
@@ -1823,23 +1839,37 @@ sub sys_tree {
 			system($cmd);
 		}
 	}
-	# for now, we want all of these as well for better debugging
-	#else {
-		sys_ls(1);
-		sys_ls(2);
-		sys_ls(3);
-		sys_ls(4);
-	#}
+	print "Constructing /$which ls data...\n";
+	if ($which eq 'sys'){
+		directory_ls($which,1);
+		directory_ls($which,2);
+		directory_ls($which,3);
+		directory_ls($which,4);
+	}
+	elsif ($which eq 'proc') {
+		directory_ls('proc',1);
+		directory_ls('proc',2,'[a-z]');
+		# don't want the /proc/self or /proc/thread-self directories, those are 
+		# too invasive
+		#directory_ls('proc',3,'[a-z]');
+		#directory_ls('proc',4,'[a-z]');
+	}
 }
-sub sys_ls {
-	my ( $depth) = @_;
+
+# include is basic regex for ls path syntax, like [a-z]
+sub directory_ls {
+	my ( $dir,$depth,$include) = @_;
+	$include ||= '';
+	my ($exclude) = ('');
+	# wd do NOT want to see anything in self or thread-self!!
+	# $exclude = 'I self -I thread-self' if $dir eq 'proc';
 	my $cmd = do {
-		if ( $depth == 1 ){ 'ls -l /sys/ 2>/dev/null' }
-		elsif ( $depth == 2 ){ 'ls -l /sys/*/ 2>/dev/null' }
-		elsif ( $depth == 3 ){ 'ls -l /sys/*/*/ 2>/dev/null' }
-		elsif ( $depth == 4 ){ 'ls -l /sys/*/*/*/ 2>/dev/null' }
-		elsif ( $depth == 5 ){ 'ls -l /sys/*/*/*/*/ 2>/dev/null' }
-		elsif ( $depth == 5 ){ 'ls -l /sys/*/*/*/*/ 2>/dev/null' }
+		if ( $depth == 1 ){ "ls -l $exclude /$dir/$include 2>/dev/null" }
+		elsif ( $depth == 2 ){ "ls -l $exclude /$dir/$include*/ 2>/dev/null" }
+		elsif ( $depth == 3 ){ "ls -l $exclude /$dir/$include*/*/ 2>/dev/null" }
+		elsif ( $depth == 4 ){ "ls -l $exclude /$dir/$include*/*/*/ 2>/dev/null" }
+		elsif ( $depth == 5 ){ "ls -l $exclude /$dir/$include*/*/*/*/ 2>/dev/null" }
+		elsif ( $depth == 5 ){ "ls -l $exclude /$dir/$include*/*/*/*/ 2>/dev/null" }
 	};
 	my @working = ();
 	my $output = '';
@@ -1870,30 +1900,72 @@ sub sys_ls {
 		}
 	}
 	close $ch;
-	my $file = "$data_dir/sys-data-ls-$depth.txt";
+	my $file = "$data_dir/$dir-data-ls-$depth.txt";
 	open my $fh, '>', $file or main::error_handler('create',"$file", "$!");
 	print $fh $output;
 	close $fh;
 	# print "$output\n";
 }
-
-sub sys_traverse_data {
-	print "Parsing /sys files...\n";
-	# get rid pointless error:Can't cd to (/sys/kernel/) debug: Permission denied
-	no warnings 'File::Find';
-	$parse_src = 'sys';
-	File::Find::find( \&wanted, "/sys");
-	process_sys_data();
-	@content = ();
-}
 sub proc_traverse_data {
-	print "Parsing /proc files...\n";
+	print "Building /proc file list...\n";
 	# get rid pointless error:Can't cd to (/sys/kernel/) debug: Permission denied
 	no warnings 'File::Find';
 	$parse_src = 'proc';
 	File::Find::find( \&wanted, "/proc");
-	process_proc_data();
+	proc_traverse_processor();
 	@content = ();
+}
+sub proc_traverse_processor {
+	my ($data,$fh,$result,$row,$sep);
+	my $proc_dir = "$data_dir/proc";
+	print "Adding /proc files...\n";
+	mkdir $proc_dir or main::error_handler('mkdir', "$proc_dir", "$!");
+	# @content = sort @content; 
+	copy_files(\@content,'proc',$proc_dir);
+# 	foreach (@content){
+# 		print "$_\n";
+# 	}
+}
+
+sub sys_traverse_data {
+	print "Building /sys file list...\n";
+	# get rid pointless error:Can't cd to (/sys/kernel/) debug: Permission denied
+	no warnings 'File::Find';
+	$parse_src = 'sys';
+	File::Find::find( \&wanted, "/sys");
+	sys_traverse_processsor();
+	@content = ();
+}
+sub sys_traverse_processsor {
+	my ($data,$fh,$result,$row,$sep);
+	my $filename = "sys-data-parse.txt";
+	print "Parsing /sys files...\n";
+	# no sorts, we want the order it comes in
+	# @content = sort @content; 
+	foreach (@content){
+		$data='';
+		$sep='';
+		my $b_fh = 1;
+		open($fh, '<', $_) or $b_fh = 0;
+		# needed for removing -T test and root
+		if ($b_fh){
+			while ($row = <$fh>) {
+				chomp $row;
+				$data .= $sep . '"' . $row . '"';
+				$sep=', ';
+			}
+		}
+		else {
+			$data = '<unreadable>';
+		}
+		$result .= "$_:[$data]\n";
+		# print "$_:[$data]\n"
+	}
+	# print scalar @content . "\n";
+	open ($fh, '>', "$data_dir/$filename");
+	print $fh $result;
+	close $fh;
+	# print $fh "$result";
 }
 sub wanted {
 	return if -d; # not directory
@@ -1911,12 +1983,14 @@ sub wanted {
 		# we discover syntax of foreign language characters
 		# Must be ascii like. This is questionable and might require further
 		# investigation, it is removing some characters that we might want
-		return unless -T; 
+		# NOTE: this made a bunch of files on arm systems unreadable so we handle 
+		# the readable tests in copy_files()
+		# return unless -T; 
 	}
 	elsif ($parse_src eq 'proc') {
 		return if $File::Find::name =~ /^\/proc\/[0-9]+\//;
 		return if $File::Find::name =~ /^\/proc\/bus\/pci\//;
-		return if $File::Find::name =~ /^\/proc\/irq\//;
+		return if $File::Find::name =~ /^\/proc\/(irq|sys)\//;
 		# these choke on sudo/root: kmsg kcore kpage and we don't want keys or kallsyms
 		return if $File::Find::name =~ /^\/proc\/k/; 
 		return if $File::Find::name =~ /(\/mb_groups|debug)$/;
@@ -1924,39 +1998,6 @@ sub wanted {
 	# print $File::Find::name . "\n";
 	push (@content, $File::Find::name);
 	return;
-}
-sub process_sys_data {
-	my ($data,$fh,$result,$row,$sep);
-	my $filename = "sys-data-parse.txt";
-	# no sorts, we want the order it comes in
-	# @content = sort @content; 
-	foreach (@content){
-		$data='';
-		$sep='';
-		open($fh, '<', $_);
-		while ($row = <$fh>) {
-			chomp $row;
-			$data .= $sep . '"' . $row . '"';
-			$sep=', ';
-		}
-		$result .= "$_:[$data]\n";
-		# print "$_:[$data]\n"
-	}
-	# print scalar @content . "\n";
-	open ($fh, '>', "$data_dir/$filename");
-	print $fh $result;
-	close $fh;
-	# print $fh "$result";
-}
-sub process_proc_data {
-	my ($data,$fh,$result,$row,$sep);
-	my $proc_dir = "$data_dir/proc";
-	mkdir $proc_dir or main::error_handler('mkdir', "$proc_dir", "$!");
-	# @content = sort @content; 
-	copy_files(\@content,'proc',$proc_dir);
-# 	foreach (@content){
-# 		print "$_\n";
-# 	}
 }
 # args: 1 - path to file to be uploaded
 # args: 2 - optional: alternate ftp upload url
@@ -3916,6 +3957,8 @@ sub get_options{
 		else {
 			error_handler('bad-arg', $opt, $arg);
 		}},
+	'proc' => sub {
+		$b_proc_debug = 1; },
 	'recommends' => sub {
 		$b_recommends = 1; },
 	'U|update:s' => sub { # 1,2,3 OR http://myserver/path/inxi
@@ -3979,7 +4022,7 @@ sub get_options{
 	     ( ( $bsd_type || $b_dmidecode_force ) && ($show{'machine'} || $show{'battery'}) ) ){
 		$b_dmi = 1;
 	}
-	if ($show{'audio'} || $show{'graphic'} || $show{'network'} ){
+	if ($show{'audio'} || $show{'graphic'} || $show{'network'} || $show{'raid'} || $show{'raid-forced'} ){
 		$b_pci = 1;
 	}
 	if ($show{'usb'} || $show{'audio'}  || $show{'network'} ){
@@ -4174,10 +4217,10 @@ sub show_options {
 	['2', '-N -A -G', '', "PCI Bus ID/USB ID number of card." ],
 	['2', '-R', '', "md-raid: second RAID Info line with extra data: 
 	blocks, chunk size, bitmap (if present). Resync line, shows blocks 
-	synced/total blocks." ],
+	synced/total blocks. Hardware RAID driver version, bus ID." ],
 	['2', '-s', '', "Basic voltages (ipmi, lm-sensors if present): 12v, 5v, 3.3v, vbat." ],
 	['2', '-S', '', "Desktop toolkit, if available (GNOME/Xfce/KDE only); 
-	Kernel gcc version" ],
+	Kernel gcc version; system base of distro (if relevant and detected)" ],
 	['2', '-t', '', "Adds memory use output to CPU (-xt c), and CPU use to 
 	memory (-xt m)." ],
 	['2', '--usb', '', "For Devices, shows USB version/speed." ],
@@ -4202,9 +4245,9 @@ sub show_options {
 	IRC. Adds Init version number, RC (if found)." ],
 	['2', '-m', '', "Manufacturer, part number; single/double bank (if found)." ],
 	['2', '-M', '', "Chassis info, BIOS ROM size (dmidecode only), if available." ],
-	['2', '-N', '', "Chip vendor:product ID for each NIC." ],
+	['2', '-N', '', "Chip vendor:product ID." ],
 	['2', '-R', '', "md-raid: Superblock (if present), algorithm. If resync, 
-	shows progress bar." ],
+	shows progress bar. Hardware RAID Chip vendor:product ID." ],
 	['2', '-s', '', "DIMM/SOC voltages (ipmi only)." ],
 	['2', '-S', '', "Display manager (dm) in desktop output if in X (e.g. kdm, 
 	gdm3, lightdm)." ],
@@ -4227,7 +4270,8 @@ sub show_options {
 	['2', '-m', '', "Width of memory bus, data and total (if present and greater 
 	than data); Detail for Type, if present; module voltage, if available; serial number." ],
 	['2', '-R', '', "zfs-raid: portion allocated (used) by RAID devices/arrays. 
-	md-raid: system md-raid support types (kernel support, read ahead, RAID events)." ],
+	md-raid: system md-raid support types (kernel support, read ahead, RAID events).
+	Hardware RAID rev, ports." ],
 	['2', '-S', '', "Panel/shell info in desktop output, if in X (like gnome-shell, 
 	cinnamon, mate-panel); (if available) dm version number, active window manager." ]
 	);
@@ -4333,6 +4377,7 @@ sub show_options {
 	['1', '', '--output', "[json|screen|xml] Change data output type. Requires --output-file 
 	if not screen." ],
 	['1', '', '--output-file', "[Full filepath|print] Output file to be used for --output." ],
+	['1', '', '--proc', "Force debugger parsing of /proc as sudo/root." ],
 	['1', '', '--sleep', "[0-x.x] Change CPU sleep time, in seconds, for -C 
 	(default:^$cpu_sleep). Allows system to catch up and show a more accurate CPU 
 	use. Example:^$self_name^-Cxxx^--sleep^0.15" ],
@@ -4928,10 +4973,11 @@ sub row_defaults {
 	$id ||= '';
 	my %unfound = (
 	'arm-cpu-f' => 'Use -f option to see features',
-	'arm-pci' => "PCI data type is not supported on ARM systems.",
+	'arm-pci' => "No ARM data found for this feature.",
 	'battery-data' => "No system battery data found. Is one present?",
 	'battery-data-sys' => "No /sys data found. Old system?",
 	'cpu-model-null' => "Model N/A",
+	'cpu-speeds' => "No non 0 speed data found for $id cores.",
 	'darwin-feature' => "Feature not supported iu Darwin/OSX.",
 	'disk-data-bsd' => "No disk data found for this BSD system.",
 	'disk-data' => "No Disk data was found.",
@@ -4940,7 +4986,7 @@ sub row_defaults {
 	'display-null' => 'No advanced graphics data found on this system.',
 	'display-root' => 'Advanced graphics data unavailable in console for root.',
 	'display-root-x' => 'Advanced graphics data unavailable for root. Old System?',
-	'display-server' => "No display server data found. Headless server?",
+	'display-server' => "No display server data found. Headless machine?",
 	'glxinfo-missing' => "Unable to show advanced data. Required tool glxinfo missing.",
 	'display-try' => 'Advanced graphics data unavailable in console. Try -G --display',
 	'dev' => 'Feature under development',
@@ -4957,9 +5003,9 @@ sub row_defaults {
 	'partition-data' => "No Partition data was found.",
 	'pci-advanced-data' => 'bus/chip ids unavailable',
 	'pci-card-data' => "No PCI card data found.",
-	'pci-slot-data' => "No PCI slot data found. SOC?",
+	'pci-slot-data' => "No PCI slot data found. SBC?",
 	'raid-data' => "No RAID data was found.",
-	'ram-data' => "No RAM data was found. SOC?",
+	'ram-data' => "No RAM data was found. SBC?",
 	'root-required' => "<root required>",
 	'sensors-data-ipmi' => "No ipmi sensors data was found.",
 	'sensors-data-linux' => "No sensors data was found. Is sensors configured?",
@@ -5239,9 +5285,11 @@ sub print_data {
 			'Card' => 1,
 			'Device' => 1,
 			'Floppy' => 1,
+			'Hardware' => 1, # hardware raid report
 			'ID' => 1,
 			'IF-ID' => 1,
 			'Optical' => 1,
+			'variant' => 1, # arm > 1 cpu type
 			);
 			$array_holder = 1;
 			foreach my $val1 (@{$data{$key1}}){
@@ -5442,7 +5490,7 @@ sub get {
 	eval $start if $b_log;
 	my (@data,@rows);
 	my $num = 0;
-	if ($b_arm){
+	if ($b_arm && !$b_arm_audio && !$b_pci_tool){
 		my $key = 'ARM';
 		@data = ({
 		main::key($num++,$key) => main::row_defaults('arm-pci',''),
@@ -5453,7 +5501,7 @@ sub get {
 		@data = card_data();
 		@rows = (@rows,@data);
 	}
-	if ( ( $b_arm || !@rows ) && (my $file = main::system_files('asound-cards') ) ){
+	if ( ( ($b_arm && !$b_arm_audio && !$b_pci_tool) || !@rows ) && (my $file = main::system_files('asound-cards') ) ){
 		@data = asound_data($file);
 		@rows = (@rows,@data);
 	}
@@ -5479,7 +5527,7 @@ sub card_data {
 	foreach (@pci){
 		$num = 1;
 		my @row = @$_;
-		if ($row[0] eq 'audio' || $row[0] eq 'multimedia'){
+		if ($row[0] =~ /^(audio|multimedia|hdmi)$/){
 			$j = scalar @rows;
 			my $driver = $row[9];
 			$driver ||= 'N/A';
@@ -5501,10 +5549,10 @@ sub card_data {
 				}
 			}
 			if ($extra > 0){
-				$rows[$j]{main::key($num++,'bus ID')} = "$row[2].$row[3]";
+				$rows[$j]{main::key($num++,'bus ID')} = (!$row[2] && !$row[3]) ? 'N/A' : "$row[2].$row[3]";
 			}
 			if ($extra > 1){
-				$rows[$j]{main::key($num++,'chip ID')} = "$row[5]:$row[6]";
+				$rows[$j]{main::key($num++,'chip ID')} = ($row[5]) ? "$row[5]:$row[6]" : $row[6];
 			}
 		}
 		#print "$row[0]\n";
@@ -6101,7 +6149,7 @@ sub get {
 sub create_output_full {
 	eval $start if $b_log;
 	my $num = 0;
-	my ($b_flags,$flag_key,@flags,%cpu,@data,@rows);
+	my ($b_flags,$b_speeds,$core_speeds_value,$flag_key,@flags,%cpu,@data,@rows);
 	my $sleep = $cpu_sleep * 1000000;
 	if ($b_hires){
 		eval 'Time::HiRes::usleep( $sleep )';
@@ -6140,6 +6188,16 @@ sub create_output_full {
 	main::key($num++,'model') => $cpu{'model_name'},
 	},);
 	@rows = (@rows,@data);
+	if ($cpu{'arm-cpus'}){
+		my $ref = $cpu{'arm-cpus'};
+		my %arm_cpus = %$ref;
+		my $i = 1;
+		my $counter = ( %arm_cpus && scalar keys %arm_cpus > 1 ) ? '-' : '';
+		foreach my $key (keys %arm_cpus){
+			$counter = '-' . $i++ if $counter;
+			$rows[$j]{main::key($num++,'variant'.$counter)} = $key;
+		}
+	}
 	$properties{'bits-sys'} ||= 'N/A';
 	$rows[$j]{main::key($num++,'bits')} = $properties{'bits-sys'};
 	if ($type){
@@ -6159,9 +6217,10 @@ sub create_output_full {
 		$cpu{'microcode'} ||= 'N/A';
 		$rows[$j]{main::key($num++,'microcode')} = $cpu{'microcode'};
 	}
-	
 	$properties{'l2-cache'} ||= 'N/A';
-	$rows[$j]{main::key($num++,'L2 cache')} = $properties{'l2-cache'} if (!$b_arm || ($b_arm && $properties{'l2-cache'} ne 'N/A'));
+	if (!$b_arm || ($b_arm && $properties{'l2-cache'} ne 'N/A')){
+		$rows[$j]{main::key($num++,'L2 cache')} = $properties{'l2-cache'};
+	}
 	if ($extra > 0 && !$show{'cpu-flag'}){
 		$j = scalar @rows;
 		@flags = split /\s+/, $cpu{'flags'} if $cpu{'flags'};
@@ -6194,7 +6253,18 @@ sub create_output_full {
 	my $min_max_key = ($properties{'min-max-key'}) ? $properties{'min-max-key'}: 'min/max';
 	my $speed = (defined $properties{'speed'}) ? $properties{'speed'}: 'N/A';
 	# aren't able to get per core speeds in bsds yet
-	my $core_speeds_value = (@speeds) ? '' : 'N/A';
+	if (@speeds){
+		if (grep {$_ ne '0'} @speeds){
+			$core_speeds_value = '';
+			$b_speeds = 1;
+		}
+		else {
+			$core_speeds_value = main::row_defaults('cpu-speeds',scalar @speeds);
+		}
+	}
+	else {
+		$core_speeds_value = 'N/A';
+	}
 	$j = scalar @rows;
 	@data = ({
 	main::key($num++,$speed_key) => $speed,
@@ -6203,8 +6273,11 @@ sub create_output_full {
 	},	);
 	@rows = (@rows,@data);
 	my $i = 1;
-	foreach (@speeds){
-		$rows[$j]{main::key($num++,$i++)} = $_;
+	# if say 96 0 speed cores, no need to print all those 0s
+	if ($b_speeds){
+		foreach (@speeds){
+			$rows[$j]{main::key($num++,$i++)} = $_;
+		}
 	}
 	if ($show{'cpu-flag'} && !$b_flags){
 		$flag_key = ($b_arm || $bsd_type) ? 'Features': 'Flags';
@@ -6541,12 +6614,18 @@ sub data_cpuinfo {
 	}
 	$cpu{'phys'} = scalar @phys_cpus;
 	$cpu{'dies'} = $die_id++; # count starts at 0, all cpus have 1 die at least
-	if ($b_arm && $cpu{'dies'} <= 1){
-		my $arm_dies = cpu_dies_sys();
-		# case were 4 core arm returned 4 sibling lists, obviously wrong
-		$cpu{'dies'} = $arm_dies if $arm_dies && $proc_count != $arm_dies;
+	if ($b_arm){
+		if ($cpu{'dies'} <= 1){
+			my $arm_dies = cpu_dies_sys();
+			# case were 4 core arm returned 4 sibling lists, obviously wrong
+			$cpu{'dies'} = $arm_dies if $arm_dies && $proc_count != $arm_dies;
+		}
+		$cpu{'type'} = 'arm' if !$cpu{'type'};
+		if (!$bsd_type){
+			my %arm_cpus = arm_cpu_name();
+			$cpu{'arm-cpus'} = \%arm_cpus if %arm_cpus;
+		}
 	}
-	$cpu{'type'} = 'arm' if $b_arm && !$cpu{'type'};
 	$cpu{'ids'} = (\@ids);
 	if ( $extra > 0 && !$cpu{'arch'} && $type ne 'short' ){
 		$cpu{'arch'} = cpu_arch($cpu{'type'},$cpu{'family'},$cpu{'model_id'});
@@ -7114,6 +7193,25 @@ sub cpu_vendor {
 	return $vendor;
 }
 
+sub arm_cpu_name {
+	eval $start if $b_log;
+	my (%cpus,$compat);
+	if ( -e '/sys/firmware/devicetree/base/cpus/cpu@1/compatible' ){
+		my @working = main::globber('/sys/firmware/devicetree/base/cpus/cpu@*/compatible');
+		foreach my $file (@working){
+			$compat = (main::reader($file))[0];
+			# these can have non printing ascii... why? As long as we only have the 
+			# splits for: null 00/start header 01/start text 02/end text 03
+			$compat = (split /\x01|\x02|\x03|\x00/, $compat)[0] if $compat;
+			$compat = (split /,\s*/, $compat)[-1] if $compat;
+			$cpus{$compat} = ($cpus{$compat}) ? ++$cpus{$compat}: 1;
+		}
+	}
+	main::log_data('dump','%cpus',\%cpus) if $b_log;
+	eval $end if $b_log;
+	return %cpus;
+}
+
 sub cpu_arch {
 	eval $start if $b_log;
 	my ($type,$family,$model) = @_;
@@ -7198,6 +7296,7 @@ sub cpu_arch {
 			elsif ( $model =~ /^(F)$/ ) {$arch = 'Isaiah'}
 		}
 	}
+	# https://software.intel.com/en-us/articles/intel-architecture-and-processor-identification-with-cpuid-model-and-family-numbers
 	elsif ( $type eq 'intel'){
 		if ($family eq '4'){
 			if ( $model =~ /^(0|1|2|3|4|5|6|7|8|9)$/ ) {$arch = '486'}
@@ -7209,20 +7308,26 @@ sub cpu_arch {
 		}
 		elsif ($family eq '6'){
 			if ( $model =~ /^(1)$/ ) {$arch = 'P6 Pro'}
-			elsif ( $model =~ /^(3|5|6)$/ ) {$arch = 'P6 II'}
-			elsif ( $model =~ /^(7|8)$/ ) {$arch = 'P6 III'}
-			elsif ( $model =~ /^(9)$/ ) {$arch = 'Banias'} # pentium M
 			elsif ( $model =~ /^(15)$/ ) {$arch = 'Dothan Tolapai'} # pentium M system on chip
+			elsif ( $model =~ /^(3)$/ ) {$arch = 'P6 II Klamath'}
+			elsif ( $model =~ /^(5)$/ ) {$arch = 'P6 II Deschutes'}
+			elsif ( $model =~ /^(6)$/ ) {$arch = 'P6 II Mendocino'}
+			elsif ( $model =~ /^(7)$/ ) {$arch = 'P6 III Katmai'}
+			elsif ( $model =~ /^(8)$/ ) {$arch = 'P6 III Coppermine'}
+			elsif ( $model =~ /^(9)$/ ) {$arch = 'Banias'} # pentium M
+			elsif ( $model =~ /^(A)$/ ) {$arch = 'P6 III Xeon'}
+			elsif ( $model =~ /^(B)$/ ) {$arch = 'P6 III Tualitin'}
 			elsif ( $model =~ /^(D)$/ ) {$arch = 'Dothan'} # Pentium M
 			elsif ( $model =~ /^(E)$/ ) {$arch = 'Yonah'}
-			elsif ( $model =~ /^(F|16)$/ ) {$arch = 'Conroe'}
+			elsif ( $model =~ /^(F|16)$/ ) {$arch = 'Merom'}
 			elsif ( $model =~ /^(17|1D)$/ ) {$arch = 'Penryn'}
 			elsif ( $model =~ /^(1A|1E|1F|2E|25|2C|2F)$/ ) {$arch = 'Nehalem'}
-			elsif ( $model =~ /^(1C|26)$/ ) {$arch = 'Bonnell'}
-			elsif ( $model =~ /^(27|35|36)$/ ) {$arch = 'Saltwell'}
+			elsif ( $model =~ /^(1C)$/ ) {$arch = 'Bonnell'} # atom Bonnell? 27?
+			elsif ( $model =~ /^(27|35)$/ ) {$arch = 'Saltwell'}
 			elsif ( $model =~ /^(25|2C|2F)$/ ) {$arch = 'Westmere'}
-			elsif ( $model =~ /^(26|27)$/ ) {$arch = 'Bonnell'}
+			elsif ( $model =~ /^(26)$/ ) {$arch = 'Atom Lincroft'}
 			elsif ( $model =~ /^(2A|2D)$/ ) {$arch = 'Sandy Bridge'}
+			elsif ( $model =~ /^(36)$/ ) {$arch = 'Atom Cedarview'}
 			elsif ( $model =~ /^(37|4A|4D|5A)$/ ) {$arch = 'Silvermont'}
 			elsif ( $model =~ /^(3A|3E)$/ ) {$arch = 'Ivy Bridge'}
 			elsif ( $model =~ /^(3C|3F|45|46)$/ ) {$arch = 'Haswell'}
@@ -7236,12 +7341,16 @@ sub cpu_arch {
 			# product codes: https://en.wikipedia.org/wiki/List_of_Intel_microprocessors
 			# coming: coffee lake; cannonlake; icelake; tigerlake
 		}
+		# itanium 1 family 7 all recalled
 		elsif ($family eq 'B'){
 			if ( $model =~ /^(1)$/ ) {$arch = 'Knights Corne'}
 		}
 		elsif ($family eq 'F'){
-			if ( $model =~ /^(0|1|2)$/ ) {$arch = 'Netburst Willamette'}
-			elsif ( $model =~ /^(3|4|6)$/ ) {$arch = 'Netburst Prescott'} # Nocona
+			if ( $model =~ /^(0|1)$/ ) {$arch = 'Netburst Willamette'}
+			elsif ( $model =~ /^(2)$/ ) {$arch = 'Netburst Northwood'}
+			elsif ( $model =~ /^(3)$/ ) {$arch = 'Prescott'} # 6? Nocona
+			elsif ( $model =~ /^(4)$/ ) {$arch = 'Smithfield'} # 6? Nocona
+			elsif ( $model =~ /^(6)$/ ) {$arch = 'Presler'}
 			else {$arch = 'Netburst'}
 		}
 	}
@@ -7988,25 +8097,26 @@ sub device_vendor {
 	# https://www.superbiiz.com # lists by real part numbers
 	my @vendors = (
 	## These go first because they are the most likely and common ##
+	['(Crucial|^CT|-CT|^M4-)','Crucial','Crucial',''],
 	['^INTEL','^INTEL','Intel',''],
+	['(KINGSTON|DataTraveler|^SMS|^SHS|^SUV)','KINGSTON','Kingston',''], # maybe SHS: SHSS37A SKC SUV
 	# must come before samsung MU. NOTE: toshiba can have: TOSHIBA_MK6475GSX: mush: MKNSSDCR120GB_
-	['^(MKN|Mushkin)','^Mushkin','Mushkin',''], # MKNS
+	['(^MKN|Mushkin)','Mushkin','Mushkin',''], # MKNS
 	# MU = Multiple_Flash_Reader too risky: |M[UZ][^L]
-	['^(SAMSUNG|MCG[0-9]+GC)','^SAMSUNG','Samsung',''], # maybe ^SM
-	['^(ST[^T]|[S]?SEAGATE|X[AFP])','^[S]?SEAGATE','Seagate',''], # real, SSEAGATE Backup+; XP1600HE30002
-	['^WD','^(WDC|WD\s)','Western Digital',''],
+	['(SAMSUNG|^MCG[0-9]+GC)','SAMSUNG','Samsung',''], # maybe ^SM
+	['(SanDisk|^SDS[S]?[DQ]|^SL([0-9]+)G|^AFGCE|ULTRA\sFIT|Cruzer)','SanDisk','SanDisk',''],
+	['(^ST[^T]|[S]?SEAGATE|^X[AFP])','[S]?SEAGATE','Seagate',''], # real, SSEAGATE Backup+; XP1600HE30002
+	['^(WD|Western Digital|My Passport|00LPCX|Elements)','(^WDC|Western Digital)','Western Digital',''],
 	## Then better known ones ##
 	['^(A-DATA|ADATA)','^(A-DATA|ADATA)','A-Data',''],
 	['^ADTRON','^(ADTRON)','Adtron',''],
 	['^ASUS','^ASUS','ASUS',''],
 	['^ATP','^ATP[\s\-]','ATP',''],
 	['^Corsair','^Corsair','Corsair',''],
-	['(^Crucial|^CT|-CT|^M4-)','^Crucial','Crucial',''],
 	['^(FUJITSU|MP)','^FUJITSU','Fujitsu',''],
 	# note: 2012:  wdc bought hgst
 	['^(Hitachi|HGST|IC|HT|HU)','^Hitachi','Hitachi',''], # HGST HUA
-	['^(HP[\s\-])','^HP[\s\-]','HP',''], # vb: VB0250EAVER but clashes with vbox
-	['^(KINGSTON|DataTraveler|SMS|SHS|SUV)','^KINGSTON','Kingston',''], # maybe SHS: SHSS37A SKC SUV
+	['^(HP\b)','^HP','HP',''], # vb: VB0250EAVER but clashes with vbox; HP_SSD_S700_120G
 	['^(LSD|Lexar)','^Lexar','Lexar',''], # mmc-LEXAR_0xb016546c
 	# OCZSSD2-2VTXE120G is OCZ-VERTEX2_3.5
 	['^(OCZ|APOC|D2|DEN|DEN|DRSAK|EC188|FTNC|GFGC|MANG|MMOC|NIMC|NIMR|PSIR|TALOS2|TMSC|TRSAK)','^OCZ[\s\-]','OCZ',''],
@@ -8014,7 +8124,6 @@ sub device_vendor {
 	['^Philips','^Philips','Philips',''],
 	['^PIONEER','^PIONEER','Pioneer',''],
 	['^PNY','^PNY\s','PNY','','^PNY'],
-	['^(SanDisk|SDS[S]?[DQ]|SL([0-9]+)G|AFGCE)','^SanDisk','SanDisk',''],
 	# note: get rid of: M[DGK] becasue mushkin starts with MK
 	# note: seen: KXG50ZNV512G NVMe TOSHIBA 512GB | THNSN51T02DUK NVMe TOSHIBA 1024GB
 	['(^[S]?TOS|^THN|TOSHIBA)','[S]?TOSHIBA','Toshiba',''], # scsi-STOSHIBA_STOR.E_EDITION_
@@ -8024,7 +8133,11 @@ sub device_vendor {
 	['^APPLE','','^APPLE','Apple'],
 	['^(AP|Apacer)','^Apacer','Apacer',''],
 	['^BUFFALO','^BUFFALO','Buffalo',''],
+	['^CHN\b','','Zheino',''],
+	['^DREVO\b','','Drevo',''],
 	['^EXCELSTOR','^EXCELSTOR( TECHNOLOGY)?','Excelstor',''],
+	['^FASTDISK','^FASTDISK','FASTDISK',''],
+	['^FORESEE','^FORESEE','Foresee',''],
 	['^GALAX\b','^GALAX','GALAX',''],
 	['^Generic','^Generic','Generic',''],
 	['^GOODRAM','^GOODRAM','GOODRAM',''],
@@ -8070,7 +8183,7 @@ sub device_vendor {
 	['^TrekStor','^TrekStor','TrekStor',''],
 	['^(UG|Unigen)','^Unigen','Unigen',''],
 	['^VBOX','','VirtualBox',''],
-	['^Verbatim','^Verbatim','Verbatim',''],
+	['^(Verbatim|STORE N GO)','^Verbatim','Verbatim',''],
 	['^VISIONTEK','^VISIONTEK','VisionTek',''],
 	['^VMware','^VMware','VMware',''],
 	['^(Vseky|Vaseky)','^Vaseky','Vaseky',''], # ata-Vseky_V880_350G_
@@ -8236,7 +8349,7 @@ sub get {
 	eval $start if $b_log;
 	my (@data,@rows);
 	my $num = 0;
-	if ($b_arm){
+	if ($b_arm && !$b_arm_gfx && !$b_pci_tool){
 		my $key = 'ARM';
 		@data = ({
 		main::key($num++,$key) => main::row_defaults('arm-pci',''),
@@ -8285,7 +8398,7 @@ sub card_data {
 		$num = 1;
 		my @row = @$_;
 		#print "$row[0] $row[3]\n";
-		if ($row[3] == 0 && ( $row[0] eq 'vga' || $row[0] eq 'display' || $row[0] eq '3d' ) ){
+		if ($row[3] == 0 && ( $row[0] =~ /^(vga|display|3d|fb|gpu|hdmi)$/ ) ){
 			#print "$row[0] $row[3]\n";
 			$j = scalar @rows;
 			$driver = $row[9];
@@ -8310,10 +8423,10 @@ sub card_data {
 				$rows[$j]{main::key($num++,'v')} = $version;
 			}
 			if ($extra > 0){
-				$rows[$j]{main::key($num++,'bus ID')} = "$row[2].$row[3]";
+				$rows[$j]{main::key($num++,'bus ID')} = (!$row[2] && !$row[3]) ? 'N/A' : "$row[2].$row[3]";
 			}
 			if ($extra > 1){
-				$rows[$j]{main::key($num++,'chip ID')} = "$row[5]:$row[6]";
+				$rows[$j]{main::key($num++,'chip ID')} = ($row[5]) ? "$row[5]:$row[6]" : $row[6];
 			}
 		}
 		#print "$row[0]\n";
@@ -9020,7 +9133,7 @@ sub create_output_arm {
 		my $system = 'System';
 		if (defined $arm_machine{'model'}){
 			$rows[$j]{main::key($num++,'System')} = $arm_machine{'model'};
-			$system = 'v';
+			$system = 'details';
 		}
 		my $device = $arm_machine{'device'};
 		$device ||= 'N/A';
@@ -9132,13 +9245,18 @@ sub machine_data_arm {
 		main::log_data('data',"device-tree-model: $model") if $b_log;
 		if ( $model ){
 			$model = main::dmi_cleaner($model);
-			my (@result) = ();
-			@result = split(/\s+/, $arm_machine{'device'}) if $arm_machine{'device'};
-			if ( !$arm_machine{'device'} || 
-				(scalar(@result) == 1 && $model !~ /$arm_machine{'device'}/) ){
+			# idea was to use only first part of string, but now try using all
+			#my (@result) = ();
+			#@result = split(/\s+/, $arm_machine{'device'}) if $arm_machine{'device'};
+			if ( !$arm_machine{'device'} || ($model && $model !~ /$arm_machine{'device'}/i) ){
 				$arm_machine{'model'} = $model;
 			}
 		}
+	}
+	if (!$arm_machine{'serial'} && -f '/proc/device-tree/serial-number'){
+		my $serial  = (main::reader('/proc/device-tree/serial-number'))[0];
+		main::log_data('data',"device-tree-serial: $serial") if $b_log;
+		$arm_machine{'serial'} = $serial if $serial;
 	}
 	#print Data::Dumper::Dumper \%arm_machine;
 	eval $end if $b_log;
@@ -9443,7 +9561,7 @@ sub get {
 	eval $start if $b_log;
 	my (@data,@rows);
 	my $num = 0;
-	if ($b_arm){
+	if ($b_arm && !$b_arm_net && !$b_pci_tool){
 		my $key = 'ARM';
 		@data = ({
 		main::key($num++,$key) => main::row_defaults('arm-pci',''),
@@ -9453,9 +9571,9 @@ sub get {
 	else {
 		@data = card_data();
 		@rows = (@rows,@data) if @data;
-		@data = usb_data();
-		@rows = (@rows,@data) if @data;
 	}
+	@data = usb_data();
+	@rows = (@rows,@data) if @data;
 	if ($show{'network-advanced'}){
 		# @ifs_found = ();
 		# shift @ifs_found;
@@ -9529,7 +9647,7 @@ sub card_data {
 				$row[8] ||= 'N/A';
 				# as far as I know, wifi has no port, but in case it does in future, use it
 				$rows[$j]{main::key($num++,'port')} = $row[8] if (!$b_wifi || ( $b_wifi && $row[8] ne 'N/A') );
-				$rows[$j]{main::key($num++,'bus ID')} = $row[2] . '.' . $row[3];
+				$rows[$j]{main::key($num++,'bus ID')} = (!$row[2] && !$row[3]) ? 'N/A' : "$row[2].$row[3]";
 			}
 			if ($extra > 1){
 				$rows[$j]{main::key($num++,'chip ID')} = $chip_id;
@@ -9685,14 +9803,24 @@ sub advanced_data_sys {
 		my ($data1,$data2,$duplex,$mac,$speed,$state);
 		# for usb, we already know where we are
 		if (!$b_usb){
-			$path = "$_/device/vendor";
-			$data1 = (main::reader($path))[0] if -e $path;
-			$data1 =~ s/^0x// if $data1;
-			$path = "$_/device/device";
-			$data2 = (main::reader($path))[0] if -e $path;
-			$data2 =~ s/^0x// if $data2;
-			# this is a fix for a redhat bug in virtio 
-			$data2 = (defined $data2 && $data2 eq '0001' && defined $chip && $chip eq '1000') ? '1000' : $data2;
+			if (!$b_arm || $b_pci_tool ){
+				$path = "$_/device/vendor";
+				$data1 = (main::reader($path))[0] if -e $path;
+				$data1 =~ s/^0x// if $data1;
+				$path = "$_/device/device";
+				$data2 = (main::reader($path))[0] if -e $path;
+				$data2 =~ s/^0x// if $data2;
+				# this is a fix for a redhat bug in virtio 
+				$data2 = (defined $data2 && $data2 eq '0001' && defined $chip && $chip eq '1000') ? '1000' : $data2;
+			}
+			elsif ($b_arm) {
+				$path = Cwd::abs_path($_);
+				$path =~ /($chip)/;
+				if ($1){
+					$data1 = $vendor;
+					$data2 = $chip;
+				}
+			}
 		}
 		#print "d1:$data1 v:$vendor d2:$data2 c:$chip\n";
 		if ( $b_usb || $b_check || ( $data1 && $data2 && $data1 eq $vendor && $data2 eq $chip )) {
@@ -9819,11 +9947,11 @@ sub advanced_data_bsd {
 # 4 - scope if, if different from if
 sub if_ip {
 	eval $start if $b_log;
-	$b_ip_run = 1;
 	my ($if) = @_;
 	my (@data,@row,@rows,$working_if);
 	my $num = 0;
 	my $j = 0;
+	$b_ip_run = 1;
 	OUTER:
 	foreach my $ref (@ifs){
 		if (ref $ref ne 'ARRAY'){
@@ -9858,11 +9986,14 @@ sub if_ip {
 						# scope global dynamic 
 						# scope global temporary deprecated dynamic 
 						# scope site temporary deprecated dynamic 
+						# scope global dynamic noprefixroute enx403cfc00ac68
 						# scope global eth0
 						# scope link
 						# scope site dynamic 
 						# scope link 
-						my $key = ($data2[4] =~ /deprecated|dynamic|temporary/ ) ? 'type':'virtual' ;
+						# trim off if at end of multi word string if found
+						$data2[4] =~ s/\s$if$// if $data2[4] =~ /[^\s]+\s$if$/;
+						my $key = ($data2[4] =~ /deprecated|dynamic|temporary|noprefixroute/ ) ? 'type':'virtual' ;
 						@row  = ({
 						main::key($num++,"IP v$ipv") => $ip,
 						main::key($num++,$key) => $data2[4],
@@ -10969,14 +11100,15 @@ sub throttled {
 {
 package RaidData;
 # debugger switches
-my ($b_md,$b_zfs) = (0,0);
+my ($b_md,$b_zfs);
+
 sub get {
 	eval $start if $b_log;
 	my (@rows,$key1,$val1);
 	my $num = 0;
 	raid_data() if !$b_raid;
 	#print 'get: ', Data::Dumper::Dumper \@raid;
-	if (!@raid){
+	if (!@raid && !@hardware_raid){
 		if ($show{'raid-forced'}){
 			$key1 = 'Message';
 			$val1 = main::row_defaults('raid-data');
@@ -10989,7 +11121,7 @@ sub get {
 		@rows = ({main::key($num++,$key1) => $val1,});
 	}
 	eval $end if $b_log;
-	($b_md,$b_zfs) = undef;
+	($b_md,$b_zfs,@hardware_raid) = undef;
 	return @rows;
 }
 sub create_output {
@@ -11001,6 +11133,38 @@ sub create_output {
 	my ($b_row_1_sizes);
 	my ($i,$j,$num,$status_id) = (0,0,0,0);
 	#print Data::Dumper::Dumper \@raid;
+	if (@hardware_raid){
+		foreach my $ref (@hardware_raid){
+			my %row = %$ref;
+			$num = 1;
+			my $device = ($row{'device'}) ? $row{'device'}: 'N/A';
+			my $driver = ($row{'driver'}) ? $row{'driver'}: 'N/A';
+			@data = ({
+			main::key($num++,'Hardware') => $device,
+			main::key($num++,'driver') => $driver,
+			});
+			@rows = (@rows,@data);
+			$j = scalar @rows - 1;
+			if ($extra > 0){
+				my $driver_version = ($row{'driver-version'}) ?  $row{'driver-version'}: 'N/A' ;
+				$rows[$j]{main::key($num++,'v')} = $driver_version;
+				if ($extra > 2){
+					my $port= ($row{'port'}) ? $row{'port'}: 'N/A' ;
+					$rows[$j]{main::key($num++,'port')} = $port;
+				}
+				my $bus_id = (defined $row{'bus-id'} && defined $row{'sub-id'}) ?  "$row{'bus-id'}.$row{'sub-id'}": 'N/A' ;
+				$rows[$j]{main::key($num++,'bus ID')} = $bus_id;
+			}
+			if ($extra > 1){
+				my $chip_id = (defined $row{'vendor-id'} && defined $row{'chip-id'}) ?  "$row{'vendor-id'}.$row{'chip-id'}": 'N/A' ;
+				$rows[$j]{main::key($num++,'chip ID')} = $chip_id;
+			}
+			if ($extra > 2){
+				my $rev= (defined $row{'rev'} && $row{'rev'}) ? $row{'rev'}: 'N/A' ;
+				$rows[$j]{main::key($num++,'rev')} = $rev;
+			}
+		}
+	}
 	if ($extra > 2 && $raid[0]{'system-supported'}){
 		@data = ({
 		main::key($num++,'Supported md-raid types') => $raid[0]{'system-supported'},
@@ -11191,6 +11355,9 @@ sub raid_data {
 	eval $start if $b_log;
 	my (@data);
 	$b_raid = 1;
+	if ($b_hardware_raid){
+		hardware_raid();
+	}
 	if ($b_md || (my $file = main::system_files('mdstat') )){
 		@data = mdraid_data($file);
 		@raid = (@raid,@data) if @data;
@@ -11201,6 +11368,43 @@ sub raid_data {
 	}
 	main::log_data('dump','@raid',\@raid) if $b_log;
 	#print Data::Dumper::Dumper \@raid;
+	eval $end if $b_log;
+}
+# 0 type
+# 1 type_id
+# 2 bus_id
+# 3 sub_id
+# 4 device
+# 5 vendor_id
+# 6 chip_id
+# 7 rev
+# 8 port
+# 9 driver
+# 10 modules
+sub hardware_raid {
+	eval $start if $b_log;
+	my ($driver,@data,@working);
+	foreach my $ref (@pci){
+		@working = @$ref;
+		next if $working[1] ne '0104';
+		$driver = ($working[9]) ? lc($working[9]): '';
+		$driver =~ s/-/_/g if $driver;
+		my $driver_version = ($driver) ? main::get_module_version($driver): '';
+		@data = ({
+		'bus-id' => $working[2],
+		'chip-id' => $working[6],
+		'device' => $working[4],
+		'driver' => $driver,
+		'driver-version' => $driver_version,
+		'port' => $working[8],
+		'rev' => $working[7],
+		'sub-id' => $working[3],
+		'vendor-id' => $working[5],
+		});
+		@hardware_raid = (@hardware_raid,@data);
+	}
+	# print Data::Dumper::Dumper \@hardware_raid;
+	main::log_data('dump','@hardware_raid',\@hardware_raid) if $b_log;
 	eval $end if $b_log;
 }
 sub mdraid_data {
@@ -12740,7 +12944,7 @@ sub get {
 	# we're allowing 1 or 2 ipmi tools, first the gnu one, then the 
 	# almost certain to be present in BSDs
 	if ( $b_ipmi || 
-	    ( main::globber('/dev/ipmi*') && 
+	    ( main::globber('/dev/ipmi**') && 
 	    ( ( $program = main::check_program('ipmi-sensors') ) ||
 	    ( $program = main::check_program('ipmitool') ) ) ) ){
 		if ($b_ipmi || $b_root){
@@ -12925,12 +13129,9 @@ sub create_output {
 sub ipmi_data {
 	eval $start if $b_log;
 	my ($program) = @_;
-	my ($cmd,$file,@data,$fan_working,%sensors,@row,$sys_fan_nu,$temp_working,$working_unit);
-	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmitool-sensors-archerseven-1.txt";
-	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmitool-sensors-crazy-epyc-1.txt";
-	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmi-sensors-crazy-epyc-1.txt";$program='ipmi-sensors';
-	#@data = main::reader($file);
-	$program ||= 'ipmi-xx'; # only for debugging, will always exist if reachers here
+	my ($b_cpu_0,$cmd,$file,@data,$fan_working,%sensors,@row,$sys_fan_nu,
+	$temp_working,$working_unit);
+	$program ||= 'ipmi-xx'; # only for debugging, will always exist if reaches here
 	my ($b_ipmitool,$i_key,$i_value,$i_unit);
 	if ($program =~ /ipmi-sensors$/){
 		$cmd = $program;
@@ -12941,13 +13142,18 @@ sub ipmi_data {
 		($b_ipmitool,$i_key,$i_value,$i_unit) = (1,0,1,2);
 	}
 	@data = main::grabber("$cmd 2>/dev/null");
+	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmitool-sensors-archerseven-1.txt";
+	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmitool-sensors-crazy-epyc-1.txt";
+	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmi-sensors-crazy-epyc-1.txt";$program='ipmi-sensors';
+	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmitool-sensors-RK016013.txt";$program='ipmi-sensors';
+	#@data = main::reader($file);
 	return if ! @data;
 	foreach (@data){
 		next if /^\s*$/;
 		#print "$_\n";
 		@row = split /\s*\|\s*/, $_;
-		#print "$row[$i_key] $row[$i_value]\n";
-		if ($row[$i_key] =~ /^System Temp/i){
+		# print "$row[$i_key] $row[$i_value]\n";
+		if ($row[$i_key] =~ /^System[\s_]Temp/i){
 			$sensors{'mobo-temp'} = int($row[$i_value]);
 			$working_unit = $row[$i_unit];
 			$working_unit =~ s/degrees\s// if $b_ipmitool; 
@@ -12955,21 +13161,24 @@ sub ipmi_data {
 		}
 		# Platform Control Hub (PCH), it is the X370 chip on the Crosshair VI Hero.
 		# VRM: voltage regulator module
-		elsif ($row[$i_key] =~ /^CPU[1]?\sTemp/i) {
+		# NOTE: CPU0_TEMP CPU1_TEMP is possible, unfortunately
+		elsif ( !$sensors{'cpu-temp'} && $row[$i_key] =~ /^CPU([01])?[\s_]Temp/i) {
+			$b_cpu_0 = 1 if defined $1 && $1 == 0;
 			$sensors{'cpu-temp'} = int($row[$i_value]);
 			$working_unit = $row[$i_unit];
 			$working_unit =~ s/degrees\s// if $b_ipmitool; 
 			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 		}
-		elsif ($row[$i_key] =~ /^CPU([2-4])\sTemp/i) {
+		elsif ($row[$i_key] =~ /^CPU([1-4])[\s_]Temp/i) {
 			$temp_working = $1;
+			$temp_working++ if $b_cpu_0;
 			$sensors{"cpu${temp_working}-temp"} = int($row[$i_value]);
 			$working_unit = $row[$i_unit];
 			$working_unit =~ s/degrees\s// if $b_ipmitool; 
 			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 		}
 		# for temp1/2 only use temp1/2 if they are null or greater than the last ones
-		elsif ($row[$i_key] =~ /^Temp 1$/i) {
+		elsif ($row[$i_key] =~ /^(MB[_]?TEMP1|Temp[\s_]1)$/i) {
 			$temp_working = int($row[$i_value]);
 			$working_unit = $row[$i_unit];
 			$working_unit =~ s/degrees\s// if $b_ipmitool; 
@@ -12978,7 +13187,7 @@ sub ipmi_data {
 			}
 			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 		}
-		elsif ($row[$i_key] =~ /^Temp 2$/i) {
+		elsif ($row[$i_key] =~ /^(MB[_]?TEMP2|Temp[\s_]2)$/i) {
 			$temp_working = int($row[$i_value]);
 			$working_unit = $row[$i_unit];
 			$working_unit =~ s/degrees\s// if $b_ipmitool; 
@@ -12988,7 +13197,7 @@ sub ipmi_data {
 			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 		}
 		# temp3 is only used as an absolute override for systems with all 3 present
-		elsif ($row[$i_key] =~ /^Temp 3$/i) {
+		elsif ($row[$i_key] =~ /^(MB[_]?TEMP3|Temp[\s_]3)$/i) {
 			$temp_working = int($row[$i_value]);
 			$working_unit = $row[$i_unit];
 			$working_unit =~ s/degrees\s// if $b_ipmitool; 
@@ -12998,15 +13207,15 @@ sub ipmi_data {
 			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 		}
 		# note: can be cpu fan:, cpu fan speed:, etc.
-		elsif ($row[$i_key] =~ /^(CPU|Processor)\sFan/i) {
+		elsif ($row[$i_key] =~ /^(CPU|Processor)[\s_]Fan/i) {
 			$sensors{'fan-main'} = () if !$sensors{'fan-main'};
 			$sensors{'fan-main'}[1] = int($row[$i_value]);
 		}
 		# note that the counters are dynamically set for fan numbers here
 		# otherwise you could overwrite eg aux fan2 with case fan2 in theory
 		# note: cpu/mobo/ps are 1/2/3
-		elsif ($row[$i_key] =~ /^FAN([0-9A-F]+)/i) {
-			$sys_fan_nu = hex($1);
+		elsif ($row[$i_key] =~ /^(SYS[\s_])?FAN([0-9A-F]+)/i) {
+			$sys_fan_nu = hex($2);
 			next if $row[$i_value] !~ /^[0-9\.]+$/;
 			$fan_working = int($row[$i_value]);
 			$sensors{'fan-default'} = () if !$sensors{'fan-default'};
@@ -13023,7 +13232,7 @@ sub ipmi_data {
 			}
 		}
 		if ($extra > 0){
-			if ($row[$i_key] =~ /^12V$/i) {
+			if ($row[$i_key] =~ /^(P[_]?)?12V$/i) {
 				$sensors{'volts-12'} = $row[$i_value];
 			}
 			elsif ($row[$i_key] =~ /^(P5V|5VCC)$/i) {
@@ -13032,7 +13241,7 @@ sub ipmi_data {
 			elsif ($row[$i_key] =~ /^(P3V3|3.3VCC)$/i) {
 				$sensors{'volts-3.3'} = $row[$i_value];
 			}
-			elsif ($row[$i_key] =~ /^VBAT$/i) {
+			elsif ($row[$i_key] =~ /^(P_)?VBAT$/i) {
 				$sensors{'volts-vbat'} = $row[$i_value];
 			}
 			# NOTE: VDimmP1ABC VDimmP1DEF
@@ -13050,12 +13259,11 @@ sub ipmi_data {
 			}
 		}
 	}
-	
 	# print Data::Dumper::Dumper \%sensors;
 	%sensors = data_processor(%sensors) if %sensors;
 	main::log_data('dump','ipmi: %sensors',\%sensors) if $b_log;
 	eval $end if $b_log;
-	#print Data::Dumper::Dumper \%sensors;
+	# print Data::Dumper::Dumper \%sensors;
 	return %sensors;
 }
 sub sensors_data {
@@ -13651,7 +13859,10 @@ sub get {
 	my (@data,@rows,$key1,$val1);
 	my $num = 0;
 	my $ref = $alerts{'dmidecode'};
-	if ($b_arm){
+	if ( $$ref{'action'} eq 'use' && (!$b_arm || $b_slot_tool )){
+		@rows = slot_data();
+	}
+	elsif ($b_arm && !$b_slot_tool){
 		$key1 = 'ARM';
 		$val1 = main::row_defaults('arm-pci','');
 		@rows = ({main::key($num++,$key1) => $val1,});
@@ -13661,9 +13872,6 @@ sub get {
 		$val1 = $$ref{$key1};
 		$key1 = ucfirst($key1);
 		@rows = ({main::key($num++,$key1) => $val1,});
-	}
-	else {
-		@rows = slot_data();
 	}
 	eval $end if $b_log;
 	return @rows;
@@ -15203,7 +15411,7 @@ sub get_display_manager {
 ## Get DistroData
 {
 package DistroData;
-my ($distro);
+my (@distro_data,@osr);
 sub get {
 	eval $start if $b_log;
 	if ($bsd_type){
@@ -15213,11 +15421,12 @@ sub get {
 		get_linux_distro();
 	}
 	eval $end if $b_log;
-	return $distro;
+	return @distro_data;
 }
 
 sub get_bsd_os {
 	eval $start if $b_log;
+	my ($distro) = ('');
 	if ($bsd_type eq 'darwin'){
 		my $file = '/System/Library/CoreServices/SystemVersion.plist';
 		if (-f $file){
@@ -15231,14 +15440,14 @@ sub get_bsd_os {
 	else {
 		$distro = "$uname[0] $uname[2]";
 	}
+	@distro_data = ($distro,'');
 	eval $end if $b_log;
-	return $distro;
 }
 
 sub get_linux_distro {
 	eval $start if $b_log;
-	my ($distro_file) = ('');
-	my ($b_antergos,$b_osr,@working);
+	my ($distro,$distro_file,$system_base) = ('','','');
+	my ($b_antergos,$b_armbian,$b_base_default,$b_mint,$b_osr,$b_raspbian,@working);
 	my @derived = qw(antix-version aptosid-version kanotix-version knoppix-version 
 	mandrake-release manjaro-release mx-version pardus-release porteus-version sabayon-release 
 	siduction-version sidux-version slitaz-release solusos-release turbolinux-release 
@@ -15247,28 +15456,33 @@ sub get_linux_distro {
 	my @primary = qw(arch-release gentoo-release redhat-release slackware-version 
 	SuSE-release);
 	my $primary_s = join "|", @primary;
+	my $base_default_s = 'antix-version|mx-version';
 	my $exclude_s = 'debian_version|devuan_version|ubuntu_version';
 	my $lsb_good_s = 'mandrake-release|mandriva-release|mandrakelinux-release|manjaro-release';
-	my $os_release_good_s = 'arch-release|SuSE-release';
+	my $os_release_good_s = 'arch-release|rpi-issue|SuSE-release';
 	# note: always exceptions, so wild card after release/version: 
 	# /etc/lsb-release-crunchbang
 	# wait to handle since crunchbang file is one of the few in the world that 
 	# uses this method
-	my @distro_files = glob('/etc/*[-_]{[rR]elease,[vV]ersion}*');
+	my @distro_files = main::globber('/etc/*[-_]{[rR]elease,[vV]ersion,issue}*');
 	my $lsb_release = '/etc/lsb-release';
-	my ($etc_issue,$issue) = ('','/etc/issue');
-	my $os_release = '/etc/os-release';
-	my $b_issue = 1 if -f $issue;
-	my $b_os_release = 1 if -f $os_release;
 	my $b_lsb = 1 if -f $lsb_release;
+	my ($etc_issue,$issue) = ('','/etc/issue');
+	my $b_issue = 1 if -f $issue;
 	# note: OpenSuse Tumbleweed 2018-05 has made /etc/issue created by sym link to /run/issue
 	# and then made that resulting file 700 permissions, which is obviously a mistake
-	$etc_issue = (main::reader($issue))[0] if $b_issue && -r $issue;
+	$etc_issue = (main::reader($issue))[0] if -r $issue;
+	my $os_release = '/etc/os-release';
+	@osr = main::reader($os_release) if -r $os_release;
 	# debian issue can end with weird escapes like \n \l 
 	# antergos: Antergos Linux \r (\l)
 	if ($etc_issue){
 		$etc_issue = main::clean_characters($etc_issue);
 		$b_antergos = 1 if $etc_issue =~ /antergos/i;
+		if ($etc_issue =~ /raspbian/i){
+			$b_raspbian = 1;
+			$os_release_good_s .= '|debian_version';
+		}
 	}
 	main::log_data('dump','@distro_files',\@distro_files) if $b_log;
 	if ( scalar @distro_files == 1 ){
@@ -15277,10 +15491,17 @@ sub get_linux_distro {
 	elsif (scalar @distro_files > 1) {
 		# special case, to force manjaro/antergos which also have arch-release
 		# manjaro should use lsb, which has the full info, arch uses os release
-		# antergos should use /etc/issue
-		if ($b_antergos || grep {/manjaro/} @distro_files){
-			@distro_files = grep {!/arch-release/} @distro_files;
+		# antergos should use /etc/issue. Note that antergos changed this around 
+		# 2018-05, and now lists antergos in os-release, sigh... We want these 
+		# distros to use os-release if it contains their names, so leave arch-release
+		if ($b_antergos || grep {/manjaro|chakra/} @distro_files){
+			if ( @osr && !(grep {/manjaro|antergos|chakra/i} @osr ) ){
+				@distro_files = grep {!/arch-release/} @distro_files;
+			}
+			# $system_base = 'Arch Linux';
 		}
+		$b_armbian = 1 if grep {/armbian/} @distro_files;
+		$b_base_default = 1 if grep {/\/etc\/($base_default_s)/} @distro_files;
 		my $distro_files_s = join "|", @distro_files;
 		@working = (@derived,@primary);
 		foreach my $file (@working){
@@ -15292,7 +15513,7 @@ sub get_linux_distro {
 				if ($b_lsb && $file =~ /$lsb_good_s/){
 					$distro_file = $lsb_release;
 				}
-				elsif ($b_os_release && $file =~ /($os_release_good_s)$/){
+				elsif (@osr && $file =~ /($os_release_good_s)$/){
 					$distro_file = $os_release;
 				}
 				else {
@@ -15316,7 +15537,7 @@ sub get_linux_distro {
 	elsif ($distro_file && $b_lsb && ($distro_file =~ /\/etc\/($lsb_good_s)$/ || $distro_file eq $lsb_release) ){
 		$distro = get_lsb_release();
 	}
-	elsif ($distro_file eq $os_release){
+	elsif ($distro_file && $distro_file eq $os_release){
 		$distro = get_os_release();
 		$b_osr = 1;
 	}
@@ -15340,10 +15561,10 @@ sub get_linux_distro {
 	}
 	# otherwise try  the default debian/ubuntu /etc/issue file
 	elsif ($b_issue){
-		my $b_mint = ( $etc_issue && $etc_issue =~ /mint/i ) ? 1 : 0;
+		$b_mint = ( $etc_issue && $etc_issue =~ /mint|lmde/i ) ? 1 : 0;
 		# os-release/lsb gives more manageable and accurate output than issue, 
 		# but mint should use issue for now. Antergos uses arch os-release, but issue shows them
-		if ($b_os_release && !$b_mint && !$b_antergos){
+		if (@osr && !$b_mint && !$b_antergos){
 			$distro = get_os_release();
 			$b_osr = 1;
 		}
@@ -15364,20 +15585,23 @@ sub get_linux_distro {
 	# exists then let's use that if it wasn't tried already. Maybe that will be better.
 	# not handling the corrupt data, maybe later if needed. 10 + distro: (8) + string
 	if ($distro && length($distro) > 60 ){
-		if (!$b_osr && $b_os_release){
+		if (!$b_osr && @osr){
 			$distro = get_os_release();
+			$b_osr = 1;
 		}
 	}
 	# test for /etc/lsb-release as a backup in case of failure, in cases 
 	# where > one version/release file were found but the above resulted 
 	# in null distro value. 
 	if (!$distro){
-		if ($b_os_release){
+		if (!$b_osr && @osr){
 			$distro = get_os_release();
+			$b_osr = 1;
 		}
 		elsif ($b_lsb){
 			$distro = get_lsb_release();
 		}
+		
 	}
 	# now some final null tries
 	if (!$distro ){
@@ -15389,10 +15613,21 @@ sub get_linux_distro {
 			$distro = $distro_file;
 		}
 	}
+	if ($extra > 2){
+		if (@osr){
+			if ($b_base_default ){
+				$system_base = get_os_release('default');
+			}
+			elsif ($b_mint){
+				$system_base = get_os_release('ubuntu');
+			}
+		}
+	}
+	$distro =~ s/Debian/Armbian/ if ($distro && $b_armbian);
 	## finally, if all else has failed, give up
 	$distro ||= 'unknown';
+	@distro_data = ($distro,$system_base);
 	eval $end if $b_log;
-	return $distro;
 }
 
 sub get_lsb_release {
@@ -15417,15 +15652,15 @@ sub get_lsb_release {
 				$id = $working[1];
 			}
 		}
-		if ($working[0] eq 'DISTRIB_RELEASE' && $working[1]){
+		elsif ($working[0] eq 'DISTRIB_RELEASE' && $working[1]){
 			$release = $working[1];
 		}
-		if ($working[0] eq 'DISTRIB_CODENAME' && $working[1]){
+		elsif ($working[0] eq 'DISTRIB_CODENAME' && $working[1]){
 			$codename = $working[1];
 		}
 		# sometimes some distros cannot do their lsb-release files correctly, 
 		# so here is one last chance to get it right.
-		if ($working[0] eq 'DISTRIB_DESCRIPTION' && $working[1]){
+		elsif ($working[0] eq 'DISTRIB_DESCRIPTION' && $working[1]){
 			$description = $working[1];
 		}
 	}
@@ -15441,9 +15676,10 @@ sub get_lsb_release {
 }
 sub get_os_release {
 	eval $start if $b_log;
-	my ($pretty_name,$lc_name,$name,$version_name,$version_id,
-	$distro_name,$distro) = ('','','','','','','');
-	my @content = main::reader('/etc/os-release');
+	my ($base_type) = @_;
+	my ($base_id,$base_name,$base_version,$distro,$distro_name,$pretty_name,
+	$lc_name,$name,$version_name,$version_id) = ('','','','','','','','','','');
+	my @content = @osr;
 	main::log_data('dump','@content',\@content) if $b_log;
 	@content = map {s/\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} @content if @content;
 	foreach (@content){
@@ -15453,34 +15689,96 @@ sub get_os_release {
 		if ($working[0] eq 'PRETTY_NAME' && $working[1]){
 			$pretty_name = $working[1];
 		}
-		if ($working[0] eq 'NAME' && $working[1]){
+		elsif ($working[0] eq 'NAME' && $working[1]){
 			$name = $working[1];
 			$lc_name = lc($name);
 		}
-		if ($working[0] eq 'VERSION' && $working[1]){
+		elsif ($working[0] eq 'VERSION' && $working[1]){
 			$version_name = $working[1];
+			$version_name =~ s/,//g;
 		}
-		if ($working[0] eq 'VERSION_ID' && $working[1]){
+		elsif ($working[0] eq 'VERSION_ID' && $working[1]){
 			$version_id = $working[1];
+		}
+		# for mint system base
+		if ($base_type ){
+			if ($working[0] eq 'ID_LIKE' && $working[1]){
+				$working[1] =~ s/ubuntu\sdebian/ubuntu/ if $base_type eq 'ubuntu';
+				$base_name = ucfirst($working[1]);
+			}
+			elsif ($base_type eq 'ubuntu' && $working[0] eq 'UBUNTU_CODENAME' && $working[1]){
+				$base_version = ucfirst($working[1]);
+			}
 		}
 	}
 	# NOTE: tumbleweed has pretty name but pretty name does not have version id
-	# arco shows only the release name, like kirk, in pretty name
-	if ($pretty_name && ($pretty_name !~ /tumbleweed/i && $lc_name ne 'arcolinux') ){
-		$distro = $pretty_name;
-	}
-	elsif ($name){
-		$distro = $name;
-		$distro = 'Arco Linux' if $lc_name eq 'arcolinux';
-		if ($version_name){
-			$distro .= ' ' . $version_name;
+	# arco shows only the release name, like kirk, in pretty name. Too many distros 
+	# are doing pretty name wrong, and just putting in the NAME value there
+	if (!$base_type){
+		if ($name && $version_name){
+			$distro = $name;
+			$distro = 'Arco Linux' if $lc_name =~ /^arco/;
+			if ($version_id && $version_name !~ /$version_id/){
+				$distro .= ' ' . $version_id;
+			}
+			$distro .= " $version_name";
 		}
-		elsif ($version_id){
-			$distro .= ' ' . $version_id;
+		elsif ($pretty_name && ($pretty_name !~ /tumbleweed/i && $lc_name ne 'arcolinux') ){
+			$distro = $pretty_name;
+		}
+		elsif ($name){
+			$distro = $name;
+			if ($version_id){
+				$distro .= ' ' . $version_id;
+			}
+		}
+	}
+	# note: mint has varying formats here, some have ubuntu as name, 17 and earlier
+	else {
+		# mint 17 used ubuntu os-release,  so won't have $base_version
+		if ($base_name && $base_version){
+			$base_id = ubuntu_id($base_version) if $base_type eq 'ubuntu' && $base_version;
+			$base_id = '' if $base_id && "$base_name$base_version" =~ /$base_id/;
+			$base_id .= ' ' if $base_id;
+			$distro = "$base_name $base_id$base_version";
+		}
+		elsif ($base_type eq 'default' && ($pretty_name || ($name && $version_name) ) ){
+			$distro = ($name && $version_name) ? "$name $version_name" : $pretty_name;
+		}
+		# maybe lmde, if that exists?
+		elsif ( $base_type eq 'ubuntu' && $lc_name =~ /^(debian|ubuntu)/ && ($pretty_name || ($name && $version_name))){
+			$distro = ($name && $version_name) ? "$name $version_name": $pretty_name;
 		}
 	}
 	eval $end if $b_log;
 	return $distro;
+}
+# note, these are only for matching derived names, no need to go
+# all the way back here, update as new names are known. This is because 
+# Mint is using UBUNTU_CODENAME without ID data.
+sub ubuntu_id {
+	eval $start if $b_log;
+	my ($codename) = lc(@_);
+	my ($id) = ('');
+	my %codenames = (
+	'cosmic' => '18.10',
+	'bionic' => '18.04 LTS',
+	'artful' => '17.10',
+	'zesty' => '17.04',
+	'yakkety' => '16.10',
+	'xenial' => '16.04 LTS',
+	'wily' => '15.10',
+	'vivid' => '15.04',
+	'utopic' => '14.10',
+	'trusty' => '14.04 LTS ',
+	'saucy' => '13.10',
+	'raring' => '13.04',
+	'quantal' => '12.10',
+	'precise' => '12.04 LTS ',
+	);
+	$id = $codenames{$codename} if defined $codenames{$codename};
+	eval $end if $b_log;
+	return $id;
 }
 }
 
@@ -15949,31 +16247,26 @@ sub get_shell_source {
 			log_data('data',$msg);
 		}
 		# in case sudo starts inxi, parent is shell (or perl inxi if run by debugger)
-		if ( $shell_parent && ( $shell_parent eq 'su' || 
-		     $shell_parent =~ /^(bash|csh|ksh|lksh|loksh|mksh|pdksh|sh|dash|perl|zsh|tcsh)$/ ) ){
-			my $shell = $1; # we want the first set only if shell is parent
-			# no idea why have to do script_parent action twice in su case, but you do.
-			$self_parent = get_start_parent($self_parent);
-			$shell_parent = get_shell_parent($self_parent) if $shell;
-			#print "shell parent 2: $shell_parent\n";
-			if ($b_log){
-				$msg = ($shell_parent) ? "shell parent 2: $shell_parent": "shell parent 2: undefined";
-				log_data('data',$msg);
-			}
-			if (!$shell || 
-			    $shell_parent =~ /^(bash|csh|ksh|lksh|loksh|mksh|pdksh|sh|dash|perl|zsh|tcsh)$/ ){
+		# so: perl (2) started pinxi with sudo (3) in sh (4) in terminal
+		for my $i (2..4){
+			if ( $shell_parent && 
+		     $shell_parent =~ /^(bash|csh|dash|ksh|lksh|loksh|mksh|pdksh|perl|sh|su|sudo|tcsh|zsh)$/ ){
+				# no idea why have to do script_parent action twice in su case, but you do.
 				$self_parent = get_start_parent($self_parent);
 				$shell_parent = get_shell_parent($self_parent);
+				#print "shell parent 2: $shell_parent\n";
+				if ($b_log){
+					$msg = ($shell_parent) ? "shell parent $i: $shell_parent": "shell parent $i: undefined";
+					log_data('data',$msg);
+				}
 			}
-			#print "shell parent 3: $shell_parent\n";
-			if ($b_log){
-				$msg = ($shell_parent) ? "shell parent 3: $shell_parent": "shell parent 3: undefined";
-			log_data('data',$msg);
+			else {
+				last;
 			}
 		}
 		# to work around a ps -p or gnome-terminal bug, which returns 
 		# gnome-terminal- trim - off end 
-		$shell_parent =~ s/-$//;
+		$shell_parent =~ s/-$// if $shell_parent;
 	}
 	if ($b_log){
 		$self_parent ||= '';
@@ -16265,6 +16558,7 @@ sub set_dmidecode_data {
 			$j = scalar @dmi;
 			$handle = hex($1);
 			$type = $2;
+			$b_slot_tool = 1 if $type && $type == 9;
 			$b_skip = ( $type > 126 )? 1 : 0;
 			next if $b_skip;
 			# we don't need 32, system boot, or 127, end of table
@@ -16465,6 +16759,12 @@ sub set_pci_data {
 			if ($alerts{'lspci'}{'action'} eq 'use' ){
 				set_lspci_data();
 			}
+			# ! -d '/proc/bus/pci'
+			# this is sketchy, a sbc won't have pci, but a non sbc arm may have it, so 
+			# build up both and see what happens
+			if ($b_arm ){
+				set_arm_soc_data();
+			}
 		}
 		else {
 			#if (1 == 1){
@@ -16491,15 +16791,17 @@ sub set_pci_data {
 sub set_lspci_data {
 	eval $start if $b_log;
 	my ($busid,$busid_nu,$content,$port,$driver,$modules,$device,$vendor_id,$chip_id,$rev,
-	$type,$type_id,@pcis,@temp);
+	$type,$type_id,@pcis,@temp,@working);
 	# my @pcis = grabber('lspci -nnv','\n','strip');
 	my $path = check_program('lspci');
 	$content = qx($path -nnv 2>/dev/null) if $path;
 	@pcis = split /\n/, $content if $content;
 	#my $file = "$ENV{HOME}/bin/scripts/inxi/data/lspci/racermach-1-knnv.txt";
+	#my $file = "$ENV{HOME}/bin/scripts/inxi/data/lspci/rk016013-knnv.txt";
 	#@pcis = reader($file);
 	#print scalar @pcis;
 	@pcis = map {$_ =~ s/^\s+//; $_} @pcis if @pcis;
+	$b_pci_tool = 1 if @pcis && scalar @pcis > 10;
 	foreach (@pcis){
 		#print "$_\n";
 		if ($device){
@@ -16522,18 +16824,21 @@ sub set_lspci_data {
 			}
 			
 		}
-		elsif ($_ =~ /^([0-9a-f]{2}:[0-9a-f]{2})[.:]([0-9a-f]+)\s(.*)\s\[([0-9a-f]{4}):([0-9a-f]{4})\](\s\(rev\s([^\)]+)\))?/){
+		# note: arm servers can have more complicated patterns
+		# 0002:01:02.0 Ethernet controller [0200]: Cavium, Inc. THUNDERX Network Interface Controller virtual function [177d:a034] (rev 08)
+		elsif ($_ =~ /^(([0-9a-f]{2,4}:)?[0-9a-f]{2}:[0-9a-f]{2})[.:]([0-9a-f]+)\s(.*)\s\[([0-9a-f]{4}):([0-9a-f]{4})\](\s\(rev\s([^\)]+)\))?/){
 			$busid = $1;
-			$busid_nu = hex($2);
-			my @working = split /:\s+/, $3;
+			$busid_nu = hex($3);
+			@working = split /:\s+/, $4;
 			$device = $working[1];
 			$type = $working[0];
-			$vendor_id = $4;
-			$chip_id = $5;
-			$rev = ($7)?$7 : '';
+			$vendor_id = $5;
+			$chip_id = $6;
+			$rev = ($8)? $8 : '';
 			$device = cleaner($device);
 			$working[0] =~ /\[([^\]]+)\]$/;
 			$type_id = $1;
+			$b_hardware_raid = 1 if $type_id eq '0104';
 			$type = lc($type);
 			$type = pci_cleaner($type,'pci');
 			$type =~ s/\s+$//;
@@ -16567,6 +16872,7 @@ sub set_pciconf_data {
 	my $path = check_program('pciconf');
 	$content = qx($path -lv 2>/dev/null) if $path;
 	@data = split /\n/, $content if $content;
+	$b_pci_tool = 1 if @data && scalar @data > 10;
 	foreach (@data){
 		if ($_ =~ /^[^@]+\@pci/){
 			push @working, '';
@@ -16603,7 +16909,6 @@ sub set_pciconf_data {
 			elsif ($_ =~ /^class/i){
 				$type = (split /\s+=\s+/,$_)[1];
 			}
-			
 		}
 		elsif (/^([^@]+)\@pci([0-9]{1,3}:[0-9]{1,3}:[0-9]{1,3}):([0-9]{1,3}).*class=([^\s]+)\scard=([^\s]+)\schip=([^\s]+)\srev=([^\s]+)/){
 			$driver = $1;
@@ -16635,11 +16940,77 @@ sub set_pciconf_data {
 	eval $end if $b_log;
 }
 
+## 1
+# /soc/1c30000.ethernet/uevent:["DRIVER=dwmac-sun8i", "OF_NAME=ethernet", 
+# "OF_FULLNAME=/soc/ethernet@1c30000", "OF_COMPATIBLE_0=allwinner,sun8i-h3-emac", 
+# "OF_COMPATIBLE_N=1", "OF_ALIAS_0=ethernet0", # "MODALIAS=of:NethernetT<NULL>Callwinner,sun8i-h3-emac"]
+## 2
+# /soc:audio/uevent:["DRIVER=bcm2835_audio", "OF_NAME=audio", "OF_FULLNAME=/soc/audio", 
+# "OF_COMPATIBLE_0=brcm,bcm2835-audio", "OF_COMPATIBLE_N=1", "MODALIAS=of:NaudioT<NULL>Cbrcm,bcm2835-audio"]
+## 3
+# /soc:fb/uevent:["DRIVER=bcm2708_fb", "OF_NAME=fb", "OF_FULLNAME=/soc/fb", 
+# "OF_COMPATIBLE_0=brcm,bcm2708-fb", "OF_COMPATIBLE_N=1", "MODALIAS=of:NfbT<NULL>Cbrcm,bcm2708-fb"]
+## 4
+# /soc/1c40000.gpu/uevent:["OF_NAME=gpu", "OF_FULLNAME=/soc/gpu@1c40000", 
+# "OF_COMPATIBLE_0=allwinner,sun8i-h3-mali", "OF_COMPATIBLE_1=allwinner,sun7i-a20-mali", 
+# "OF_COMPATIBLE_2=arm,mali-400", "OF_COMPATIBLE_N=3", 
+# "MODALIAS=of:NgpuT<NULL>Callwinner,sun8i-h3-maliCallwinner,sun7i-a20-maliCarm,mali-400"]
+sub set_arm_soc_data {
+	eval $start if $b_log;
+	my ($content,@files,@temp2,@temp3,@working);
+	@files = globber("/sys/devices/platform/soc*/*/uevent");
+	# not sure why, but even as root/sudo, /subsystem/uevent is unreadable with -r test true
+	@files = grep {!/subsystem/} @files if @files;
+	foreach my $file (@files){
+		my ($busid,$busid_nu,$chip_id,$device,$driver,$modules,$port,$rev,
+		$type,$type_id,$vendor_id,@working);
+		$chip_id = $file;
+		# variants: /soc/20100000.ethernet /soc/soc:audio /soc:/ /soc@0/
+		$chip_id =~ /\/sys\/devices\/platform\/soc[^\/]*\/([^\/]+)[\.:][^\/]+\/uevent/;
+		$chip_id = $1;
+		@working = reader($file, 'strip') if -r $file;
+		foreach my $data (@working){
+			@temp2 = split /=/, $data;
+			if ($temp2[0] eq 'DRIVER'){
+				$driver = $temp2[1];
+				$driver =~ s/-/_/g if $driver; # kernel uses _, not - in module names
+			}
+			elsif ($temp2[0] eq 'OF_NAME'){
+				$type = $temp2[1];
+			}
+			elsif ($temp2[0] eq 'OF_COMPATIBLE_0'){
+				@temp3 = split /,/, $temp2[1];
+				$device = $temp3[-1];
+				$vendor_id = $temp3[0];
+			}
+		}
+		$type = '' if ! defined $type;
+		$driver = '' if ! defined $driver;
+		$busid =  '';
+		$busid_nu =  0;
+		$type_id =  '';
+		$port = '';
+		$rev = '';
+		$modules = '';
+		$b_arm_audio = 1 if ($type eq 'audio' || $type eq 'hdmi' );
+		$b_arm_gfx = 1 if ($type eq 'gpu' || $type eq 'fb' || $type eq 'hdmi');
+		$b_arm_net = 1 if $type eq 'ethernet' || $type =~ /wifi/;
+		@temp3 = ($type,$type_id,$busid,$busid_nu,$device,$vendor_id,$chip_id,$rev,$port,$driver,$modules);
+		@pci = (@pci,[@temp3]);
+	}
+	print Dumper \@pci if $test[4];
+	main::log_data('dump','@pci',\@pci) if $b_log;
+	eval $end if $b_log;
+}
+
 sub set_ps_aux {
 	eval $start if $b_log;
 	@ps_aux = split "\n",qx(ps aux);;
 	shift @ps_aux; # get rid of header row
 	$_=lc for @ps_aux; # this is a super fast way to set to lower
+	# note: regular perl /.../inxi but sudo /.../inxi is added for sudo start
+	# for pinxi, we want to see the useage data for cpu/ram
+	@ps_aux = grep {!/\/$self_name\b/} @ps_aux if $self_name eq 'inxi';
 	# this is for testing for the presence of the command
 	@ps_cmd = map {
 		my @split = split /\s+/, $_;
@@ -17003,6 +17374,7 @@ sub generate_lines {
 			assign_data(%row);
 		}
 		if ( $show{'raid'} ){
+			set_pci_data() if !$b_pci_check; 
 			%row = line_handler('RAID','raid');
 			assign_data(%row);
 		}
@@ -17373,11 +17745,14 @@ sub generate_system_data {
 		$dms ||= 'N/A';
 		$data{$data_name}[$index]{main::key($num++,'dm')} = $dms;
 	}
-	my $distro_key = ($bsd_type) ? 'OS': 'Distro' ;
-	my $distro = DistroData::get();
+	my $distro_key = ($bsd_type) ? 'OS': 'Distro';
+	my @distro_data = DistroData::get();
+	my $distro = $distro_data[0];
 	$distro ||= 'N/A';
 	$data{$data_name}[$index]{main::key($num++,$distro_key)} = $distro;
-	
+	if ($extra > 0 && $distro_data[1]){
+		$data{$data_name}[$index]{main::key($num++,'base')} = $distro_data[1];
+	}
 	eval $end if $b_log;
 	return %data;
 }
