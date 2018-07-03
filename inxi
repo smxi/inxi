@@ -31,8 +31,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.0.14';
-my $self_date='2018-06-27';
+my $self_version='3.0.15';
+my $self_date='2018-07-03';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -1489,8 +1489,9 @@ sub display_data {
 	'gdmsession' => $ENV{'GDMSESSION'},
 	'gnome-desktop-session-id' => $ENV{'GNOME_DESKTOP_SESSION_ID'},
 	'kde3-full-session' => $ENV{'KDE_FULL_SESSION'},
-	'xdg-current-desktop' => $ENV{'XDG_CURRENT_DESKTOP'},
 	'kde-gte-4-session-version' => $ENV{'KDE_SESSION_VERSION'},
+	'vdpau-driver' => $ENV{'VDPAU_DRIVER'},
+	'xdg-current-desktop' => $ENV{'XDG_CURRENT_DESKTOP'},
 	'xdg-session-desktop' => $ENV{'XDG_SESSION_DESKTOP'},
 	# wayland data collectors:
 	'xdg-session-type' => $ENV{'XDG_SESSION_TYPE'},
@@ -1528,6 +1529,8 @@ sub display_data {
 	['nvidia-smi','-q'],
 	['nvidia-smi','-q -x'],
 	['plasmashell','--version'],
+	['vainfo',''],
+	['vdpauinfo',''],
 	['weston-info',''], 
 	['wmctrl','-m'],
 	['weston','--version'],
@@ -3100,7 +3103,7 @@ sub program_values {
 	'mate-about' => ['^MATE[[:space:]]DESKTOP',-1,'--version','MATE',0,1,0],
 	# note, mate-session when launched with full path returns full path in version string
 	'mate-session' => ['mate-session',-1,'--version','MATE',0,1,0], 
-	'openbox' => ['^openboxt',2,'--version','Openbox',0,1,0],
+	'openbox' => ['^openbox',2,'--version','Openbox',0,1,0],
 	'pekwm' => ['^pekwm',3,'--version','pekwm',0,1,0],
 	'plasmashell' => ['^plasmashell',2,'--version','KDE Plasma',0,1,0],
 	'qtdiag' => ['^qt',2,'--version','Qt',0,1,0],
@@ -4239,7 +4242,9 @@ sub show_options {
 	['2', '-C', '', "Minimum CPU speed, if available." ],
 	['2', '-D', '', "Disk transfer speed; NVMe lanes; Disk serial number." ],
 	['2', '-G', '', "Chip vendor:product ID for each video card; OpenGL 
-	compatibility version, if free drivers and available; compositor (experimental)." ],
+	compatibility version, if free drivers and available; compositor (experimental);
+	alternate Xorg drivers (if available). Alternate means driver is on automatic 
+	driver check list of Xorg for the card vendor, but is not installed on system." ],
 	['2', '-I', '', "Other detected installed gcc versions (if present). System 
 	default runlevel. Adds parent program (or tty) for shell info if not in 
 	IRC. Adds Init version number, RC (if found)." ],
@@ -8108,7 +8113,7 @@ sub device_vendor {
 	['(^ST[^T]|[S]?SEAGATE|^X[AFP])','[S]?SEAGATE','Seagate',''], # real, SSEAGATE Backup+; XP1600HE30002
 	['^(WD|Western Digital|My Passport|00LPCX|Elements)','(^WDC|Western Digital)','Western Digital',''],
 	## Then better known ones ##
-	['^(A-DATA|ADATA)','^(A-DATA|ADATA)','A-Data',''],
+	['^(A-DATA|ADATA|AXN)','^(A-DATA|ADATA)','A-Data',''],
 	['^ADTRON','^(ADTRON)','Adtron',''],
 	['^ASUS','^ASUS','ASUS',''],
 	['^ATP','^ATP[\s\-]','ATP',''],
@@ -8538,7 +8543,6 @@ sub display_data(){
 								}
 							}
 						}
-						
 					}
 				}
 			}
@@ -8604,6 +8608,9 @@ sub display_data(){
 			}
 			if ($drivers[1]){
 				$row[0]{main::key($num++,'unloaded')} = $drivers[1];
+			}
+			if ($extra > 1 && $drivers[3]){
+				$row[0]{main::key($num++,'alternate')} = $drivers[3];
 			}
 			if ($graphics{'compositor'}){
 				$row[0]{main::key($num++,'compositor')} = $graphics{'compositor'};
@@ -8763,11 +8770,15 @@ sub tty_data(){
 sub x_drivers {
 	eval $start if $b_log;
 	my ($driver,@driver_data,,%drivers);
-	my ($failed,$loaded,$sep,$unloaded) = ('','','','');
+	my ($alternate,$failed,$loaded,$sep,$unloaded) = ('','','','','');
 	if (my $log = main::system_files('xorg-log')){
+		# $log = "$ENV{HOME}/bin/scripts/inxi/data/xorg-logs/Xorg.0-voyager-serena.log";
+		# $log = "$ENV{HOME}/bin/scripts/inxi/data/xorg-logs/loading-unload-failed-all41-mint.txt";
+		# $log = "$ENV{HOME}/bin/scripts/inxi/data/xorg-logs/loading-unload-failed-phd21-mint.txt";
+		# $log = "$ENV{HOME}/bin/scripts/inxi/data/xorg-logs/Xorg.0-gm10.log";
 		my @xorg = main::reader($log);
-		# list is from sgfxi plus non-free drivers
-		my $list = 'amdgpu|apm|ark|ati|chips|cirrus|cyrix|fbdev|fglrx|glint|';
+		# list is from sgfxi plus non-free drivers, plus ARM drivers
+		my $list = 'amdgpu|apm|ark|armsoc|ati|chips|cirrus|cyrix|fbdev|fbturbo|fglrx|glint|';
 		$list .= 'i128|i740|i810|iftv|imstt|intel|ivtv|mach64|mesa|mga|modesetting|';
 		$list .= 'neomagic|newport|nouveau|nsc|nvidia|nv|openchrome|radeonhd|radeon|';
 		$list .= 'rendition|s3virge|s3|savage|siliconmotion|sisimedia|sisusb|sis|tdfx|';
@@ -8777,29 +8788,48 @@ sub x_drivers {
 		#@xorg = grep {/Failed|Unload|Loading/} @xorg;
 		foreach (@xorg){
 			next if !/Failed|Unload|Loading/;
+			# print "$_\n";
 			# note that in file names, driver is always lower case
 			if (/\sLoading.*($list)_drv.so$/i ) {
 				$driver=lc($1);
 				# we get all the actually loaded drivers first, we will use this to compare the
 				# failed/unloaded, which have not always actually been truly loaded
-				$drivers{$driver}="loaded";
+				$drivers{$driver}='loaded';
 			}
 			# openbsd uses UnloadModule: 
-			elsif (/(Unloading\s|UnloadModule).*($list)(_drv.so)?$/i ) {
+			elsif (/(Unloading\s|UnloadModule).*\"?($list)(_drv.so)?\"?$/i ) {
 				$driver=lc($2);
 				# we get all the actually loaded drivers first, we will use this to compare the
 				# failed/unloaded, which have not always actually been truly loaded
-				$drivers{$driver}="unloaded" ;
+				if (exists $drivers{$driver} && $drivers{$driver} ne 'alternate'){
+					$drivers{$driver}='unloaded';
+				}
 			}
 			# verify that the driver actually started the desktop, even with false failed messages 
-			# which can occur. This is the driver that is actually driving the display
-			elsif (/Failed.*($list)\"?(_drv.so)?$/i ) {
-				$driver=lc($1);
-				# we need to make sure that the driver has already been truly loaded, not just 
-				# discussed, also set driver to lower case because sometimes it will show as 
+			# which can occur. This is the driver that is actually driving the display.
+			# note that xorg will often load several modules, like modesetting,fbdev,nouveau
+			# NOTE:
+			#(II) UnloadModule: "nouveau"
+			#(II) Unloading nouveau
+			#(II) Failed to load module "nouveau" (already loaded, 0)
+			#(II) LoadModule: "modesetting"
+			elsif (/Failed.*($list)\"?.*$/i ) {
+				# Set driver to lower case because sometimes it will show as 
 				# RADEON or NVIDIA in the actual x start
-				if (exists $drivers{$driver}){
-					$drivers{$driver}="failed";
+				$driver=lc($1);
+				# we need to make sure that the driver has already been truly loaded, 
+				# not just discussed
+				if (exists $drivers{$driver} && $drivers{$driver} ne 'alternate'){
+					if ( $_ !~ /\(already loaded/){
+						$drivers{$driver}='failed';
+					}
+					# reset the previous line's 'unloaded' to 'loaded' as well
+					else {
+						$drivers{$driver}='loaded';
+					}
+				}
+				elsif ($_ =~ /module does not exist/){
+					$drivers{$driver}='alternate';
 				}
 			}
 		}
@@ -8817,9 +8847,13 @@ sub x_drivers {
 				$sep = ($failed) ? ',' : '';
 				$failed .= $sep . $_;
 			}
+			elsif ($drivers{$_} eq 'alternate') {
+				$sep = ($alternate) ? ',' : '';
+				$alternate .= $sep . $_;
+			}
 		}
 		$loaded ||= 'none';
-		@driver_data = ($loaded,$unloaded,$failed);
+		@driver_data = ($loaded,$unloaded,$failed,$alternate);
 	}
 	eval $end if $b_log;
 	return @driver_data;
@@ -15076,7 +15110,7 @@ sub get_xprop_de_data {
 			$desktop[1] = '' if $desktop[1] !~ /[0-9]\./; 
 		}
 		$desktop[0] ||= 'Xfce';
-		$desktop[1] ||= 4;
+		$desktop[1] ||= ''; # xfce isn't going to be 4 forever
 		if ($extra > 0){
 			@data = main::program_values('xfdesktop-toolkit');
 			#$desktop[3] = main::program_version('xfdesktop',$data[0],$data[1],$data[2],$data[5],$data[6]);
@@ -15157,6 +15191,11 @@ sub get_xprop_de_data {
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('herbstluftwm',$data[0],$data[1],$data[2],$data[5],$data[6]);
 	}
+	elsif (main::check_program('openbox') && main::awk(\@xprop,'openbox_pid' )){
+		@data = main::program_values('openbox');
+		$desktop[0] = $data[3];
+		$desktop[1] = main::program_version('openbox',$data[0],$data[1],$data[2],$data[5],$data[6]);
+	}
 	# need to check starts line because it's so short
 	eval $end if $b_log;
 }
@@ -15182,6 +15221,11 @@ sub get_ps_de_data {
 		@data = main::program_values('awesome');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('awesome',$data[0],$data[1],$data[2],$data[5],$data[6]);
+	}
+	elsif (main::check_program('blackbox') && main::awk(\@ps_cmd,'blackbox' )){
+		@data = main::program_values('blackbox');
+		$desktop[0] = $data[3];
+		$desktop[1] = main::program_version('blackbox',$data[0],$data[1],$data[2],$data[5],$data[6]);
 	}
 	# not in debian apt
 	elsif (main::check_program('scrotwm') && main::awk(\@ps_cmd,'scrotwm' )){
@@ -15238,11 +15282,23 @@ sub get_wm {
 	if ( my $program =  main::check_program('wmctrl') ){
 		my $cmd = "$program -m 2>/dev/null";
 		my @data = main::grabber($cmd,'','strip');
+		main::log_data('dump','@data',\@data) if $b_log;
 		$desktop[5] = main::awk(\@data,'^Name',2,'\s*:\s*');
 		if ($desktop[5]){
-			# IceWM 1.3.8 (Linux 3.2.0-4-amd64/i686)
-			$desktop[5] =~ s/[0-9]+\.[0-9][\S]+|[\[\(].*[\)\]]//g;
+			# variants: gnome shell; 
+			# IceWM 1.3.8 (Linux 3.2.0-4-amd64/i686) ; Metacity (Marco) ; Xfwm4
+			$desktop[5] =~ s/\d+\.\d\S+|[\[\(].*\d+\.\d.*[\)\]]//g;
 			$desktop[5] = main::trimmer($desktop[5]);
+# 			my $temp = (split /\s+/, $desktop[5])[0];
+# 			if ($temp){
+# 				$temp = lc($temp);
+# 				@data = main::program_values($temp);
+# 				# print Data::Dumper::Dumper \@data;
+# 				if (@data){
+# 					my $version = main::program_version($temp,$data[0],$data[1],$data[2],$data[5],$data[6]);
+# 					$desktop[5] .= ' ' . $version if $version;
+# 				}
+# 			}
 		}
 	}
 	eval $end if $b_log;
@@ -15360,8 +15416,8 @@ sub get_display_manager {
 	# extension in Arch note: to avoid positives with directories, test for -f 
 	# explicitly, not -e
 	my @dms = qw(entranced.pid gdm.pid gdm3.pid kdm.pid ldm.pid 
-	lightdm.pid lxdm.pid mdm.pid nodm.pid pcdm.pid 
-	sddm.pid slim.lock tint2.pid wdm.pid xdm.pid xenodm.pid);
+	lightdm.pid lxdm.pid mdm.pid nodm.pid pcdm.pid 	sddm.pid slim.lock 
+	tint2.pid wdm.pid xdm.pid xenodm.pid);
 	# this is the only one I know of so far that has --version
 	# lightdm outputs to stderr, so it has to be redirected
 	my @dms_version = qw(lightdm);
@@ -15369,7 +15425,7 @@ sub get_display_manager {
 	# in most linux, /var/run is a sym link to /run, so no need to check it twice
 	if ( -d "/var/run" ){
 		my $rdlink = readlink('/var/run');
-		$b_vrun = 1 if $rdlink && $rdlink ne '/run';
+		$b_vrun = 1 if !$rdlink || ($rdlink && $rdlink ne '/run');
 		$b_vrunrc = 1 if -d "/var/run/rc.d";
 	}
 	foreach my $id (@dms){
@@ -15446,8 +15502,8 @@ sub get_bsd_os {
 
 sub get_linux_distro {
 	eval $start if $b_log;
-	my ($distro,$distro_file,$system_base) = ('','','');
-	my ($b_antergos,$b_armbian,$b_mint,$b_osr,$b_raspbian,@working);
+	my ($distro,$distro_id,$distro_file,$system_base) = ('','','','');
+	my ($b_issue,$b_osr,$b_use_issue,@working);
 	my @derived = qw(antix-version aptosid-version kanotix-version knoppix-version 
 	mandrake-release manjaro-release mx-version pardus-release porteus-version sabayon-release 
 	siduction-version sidux-version slitaz-release solusos-release turbolinux-release 
@@ -15456,7 +15512,6 @@ sub get_linux_distro {
 	my @primary = qw(arch-release gentoo-release redhat-release slackware-version 
 	SuSE-release);
 	my $primary_s = join "|", @primary;
-	my $base_default_s = 'antix-version|mx-version';
 	my $exclude_s = 'debian_version|devuan_version|ubuntu_version';
 	my $lsb_good_s = 'mandrake-release|mandriva-release|mandrakelinux-release|manjaro-release';
 	my $os_release_good_s = 'arch-release|rpi-issue|SuSE-release';
@@ -15468,7 +15523,7 @@ sub get_linux_distro {
 	my $lsb_release = '/etc/lsb-release';
 	my $b_lsb = 1 if -f $lsb_release;
 	my ($etc_issue,$issue) = ('','/etc/issue');
-	my $b_issue = 1 if -f $issue;
+	$b_issue = 1 if -f $issue;
 	# note: OpenSuse Tumbleweed 2018-05 has made /etc/issue created by sym link to /run/issue
 	# and then made that resulting file 700 permissions, which is obviously a mistake
 	$etc_issue = (main::reader($issue))[0] if -r $issue;
@@ -15478,51 +15533,65 @@ sub get_linux_distro {
 	# antergos: Antergos Linux \r (\l)
 	if ($etc_issue){
 		$etc_issue = main::clean_characters($etc_issue);
-		$b_antergos = 1 if $etc_issue =~ /antergos/i;
-		if ($etc_issue =~ /raspbian/i){
-			$b_raspbian = 1;
-			$os_release_good_s .= '|debian_version';
+		if ($etc_issue =~ /antergos/i){
+			$distro_id = 'antergos';
+			$b_use_issue = 1;
+		}
+		if (lc($etc_issue) =~ /(raspbian|peppermint)/){
+			$distro_id = $1;
+			$distro_file = $os_release if @osr;
+		}
+		elsif (lc($etc_issue) =~ /(grml)/){
+			$distro_id = $1;
+			$b_use_issue = 1;
 		}
 	}
+	# Note that antergos changed this around 	# 2018-05, and now lists 
+	# antergos in os-release, sigh... We want these distros to use os-release 
+	# if it contains their names. Last check below
+	if ( @osr && (grep {/manjaro|antergos|chakra/i} @osr ) ){
+		$distro_file = $os_release;
+		#$system_base = 'Arch Linux';
+	}
+	
+	$distro_id = 'armbian' if grep {/armbian/} @distro_files;
 	main::log_data('dump','@distro_files',\@distro_files) if $b_log;
-	if ( scalar @distro_files == 1 ){
-		$distro_file = $distro_files[0];
-	}
-	elsif (scalar @distro_files > 1) {
-		# special case, to force manjaro/antergos which also have arch-release
-		# manjaro should use lsb, which has the full info, arch uses os release
-		# antergos should use /etc/issue. Note that antergos changed this around 
-		# 2018-05, and now lists antergos in os-release, sigh... We want these 
-		# distros to use os-release if it contains their names, so leave arch-release
-		if ($b_antergos || grep {/manjaro|chakra/} @distro_files){
-			if ( @osr && !(grep {/manjaro|antergos|chakra/i} @osr ) ){
+	main::log_data('data',"distro_file-1: $distro_file") if $b_log;
+	if (!$distro_file){
+		if (scalar @distro_files == 1){
+			$distro_file = $distro_files[0];
+		}
+		elsif (scalar @distro_files > 1) {
+			# special case, to force manjaro/antergos which also have arch-release
+			# manjaro should use lsb, which has the full info, arch uses os release
+			# antergos should use /etc/issue. We've already checked os-release above
+			if ($distro_id eq 'antergos' || (grep {/antergos|chakra|manjaro/} @distro_files )){
 				@distro_files = grep {!/arch-release/} @distro_files;
+				#$system_base = 'Arch Linux';
 			}
-			# $system_base = 'Arch Linux';
-		}
-		$b_armbian = 1 if grep {/armbian/} @distro_files;
-		my $distro_files_s = join "|", @distro_files;
-		@working = (@derived,@primary);
-		foreach my $file (@working){
-			if ( "/etc/$file" =~ /($distro_files_s)$/){
-				# Now lets see if the distro file is in the known-good working-lsb-list
-				# if so, use lsb-release, if not, then just use the found file
-				# this is for only those distro's with self named release/version files
-				# because Mint does not use such, it must be done as below 
-				if ($b_lsb && $file =~ /$lsb_good_s/){
-					$distro_file = $lsb_release;
+			my $distro_files_s = join "|", @distro_files;
+			@working = (@derived,@primary);
+			foreach my $file (@working){
+				if ( "/etc/$file" =~ /($distro_files_s)$/){
+					# Now lets see if the distro file is in the known-good working-lsb-list
+					# if so, use lsb-release, if not, then just use the found file
+					# this is for only those distro's with self named release/version files
+					# because Mint does not use such, it must be done as below 
+					if ($b_lsb && $file =~ /$lsb_good_s/){
+						$distro_file = $lsb_release;
+					}
+					elsif (@osr && $file =~ /($os_release_good_s)$/){
+						$distro_file = $os_release;
+					}
+					else {
+						$distro_file = "/etc/$file";
+					}
+					last;
 				}
-				elsif (@osr && $file =~ /($os_release_good_s)$/){
-					$distro_file = $os_release;
-				}
-				else {
-					$distro_file = "/etc/$file";
-				}
-				last;
 			}
 		}
 	}
-	main::log_data('data',"distro_file: $distro_file") if $b_log;
+	main::log_data('data',"distro_file-2: $distro_file") if $b_log;
 	# first test for the legacy antiX distro id file
 	if ( -f '/etc/antiX'){
 		@working = main::reader('/etc/antiX');
@@ -15560,14 +15629,17 @@ sub get_linux_distro {
 	}
 	# otherwise try  the default debian/ubuntu /etc/issue file
 	elsif ($b_issue){
-		$b_mint = ( $etc_issue && $etc_issue =~ /mint|lmde/i ) ? 1 : 0;
+		if ( !$distro_id && $etc_issue && lc($etc_issue) =~ /(mint|lmde)/ ){
+			$distro_id = $1;
+			$b_use_issue = 1;
+		}
 		# os-release/lsb gives more manageable and accurate output than issue, 
 		# but mint should use issue for now. Antergos uses arch os-release, but issue shows them
-		if (@osr && !$b_mint && !$b_antergos){
+		if (!$b_use_issue && @osr){
 			$distro = get_os_release();
 			$b_osr = 1;
 		}
-		elsif ($b_lsb && !$b_mint && !$b_antergos){
+		elsif (!$b_use_issue && $b_lsb){
 			$distro = get_lsb_release();
 		}
 		elsif ($etc_issue) {
@@ -15600,7 +15672,6 @@ sub get_linux_distro {
 		elsif ($b_lsb){
 			$distro = get_lsb_release();
 		}
-		
 	}
 	# now some final null tries
 	if (!$distro ){
@@ -15613,21 +15684,38 @@ sub get_linux_distro {
 		}
 	}
 	if ($extra > 0){
+		my $base_default = 'antix-version|mx-version';
+		my $base_issue = 'bunsen';
+		my $base_manual = 'kali';
+		my $base_osr = 'aptosid|grml|siduction';
 		if (@osr){
-			my ($b_base_default);
+			my ($base_type) = ('');
+			if ($etc_issue && (grep {/($base_issue)/i} @osr)){
+				$system_base = $etc_issue;
+			}
+			elsif ($etc_issue && lc($etc_issue) =~ /($base_manual)/){
+				my $id = $1;
+				my %manual = (
+				'kali' => 'Debian testing',
+				);
+				$system_base = $manual{$id};
+			}
 			# more tests added here for other ubuntu derived distros
-			if ( @distro_files && (grep {/\/etc\/($base_default_s)/} @distro_files) ){
-				$b_base_default = 1;
+			elsif ( @distro_files && (grep {/($base_default)/} @distro_files) ){
+				$base_type = 'default';
 			}
-			if ($b_base_default ){
-				$system_base = get_os_release('default');
+			elsif ($distro_id && $distro_id =~ /(mint)/){
+				$base_type = 'ubuntu';
 			}
-			elsif ($b_mint){
-				$system_base = get_os_release('ubuntu');
+			elsif (@distro_files && (grep {/($base_osr)/} @distro_files) && !(grep {/($base_osr)/i} @osr)){
+				$system_base = get_os_release();
+			}
+			if (!$system_base && $base_type){
+				$system_base = get_os_release($base_type);
 			}
 		}
 	}
-	$distro =~ s/Debian/Armbian/ if ($distro && $b_armbian);
+	$distro =~ s/Debian/Armbian/ if ($distro && $distro_id eq 'armbian');
 	## finally, if all else has failed, give up
 	$distro ||= 'unknown';
 	@distro_data = ($distro,$system_base);
@@ -15707,7 +15795,10 @@ sub get_os_release {
 		# for mint system base
 		if ($base_type ){
 			if ($working[0] eq 'ID_LIKE' && $working[1]){
-				$working[1] =~ s/ubuntu\sdebian/ubuntu/ if $base_type eq 'ubuntu';
+				if ($base_type eq 'ubuntu'){
+					$working[1] =~ s/ubuntu\sdebian/ubuntu/;
+					$working[1] = 'ubuntu' if $working[1] eq 'debian';
+				}
 				$base_name = ucfirst($working[1]);
 			}
 			elsif ($base_type eq 'ubuntu' && $working[0] eq 'UBUNTU_CODENAME' && $working[1]){
@@ -15749,7 +15840,7 @@ sub get_os_release {
 		elsif ($base_type eq 'default' && ($pretty_name || ($name && $version_name) ) ){
 			$distro = ($name && $version_name) ? "$name $version_name" : $pretty_name;
 		}
-		# maybe lmde, if that exists?
+		# LMDE has only limited data in os-release, no _LIKE values
 		elsif ( $base_type eq 'ubuntu' && $lc_name =~ /^(debian|ubuntu)/ && ($pretty_name || ($name && $version_name))){
 			$distro = ($name && $version_name) ? "$name $version_name": $pretty_name;
 		}
