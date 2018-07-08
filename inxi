@@ -31,8 +31,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.0.15';
-my $self_date='2018-07-03';
+my $self_version='3.0.16';
+my $self_date='2018-07-08';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -55,9 +55,9 @@ if (eval {require Time::HiRes}){
 my ( %alerts,%client,%colors,%dl,%files,%rows,%system_files,%use );
 
 ## Arrays
-# ps_aux is full output, ps_cmd is only the last 10 to last
+# ps_aux is full output, ps_cmd is only the last 10 columns to last
 my (@app,@dmesg_boot,@dmi,@gpudata,@ifs,@ifs_bsd,@paths,@pci,@ps_aux,
-@ps_cmd,@sysctl,@sysctl_battery,@sysctl_sensors,@sysctl_machine,
+@ps_cmd,@ps_gui,@sysctl,@sysctl_battery,@sysctl_sensors,@sysctl_machine,
 @uname,@usb);
 ## Disk arrays 
 my (@dm_boot_disk,@dm_boot_optical,@glabel,@gpart,@hardware_raid,@labels,
@@ -66,11 +66,12 @@ my @test = (0,0,0,0,0);
 
 ## Booleans
 my ($b_admin,$b_arm,$b_arm_audio,$b_arm_gfx,$b_arm_net,$b_console_irc,
-$b_debug_gz,$b_display,$b_dmesg_boot_check,$b_dmi,$b_dmidecode_force,
-$b_fake_bsd,$b_fake_dboot,$b_fake_pciconf,$b_fake_sysctl,$b_fake_usbdevs,
-$b_force_display,$b_gpudata,$b_irc,$b_log,$b_log_colors,$b_log_full,
-$b_man,$b_mem,$b_pci,$b_pci_tool,$b_proc_debug,$b_root,
-$b_running_in_display,$b_slot_tool,$b_sudo,$b_sysctl,$b_usb_check);
+$b_debug_gz,$b_debug_timers,$b_display,$b_dmesg_boot_check,
+$b_dmi,$b_dmidecode_force,$b_fake_bsd,$b_fake_dboot,$b_fake_pciconf,
+$b_fake_sysctl,$b_fake_usbdevs,$b_force_display,$b_gpudata,$b_irc,
+$b_log,$b_log_colors,$b_log_full,$b_man,$b_mem,$b_pci,$b_pci_tool,
+$b_proc_debug,$b_ps_gui,$b_root,$b_running_in_display,$b_slot_tool,
+$b_sudo,$b_sysctl,$b_usb_check,$b_wm_ps);
 ## Disk checks
 my ($b_dm_boot_disk,$b_dm_boot_optical,$b_glabel,$b_hardware_raid,
 $b_label_uuid,$b_lsblk,$b_partitions,$b_raid);
@@ -138,7 +139,7 @@ sub main {
 	eval $start if $b_log;
 	initialize();
 	## use for start client debugging
-	# $debug = 10;
+	# $debug = 3; # 3 prints timers
 	# set_debugger(); # for debugging of konvi issues
 	#my $ob_start = StartClient->new();
 	#$ob_start->get_client_data();
@@ -1089,9 +1090,10 @@ sub begin_logging {
 	$end='main::log_data("fe", (caller(1))[3], "");';
 	$start='main::log_data("fs", (caller(1))[3], \@_);';
 	#$t3 = tv_interval ($t0, [gettimeofday]);
-	 $t3 = eval 'Time::HiRes::tv_interval (\@t0, [Time::HiRes::gettimeofday()]);' if $b_hires;
+	$t3 = eval 'Time::HiRes::tv_interval (\@t0, [Time::HiRes::gettimeofday()]);' if $b_hires;
 	#print Dumper $@;
 	my $now = strftime "%Y-%m-%d %H:%M:%S", localtime;
+	return if $b_debug_timers;
 	# do the rotation if logfile exists
 	if ( -f $log_file ){
 		# copy if present second to third
@@ -1127,8 +1129,7 @@ sub begin_logging {
 sub log_data {
 	return if ! $b_log;
 	my ($one, $two, $three) = @_;
-	my $args = '';
-	my $data = '';
+	my ($args,$data,$timer) = ('','','');
 	my $spacer = '   ';
 	# print "1: $one 2: $two 3: $three\n";
 	if ($one eq 'fs') {
@@ -1146,6 +1147,7 @@ sub log_data {
 		#print Dumper $@;
 		$data = "Start: Function: $two$args\n${spacer}Elapsed: $t3\n";
 		$spacer='';
+		$timer = $data if $b_debug_timers;
 	}
 	elsif ( $one eq 'fe') {
 		# print 'timer:', Time::HiRes::tv_interval(\@t0, [Time::HiRes::gettimeofday()]),"\n";
@@ -1154,6 +1156,7 @@ sub log_data {
 		#print Dumper $t3;
 		$data = "${spacer}Elapsed: $t3\nEnd: Function: $two\n";
 		$spacer='';
+		$timer = $data if $b_debug_timers;
 	}
 	elsif ( $one eq 'cat') {
 		if ( $b_log_full ){
@@ -1195,25 +1198,24 @@ sub log_data {
 	else {
 		$data = "$two\n";
 	}
-	# print "d: $data";
-	if ($data){
+	if ($b_debug_timers){
+		print $timer if $timer;
+	}
+	#print "d: $data";
+	elsif ($data){
 		print $fh_l "$spacer$data";
 	}
 }
 
 sub set_debugger {
-	if ( $debug < 10 || $debug > 12){
-		$end = '';
-		$start = '';
-		if ( $debug >= 20 ){
-			error_handler('not-in-irc', 'debug data generator') if $b_irc;
-			my $option = ( $debug > 22 ) ? 'main-full' : 'main';
-			$b_debug_gz = 1 if ($debug == 22 || $debug == 24);
-			my $ob_sys = SystemDebugger->new($option);
-			$ob_sys->run_debugger();
-			$ob_sys->upload_file($ftp_alt) if $debug > 20;
-			exit 0;
-		}
+	if ( $debug >= 20){
+		error_handler('not-in-irc', 'debug data generator') if $b_irc;
+		my $option = ( $debug > 22 ) ? 'main-full' : 'main';
+		$b_debug_gz = 1 if ($debug == 22 || $debug == 24);
+		my $ob_sys = SystemDebugger->new($option);
+		$ob_sys->run_debugger();
+		$ob_sys->upload_file($ftp_alt) if $debug > 20;
+		exit 0;
 	}
 	elsif ($debug >= 10 && $debug <= 12){
 		$b_log = 1;
@@ -1224,6 +1226,17 @@ sub set_debugger {
 			$b_log_colors = 1;
 		}
 		begin_logging();
+	}
+	elsif ($debug <= 3){
+		if ($debug == 3){
+			$b_log = 1;
+			$b_debug_timers = 1;
+			begin_logging();
+		}
+		else {
+			$end = '';
+			$start = '';
+		}
 	}
 }
 
@@ -1704,6 +1717,8 @@ sub system_files {
 	push (@files, '/etc/issue');
 	push (@files, '/etc/lsb-release');
 	push (@files, '/etc/os-release');
+	copy_files(\@files,'system-distro');
+	@files = main::globber('/etc/upstream[-_]{[rR]elease,[vV]ersion}/*');
 	copy_files(\@files,'system-distro');
 	@files = (
 	'/proc/1/comm',
@@ -3075,15 +3090,16 @@ sub program_values {
 	'weechat-curses' => ['[0-9.]+',1,'-v','WeeChat',1,0,0],
 	'xchat-gnome' => ['[0-9.]+',2,'-v','X-Chat-Gnome',1,1,0],
 	'xchat' => ['[0-9.]+',2,'-v','X-Chat',1,1,0],
-	## Desktops 
+	## Desktops / wm
 	'afterstep' => ['^afterstep',3,'--version','AfterStep',0,1,0],
 	'awesome' => ['^awesome',2,'--version','Awesome',0,1,0],
 	'blackbox' => ['^Blackbox',2,'--version','Blackbox',0,1,0],
 	'budgie' => ['^budgie-desktop',2,'--version','Budgie',0,1,0],
 	'cinnamon' => ['^cinnamon',2,'--version','Cinnamon',0,1,0],
-	'dwm' => ['^dwm',1,'-v','dwm',0,1,1],
+	'dwm' => ['^dwm',1,'-v','Dwm',0,1,1],
 	'fluxbox' => ['^fluxbox',2,'--version','Fluxbox',0,1,0],
 	'fvwm' => ['^fvwm',2,'--version','FVWM',0,0,1],
+	'fvwm2' => ['^fvwm',2,'--version','FVWM2',0,0,1],
 	# command: fvwm
 	'fvwm-crystal' => ['^fvwm',2,'--version','FVWM-Crystal',0,0,0], 
 	'gnome-about' => ['gnome',3,'--version','Gnome',0,1,0],
@@ -3098,20 +3114,25 @@ sub program_values {
 	'kded2' => ['^KDE Development Platform:',4,'--version','KDE',0,1,0],
 	'kded3' => ['^KDE Development Platform:',4,'--version','KDE',0,1,0],
 	'kded4' => ['^KDE Development Platform:',4,'--version','KDE',0,1,0],
-	# command: lxqt-about
-	'lxqt' => ['^lxqt-about',2,'--version','LXQT',0,1,0],
+	'lxde' => ['^lxpanel',2,'--version','LXDE',0,1,0],
+	# command: lxqt-panel
+	'lxqt' => ['^lxqt-panel',2,'--version','LXQt',0,1,0],
+	'marco' => ['^marco',2,'--version','marco',0,1,0],
+	'matchbox-panel' => ['^matchbox',2,'--version','Matchbox',0,1,0],
 	'mate-about' => ['^MATE[[:space:]]DESKTOP',-1,'--version','MATE',0,1,0],
 	# note, mate-session when launched with full path returns full path in version string
 	'mate-session' => ['mate-session',-1,'--version','MATE',0,1,0], 
+	'metacity' => ['^metacity',2,'--version','Metacity',0,1,0],
+	'muffin' => ['^muffin',2,'--version','muffin',0,1,0],
 	'openbox' => ['^openbox',2,'--version','Openbox',0,1,0],
-	'pekwm' => ['^pekwm',3,'--version','pekwm',0,1,0],
+	'pekwm' => ['^pekwm',3,'--version','PekWM',0,1,0],
 	'plasmashell' => ['^plasmashell',2,'--version','KDE Plasma',0,1,0],
 	'qtdiag' => ['^qt',2,'--version','Qt',0,1,0],
 	'sawfish' => ['^sawfish',3,'--version','Sawfish',0,1,0],
-	'scrotwm' => ['^welcome.*scrotwm',4,'-v','Scrotwm',0,1,1],
-	'spectrwm' => ['^spectrwm.*welcome.*spectrwm',5,'-v','Spectrwm',0,1,0],
+	'scrotwm' => ['^scrotwm.*welcome.*',5,'-v','Scrotwm',0,1,1],
+	'spectrwm' => ['^spectrwm.*welcome.*wm',5,'-v','Spectrwm',0,1,0],
 	'unity' => ['^unity',2,'--version','Unity',0,1,0],
-	'wm2' => ['^wm2',-1,'--version','WM2',0,1,0],
+	'wm2' => ['^wm2',-1,'--version','wm2',0,1,0],
 	'wmaker' => ['^Window[[:space:]]*Maker',-1,'--version','WindowMaker',0,1,0],
 	'wmii' => ['^wmii',1,'--version','wmii',0,1,0], # note: in debian, wmii is wmii3
 	'wmii2' => ['^wmii2',1,'--version','wmii2',0,1,0],
@@ -3157,6 +3178,7 @@ sub program_version {
 	my ($cmd,$line,$output);
 	my $version_nu = '';
 	my $count = 0;
+	#print "app:$app\n";
 	$exit ||= 100; # basically don't exit ever
 	$version ||= '--version';
 	# adjust to array index, not human readable
@@ -3281,6 +3303,7 @@ sub uniq {
 	my %seen;
 	grep !$seen{$_}++, @_;
 }
+
 
 # arg: 1 file full  path to write to; 2 - arrayof data to write. 
 # note: turning off strict refs so we can pass it a scalar or an array reference.
@@ -3861,7 +3884,7 @@ sub get_options{
 		}},
 	'debug:i' => sub { 
 		my ($opt,$arg) = @_;
-		if ($arg =~ /^[1-3]|1[0-2]|2[0-4]$/){
+		if ($arg =~ /^[1-3]|1[0-3]|2[0-4]$/){
 			$debug=$arg;
 		}
 		else {
@@ -4004,6 +4027,8 @@ sub get_options{
 		} },
 	'V|version' => sub { 
 		$b_version = 1 },
+	'wm' => sub { 
+		$b_wm_ps = 1 },
 	'<>' => sub {
 		my ($opt) = @_;
 		error_handler('unknown-option', "$opt", "" ); }
@@ -4255,7 +4280,7 @@ sub show_options {
 	shows progress bar. Hardware RAID Chip vendor:product ID." ],
 	['2', '-s', '', "DIMM/SOC voltages (ipmi only)." ],
 	['2', '-S', '', "Display manager (dm) in desktop output if in X (e.g. kdm, 
-	gdm3, lightdm)." ],
+	gdm3, lightdm). Adds active window manager if detected." ],
 	['2', '--slots', '', "Slot length." ],
 	['2', '--usb', '', "Vendor:chip ID." ],
 	);
@@ -4273,12 +4298,14 @@ sub show_options {
 	['2', '-I', '', "For 'Shell:' adds ([su|sudo|login]) to shell name if present; 
 	for 'running in:' adds (SSH) if SSH session." ],
 	['2', '-m', '', "Width of memory bus, data and total (if present and greater 
-	than data); Detail for Type, if present; module voltage, if available; serial number." ],
+	than data); Detail for Type, if present; module voltage, if available; serial 
+	number." ],
 	['2', '-R', '', "zfs-raid: portion allocated (used) by RAID devices/arrays. 
 	md-raid: system md-raid support types (kernel support, read ahead, RAID events).
 	Hardware RAID rev, ports." ],
-	['2', '-S', '', "Panel/shell info in desktop output, if in X (like gnome-shell, 
-	cinnamon, mate-panel); (if available) dm version number, active window manager." ]
+	['2', '-S', '', "Panel/shell info in desktop output, if in X (like lxpanel, 
+	xfce4-panel, mate-panel); (if available) dm version number, window manager
+	version number." ]
 	);
 	push @data, @rows;
 	if ( $b_weather ){
@@ -4386,6 +4413,7 @@ sub show_options {
 	['1', '', '--sleep', "[0-x.x] Change CPU sleep time, in seconds, for -C 
 	(default:^$cpu_sleep). Allows system to catch up and show a more accurate CPU 
 	use. Example:^$self_name^-Cxxx^--sleep^0.15" ],
+	['1', '', '--wm', "Force wm: to use ps (not wmctrl) as data source." ],
 	['0', '', '', $line ],
 	);
 	push @data, @rows;
@@ -7088,7 +7116,7 @@ sub set_cpu_speeds_sys {
 		if ($b_arm){
 			@arm = main::globber('/sys/devices/system/cpu/cpufreq/policy*/');
 			# there are arm chips with two dies, that run at different min max speeds!!
-			# see: https://github.com/smxi/inxi/issues/128.
+			# see: https://github.com/smxi/inxi/issues/128
 			# it would be slick to show both die min/max/cur speeds, but this is
 			# ok for now.
 			if (scalar @arm > 1){
@@ -8110,8 +8138,8 @@ sub device_vendor {
 	# MU = Multiple_Flash_Reader too risky: |M[UZ][^L]
 	['(SAMSUNG|^MCG[0-9]+GC)','SAMSUNG','Samsung',''], # maybe ^SM
 	['(SanDisk|^SDS[S]?[DQ]|^SL([0-9]+)G|^AFGCE|ULTRA\sFIT|Cruzer)','SanDisk','SanDisk',''],
-	['(^ST[^T]|[S]?SEAGATE|^X[AFP])','[S]?SEAGATE','Seagate',''], # real, SSEAGATE Backup+; XP1600HE30002
-	['^(WD|Western Digital|My Passport|00LPCX|Elements)','(^WDC|Western Digital)','Western Digital',''],
+	['(^ST[^T]|[S]?SEAGATE|^X[AFP]|^BUP)','[S]?SEAGATE','Seagate',''], # real, SSEAGATE Backup+; XP1600HE30002
+	['^(WD|Western Digital|My (Book|Passport)|00LPCX|Elements)','(^WDC|Western Digital)','Western Digital',''],
 	## Then better known ones ##
 	['^(A-DATA|ADATA|AXN)','^(A-DATA|ADATA)','A-Data',''],
 	['^ADTRON','^(ADTRON)','Adtron',''],
@@ -8120,7 +8148,9 @@ sub device_vendor {
 	['^Corsair','^Corsair','Corsair',''],
 	['^(FUJITSU|MP)','^FUJITSU','Fujitsu',''],
 	# note: 2012:  wdc bought hgst
-	['^(Hitachi|HGST|IC|HT|HU)','^Hitachi','Hitachi',''], # HGST HUA
+	['^(HGST)','^HGST','HGST (Hitachi)',''], # HGST HUA
+	['^(Hitachi|HDS|IC|HT|HU)','^Hitachi','Hitachi',''], 
+	['^Hoodisk','^Hoodisk','Hoodisk',''],
 	['^(HP\b)','^HP','HP',''], # vb: VB0250EAVER but clashes with vbox; HP_SSD_S700_120G
 	['^(LSD|Lexar)','^Lexar','Lexar',''], # mmc-LEXAR_0xb016546c
 	# OCZSSD2-2VTXE120G is OCZ-VERTEX2_3.5
@@ -8139,6 +8169,7 @@ sub device_vendor {
 	['^(AP|Apacer)','^Apacer','Apacer',''],
 	['^BUFFALO','^BUFFALO','Buffalo',''],
 	['^CHN\b','','Zheino',''],
+	['^Colorful\b','^Colorful','Colorful',''],
 	['^DREVO\b','','Drevo',''],
 	['^EXCELSTOR','^EXCELSTOR( TECHNOLOGY)?','Excelstor',''],
 	['^FASTDISK','^FASTDISK','FASTDISK',''],
@@ -8154,6 +8185,7 @@ sub device_vendor {
 	['^(InnoDisk|Innolite)','^InnoDisk( Corp.)?','InnoDisk',''],
 	['^Innostor','^Innostor','Innostor',''],
 	['^Intenso','^Intenso','Intenso',''],
+	['^KingDian','^KingDian','KingDian',''],
 	['^(LITE[\-]?ON[\s\-]?IT)','^LITE[\-]?ON[\s\-]?IT','LITE-ON IT',''], # LITEONIT_LSS-24L6G
 	['^(LITE[\-]?ON|PH6)','^LITE[\-]?ON','LITE-ON',''], # PH6-CE240-L
 	['^M-Systems','^M-Systems','M-Systems',''],
@@ -8891,73 +8923,47 @@ sub display_compositor {
 	eval $start if $b_log;
 	my ($protocol) = @_; 
 	my ($compositor) = ('');
-	# NOTE: chains of greps of ps data are VERY expensive, so check for program presence
-	if (main::check_program('mutter') && (grep {/mutter/} @ps_cmd ) ) {
-		$compositor = 'mutter';
-	}
-	elsif (main::check_program('kwin_wayland') && (grep {/\bkwin_wayland\b/} @ps_cmd ) ) {
-		$compositor = 'kwin_wayland';
-	}
-	elsif (main::check_program('kwin') && (grep {/\bkwin\b/} @ps_cmd ) ) {
-		$compositor = 'kwin';
-	}
-	elsif (main::check_program('muffin') && (grep {/muffin/} @ps_cmd ) ) {
-		$compositor = 'muffin';
-	}
-	# Note: other strings have gnome-shell in them, so important to get exact one. Since we 
-	# can't fully trust how this will appear, the pattern should tighten it
-	elsif (main::check_program('gnome-shell') && (grep {/^(\/[\S]+\/)?gnome-shell(\s|$)/} @ps_cmd ) ) {
-		$compositor = 'gnome-shell';
-	}
-	elsif (main::check_program('weston') && (grep {/weston/} @ps_cmd ) ) {
-		$compositor = 'weston';
-	}
-	elsif (main::check_program('compton') && (grep {/compton/} @ps_cmd ) ) {
-		$compositor = 'compton';
-	}
-	# owned by: compiz-core in debian
-	elsif (main::check_program('compiz') && (grep {/compiz/} @ps_cmd ) ) {
-		$compositor = 'compiz';
-	}
-	# did not find in debian apt
-	elsif (main::check_program('moblin') && (grep {/moblin/} @ps_cmd ) ) {
-		$compositor = 'moblin';
-	}
-	# did not find in debian apt
-	elsif (main::check_program('kmscon') && (grep {/kmscon/} @ps_cmd ) ) {
-		$compositor = 'kmscon';
-	}
-	# did not find in debian apt
-	elsif (main::check_program('sway') && (grep {/\bsway\b/} @ps_cmd ) ) {
-		$compositor = 'sway';
-	}
-	# did not find in debian apt
-	elsif (main::check_program('grefson') && (grep {/grefson/} @ps_cmd ) ) {
-		$compositor = 'grefson';
-	}
-	# did not find in debian apt
-	elsif (main::check_program('westford') && (grep {/westford/} @ps_cmd ) ) {
-		$compositor = 'westford';
-	}
-	# did not find in debian apt
-	elsif (main::check_program('rustland') && (grep {/rustland/} @ps_cmd ) ) {
-		$compositor = 'rustland';
-	}
-	# did not find in debian apt
-	elsif (main::check_program('ireplace') && (grep {/fireplace/} @ps_cmd ) ) {
-		$compositor = 'fireplace';
-	}
-	# did not find in debian apt
-	elsif (main::check_program('wayhouse') && (grep {/wayhouse/} @ps_cmd ) ) {
-		$compositor = 'wayhouse';
-	}
-	# did not find in debian apt
-	elsif (main::check_program('swc') && (grep {/\bswc\b/} @ps_cmd ) ) {
-		$compositor = 'swc';
-	}
-	# did not find in debian apt
-	elsif (main::check_program('dwc') && (grep {/\bdwc\b/} @ps_cmd ) ) {
-		$compositor = 'dwc';
+	main::set_ps_gui() if ! $b_ps_gui;
+	if (@ps_gui){
+		# 1 check program; 2 search; 3 unused version; 4 print
+		my @compositors = (
+		['compton','compton','','compton'],
+		['gnome-shell','gnome-shell','','gnome-shell'],
+		['kwin_wayland','kwin_wayland','','kwin wayland'],
+		#['kwin_x11','kwin_wayland','','kwin x11'],
+		#['kwin','kwin','','kwin'],
+		['marco','marco','','marco'],
+		['muffin','muffin','','muffin'],
+		['mutter','mutter','','mutter'],
+		['weston','weston','','weston'],
+		# owned by: compiz-core in debian
+		['compiz','compiz','','compiz'],
+		# did not find follwing in debian apt
+		['3dwm','3dwm','','3dwm'],
+		['dwc','dwc','','dwc'],
+		['grefson','grefson','','grefson'],
+		['ireplace','ireplace','','ireplace'],
+		['kmscon','kmscon','','kmscon'],
+		['metisse','metisse','','metisse'],
+		['mir','mir','','mir'],
+		['moblin','moblin','','moblin'],
+		['rustland','rustland','','rustland'],
+		['sway','sway','','sway'],
+		['swc','swc','','swc'],
+		['unagi','unagi','','unagi'],
+		['wayhouse','wayhouse','','wayhouse'],
+		['westford','westford','','westford'],
+		['xcompmgr','xcompmgr','','xcompmgr'],
+		);
+		foreach my $ref (@compositors){
+			my @item = @$ref;
+			# no need to use check program with short list of ps_gui
+			# if (main::check_program($item[0]) && (grep {/^$item[1]$/} @ps_gui ) ){
+			if (grep {/^$item[1]$/} @ps_gui){
+				$compositor = $item[3];
+				last;
+			}
+		}
 	}
 	main::log_data('data',"compositor: $compositor") if $b_log;
 	eval $end if $b_log;
@@ -9279,6 +9285,7 @@ sub machine_data_arm {
 		main::log_data('data',"device-tree-model: $model") if $b_log;
 		if ( $model ){
 			$model = main::dmi_cleaner($model);
+			$model = (split /\x01|\x02|\x03|\x00/, $model)[0] if $model;
 			# idea was to use only first part of string, but now try using all
 			#my (@result) = ();
 			#@result = split(/\s+/, $arm_machine{'device'}) if $arm_machine{'device'};
@@ -9289,6 +9296,7 @@ sub machine_data_arm {
 	}
 	if (!$arm_machine{'serial'} && -f '/proc/device-tree/serial-number'){
 		my $serial  = (main::reader('/proc/device-tree/serial-number'))[0];
+		$serial = (split /\x01|\x02|\x03|\x00/, $serial)[0] if $serial;
 		main::log_data('data',"device-tree-serial: $serial") if $b_log;
 		$arm_machine{'serial'} = $serial if $serial;
 	}
@@ -9669,9 +9677,12 @@ sub card_data {
 			$driver ||= 'N/A';
 			@data = ({
 			main::key($num++,'Card') => $card,
-			main::key($num++,'driver') => $driver,
 			},);
 			@rows = (@rows,@data);
+			if ($row[1] eq '0680'){
+				$rows[$j]{main::key($num++,'type')} = 'network bridge';
+			}
+			$rows[$j]{main::key($num++,'driver')} = $driver;
 			if ($extra > 0){
 				if ($row[9] && !$bsd_type){
 					my $version = main::get_module_version($row[9]);
@@ -14881,6 +14892,7 @@ sub get_compiler_version_linux {
 # 3 - toolkit version
 # 4 - info extra desktop data
 # 5 - wm
+# 6 - wm version
 {
 package DesktopEnvironment;
 my ($b_xprop,$kde_session_version,$xdg_desktop,@desktop,@data,@xprop);
@@ -14905,7 +14917,7 @@ sub get {
 	if ($extra > 2 && @desktop){
 		set_info_data();
 	}
-	if ($b_display && !$b_force_display && $extra > 2){
+	if ($b_display && !$b_force_display && $extra > 1){
 		get_wm();
 	}
 	main::log_data('dump','@desktop', \@desktop) if $b_log;
@@ -14958,9 +14970,19 @@ sub get_kde_data {
 			$desktop[1] = ($kde_session_version) ? $kde_session_version: main::row_defaults('unknown-desktop-version');
 		}
 		# print Data::Dumper::Dumper \@version_data;
-		if ($extra > 0 && @version_data){
+		if ($extra > 0){
+			if (@version_data){
+				$desktop[3] = main::awk(\@version_data,'^Qt:', 2,'\s+');
+			}
+			# qmake can have variants, qt4-qmake, qt5-qmake, also qt5-default but not tested
+			if (!$desktop[3] && ($program = main::check_program("qmake"))){
+				# note: this program has issues, it may appear to be in /usr/bin, but it 
+				# often fails to execute, so the below will have null output, but use as a 
+				# fall back test anyway.
+				@version_data = main::grabber("$program --version 2>/dev/null");
+				$desktop[3] = main::awk(\@version_data,'^Using Qt version',4) if @version_data;
+			}
 			$desktop[2] = 'Qt';
-			$desktop[3] = main::awk(\@version_data,'^Qt:', 2,'\s+');
 		}
 	}
 	# KDE_FULL_SESSION property is only available since KDE 3.5.5.
@@ -14981,7 +15003,7 @@ sub get_kde_data {
 sub get_env_de_data {
 	eval $start if $b_log;
 	my ($program,@version_data);
-	
+	main::set_ps_gui() if ! $b_ps_gui;
 	if ($xdg_desktop eq 'unity'){
 		@data = main::program_values('unity');
 		$desktop[0] = $data[3];
@@ -14995,22 +15017,30 @@ sub get_env_de_data {
 		$desktop[1] = main::program_version('budgie-desktop',$data[0],$data[1],$data[2],$data[5],$data[6]);
 		set_gtk_data() if $extra > 0;
 	}
-	elsif ( $xdg_desktop eq 'lxqt' ){
-		@data = main::program_values('lxqt');
-		$desktop[0] = $data[3];
-		$desktop[0] ||= 'LXQT';
-		$desktop[1] = main::program_version('lxqt-about',$data[0],$data[1],$data[2],$data[5],$data[6]);
-		if ( $extra > 0 ){
-			if ($program = main::check_program("kded$kde_session_version") ){
-				@version_data = main::grabber("$program --version 2>/dev/null");
-				$desktop[2] = 'Qt';
-				$desktop[3] = main::awk(\@version_data,'^Qt:',2);
+	# debian package: lxde-core. 
+	# NOTE: some distros fail to set XDG data for root
+	elsif ( $xdg_desktop =~ /^(lxde|razor|lxqt)$/ || (grep {/^(razor-session|lxsession|lxqt-session)$/} @ps_gui)){
+		# note: openbox-lxde --version may be present, but returns openbox data
+		if ($xdg_desktop eq 'lxde' || (grep {/^lxsession$/} @ps_gui )){
+			@data = main::program_values('lxde');
+			$desktop[0] = $data[3];
+			$desktop[1] = main::program_version('lxpanel',$data[0],$data[1],$data[2],$data[5],$data[6]);
+		}
+		# NOTE: lxqt-about opens a gui dialog
+		elsif ($xdg_desktop eq 'razor' || $xdg_desktop eq 'lxqt' || (grep {/^(razor-desktop|lxqt-session)$/} @ps_gui)) {
+			if (grep {/^lxqt-session$/} @ps_gui){
+				@data = main::program_values('lxqt');
+				$desktop[0] = $data[3];
+				# BAD: lxqt-about opens dialogue, sigh
+				$desktop[1] = main::program_version('lxqt-panel',$data[0],$data[1],$data[2],$data[5],$data[6]);
 			}
-			elsif ($program = main::check_program("qtdiag") ){
-				@data = main::program_values('qtdiag');
-				$desktop[3] = main::program_version($program,$data[0],$data[1],$data[2],$data[5],$data[6]);
-				$desktop[2] = $data[3];
+			elsif (grep {/^razor-session$/} @ps_gui){
+				$desktop[0] = 'Razor-Qt';
 			}
+			else {
+				$desktop[0] = 'LX-Qt-Variant';
+			}
+			set_qt_data();
 		}
 	}
 	# note, X-Cinnamon value strikes me as highly likely to change, so just 
@@ -15081,7 +15111,12 @@ sub get_xprop_de_data {
 	#print join "\n", @xprop, "\n";
 	# String: "This is xfdesktop version 4.2.12"
 	# alternate: xfce4-about --version > xfce4-about 4.10.0 (Xfce 4.10)
-	if ($xdg_desktop eq 'xfce' || main::awk(\@xprop,'xfce' )){
+	# note: some distros/wm (e.g. bunsen) set xdg to xfce to solve some other 
+	# issues so don't test for that. $xdg_desktop eq 'xfce'
+	# the sequence here matters, some desktops like icewm, razor, let you set different 
+	# wm, so we want to get the main controlling desktop first, then fall back to the wm
+	# detections. get_wm() will handle alternate wm detections.
+	if ((main::check_program('xfdesktop')) && main::awk(\@xprop,'^(xfdesktop|xfce)' )){
 		# this is a very expensive test that doesn't usually result in a find
 		# talk to xfce to see what id they will be using for xfce 5
 # 		if (main::awk(\@xprop, 'xfce4')){
@@ -15118,44 +15153,7 @@ sub get_xprop_de_data {
 			$desktop[2] = $data[3];
 		}
 	}
-	elsif ( (main::check_program('blackbox') || main::check_program('fluxbox')) && main::awk(\@xprop,'blackbox_pid' )){
-		if (grep {/fluxbox/} @ps_cmd){
-			@data = main::program_values('fluxbox');
-			$desktop[0] = $data[3];
-			$desktop[1] = main::program_version('fluxbox',$data[0],$data[1],$data[2],$data[5],$data[6]);
-		}
-		else {
-			@data = main::program_values('blackbox');
-			$desktop[0] = $data[3];
-			$desktop[1] = main::program_version('blackbox',$data[0],$data[1],$data[2],$data[5],$data[6]);
-		}
-	}
-	# debian package: lxde-core
-	elsif ( (main::check_program('lxpanel') || main::check_program('lxqt-session') ||
-	     main::check_program('razor-session')) && main::awk(\@xprop,'openbox_pid' )){
-		# note: openbox-lxde --version may be present, but returns openbox data
-		@data = main::program_values('openbox');
-		$desktop[1] = main::program_version('openbox',$data[0],$data[1],$data[2],$data[5],$data[6]);
-		if ($xdg_desktop eq 'lxde' || main::awk(\@ps_cmd, 'lxsession')){
-			$desktop[1] = "(Openbox $desktop[1])" if $desktop[1];
-			$desktop[0] = 'LXDE';
-		}
-		elsif ($xdg_desktop eq 'razor' || $xdg_desktop eq 'lxqt' || main::awk(\@ps_cmd, 'razor-desktop|lxqt-session')) {
-			if (main::awk(\@ps_cmd,'lxqt-session' )){
-				$desktop[0] = 'LXQt';
-			}
-			elsif (main::awk(\@ps_cmd, 'razor-desktop')){
-				$desktop[0] = 'Razor-Qt';
-			}
-			else {
-				$desktop[0] = 'LX-Qt-Variant';
-			}
-			$desktop[1] = "(Openbox $desktop[1])" if $desktop[1];
-		}
-		else {
-			$desktop[0] = 'Openbox';
-		}
-	}
+	# must come right after xfce 
 	elsif (main::check_program('icewm') && main::awk(\@xprop,'icewm' )){
 		@data = main::program_values('icewm');
 		$desktop[0] = $data[3];
@@ -15176,7 +15174,7 @@ sub get_xprop_de_data {
 		$desktop[1] = main::program_version('i3',$data[0],$data[1],$data[2],$data[5],$data[6]);
 	}
 	# debian package name: wmaker
-	elsif (main::check_program('WindowMaker') && main::awk(\@xprop,'^windowmaker' )){
+	elsif (main::check_program('WindowMaker') && main::awk(\@xprop,'^_?windowmaker' )){
 		@data = main::program_values('wmaker');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('wmaker',$data[0],$data[1],$data[2],$data[5],$data[6]);
@@ -15191,6 +15189,18 @@ sub get_xprop_de_data {
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('herbstluftwm',$data[0],$data[1],$data[2],$data[5],$data[6]);
 	}
+	elsif ( (main::check_program('blackbox') || main::check_program('fluxbox')) && main::awk(\@xprop,'blackbox_pid' )){
+		if (@ps_gui && (grep {/^fluxbox$/} @ps_gui )){
+			@data = main::program_values('fluxbox');
+			$desktop[0] = $data[3];
+			$desktop[1] = main::program_version('fluxbox',$data[0],$data[1],$data[2],$data[5],$data[6]);
+		}
+		else {
+			@data = main::program_values('blackbox');
+			$desktop[0] = $data[3];
+			$desktop[1] = main::program_version('blackbox',$data[0],$data[1],$data[2],$data[5],$data[6]);
+		}
+	}
 	elsif (main::check_program('openbox') && main::awk(\@xprop,'openbox_pid' )){
 		@data = main::program_values('openbox');
 		$desktop[0] = $data[3];
@@ -15202,103 +15212,166 @@ sub get_xprop_de_data {
 sub get_ps_de_data {
 	eval $start if $b_log;
 	my ($program,@version_data);
-	if ( main::check_program('fvwm-crystal') && main::awk(\@ps_cmd,'fvwm-crystal' )){
-		@data = main::program_values('fvwm-crystal');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('fvwm',$data[0],$data[1],$data[2],$data[5],$data[6]);
+	main::set_ps_gui() if !$b_ps_gui;
+	if (@ps_gui){
+		# 1 check program; 2 search; 3 values; 4 version; 5 -optional: print value
+		my @desktops =(
+		['fvwm-crystal','fvwm-crystal','fvwm-crystal','fvwm'],
+		['fvwm2','fvwm2','fvwm2','fvwm2'],
+		['fvwm','fvwm','fvwm','fvwm'],
+		['pekwm','pekwm','pekwm','pekwm'],
+		['awesome','awesome','awesome','awesome'],
+		['blackbox','blackbox','blackbox','blackbox'],
+		# not in debian apt
+		['scrotwm','scrotwm','scrotwm','scrotwm'],
+		['spectrwm','spectrwm','spectrwm','spectrwm'],
+		['twm','twm','','','twm'],
+		# note: built from source, but I assume it will show: /usr/bin/dwm
+		['dwm','dwm','dwm','dwm'],
+		# not in debian apt, current is wmii, version 3
+		['wmii2','wmii2','wmii2','wmii2'],
+		['wmii','wmii','wmii','wmii'],
+		['flwm','flwm','','','FLVM'],
+		['jwm','jwm','jwm','jwm'],
+		['sawfish','sawfish','sawfish','sawfish'],
+		['matchbox-panel','matchbox-panel','matchbox-panel','matchbox-panel'],
+		['afterstep','afterstep','afterstep','afterstep'],
+		['WindowMaker','WindowMaker','wmaker','wmaker'],
+		);
+		foreach my $ref (@desktops){
+			my @item = @$ref;
+			# no need to use check program with short list of ps_gui
+			# if ( main::check_program($item[0]) && (grep {/^$item[1]$/} @ps_gui)){
+			if (grep {/^$item[1]$/} @ps_gui){
+				if ($item[2]){
+					@data = main::program_values($item[2]);
+					$desktop[0] = $data[3];
+				}
+				else {
+					$desktop[0] = $item[4];
+				}
+				if (@data && $item[3]){
+					$desktop[1] = main::program_version($item[3],$data[0],$data[1],$data[2],$data[5],$data[6]);
+				}
+				last;
+			}
+		}
 	}
-	elsif ((main::check_program('fvwm2') || main::check_program('fvwm')) && main::awk(\@ps_cmd,'fvwm' )){
-		@data = main::program_values('fvwm');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('fvwm',$data[0],$data[1],$data[2],$data[5],$data[6]);
+	eval $end if $b_log;
+}
+
+sub set_qt_data {
+	eval $start if $b_log;
+	my ($program,@data,@version_data);
+	my $kde_version = $kde_session_version;
+	$program = '';
+	if (!$kde_version){
+		if ($program = main::check_program("kded6") ){$kde_version = 6;}
+		elsif ($program = main::check_program("kded5") ){$kde_version = 5;}
+		elsif ($program = main::check_program("kded4") ){$kde_version = 4;}
+		elsif ($program = main::check_program("kded") ){$kde_version = '';}
 	}
-	elsif (main::check_program('pekwm') && main::awk(\@ps_cmd,'pekwm' )){
-		@data = main::program_values('pekwm');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('pekwm',$data[0],$data[1],$data[2],$data[5],$data[6]);
+	# alternate: qt4-default, qt4-qmake or qt5-default, qt5-qmake
+	if (!$desktop[3] && ($program = main::check_program("qmake"))){
+		@version_data = main::grabber("$program --version 2>/dev/null");
+		$desktop[2] = 'Qt';
+		$desktop[3] = main::awk(\@version_data,'^Using Qt version',4) if @version_data;
 	}
-	elsif (main::check_program('awesome') && main::awk(\@ps_cmd,'awesome' )){
-		@data = main::program_values('awesome');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('awesome',$data[0],$data[1],$data[2],$data[5],$data[6]);
+	if (!$desktop[3] && ($program = main::check_program("qtdiag") )){
+		@data = main::program_values('qtdiag');
+		$desktop[3] = main::program_version($program,$data[0],$data[1],$data[2],$data[5],$data[6]);
+		$desktop[2] = $data[3];
 	}
-	elsif (main::check_program('blackbox') && main::awk(\@ps_cmd,'blackbox' )){
-		@data = main::program_values('blackbox');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('blackbox',$data[0],$data[1],$data[2],$data[5],$data[6]);
+	if (!$desktop[3] && ($program = main::check_program("kf$kde_version-config") )){
+		@version_data = main::grabber("$program --version 2>/dev/null");
+		$desktop[2] = 'Qt';
+		$desktop[3] = main::awk(\@version_data,'^Qt:',2) if @version_data;
 	}
-	# not in debian apt
-	elsif (main::check_program('scrotwm') && main::awk(\@ps_cmd,'scrotwm' )){
-		@data = main::program_values('scrotwm');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('scrotwm',$data[0],$data[1],$data[2],$data[5],$data[6]);
-	}
-	elsif (main::check_program('spectrwm') && main::awk(\@ps_cmd,'spectrwm' )){
-		@data = main::program_values('spectrwm');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('spectrwm',$data[0],$data[1],$data[2],$data[5],$data[6]);
-	}
-	elsif (main::check_program('twm') && main::awk(\@ps_cmd,'(\s|\/)twm' )){
-		# no version
-		$desktop[0] = 'Twm';
-	}
-	# note: built from source, but I assume it will show: /usr/bin/dwm
-	elsif (main::check_program('dwm') && main::awk(\@ps_cmd,'(\s|\/)dwm' )){
-		@data = main::program_values('dwm');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('dwm',$data[0],$data[1],$data[2],$data[5],$data[6]);
-	}
-	# not in debian apt, current is wmii, version 3
-	elsif (main::check_program('wmii2') && main::awk(\@ps_cmd,'wmii2' )){
-		@data = main::program_values('wmii2');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('wmii2',$data[0],$data[1],$data[2],$data[5],$data[6]);
-	}
-	elsif (main::check_program('wmii') && main::awk(\@ps_cmd,'wmii' )){
-		@data = main::program_values('wmii');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('wmii',$data[0],$data[1],$data[2],$data[5],$data[6]);
-	}
-	elsif (main::check_program('jwm') && main::awk(\@ps_cmd,'(\s|\/)jwm' )){
-		@data = main::program_values('jwm');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('jwm',$data[0],$data[1],$data[2],$data[5],$data[6]);
-	}
-	elsif (main::check_program('sawfish') && main::awk(\@ps_cmd,'sawfish' )){
-		@data = main::program_values('sawfish');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('sawfish',$data[0],$data[1],$data[2],$data[5],$data[6]);
-	}
-	elsif ( main::check_program('afterstep') && grep {/afterstep/} @ps_cmd){
-		@data = main::program_values('afterstep');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('afterstep',$data[0],$data[1],$data[2],$data[5],$data[6]);
+	# note: qt 5 does not show qt version in kded5, sigh
+	if (!$desktop[3] && ($program = main::check_program("kded$kde_version"))){
+		@version_data = main::grabber("$program --version 2>/dev/null");
+		$desktop[2] = 'Qt';
+		$desktop[3] = main::awk(\@version_data,'^Qt:',2) if @version_data;
 	}
 	eval $end if $b_log;
 }
 
 sub get_wm {
 	eval $start if $b_log;
-	if ( my $program =  main::check_program('wmctrl') ){
+	if ( !$b_wm_ps && (my $program =  main::check_program('wmctrl'))){
 		my $cmd = "$program -m 2>/dev/null";
 		my @data = main::grabber($cmd,'','strip');
 		main::log_data('dump','@data',\@data) if $b_log;
 		$desktop[5] = main::awk(\@data,'^Name',2,'\s*:\s*');
+		$desktop[5] = '' if $desktop[5] && $desktop[5] eq 'N/A';
 		if ($desktop[5]){
 			# variants: gnome shell; 
 			# IceWM 1.3.8 (Linux 3.2.0-4-amd64/i686) ; Metacity (Marco) ; Xfwm4
 			$desktop[5] =~ s/\d+\.\d\S+|[\[\(].*\d+\.\d.*[\)\]]//g;
 			$desktop[5] = main::trimmer($desktop[5]);
-# 			my $temp = (split /\s+/, $desktop[5])[0];
-# 			if ($temp){
-# 				$temp = lc($temp);
-# 				@data = main::program_values($temp);
-# 				# print Data::Dumper::Dumper \@data;
-# 				if (@data){
-# 					my $version = main::program_version($temp,$data[0],$data[1],$data[2],$data[5],$data[6]);
-# 					$desktop[5] .= ' ' . $version if $version;
-# 				}
-# 			}
+			# change Metacity (Marco) to marco
+			if ($desktop[5] =~ /marco/i) {$desktop[5] = 'marco'}
+			elsif (lc($desktop[5]) eq 'gnome shell') {$desktop[5] = 'gnome-shell'}
+			get_wm_version('wmctrl',$desktop[5]);
+		}
+	}
+	else {
+		get_wm_manual();
+	}
+	eval $end if $b_log;
+}
+sub get_wm_manual {
+	eval $start if $b_log;
+	my ($wms,$working);
+	# xprop is set only if not kde/gnome/cinnamon/mate/budgie/lx..
+	if ($b_xprop){
+		#KWIN_RUNNING
+		$wms = 'blackbox|kwin_wayland|kwin_x11|kwin|marco|muffin|';
+		$wms .= 'openbox|herbstluftwm|wm2|windowmaker|i3';
+		foreach (@xprop){
+			if (/\b($wms)\b/){
+				$working = $1;
+				$working = 'wmaker' if $working eq 'windowmaker';
+				last;
+			}
+		}
+	}
+	if (!$desktop[5]){
+		main::set_ps_gui() if ! $b_ps_gui;
+		# order matters, see above logic
+		$wms = 'afterstep|awesome|fluxbox|blackbox|dwm|flwm|fvwm-crystal|fvwm2|fvwm|';
+		$wms .= 'gnome-shell|i3|jwm|kwin_wayland|kwin_x11|kwin|matchbox-panel|marco|';
+		$wms .= 'muffin|mutter|metacity|openbox|sawfish|scrotwm|spectrwm|twm|';
+		$wms .= 'WindowMaker|wm2|wmii2|wmii|xfwm4|xfwm5';
+		foreach (@ps_gui){
+			if (/^($wms)$/){
+				$working = $1;
+				last;
+			}
+		}
+	}
+	get_wm_version('manual',$working) if $working;
+	$desktop[5] = $working if !$desktop[5] && $working;
+	eval $end if $b_log;
+}
+sub get_wm_version {
+	eval $start if $b_log;
+	my ($type,$wm) = @_;
+	# we don't want the gnome-shell version, and the others have no --version
+	# we also don't want to run --version again on stuff we already have tested
+	return if ! $wm || $wm =~ /^(gnome-shell|flwm|twm)$/ || ($desktop[0] && lc($desktop[0]) eq lc($wm) );
+	my $temp = (split /\s+/, $wm)[0];
+	if ($temp){
+		$temp = (split /\s+/, $temp)[0];
+		$temp = lc($temp);
+		$temp = 'wmaker' if $temp eq 'windowmaker';
+		my @data = main::program_values($temp);
+		return if !@data;
+		# print Data::Dumper::Dumper \@data;
+		$desktop[5] = $data[3] if $type eq 'manual';
+		if ($extra > 2){
+			my $version = main::program_version($temp,$data[0],$data[1],$data[2],$data[5],$data[6]);
+			$desktop[6] = $version if $version;
 		}
 	}
 	eval $end if $b_log;
@@ -15373,9 +15446,9 @@ sub set_gtk_data {
 sub set_info_data {
 	eval $start if $b_log;
 	my (@data,@info,$item);
-	my $pattern = 'gnome-shell|gnome-panel|kicker|lxpanel|mate-panel|';
-	$pattern .= 'plasma-desktop|plasma-netbook|xfce4-panel';
-	if (@data = grep {/($pattern)(\s|$)/} @ps_cmd ) {
+	my $pattern = 'gnome-panel|kicker|lxpanel|lxqt-panel|mate-panel|plasma-desktop|';
+	$pattern .= 'plasma-netbook|razor-panel|razorqt-panel|xfce4-panel';
+	if (@data = grep {/^($pattern)$/} @ps_gui ) {
 		# only one entry per type, can be multiple
 		foreach $item (@data){
 			if (! grep {$item =~ /$_/} @info){
@@ -15395,8 +15468,9 @@ sub set_xprop {
 		@xprop = main::grabber("xprop -root $display_opt 2>/dev/null");
 		if (@xprop){
 			# add wm / de as required, but only add what is really tested for above
-			my $pattern = 'blackbox_pid|enlightenment|^_gnome|herbstluftwm|';
-			$pattern .= '^i3_|icewm|_marco|_muffin|openbox_pid|^windowmaker|^_wm2|xfce';
+			my $pattern = 'blackbox_pid|enlightenment|^_gnome|herbstluftwm|^kwin_|';
+			# XFDESKTOP_IMAGE_FILE; XFCE_DESKTOP
+			$pattern .= '^i3_|icewm|_marco|_muffin|openbox_pid|^_?windowmaker|^_wm2|^(xfdesktop|xfce)';
 			# let's only do these searches once
 			@xprop = grep {/^\S/ && /($pattern)/i} @xprop;
 			$_ = lc for @xprop;
@@ -15461,7 +15535,7 @@ sub get_display_manager {
 	# unknown dm, so we'll keep output to N/A
 	log_data('dump','display manager: @found',\@found) if $b_log;
 	eval $end if $b_log;
-	return join ',', @found if @found;
+	return join ', ', @found if @found;
 }
 
 ## Get DistroData
@@ -15522,28 +15596,25 @@ sub get_linux_distro {
 	my @distro_files = main::globber('/etc/*[-_]{[rR]elease,[vV]ersion,issue}*');
 	my $lsb_release = '/etc/lsb-release';
 	my $b_lsb = 1 if -f $lsb_release;
-	my ($etc_issue,$issue) = ('','/etc/issue');
+	my ($etc_issue,$issue,$lc_issue) = ('','/etc/issue','');
 	$b_issue = 1 if -f $issue;
 	# note: OpenSuse Tumbleweed 2018-05 has made /etc/issue created by sym link to /run/issue
 	# and then made that resulting file 700 permissions, which is obviously a mistake
 	$etc_issue = (main::reader($issue))[0] if -r $issue;
+	$etc_issue = main::clean_characters($etc_issue);
 	my $os_release = '/etc/os-release';
 	@osr = main::reader($os_release) if -r $os_release;
 	# debian issue can end with weird escapes like \n \l 
 	# antergos: Antergos Linux \r (\l)
 	if ($etc_issue){
-		$etc_issue = main::clean_characters($etc_issue);
-		if ($etc_issue =~ /antergos/i){
-			$distro_id = 'antergos';
+		$lc_issue = lc($etc_issue) if $etc_issue;
+		if ($lc_issue =~ /(antergos|grml|linux lite)/){
+			$distro_id = $1;
 			$b_use_issue = 1;
 		}
-		if (lc($etc_issue) =~ /(raspbian|peppermint)/){
+		elsif ($lc_issue =~ /(raspbian|peppermint)/){
 			$distro_id = $1;
 			$distro_file = $os_release if @osr;
-		}
-		elsif (lc($etc_issue) =~ /(grml)/){
-			$distro_id = $1;
-			$b_use_issue = 1;
 		}
 	}
 	# Note that antergos changed this around 	# 2018-05, and now lists 
@@ -15553,7 +15624,6 @@ sub get_linux_distro {
 		$distro_file = $os_release;
 		#$system_base = 'Arch Linux';
 	}
-	
 	$distro_id = 'armbian' if grep {/armbian/} @distro_files;
 	main::log_data('dump','@distro_files',\@distro_files) if $b_log;
 	main::log_data('data',"distro_file-1: $distro_file") if $b_log;
@@ -15629,7 +15699,7 @@ sub get_linux_distro {
 	}
 	# otherwise try  the default debian/ubuntu /etc/issue file
 	elsif ($b_issue){
-		if ( !$distro_id && $etc_issue && lc($etc_issue) =~ /(mint|lmde)/ ){
+		if ( !$distro_id && $etc_issue && $lc_issue =~ /(mint|lmde)/ ){
 			$distro_id = $1;
 			$b_use_issue = 1;
 		}
@@ -15684,21 +15754,33 @@ sub get_linux_distro {
 		}
 	}
 	if ($extra > 0){
-		my $base_default = 'antix-version|mx-version';
-		my $base_issue = 'bunsen';
-		my $base_manual = 'kali';
-		my $base_osr = 'aptosid|grml|siduction';
-		if (@osr){
+		my $base_default = 'antix-version|mx-version'; # osr has base ids
+		my $base_issue = 'bunsen'; # base only found in issue
+		my $base_manual = 'kali'; # synthesize, no direct data available
+		my $base_osr = 'aptosid|grml|siduction'; # osr base, distro id in list of distro files
+		my $base_osr_issue = 'grml|linux lite'; # osr base, distro id in issue
+		my $base_upstream_lsb = '/etc/upstream-release/lsb-release';
+		my $base_upstream_osr = '/etc/upstream-release/os-release';
+		# first: try, some distros have upstream-release, elementary, new mint
+		# and anyone else who uses this method for fallback ID
+		if ( -r $base_upstream_osr){
+			my @osr_working = main::reader($base_upstream_osr);
+			if ( @osr_working){
+				my (@osr_temp);
+				@osr_temp = @osr;
+				@osr = @osr_working;
+				$system_base = get_os_release();
+				@osr = @osr_temp if !$system_base;
+				(@osr_temp,@osr_working) = (undef,undef);
+			}
+		}
+		elsif ( -r $base_upstream_lsb){
+			$system_base = get_lsb_release($base_upstream_lsb);
+		}
+		if (!$system_base && @osr){
 			my ($base_type) = ('');
 			if ($etc_issue && (grep {/($base_issue)/i} @osr)){
 				$system_base = $etc_issue;
-			}
-			elsif ($etc_issue && lc($etc_issue) =~ /($base_manual)/){
-				my $id = $1;
-				my %manual = (
-				'kali' => 'Debian testing',
-				);
-				$system_base = $manual{$id};
 			}
 			# more tests added here for other ubuntu derived distros
 			elsif ( @distro_files && (grep {/($base_default)/} @distro_files) ){
@@ -15707,12 +15789,21 @@ sub get_linux_distro {
 			elsif ($distro_id && $distro_id =~ /(mint)/){
 				$base_type = 'ubuntu';
 			}
-			elsif (@distro_files && (grep {/($base_osr)/} @distro_files) && !(grep {/($base_osr)/i} @osr)){
+			elsif ( ( ($distro_id && $distro_id =~ /($base_osr_issue)/ ) || 
+			      (@distro_files && (grep {/($base_osr)/} @distro_files)) ) && 
+			      !(grep {/($base_osr)/i} @osr)){
 				$system_base = get_os_release();
 			}
 			if (!$system_base && $base_type){
 				$system_base = get_os_release($base_type);
 			}
+		}
+		if (!$system_base && $lc_issue && $lc_issue =~ /($base_manual)/){
+			my $id = $1;
+			my %manual = (
+			'kali' => 'Debian testing',
+			);
+			$system_base = $manual{$id};
 		}
 	}
 	$distro =~ s/Debian/Armbian/ if ($distro && $distro_id eq 'armbian');
@@ -15724,8 +15815,10 @@ sub get_linux_distro {
 
 sub get_lsb_release {
 	eval $start if $b_log;
+	my ($lsb_file) = @_;
+	$lsb_file ||= '/etc/lsb-release';
 	my ($distro,$id,$release,$codename,$description) = ('','','','','');
-	my @content = main::reader('/etc/lsb-release');
+	my @content = main::reader($lsb_file);
 	main::log_data('dump','@content',\@content) if $b_log;
 	@content = map {s/,|\*|\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} @content if @content;
 	foreach (@content){
@@ -16549,6 +16642,56 @@ sub get_usb_path {
 	return $path
 }
 
+sub set_ps_gui {
+	eval $start if $b_log;
+	$b_ps_gui = 1;
+	my ($working,@match,@temp);
+	# desktops
+	if ($show{'system'}){
+		@temp=qw(razor-desktop razor-session lxsession lxqt-session);
+		@match = (@match,@temp);
+		@temp=qw(afterstep awesome blackbox 3dwm dwm fluxbox flwm 
+		fvwm-crystal fvwm2 fvwm i3 jwm matchbox-panel openbox sawfish 
+		scrotwm spectrwm twm WindowMaker wm2 wmii2 wmii);
+		@match = (@match,@temp);
+	}
+	# wm:
+	if ($show{'system'} && $extra > 1){
+		@temp=qw(afterstep awesome blackbox compiz 3dwm dwm fluxbox 
+		flwm fvwm-crystal fvwm2 fvwm gnome-shell i3 jwm kwin_wayland 
+		kwin_x11 kwin matchbox-panel marco metacity metisse mir muffin mutter 
+		openbox sawfish scrotwm spectrwm twm WindowMaker wm2 wmii2 wmii 
+		xfwm4 xfwm5);
+		@match = (@match,@temp);
+	}
+	# info: 
+	if ($show{'system'} && $extra > 2){
+		@temp=qw(gnome-panel kicker lxpanel lxqt-panel mate-panel 
+		plasma-desktop plasma-netbook razor-panel razorqt-panel 
+		xfce4-panel);
+		@match = (@match,@temp);
+	}
+	# compositors (for wayland these are also the server, note 
+	if ($show{'graphic'} && $extra > 1){
+		@temp=qw(compiz compton dwc dcompmgr grefson ireplace kmscon 
+		kwin_wayland metisse mir moblin rustland sway swc unagi 
+		wayhouse westford weston xcompmgr);
+		@match = (@match,@temp);
+	}
+	@match = uniq(@match);
+	my $matches = join '|', @match;
+	foreach (@ps_cmd){
+		if (/^[\S]*\b($matches)(\s|$)/){
+			$working = $1;
+			push @ps_gui, $working; # deal with duplicates with uniq
+		}
+	}
+	@ps_gui = uniq(@ps_gui) if @ps_gui;
+	print Dumper \@ps_gui if $test[5];
+	log_data('dump','@ps_gui',\@ps_gui) if $b_log;
+	eval $end if $b_log;
+}
+
 #### -------------------------------------------------------------------
 #### INITIALIZE DATA VALUES
 #### -------------------------------------------------------------------
@@ -17050,10 +17193,15 @@ sub set_pciconf_data {
 # "OF_COMPATIBLE_0=allwinner,sun8i-h3-mali", "OF_COMPATIBLE_1=allwinner,sun7i-a20-mali", 
 # "OF_COMPATIBLE_2=arm,mali-400", "OF_COMPATIBLE_N=3", 
 # "MODALIAS=of:NgpuT<NULL>Callwinner,sun8i-h3-maliCallwinner,sun7i-a20-maliCarm,mali-400"]
+## 5
+# /sys/devices/platform/soc/soc:internal-regs/d0018180.gpio/uevent
 sub set_arm_soc_data {
 	eval $start if $b_log;
 	my ($content,@files,@temp2,@temp3,@working);
 	@files = globber("/sys/devices/platform/soc*/*/uevent");
+	@temp2 = globber("/sys/devices/platform/soc*/soc*/*/uevent");
+	@files = (@files,@temp2) if @temp2;
+	@temp2 = undef;
 	# not sure why, but even as root/sudo, /subsystem/uevent is unreadable with -r test true
 	@files = grep {!/subsystem/} @files if @files;
 	foreach my $file (@files){
@@ -17061,8 +17209,8 @@ sub set_arm_soc_data {
 		$type,$type_id,$vendor_id,@working);
 		$chip_id = $file;
 		# variants: /soc/20100000.ethernet /soc/soc:audio /soc:/ /soc@0/
-		$chip_id =~ /\/sys\/devices\/platform\/soc[^\/]*\/([^\/]+)[\.:][^\/]+\/uevent/;
-		$chip_id = $1;
+		$chip_id =~ /\/sys\/devices\/platform\/(soc[^\/]*\/)?soc[^\/]*\/([^\/]+)[\.:][^\/]+\/uevent/;
+		$chip_id = $2;
 		@working = reader($file, 'strip') if -r $file;
 		foreach my $data (@working){
 			@temp2 = split /=/, $data;
@@ -17097,7 +17245,6 @@ sub set_arm_soc_data {
 	main::log_data('dump','@pci',\@pci) if $b_log;
 	eval $end if $b_log;
 }
-
 sub set_ps_aux {
 	eval $start if $b_log;
 	@ps_aux = split "\n",qx(ps aux);;
@@ -17107,7 +17254,7 @@ sub set_ps_aux {
 	# for pinxi, we want to see the useage data for cpu/ram
 	@ps_aux = grep {!/\/$self_name\b/} @ps_aux if $self_name eq 'inxi';
 	# this is for testing for the presence of the command
-	@ps_cmd = map {
+	@ps_cmd = grep {!/^\[/} map {
 		my @split = split /\s+/, $_;
 		# slice out 10th to last elements of ps aux rows
 		my $final = $#split;
@@ -17116,7 +17263,9 @@ sub set_ps_aux {
 		@split = @split[10 .. $final ];
 		join " ", @split;
 	} @ps_aux;
-	print Dumper \@ps_aux if $test[5];
+	#@ps_cmd = grep {!/^\[/} @ps_cmd;
+	# never, because ps loaded before option handler
+	print Dumper \@ps_cmd if $test[5];
 	eval $end if $b_log;
 }
 
@@ -17806,8 +17955,11 @@ sub generate_system_data {
 			$desktop_info = $desktop_data[4];
 		}
 		# don't print the desktop if it's a wm and the same
-		if ($desktop_data[5] && (!$desktop_data[0] || index(lc($desktop_data[5]),lc($desktop_data[0])) == -1 )){
+		if ($extra > 1 && $desktop_data[5] && 
+		    (!$desktop_data[0] || $desktop_data[5] =~ /gnome[\s\-_]shell/i || 
+		    index(lc($desktop_data[5]),lc($desktop_data[0])) == -1 )){
 			$wm = $desktop_data[5];
+			$wm .= ' ' . $desktop_data[6] if $extra > 2 && $desktop_data[6];
 		}
 	}
 	if (!$b_display || ( ! $desktop && $b_root)) {
@@ -17831,11 +17983,12 @@ sub generate_system_data {
 		if ($desktop_info){
 			$data{$data_name}[$index]{main::key($num++,'info')} = $desktop_info;
 		}
-		if ($wm){
-			$data{$data_name}[$index]{main::key($num++,'wm')} = $wm;
-		}
 	}
 	if ($extra > 1){
+		if ($wm){
+			$data{$data_name}[$index]{main::key($num++,'wm')} = $wm;
+			
+		}
 		my $dms = get_display_manager();
 		$dms ||= 'N/A';
 		$data{$data_name}[$index]{main::key($num++,'dm')} = $dms;
