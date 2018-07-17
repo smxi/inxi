@@ -31,8 +31,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.0.17';
-my $self_date='2018-07-12';
+my $self_version='3.0.18';
+my $self_date='2018-07-16';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -65,13 +65,13 @@ my (@dm_boot_disk,@dm_boot_optical,@glabel,@gpart,@hardware_raid,@labels,
 my @test = (0,0,0,0,0);
 
 ## Booleans
-my ($b_admin,$b_arm,$b_arm_audio,$b_arm_gfx,$b_arm_net,$b_console_irc,
-$b_debug_gz,$b_debug_timers,$b_display,$b_dmesg_boot_check,
+my ($b_admin,$b_arm,$b_console_irc,$b_debug_gz,$b_debug_timers,
+$b_display,$b_dmesg_boot_check,
 $b_dmi,$b_dmidecode_force,$b_fake_bsd,$b_fake_dboot,$b_fake_pciconf,
 $b_fake_sysctl,$b_fake_usbdevs,$b_force_display,$b_gpudata,$b_irc,
-$b_log,$b_log_colors,$b_log_full,$b_man,$b_mem,$b_pci,$b_pci_tool,
+$b_log,$b_log_colors,$b_log_full,$b_man,$b_mem,$b_mips,$b_pci,$b_pci_tool,
 $b_proc_debug,$b_ps_gui,$b_root,$b_running_in_display,$b_slot_tool,
-$b_sudo,$b_sysctl,$b_usb_check,$b_wmctrl);
+$b_soc_audio,$b_soc_gfx,$b_soc_net,$b_sudo,$b_sysctl,$b_usb_check,$b_wmctrl);
 ## Disk checks
 my ($b_dm_boot_disk,$b_dm_boot_optical,$b_glabel,$b_hardware_raid,
 $b_label_uuid,$b_lsblk,$b_partitions,$b_raid);
@@ -79,7 +79,7 @@ my ($b_sysctl_disk,$b_update,$b_weather) = (1,1,1);
 
 ## System
 my ($bsd_type,$language,$os) = ('','','');
-my ($bits_sys);
+my ($bits_sys,$cpu_arch);
 my ($cpu_sleep,$dl_timeout,$limit,$ps_count,$usb_level) = (0.35,4,10,5,0);
 my $sensors_cpu_nu = 0;
 my $weather_unit='mi';
@@ -411,12 +411,14 @@ sub set_fake_tools {
 sub set_os {
 	@uname = uname();
 	$os = lc($uname[0]);
-	my $type = lc($uname[-1]);
-	$b_arm = 1 if $type =~ /arm|aarch/;
-	if ($type =~ /(armv[1-7]|aarch32|sparc_v9)/){
+	$cpu_arch = lc($uname[-1]);
+	if ($cpu_arch =~ /arm|aarch/){$b_arm = 1}
+	elsif ($cpu_arch =~ /mips/) {$b_mips = 1}
+	# aarch32 mips32 intel/amd handled in cpu
+	if ($cpu_arch =~ /(armv[1-7]|32|sparc_v9)/){
 		$bits_sys = 32;
 	}
-	elsif ($type =~ /(alpha|64)/){
+	elsif ($cpu_arch =~ /(alpha|64)/){
 		$bits_sys = 64;
 	}
 	if ( $os =~ /(bsd|dragonfly|darwin)/ ){
@@ -1315,7 +1317,7 @@ sub create_debug_directory {
 	my $host = main::get_hostname();
 	$host =~ s/ /-/g;
 	$host = 'no-host' if !$host || $host eq 'N/A';
-	my ($arm_string,$bsd_string,$root_string) = ('','','');
+	my ($alt_string,$bsd_string,$root_string) = ('','','');
 	# note: Time::Piece was introduced in perl 5.9.5
 	my ($sec,$min,$hour,$mday,$mon,$year) = localtime;
 	$year = $year+1900;
@@ -1332,8 +1334,9 @@ sub create_debug_directory {
 		$root_string = '-root';
 	}
 	$bsd_string = "-BSD-$bsd_type" if $bsd_type;
-	$arm_string = '-ARM' if $b_arm;
-	$debug_dir = "$self_name$arm_string$bsd_string-$host-$today$root_string-$self_version";
+	if ($b_arm ){$alt_string = '-ARM'}
+	elsif ($b_mips) {$alt_string = '-MIPS'}
+	$debug_dir = "$self_name$alt_string$bsd_string-$host-$today$root_string-$self_version";
 	$debug_gz = "$debug_dir.tar.gz";
 	$data_dir = "$user_data_dir/$debug_dir";
 	if ( -d $data_dir ){
@@ -3093,11 +3096,15 @@ sub program_values {
 	'xchat-gnome' => ['[0-9.]+',2,'-v','X-Chat-Gnome',1,1,0],
 	'xchat' => ['[0-9.]+',2,'-v','X-Chat',1,1,0],
 	## Desktops / wm
+	'3dwm' => ['^3dwm',0,'0','3dwm',0,1,0], # unknown syntax
+	'9wm' => ['^9wm',3,'-version','9wm',0,1,0],
 	'afterstep' => ['^afterstep',3,'--version','AfterStep',0,1,0],
+	'amiwm' => ['^amiwm',0,'0','AmiWM',0,1,0],
 	'awesome' => ['^awesome',2,'--version','Awesome',0,1,0],
 	'blackbox' => ['^Blackbox',2,'--version','Blackbox',0,1,0],
 	'budgie' => ['^budgie-desktop',2,'--version','Budgie',0,1,0],
 	'cinnamon' => ['^cinnamon',2,'--version','Cinnamon',0,1,0],
+	'compiz' => ['^compiz',2,'--version','Compiz',0,1,0],
 	'dwm' => ['^dwm',1,'-v','Dwm',0,1,1],
 	'fluxbox' => ['^fluxbox',2,'--version','Fluxbox',0,1,0],
 	'flwm' => ['^flwm',0,'0','FLWM',0,0,1],
@@ -3105,8 +3112,10 @@ sub program_values {
 	'fvwm2' => ['^fvwm',2,'--version','FVWM2',0,0,1],
 	# command: fvwm
 	'fvwm-crystal' => ['^fvwm',2,'--version','FVWM-Crystal',0,0,0], 
+	'gala' => ['^gala',2,'--version','gala',0,1,0], # super slow result
 	'gnome-about' => ['gnome',3,'--version','Gnome',0,1,0],
 	'gnome-shell' => ['gnome',3,'--version','Gnome',0,1,0],
+	# fails to return version when in wm, but outside does. weird.
 	'herbstluftwm' => ['^herbstluftwm',2,'--version','herbstluftwm',0,1,0],
 	'jwm' => ['^jwm',2,'--version','JWM',0,1,0],
 	# i3 version 4.13 (2016-11-08) © 2009 Michael Stapelberg and contributors
@@ -3128,16 +3137,20 @@ sub program_values {
 	'mate-session' => ['mate-session',-1,'--version','MATE',0,1,0], 
 	'metacity' => ['^metacity',2,'--version','Metacity',0,1,0],
 	'muffin' => ['^muffin',2,'--version','muffin',0,1,0],
-	'mwm' => ['^mwm',0,'0','MWM',0,1,0],
+	'mwm' => ['^mwm',0,'0','mwm',0,1,0],
+	'notion' => ['^.',1,'--version','notion',0,1,0],
 	'openbox' => ['^openbox',2,'--version','Openbox',0,1,0],
+	'pantheon' => ['^pantheon',0,'0','Pantheon',0,1,0],
 	'pekwm' => ['^pekwm',3,'--version','PekWM',0,1,0],
 	'plasmashell' => ['^plasmashell',2,'--version','KDE Plasma',0,1,0],
 	'qtdiag' => ['^qt',2,'--version','Qt',0,1,0],
+	'ratpoison' => ['^ratpoison',2,'--version','Ratpoison',0,1,0],
 	'sawfish' => ['^sawfish',3,'--version','Sawfish',0,1,0],
 	'scrotwm' => ['^scrotwm.*welcome.*',5,'-v','Scrotwm',0,1,1],
 	'spectrwm' => ['^spectrwm.*welcome.*wm',5,'-v','Spectrwm',0,1,0],
 	'twm' => ['^twm',0,'0','twm',0,1,0],
 	'unity' => ['^unity',2,'--version','Unity',0,1,0],
+	'windowlab' => ['^windowlab',2,'-about','WindowLab',0,1,0],
 	'wm2' => ['^wm2',0,'0','wm2',0,1,0],
 	'wmaker' => ['^Window[[:space:]]*Maker',-1,'--version','WindowMaker',0,1,0],
 	'wmii' => ['^wmii',0,'0','wmii',0,1,0], # note: in debian, wmii is wmii3
@@ -3147,6 +3160,7 @@ sub program_values {
 	'xfdesktop' => ['xfdesktop[[:space:]]version',5,'--version','Xfce',0,1,0],
 	# command: xfdesktop
 	'xfdesktop-toolkit' => ['Built[[:space:]]with[[:space:]]GTK',4,'--version','Gtk',0,1,0],
+	'xmonad' => ['^xmonad',2,'--version','XMonad',0,1,0],
 	## Shells
 	'bash' => ['^GNU[[:space:]]bash,[[:space:]]version',4,'--version','Bash',1,0,0],
 	'csh' => ['^tcsh',2,'--version','csh',1,0,0],
@@ -4220,8 +4234,8 @@ sub show_options {
 		['1', '-W', '--weather-location', "[location] Supported options for 
 		[location]: postal code; city, state/country; latitude, longitude. 
 		Only use if you want the weather somewhere other than the machine running
-		$self_name. Use only ASCII characters, replace spaces in city/state/country names with '+'. 
-		Example:^$self_name^-W^new+york,ny"],
+		$self_name. Use only ASCII characters, replace spaces in city/state/country 
+		names with '+'. Example:^$self_name^-W^new+york,ny"],
 		['1', '', '--weather-unit', "Set weather units to metric (m), imperial (i), 
 		metric/imperial (mi), or imperial/metric (im)."],
 		);
@@ -4253,8 +4267,8 @@ sub show_options {
 	blocks, chunk size, bitmap (if present). Resync line, shows blocks 
 	synced/total blocks. Hardware RAID driver version, bus ID." ],
 	['2', '-s', '', "Basic voltages (ipmi, lm-sensors if present): 12v, 5v, 3.3v, vbat." ],
-	['2', '-S', '', "Desktop toolkit, if available (Xfce/KDE/Trinity only); 
-	Kernel gcc version; system base of distro (if relevant and detected)" ],
+	['2', '-S', '', "Kernel gcc version; system base of distro (if relevant 
+	and detected)" ],
 	['2', '-t', '', "Adds memory use output to CPU (-xt c), and CPU use to 
 	memory (-xt m)." ],
 	['2', '--usb', '', "For Devices, shows USB version/speed." ],
@@ -4286,7 +4300,8 @@ sub show_options {
 	shows progress bar. Hardware RAID Chip vendor:product ID." ],
 	['2', '-s', '', "DIMM/SOC voltages (ipmi only)." ],
 	['2', '-S', '', "Display manager (dm) in desktop output (e.g. kdm, 
-	gdm3, lightdm). Adds active window manager if detected." ],
+	gdm3, lightdm); active window manager if detected; desktop toolkit, 
+	if available (Xfce/KDE/Trinity only)." ],
 	['2', '--slots', '', "Slot length." ],
 	['2', '--usb', '', "Vendor:chip ID." ],
 	);
@@ -4300,6 +4315,7 @@ sub show_options {
 	with verbose or line output, not short form):" ],
 	['2', '-A', '', "Specific vendor/product information (if relevant)." ],
 	['2', '-B', '', "Chemistry, cycles, location (if available)." ],
+	['2', '-C', '', "CPU boost (turbo) enabled/disabled, if present." ],
 	['2', '-D', '', "Firmware rev. if available; partition scheme, in some cases; disk 
 	rotation speed (if detected)." ],
 	['2', '-G', '', "Specific vendor/product information (if relevant)." ],
@@ -4332,8 +4348,8 @@ sub show_options {
 	location (-w), user home directory name. Default on for IRC clients." ],
 	['1', '-Z', '--filter-override', "Absolute override for output filters. Useful for 
 	debugging networking issues in IRC, for example." ],
-	['0', '', '', "$line" ],
-	['0', '', '', "Additional Options:" ],
+	[0, '', '', "$line" ],
+	[0, '', '', "Additional Options:" ],
 	['1', '-h', '--help', "This help menu." ],
  	['1', '', '--recommends', "Checks $self_name application dependencies + recommends, 
  	and directories, then shows what package(s) you need to install to add support 
@@ -4357,7 +4373,6 @@ sub show_options {
 	}
 	@rows = (
 	['1', '-V', '--version', "Prints $self_name version info then exits." ],
-	
 	['0', '', '', "$line" ],
 	['0', '', '', "Advanced Options:" ],
 	['1', '', '--alt', "Trigger for various advanced options:" ],
@@ -4404,7 +4419,7 @@ sub show_options {
 	(default:^$cpu_sleep). Allows system to catch up and show a more accurate CPU 
 	use. Example:^$self_name^-Cxxx^--sleep^0.15" ],
 	['1', '', '--wm', "Force wm: to use wmctrl as data source. Default uses ps." ],
-	['0', '', '', "$line" ],
+	['0', '', '', $line ],
 	['0', '', '', "Debugging Options:" ],
 	['1', '', '--debug', "Triggers debugging modes." ],
 	['2', '1-3', '', "On screen debugger output." ],
@@ -4423,7 +4438,7 @@ sub show_options {
 	['1', '', '--ftp', "Use with --debugger 21 to trigger an alternate FTP server for upload. 
 	Format:^[ftp.xx.xx/yy]. Must include a remote directory to upload to. 
 	Example:^$self_name^--debug^21^--ftp^ftp.myserver.com/incoming" ],
-	['0', '', '', $line ],
+	['0', '', '', "$line" ],
 	);
 	push @data, @rows;
 	print_basic(@data); 
@@ -5043,7 +5058,7 @@ sub row_defaults {
 	'battery-data' => "No system battery data found. Is one present?",
 	'battery-data-sys' => "No /sys data found. Old system?",
 	'cpu-model-null' => "Model N/A",
-	'cpu-speeds' => "No non 0 speed data found for $id cores.",
+	'cpu-speeds' => "No speed data found for $id cores.",
 	'darwin-feature' => "Feature not supported iu Darwin/OSX.",
 	'disk-data-bsd' => "No disk data found for this BSD system.",
 	'disk-data' => "No Disk data was found.",
@@ -5063,6 +5078,7 @@ sub row_defaults {
 	'machine-data-bsd' => "No machine data: Is dmidecode installed? Try -M --dmidecode.",
 	'machine-data-dmidecode' => "No machine data: try newer kernel. Is dmidecode installed? Try -M --dmidecode.",
 	'machine-data-force-dmidecode' => "No machine data: try newer kernel. Is dmidecode installed? Try -M --dmidecode.",
+	'mips-pci' => "No MIPS data found for this feature.",
 	'optical-data' => "No Optical or Floppy data was found.",
 	'optical-data-bsd' => "No floppy or optical data found for this BSD system.",
 	'output-limit' => "Output throttled. IPs: $id; Limit: $limit; Override: --limit [1-x;-1 all]",
@@ -5556,10 +5572,10 @@ sub get {
 	eval $start if $b_log;
 	my (@data,@rows);
 	my $num = 0;
-	if ($b_arm && !$b_arm_audio && !$b_pci_tool){
-		my $key = 'ARM';
+	if (($b_arm || $b_mips) && !$b_soc_audio && !$b_pci_tool){
+		my $key = ($b_arm) ? 'ARM' : 'MIPS';
 		@data = ({
-		main::key($num++,$key) => main::row_defaults('arm-pci',''),
+		main::key($num++,$key) => main::row_defaults(lc($key) . '-pci',''),
 		},);
 		@rows = (@rows,@data);
 	}
@@ -5567,7 +5583,8 @@ sub get {
 		@data = card_data();
 		@rows = (@rows,@data);
 	}
-	if ( ( ($b_arm && !$b_arm_audio && !$b_pci_tool) || !@rows ) && (my $file = main::system_files('asound-cards') ) ){
+	if ( ( (($b_arm || $b_mips) && !$b_soc_audio && !$b_pci_tool) || !@rows ) && 
+	   (my $file = main::system_files('asound-cards') ) ){
 		@data = asound_data($file);
 		@rows = (@rows,@data);
 	}
@@ -5593,7 +5610,7 @@ sub card_data {
 	foreach (@pci){
 		$num = 1;
 		my @row = @$_;
-		if ($row[0] =~ /^(audio|multimedia|hdmi)$/){
+		if ($row[0] =~ /^(audio|daudio|hdmi|multimedia)$/){
 			$j = scalar @rows;
 			my $driver = $row[9];
 			$driver ||= 'N/A';
@@ -6339,9 +6356,13 @@ sub create_output_full {
 	@data = ({
 	main::key($num++,$speed_key) => $speed,
 	main::key($num++,$min_max_key) => $min_max,
-	main::key($num++,$core_key) => $core_speeds_value,
-	},	);
+	});
 	@rows = (@rows,@data);
+	if ($extra > 2){
+		my $boost = get_boost_status();
+		$rows[$j]{main::key($num++,'boost')} = $boost if $boost;
+	}
+	$rows[$j]{main::key($num++,$core_key)} = $core_speeds_value;
 	my $i = 1;
 	# if say 96 0 speed cores, no need to print all those 0s
 	if ($b_speeds){
@@ -6492,6 +6513,7 @@ sub data_cpuinfo {
 	# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/intel/2-1-core-xeon-vm-vs2017.txt";
 	# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/intel/4-1-core-xeon-vps-frodo1.txt";
 	# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/intel/4-6-core-xeon-no-mt-lathander.txt";
+	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/mips/mips-mainusg-cpuinfo.txt";
 	my %speeds = set_cpu_speeds_sys();
 	my @cpuinfo = main::reader($file);
 	my @phys_cpus = (0);# start with 1 always
@@ -6582,7 +6604,7 @@ sub data_cpuinfo {
 			$cpu{'model_id'} =~ s/^0X//;
 		}
 		# cpu can show in arm
-		elsif (!$cpu{'model_name'} &&( $line[0] eq 'model name' || $line[0] eq 'cpu' )){
+		elsif (!$cpu{'model_name'} && ( $line[0] eq 'model name' || $line[0] eq 'cpu' || $line[0] eq 'cpu model' )){
 			$cpu{'model_name'} = main::cleaner($line[1]);
 			$cpu{'model_name'} = cpu_cleaner($cpu{'model_name'});
 			if ( $b_arm || $line[1] =~ /ARM|AArch/i){
@@ -6597,6 +6619,10 @@ sub data_cpuinfo {
 					}
 					#$cpu{'processors'}[$proc_count] = 0;
 				}
+			}
+			elsif ($b_mips || $line[1] =~ /mips/i){
+				$b_mips = 1;
+				$cpu{'type'} = 'mips';
 			}
 		}
 		elsif ( $line[0] eq 'cpu mhz' ){
@@ -6699,6 +6725,7 @@ sub data_cpuinfo {
 	$cpu{'ids'} = (\@ids);
 	if ( $extra > 0 && !$cpu{'arch'} && $type ne 'short' ){
 		$cpu{'arch'} = cpu_arch($cpu{'type'},$cpu{'family'},$cpu{'model_id'});
+		$cpu{'arch'} = $cpu_arch if (!$cpu{'arch'} && $cpu_arch && ($b_mips || $b_arm))
 		#print "$cpu{'type'},$cpu{'family'},$cpu{'model_id'},$cpu{'arch'}\n";
 	}
 	if (!$speeds{'cur-freq'}){
@@ -7262,7 +7289,19 @@ sub cpu_vendor {
 	eval $end if $b_log;
 	return $vendor;
 }
-
+sub get_boost_status {
+	eval $start if $b_log;
+	my ($boost);
+	my $path = '/sys/devices/system/cpu/cpufreq/boost';
+	if (-f $path){
+		$boost = (main::reader($path))[0];
+		if (defined $boost && $boost =~/^[01]$/){
+			$boost = ($boost) ? 'enabled' : 'disabled';
+		}
+	}
+	eval $end if $b_log;
+	return $boost;
+}
 sub arm_cpu_name {
 	eval $start if $b_log;
 	my (%cpus,$compat);
@@ -8255,6 +8294,7 @@ sub device_vendor {
 	['^TEAC','^TEAC','TEAC',''],
 	['^(TS|Transcend|JetFlash)','^Transcend','Transcend',''],
 	['^TrekStor','^TrekStor','TrekStor',''],
+	['^UDinfo','^UDinfo','UDinfo',''],
 	['^(UG|Unigen)','^Unigen','Unigen',''],
 	['^VBOX','','VirtualBox',''],
 	['^(Verbatim|STORE N GO)','^Verbatim','Verbatim',''],
@@ -8423,10 +8463,10 @@ sub get {
 	eval $start if $b_log;
 	my (@data,@rows);
 	my $num = 0;
-	if ($b_arm && !$b_arm_gfx && !$b_pci_tool){
-		my $key = 'ARM';
+	if (($b_arm || $b_mips) && !$b_soc_gfx && !$b_pci_tool){
+		my $key = ($b_arm) ? 'ARM' : 'MIPS';
 		@data = ({
-		main::key($num++,$key) => main::row_defaults('arm-pci',''),
+		main::key($num++,$key) => main::row_defaults(lc($key) . '-pci',''),
 		},);
 		@rows = (@rows,@data);
 	}
@@ -8472,7 +8512,7 @@ sub card_data {
 		$num = 1;
 		my @row = @$_;
 		#print "$row[0] $row[3]\n";
-		if ($row[3] == 0 && ( $row[0] =~ /^(vga|display|3d|fb|gpu|hdmi)$/ ) ){
+		if ($row[3] == 0 && ( $row[0] =~ /^(vga|disp|display|3d|fb|gpu|hdmi)$/ ) ){
 			#print "$row[0] $row[3]\n";
 			$j = scalar @rows;
 			$driver = $row[9];
@@ -9018,7 +9058,7 @@ package MachineData;
 
 sub get {
 	eval $start if $b_log;
-	my (%arm_machine,@data,@rows,$key1,$val1,$which);
+	my (%soc_machine,@data,@rows,$key1,$val1,$which);
 	my $num = 0;
 	if ($bsd_type && @sysctl_machine && !$b_dmidecode_force ){
 		@data = machine_data_sysctl();
@@ -9051,11 +9091,9 @@ sub get {
 	}
 	elsif (!$bsd_type) {
 		# this uses /proc/cpuinfo so only GNU/Linux
-		if ($b_arm){
-			%arm_machine = machine_data_arm();
-			if (%arm_machine){
-				@data = create_output_arm(%arm_machine);
-			}
+		if ($b_arm || $b_mips){
+			%soc_machine = machine_data_soc();
+			@data = create_output_soc(%soc_machine) if %soc_machine;
 		}
 		if (!@data){
 			$key1 = 'Message';
@@ -9201,37 +9239,38 @@ sub create_output {
 	eval $end if $b_log;
 	return @rows;
 }
-sub create_output_arm {
+sub create_output_soc {
 	my (%data,@row,@rows);
-	my (%arm_machine) = @_;
+	my (%soc_machine) = @_;
 	my $num = 0;
 	my $j = 0;
-	#print Data::Dumper::Dumper \%arm_machine;
+	#print Data::Dumper::Dumper \%soc_machine;
 	# this is sketchy, /proc/device-tree/model may be similar to Hardware value from /proc/cpuinfo
 	# raspi: Hardware	: BCM2835 model: Raspberry Pi Model B Rev 2
-	if ($arm_machine{'device'} || $arm_machine{'model'}){
-		$rows[$j]{main::key($num++,'Type')} = 'ARM Device';
+	if ($soc_machine{'device'} || $soc_machine{'model'}){
+		my $key = ($b_arm) ? 'ARM Device': 'MIPS Device';
+		$rows[$j]{main::key($num++,'Type')} = $key;
 		my $system = 'System';
-		if (defined $arm_machine{'model'}){
-			$rows[$j]{main::key($num++,'System')} = $arm_machine{'model'};
+		if (defined $soc_machine{'model'}){
+			$rows[$j]{main::key($num++,'System')} = $soc_machine{'model'};
 			$system = 'details';
 		}
-		my $device = $arm_machine{'device'};
+		my $device = $soc_machine{'device'};
 		$device ||= 'N/A';
 		$rows[$j]{main::key($num++,$system)} = $device;
 	}
 	# we're going to print N/A for 0000 values sine the item was there.
-	if ($arm_machine{'firmware'}){
+	if ($soc_machine{'firmware'}){
 		# most samples I've seen are like: 0000
-		$arm_machine{'firmware'} =~ s/^[0]+$//;
-		$arm_machine{'firmware'} ||= 'N/A';
-		$rows[$j]{main::key($num++,'rev')} = $arm_machine{'firmware'};
+		$soc_machine{'firmware'} =~ s/^[0]+$//;
+		$soc_machine{'firmware'} ||= 'N/A';
+		$rows[$j]{main::key($num++,'rev')} = $soc_machine{'firmware'};
 	}
 	# sometimes has value like: 0000
-	if (defined $arm_machine{'serial'}){
+	if (defined $soc_machine{'serial'}){
 		# most samples I've seen are like: 0000
-		$arm_machine{'serial'} =~ s/^[0]+$//;
-		$rows[$j]{main::key($num++,'serial')} = main::apply_filter($arm_machine{'serial'});
+		$soc_machine{'serial'} =~ s/^[0]+$//;
+		$rows[$j]{main::key($num++,'serial')} = main::apply_filter($soc_machine{'serial'});
 	}
 	eval $end if $b_log;
 	return @rows;
@@ -9300,29 +9339,35 @@ sub machine_data_sys {
 # which will be used for alt ARM machine data in cases 
 # where no dmi data present, or by cpu data to guess at 
 # certain actions for arm only.
-sub machine_data_arm {
+sub machine_data_soc {
 	eval $end if $b_log;
-	my (%arm_machine,@temp);
+	my (%soc_machine,@temp);
 	if (my $file = main::system_files('cpuinfo')){
 		#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/arm/arm-shevaplug-1.2ghz.txt";
 		my @data = main::reader($file);
 		foreach (@data){
-			if (/^Hardware/i){
+			if (/^(Hardware|machine)\s*:/i){
 				@temp = split /\s*:\s*/, $_;
 				$temp[1] = main::arm_cleaner($temp[1]);
-				$arm_machine{'device'} = main::cleaner($temp[1]);
+				$temp[1] = main::dmi_cleaner($temp[1]);
+				$soc_machine{'device'} = main::cleaner($temp[1]);
+			}
+			elsif (/^(system type)\s*:/i){
+				@temp = split /\s*:\s*/, $_;
+				$temp[1] = main::dmi_cleaner($temp[1]);
+				$soc_machine{'model'} = main::cleaner($temp[1]);
 			}
 			elsif (/^Revision/i){
 				@temp = split /\s*:\s*/, $_;
-				$arm_machine{'firmware'} = $temp[1];
+				$soc_machine{'firmware'} = $temp[1];
 			}
 			elsif (/^Serial/i){
 				@temp = split /\s*:\s*/, $_;
-				$arm_machine{'serial'} = $temp[1];
+				$soc_machine{'serial'} = $temp[1];
 			}
 		}
 	}
-	if (-f '/proc/device-tree/model'){
+	if (!$soc_machine{'model'} && -f '/proc/device-tree/model'){
 		my $model  = (main::reader('/proc/device-tree/model'))[0];
 		main::log_data('data',"device-tree-model: $model") if $b_log;
 		if ( $model ){
@@ -9330,22 +9375,22 @@ sub machine_data_arm {
 			$model = (split /\x01|\x02|\x03|\x00/, $model)[0] if $model;
 			# idea was to use only first part of string, but now try using all
 			#my (@result) = ();
-			#@result = split(/\s+/, $arm_machine{'device'}) if $arm_machine{'device'};
-			if ( !$arm_machine{'device'} || ($model && $model !~ /$arm_machine{'device'}/i) ){
+			#@result = split(/\s+/, $soc_machine{'device'}) if $soc_machine{'device'};
+			if ( !$soc_machine{'device'} || ($model && $model !~ /$soc_machine{'device'}/i) ){
 				$model = main::arm_cleaner($model);
-				$arm_machine{'model'} = $model;
+				$soc_machine{'model'} = $model;
 			}
 		}
 	}
-	if (!$arm_machine{'serial'} && -f '/proc/device-tree/serial-number'){
+	if (!$soc_machine{'serial'} && -f '/proc/device-tree/serial-number'){
 		my $serial  = (main::reader('/proc/device-tree/serial-number'))[0];
 		$serial = (split /\x01|\x02|\x03|\x00/, $serial)[0] if $serial;
 		main::log_data('data',"device-tree-serial: $serial") if $b_log;
-		$arm_machine{'serial'} = $serial if $serial;
+		$soc_machine{'serial'} = $serial if $serial;
 	}
-	#print Data::Dumper::Dumper \%arm_machine;
+	#print Data::Dumper::Dumper \%soc_machine;
 	eval $end if $b_log;
-	return %arm_machine;
+	return %soc_machine;
 }
 
 # bios_date: 09/07/2010
@@ -9646,7 +9691,7 @@ sub get {
 	eval $start if $b_log;
 	my (@data,@rows);
 	my $num = 0;
-	if ($b_arm && !$b_arm_net && !$b_pci_tool){
+	if (($b_arm || $b_mips) && !$b_soc_net && !$b_pci_tool){
 		# do nothing, but keep the test conditions to force 
 		# the non arm case to always run
 	}
@@ -9657,10 +9702,10 @@ sub get {
 	@data = usb_data();
 	@rows = (@rows,@data) if @data;
 	# note: rasberry pi uses usb networking only 
-	if (!@rows && $b_arm){
-		my $key = 'ARM';
+	if (!@rows && ($b_arm || $b_mips)){
+		my $key = ($b_arm) ? 'ARM' : 'MIPS';
 		@data = ({
-		main::key($num++,$key) => main::row_defaults('arm-pci',''),
+		main::key($num++,$key) => main::row_defaults(lc($key) . '-pci',''),
 		},);
 		@rows = (@rows,@data);
 	}
@@ -9705,7 +9750,7 @@ sub card_data {
 		#print "$row[0] $row[3]\n"; 
 		# NOTE: class 06 subclass 80 
 		# https://www-s.acm.illinois.edu/sigops/2007/roll_your_own/7.c.1.html
-		if ($row[0] eq 'network' || $row[0] eq 'ethernet' || $row[1] eq '0680' ){
+		if (($row[0] && $row[0] =~ /^(eth|ethernet|ethernet-phy|network|wifi|wlan)$/ )|| ($row[1] && $row[1] eq '0680' ) ){
 			#print "$row[0] $row[3]\n";
 			$j = scalar @rows;
 			my $driver = $row[9];
@@ -9744,7 +9789,12 @@ sub card_data {
 				$row[8] ||= 'N/A';
 				# as far as I know, wifi has no port, but in case it does in future, use it
 				$rows[$j]{main::key($num++,'port')} = $row[8] if (!$b_wifi || ( $b_wifi && $row[8] ne 'N/A') );
-				$rows[$j]{main::key($num++,'bus ID')} = (!$row[2] && !$row[3]) ? 'N/A' : "$row[2].$row[3]";
+				my $bus_id = 'N/A';
+				# note: for arm/mips we want to see the single item bus id, why not?
+				if ($row[2] && $row[3]){$bus_id = "$row[2].$row[3]"}
+				elsif ($row[2]){$bus_id = $row[2]}
+				elsif ($row[3]){$bus_id = $row[3]}
+				$rows[$j]{main::key($num++,'bus ID')} = $bus_id;
 			}
 			if ($extra > 1){
 				$rows[$j]{main::key($num++,'chip ID')} = $chip_id;
@@ -10661,13 +10711,14 @@ sub partition_data {
 			$b_fake_map = 1;
 			($back_size,$back_used) = (7,6);
 		}
-		if (!@partitions_working){
-			@partitions_working = main::grabber("df -k 2>/dev/null");
-			$b_fs = 0;
-			$cols = 5 if $bsd_type ne 'darwin';
-			if (my $path = main::check_program('mount')){
-				@mount = main::grabber("$path 2>/dev/null");
-			}
+	}
+	# busybox only supports -k and -P, openbsd, darwin
+	if (!@partitions_working){
+		@partitions_working = main::grabber("df -k 2>/dev/null");
+		$b_fs = 0;
+		$cols = 5 if !$bsd_type || $bsd_type ne 'darwin';
+		if (my $path = main::check_program('mount')){
+			@mount = main::grabber("$path 2>/dev/null");
 		}
 	}
 	# determine positions
@@ -10739,7 +10790,12 @@ sub partition_data {
 		}
 		if ($b_load){
 			if (!$bsd_type){
-				$fs = (%part && $part{'fs'}) ? $part{'fs'} : $row[1];
+				if ($b_fs){
+					$fs = (%part && $part{'fs'}) ? $part{'fs'} : $row[1];
+				}
+				else {
+					$fs = get_mounts_fs($row[0],@mount);
+				}
 				if ($show{'label'}) {
 					if (%part && $part{'label'}) {
 						$label = $part{'label'};
@@ -10758,7 +10814,7 @@ sub partition_data {
 				}
 			}
 			else {
-				$fs = ($b_fs) ? $row[1]: get_bsd_fs($row[0],@mount);
+				$fs = ($b_fs) ? $row[1]: get_mounts_fs($row[0],@mount);
 				if (@gpart && ($show{'label'} || $show{'uuid'} ) ){
 					my @extra = get_bsd_label_uuid("$dev_base");
 					if (@extra){
@@ -10819,7 +10875,7 @@ sub swap_data {
 	# though this can include /dev/ramzswap0. Note: you can also use /proc/swaps for this
 	# data, it's the same exact output as swapon -s
 	foreach (@working){
-		next if ! /^\/dev/;
+		next if ! /^\/dev/ || /^\/dev\/(ramzwap|zram)/;
 		my @data = split /\s+/, $_;
 		my $dev_base = $data[0];
 		$dev_base =~ s/^\/dev\///;
@@ -10856,16 +10912,21 @@ sub swap_data {
 	eval $end if $b_log;
 	return @swap;
 }
-sub get_bsd_fs {
+sub get_mounts_fs {
 	eval $start if $b_log;
 	my ($item,@mount) = @_;
-	$item =~ s/map:\/(\S+)/map $1/ if $bsd_type eq 'darwin';
+	$item =~ s/map:\/(\S+)/map $1/ if $bsd_type && $bsd_type eq 'darwin';
 	return 'N/A' if ! @mount;
 	my ($fs) = ('');
 	# linux: /dev/sdb6 on /var/www/m type ext4 (rw,relatime,data=ordered)
+	# /dev/sda3 on /root.dev/ugw type ext3 (rw,relatime,errors=continue,user_xattr,acl,barrier=1,data=journal)
 	# bsd: /dev/ada0s1a on / (ufs, local, soft-updates)
 	foreach (@mount){
-		if ($_ =~ /^$item\son.*\(([^,\s\)]+)[,\s]*.*\)/){
+		if ($bsd_type && $_ =~ /^$item\son.*\(([^,\s\)]+)[,\s]*.*\)/){
+			$fs = $1;
+			last;
+		}
+		elsif (!$bsd_type && $_ =~ /^$item\son.*\stype\s([\S]+)\s\([^\)]+\)/){
 			$fs = $1;
 			last;
 		}
@@ -13133,6 +13194,10 @@ sub create_output {
 		my $psu_temp = $sensors{'psu-temp'} . $temp_unit;
 		$rows[$j]{main::key($num++,'psu')} = $psu_temp;
 	}
+	if (defined $sensors{'ambient-temp'}){
+		my $ambient_temp = $sensors{'ambient-temp'} . $temp_unit;
+		$rows[$j]{main::key($num++,'ambient')} = $ambient_temp;
+	}
 	if (scalar @gpu == 1){
 		my $gpu_temp = $gpu[0]{'temp'};
 		my $gpu_type = $gpu[0]{'type'};
@@ -13179,6 +13244,9 @@ sub create_output {
 			$rows[$j]{main::key($num++,"fan-$i")} = $fan_default[$i];
 		}
 	}
+	$rows[$j]{main::key($num++,'psu')} = $sensors{'fan-psu'} if defined $sensors{'fan-psu'};
+	$rows[$j]{main::key($num++,'psu-1')} = $sensors{'fan-psu1'} if defined $sensors{'fan-psu1'};
+	$rows[$j]{main::key($num++,'psu-2')} = $sensors{'fan-psu2'} if defined $sensors{'fan-psu2'};
 	# note: so far, only nvidia-settings returns speed, and that's in percent
 	if (scalar @gpu == 1 && defined $gpu[0]{'fan-speed'}){
 		my $gpu_fan = $gpu[0]{'fan-speed'} . $gpu[0]{'speed-unit'};
@@ -13251,6 +13319,7 @@ sub ipmi_data {
 	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmi-sensors-crazy-epyc-1.txt";$program='ipmi-sensors';
 	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmitool-sensors-RK016013.txt";$program='ipmi-sensors';
 	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmi-sensors-lathander.txt";
+	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmi-sensors-zwerg.txt";
 	#@data = main::reader($file);
 	return if ! @data;
 	foreach (@data){
@@ -13258,9 +13327,15 @@ sub ipmi_data {
 		# print "$_\n";
 		@row = split /\s*\|\s*/, $_;
 		next if $row[$i_value] !~ /^[0-9\.]+$/i;
-		# print "$row[$i_key]; $row[$i_value]\n";
-		if ($row[$i_key] =~ /^System[\s_]Temp$/i){
+		# print "$row[$i_key] - $row[$i_value]\n";
+		if ($row[$i_key] =~ /^(System[\s_]Temp|System[\s_]?Board)$/i){
 			$sensors{'mobo-temp'} = int($row[$i_value]);
+			$working_unit = $row[$i_unit];
+			$working_unit =~ s/degrees\s// if $b_ipmitool; 
+			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
+		}
+		elsif ($row[$i_key] =~ /^(Ambient)$/i){
+			$sensors{'ambient-temp'} = int($row[$i_value]);
 			$working_unit = $row[$i_unit];
 			$working_unit =~ s/degrees\s// if $b_ipmitool; 
 			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
@@ -13268,14 +13343,14 @@ sub ipmi_data {
 		# Platform Control Hub (PCH), it is the X370 chip on the Crosshair VI Hero.
 		# VRM: voltage regulator module
 		# NOTE: CPU0_TEMP CPU1_TEMP is possible, unfortunately; CPU Temp Interf 
-		elsif ( !$sensors{'cpu-temp'} && $row[$i_key] =~ /^CPU([01])?[\s_]Temp$/i) {
+		elsif ( !$sensors{'cpu-temp'} && $row[$i_key] =~ /^CPU([01])?([\s_]Temp)?$/i) {
 			$b_cpu_0 = 1 if defined $1 && $1 == 0;
 			$sensors{'cpu-temp'} = int($row[$i_value]);
 			$working_unit = $row[$i_unit];
 			$working_unit =~ s/degrees\s// if $b_ipmitool; 
 			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 		}
-		elsif ($row[$i_key] =~ /^CPU([1-4])[\s_]Temp$/i) {
+		elsif ($row[$i_key] =~ /^CPU([1-4])([\s_]Temp)?$/i) {
 			$temp_working = $1;
 			$temp_working++ if $b_cpu_0;
 			$sensors{"cpu${temp_working}-temp"} = int($row[$i_value]);
@@ -13312,6 +13387,12 @@ sub ipmi_data {
 			}
 			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 		}
+		elsif (!$sensors{'sodimm-temp'} && $row[$i_key] =~ /^(DIMM-[0-9][A-Z]?)$/i){
+			$sensors{'sodimm-temp'} = int($row[$i_value]);
+			$working_unit = $row[$i_unit];
+			$working_unit =~ s/degrees\s// if $b_ipmitool; 
+			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
+		}
 		# note: can be cpu fan:, cpu fan speed:, etc.
 		elsif ($row[$i_key] =~ /^(CPU|Processor)[\s_]Fan/i) {
 			$sensors{'fan-main'} = () if !$sensors{'fan-main'};
@@ -13337,17 +13418,26 @@ sub ipmi_data {
 				}
 			}
 		}
+		elsif ($row[$i_key] =~ /^(FAN PSU|PSU FAN)$/i) {
+			$sensors{'fan-psu'} = int($row[$i_value]);
+		}
+		elsif ($row[$i_key] =~ /^(FAN PSU1|PSU1 FAN)$/i) {
+			$sensors{'fan-psu-1'} = int($row[$i_value]);
+		}
+		elsif ($row[$i_key] =~ /^(FAN PSU2|PSU2 FAN)$/i) {
+			$sensors{'fan-psu-2'} = int($row[$i_value]);
+		}
 		if ($extra > 0){
-			if ($row[$i_key] =~ /^(P[_]?)?12V$/i) {
+			if ($row[$i_key] =~ /^(MAIN\s|P[_]?)?12V$/i) {
 				$sensors{'volts-12'} = $row[$i_value];
 			}
-			elsif ($row[$i_key] =~ /^(P5V|5VCC|5V PG)$/i) {
+			elsif ($row[$i_key] =~ /^(MAIN\s5V|P5V|5VCC|5V PG)$/i) {
 				$sensors{'volts-5'} = $row[$i_value];
 			}
-			elsif ($row[$i_key] =~ /^(P3V3|3.3VCC|3.3V PG)$/i) {
+			elsif ($row[$i_key] =~ /^(MAIN\s3.3V|P3V3|3.3VCC|3.3V PG)$/i) {
 				$sensors{'volts-3.3'} = $row[$i_value];
 			}
-			elsif ($row[$i_key] =~ /^((P_)?VBAT|CMOS Battery)$/i) {
+			elsif ($row[$i_key] =~ /^((P_)?VBAT|CMOS Battery|BATT 3.0V)$/i) {
 				$sensors{'volts-vbat'} = $row[$i_value];
 			}
 			# NOTE: VDimmP1ABC VDimmP1DEF
@@ -13377,12 +13467,13 @@ sub lm_sensors_data {
 	my (%sensors);
 	my ($b_valid,$sys_fan_nu)  = (0,0);
 	my ($adapter,$fan_working,$temp_working,$working_unit)  = ('','','','');
+	@sensors_data = main::grabber(main::check_program('sensors') . " 2>/dev/null");
 	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/amdgpu-w-fan-speed-stretch-k10.txt";
 	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/peci-tin-geggo.txt";
 	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-w-other-biker.txt";
 	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-asus-chassis-1.txt";
+	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-devnull-1.txt";
 	#@sensors_data = main::reader($file);
-	@sensors_data = main::grabber(main::check_program('sensors') . " 2>/dev/null");
 	#print @sensors_data;
 	@sensors_data = map {$_ =~ s/\s*:\s*\+?/:/;$_} @sensors_data;
 	foreach (@sensors_data){
@@ -13782,13 +13873,18 @@ sub data_processor {
 		%sensors = ();
 	}
 	else {
-		my ($psu_temp,$sodimm_temp,$v_12,$v_5,$v_3_3,$v_dimm_p1,$v_dimm_p2,$v_soc_p1,$v_soc_p2,$v_vbat);
+		my ($ambient_temp,$psu_fan,$psu1_fan,$psu2_fan,$psu_temp,$sodimm_temp,
+		$v_12,$v_5,$v_3_3,$v_dimm_p1,$v_dimm_p2,$v_soc_p1,$v_soc_p2,$v_vbat);
 		$psu_temp = $sensors{'psu-temp'} if $sensors{'psu-temp'};
 		# sodimm fan is fan_main[4]
 		$sodimm_temp = $sensors{'sodimm-temp'} if $sensors{'sodimm-temp'};
 		$cpu2_temp = $sensors{'cpu2-temp'} if $sensors{'cpu2-temp'};
 		$cpu3_temp = $sensors{'cpu3-temp'} if $sensors{'cpu3-temp'};
 		$cpu4_temp = $sensors{'cpu4-temp'} if $sensors{'cpu4-temp'};
+		$ambient_temp = $sensors{'ambient-temp'} if $sensors{'ambient-temp'};
+		$psu_fan = $sensors{'fan-psu'} if $sensors{'fan-psu'};
+		$psu1_fan = $sensors{'fan-psu-1'} if $sensors{'fan-psu-1'};
+		$psu2_fan = $sensors{'fan-psu-2'} if $sensors{'fan-psu-2'};
 		# so far only for ipmi, sensors data is junk for volts
 		if ($extra > 0 && 
 		    ($sensors{'volts-12'} || $sensors{'volts-5'} || $sensors{'volts-3.3'} || $sensors{'volts-vbat'}) ){
@@ -13802,6 +13898,7 @@ sub data_processor {
 			$v_soc_p2 = $sensors{'volts-soc-p2'} if $sensors{'volts-soc-p2'};
 		}
 		%sensors = (
+		'ambient-temp' => $ambient_temp,
 		'cpu-temp' => $cpu_temp,
 		'cpu2-temp' => $cpu2_temp,
 		'cpu3-temp' => $cpu3_temp,
@@ -13811,6 +13908,9 @@ sub data_processor {
 		'temp-unit' => $sensors{'temp-unit'},
 		'fan-main' => \@fan_main,
 		'fan-default' => \@fan_default,
+		'fan-psu' => $psu_fan,
+		'fan-psu1' => $psu1_fan,
+		'fan-psu2' => $psu2_fan,
 		);
 		if ($psu_temp){
 			$sensors{'psu-temp'} = $psu_temp;
@@ -13929,6 +14029,10 @@ sub gpu_data {
 				$holder = $1;
 				$j = scalar @gpudata;
 			}
+			if (/^(?:(?!amdgpu|.*hwmon|intel|nouveau|radeon).)*-(pci|virtual|isa)-(.*)/){
+				$b_found = 0;
+				$holder = '';
+			}
 			if ($b_found){
 				if (/^temp.*:([0-9]+).*(C|F)/){
 					$gpudata[$j]{'temp'} = $1;
@@ -13941,10 +14045,6 @@ sub gpu_data {
 					$gpudata[$j]{'speed-unit'} = '';
 				}
 				main::log_data('dump','sensors output: video: @gpudata',\@gpudata);
-			}
-			if (/^(?:(?!amdgpu|intel|nouveau|radeon).)*-(pci|virtual|isa)-(.*)/){
-				$b_found = 0;
-				$holder = '';
 			}
 		}
 	}
@@ -14139,7 +14239,7 @@ sub unmounted_data {
 		# need to exclude loop type file systems, squashfs for example
 		# NOTE: nvme needs special treatment because the main device is: nvme0n1
 		# note: $working[2] != 1 is wrong, it's not related
-		if ( $working[-1] !~ /^(nvme[0-9]+n|mmcblk)[0-9]+$/ && 
+		if ( $working[-1] !~ /^(nvme[0-9]+n|mmcblk|mtdblk|mtdblock)[0-9]+$/ && 
 		     $working[-1] =~ /[a-z][0-9]+$|dm-[0-9]+$/ && $working[-1] !~ /loop/ && 
 		     !(grep {$working[-1] =~ /$_/} @mounted)){
 			%part = PartitionData::check_lsblk($working[-1],0) if (@lsblk && $working[-1]);
@@ -15032,7 +15132,7 @@ sub get_kde_data {
 			$desktop[1] = ($kde_session_version) ? $kde_session_version: main::row_defaults('unknown-desktop-version');
 		}
 		# print Data::Dumper::Dumper \@version_data;
-		if ($extra > 0){
+		if ($extra > 1){
 			if (@version_data){
 				$desktop[3] = main::awk(\@version_data,'^Qt:', 2,'\s+');
 			}
@@ -15055,7 +15155,7 @@ sub get_kde_data {
 		if (!$desktop[1]){
 			$desktop[1] = '3.5';
 		}
-		if ($extra > 0 && @version_data){
+		if ($extra > 1 && @version_data){
 			$desktop[2] = 'Qt';
 			$desktop[3] = main::awk(\@version_data,'^Qt:',2,'\s+') if @version_data;
 		}
@@ -15072,7 +15172,7 @@ sub get_env_de_data {
 			@version_data = main::grabber("$program --version 2>/dev/null");
 			$desktop[1] = main::awk(\@version_data,'^TDE:',2,'\s+') if @version_data;
 		}
-		if ($extra > 0 && @version_data){
+		if ($extra > 1 && @version_data){
 			$desktop[2] = 'Qt';
 			$desktop[3] = main::awk(\@version_data,'^Qt:',2,'\s+') if @version_data;
 		}
@@ -15082,13 +15182,12 @@ sub get_env_de_data {
 		$desktop[0] = $data[3];
 		$desktop[0] ||= 'Unity';
 		$desktop[1] = main::program_version('cinnamon',$data[0],$data[1],$data[2],$data[5],$data[6]);
-		#set_gtk_data() if $extra > 0;
+		#set_gtk_data() if $extra > 1;
 	}
 	elsif ( $xdg_desktop =~ /budgie/ ){
 		@data = main::program_values('budgie');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('budgie-desktop',$data[0],$data[1],$data[2],$data[5],$data[6]);
-		#set_gtk_data() if $extra > 0;
 	}
 	# debian package: lxde-core. 
 	# NOTE: some distros fail to set XDG data for root
@@ -15113,7 +15212,7 @@ sub get_env_de_data {
 			else {
 				$desktop[0] = 'LX-Qt-Variant';
 			}
-			set_qt_data();
+			set_qt_data() if $extra > 1;
 		}
 	}
 	# note, X-Cinnamon value strikes me as highly likely to change, so just 
@@ -15122,7 +15221,13 @@ sub get_env_de_data {
 		@data = main::program_values('cinnamon');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('cinnamon',$data[0],$data[1],$data[2],$data[5],$data[6]);
-		#set_gtk_data() if $extra > 0;
+		#set_gtk_data() if $extra > 1;
+	}
+	elsif ($xdg_desktop eq 'pantheon' || $desktop_session eq 'pantheon'){
+		@data = main::program_values('pantheon');
+		$desktop[0] = $data[3];
+		#$desktop[1] = main::program_version('pantheon',$data[0],$data[1],$data[2],$data[5],$data[6]);
+		#set_gtk_data() if $extra > 1;
 	}
 	eval $end if $b_log;
 }
@@ -15141,7 +15246,7 @@ sub get_env_xprop_de_data {
 		@data = main::program_values('cinnamon');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('cinnamon',$data[0],$data[1],$data[2],$data[5],$data[6]);
-		#set_gtk_data() if $extra > 0;
+		#set_gtk_data() if $extra > 1;
 		$desktop[0] ||= 'Cinnamon';
 	}
 	elsif ($xdg_desktop eq 'mate' || ( $b_xprop && main::awk(\@xprop,'_marco') )){
@@ -15154,7 +15259,7 @@ sub get_env_xprop_de_data {
 			$desktop[0] = $data[3];
 			$desktop[1] = main::program_version($program,$data[0],$data[1],$data[2],$data[5],$data[6]);
 		}
-		#set_gtk_data() if $extra > 0;
+		#set_gtk_data() if $extra > 1;
 		$desktop[0] ||= 'MATE';
 	}
 	# note, GNOME_DESKTOP_SESSION_ID is deprecated so we'll see how that works out
@@ -15170,7 +15275,7 @@ sub get_env_xprop_de_data {
 			@data = main::program_values('gnome-shell');
 			$desktop[1] = main::program_version('gnome-shell',$data[0],$data[1],$data[2],$data[5],$data[6]);
 		}
-		# set_gtk_data() if $extra > 0;
+		# set_gtk_data() if $extra > 1;
 		$desktop[0] = ( $data[3] ) ? $data[3] : 'Gnome';
 	}
 	eval $end if $b_log;
@@ -15216,7 +15321,7 @@ sub get_xprop_de_data {
 		}
 		$desktop[0] ||= 'Xfce';
 		$desktop[1] ||= ''; # xfce isn't going to be 4 forever
-		if ($extra > 0){
+		if ($extra > 1){
 			@data = main::program_values('xfdesktop-toolkit');
 			#$desktop[3] = main::program_version('xfdesktop',$data[0],$data[1],$data[2],$data[5],$data[6]);
 			$desktop[3] = main::awk(\@version_data,$data[0],$data[1],'\s+');
@@ -15281,6 +15386,11 @@ sub get_xprop_de_data {
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('openbox',$data[0],$data[1],$data[2],$data[5],$data[6]);
 	}
+	elsif (main::check_program('amiwm') && main::awk(\@xprop,'amiwm' )){
+		@data = main::program_values('amiwm');
+		$desktop[0] = $data[3];
+		#$desktop[1] = main::program_version('openbox',$data[0],$data[1],$data[2],$data[5],$data[6]);
+	}
 	# need to check starts line because it's so short
 	eval $end if $b_log;
 }
@@ -15308,14 +15418,20 @@ sub get_ps_de_data {
 		# not in debian apt, current is wmii, version 3
 		['wmii2','wmii2','wmii2','wmii2'],
 		['wmii','wmii','wmii','wmii'],
+		['9wm','9wm','9wm','9wm'],
+		['amiwm','amiwm','amiwm','amiwm'],
 		['flwm','flwm','flwm','flwm'],
 		['jwm','jwm','jwm','jwm'],
 		['mwm','mwm','mwm','mwm'],
+		['notion','notion','notion','notion'],
+		['ratpoison','ratpoison','ratpoison','ratpoison'],
 		['sawfish','sawfish','sawfish','sawfish'],
 		['matchbox-window-manager','matchbox-window-manager',
 		  'matchbox-window-manager','matchbox-window-manager'],
 		['afterstep','afterstep','afterstep','afterstep'],
 		['WindowMaker','WindowMaker','wmaker','wmaker'],
+		['windowlab','windowlab','windowlab','windowlab'],
+		['xmonad','xmonad','xmonad','xmonad'],
 		);
 		foreach my $ref (@desktops){
 			my @item = @$ref;
@@ -15399,11 +15515,11 @@ sub get_wm_main {
 	if (!$desktop[5]){
 		main::set_ps_gui() if ! $b_ps_gui;
 		# order matters, see above logic
-		$wms = 'afterstep|awesome|budgie-wm|compiz|fluxbox|blackbox|dwm|flwm|';
-		$wms .= 'fvwm-crystal|fvwm2|fvwm|gnome-shell|i3|jwm|';
+		$wms = '9wm|afterstep|amiwm|awesome|budgie-wm|compiz|fluxbox|blackbox|dwm|';
+		$wms .= 'flwm|fvwm-crystal|fvwm2|fvwm|gala|gnome-shell|i3|jwm|';
 		$wms .= 'twin|kwin_wayland|kwin_x11|kwin|matchbox-window-manager|marco|';
-		$wms .= 'muffin|mutter|metacity|mwm|openbox|sawfish|scrotwm|spectrwm|';
-		$wms .= 'twm|WindowMaker|wm2|wmii2|wmii|xfwm4|xfwm5';
+		$wms .= 'muffin|mutter|metacity|mwm|notion|openbox|ratpoison|sawfish|scrotwm|spectrwm|';
+		$wms .= 'twm|windowlab|WindowMaker|wm2|wmii2|wmii|xfwm4|xfwm5|xmonad';
 		foreach (@ps_gui){
 			if (/^($wms)$/){
 				$working = $1;
@@ -15531,7 +15647,7 @@ sub set_info_data {
 	my (@data,@info,$item);
 	my $pattern = 'gnome-panel|kicker|lxpanel|lxqt-panel|matchbox-panel|';
 	$pattern .= 'mate-panel|plasma-desktop|plasma-netbook|razor-panel|razorqt-panel|';
-	$pattern .= 'xfce4-panel|xfce5-panel';
+	$pattern .= 'wingpanel|xfce4-panel|xfce5-panel';
 	if (@data = grep {/^($pattern)$/} @ps_gui ) {
 		# only one entry per type, can be multiple
 		foreach $item (@data){
@@ -15553,7 +15669,7 @@ sub set_xprop {
 		if (@xprop){
 			# add wm / de as required, but only add what is really tested for above
 			# XFDESKTOP_IMAGE_FILE; XFCE_DESKTOP
-			my $pattern = 'blackbox_pid|compiz|enlightenment|^_gnome|herbstluftwm|';
+			my $pattern = '^amiwm|blackbox_pid|compiz|enlightenment|^_gnome|herbstluftwm|';
 			$pattern .= '^kwin_|^i3_|icewm|_marco|^_motif|_muffin|openbox_pid|';
 			$pattern .= '^_?windowmaker|^_wm2|^(xfdesktop|xfce)';
 			# let's only do these searches once
@@ -17093,8 +17209,8 @@ sub set_pci_data {
 			# ! -d '/proc/bus/pci'
 			# this is sketchy, a sbc won't have pci, but a non sbc arm may have it, so 
 			# build up both and see what happens
-			if ($b_arm ){
-				set_arm_soc_data();
+			if ($b_arm || $b_mips){
+				set_soc_data();
 			}
 		}
 		else {
@@ -17301,22 +17417,42 @@ sub set_pciconf_data {
 # "MODALIAS=of:NgpuT<NULL>Callwinner,sun8i-h3-maliCallwinner,sun7i-a20-maliCarm,mali-400"]
 ## 5
 # /sys/devices/platform/soc/soc:internal-regs/d0018180.gpio/uevent
-sub set_arm_soc_data {
+## 6
+# /sys/devices/soc.0/1180000001800.mdio/8001180000001800:05/uevent
+#  ["DRIVER=AR8035", "OF_NAME=ethernet-phy"
+## 7
+# /sys/devices/soc.0/1c30000.eth/uevent
+## 8
+# /sys/devices/wlan.26/uevent [from pine64]
+sub set_soc_data {
 	eval $start if $b_log;
 	my ($content,@files,@temp2,@temp3,@working);
-	@files = globber("/sys/devices/platform/soc*/*/uevent");
-	@temp2 = globber("/sys/devices/platform/soc*/soc*/*/uevent");
+	if (-d '/sys/devices/platform/'){
+		@files = globber('/sys/devices/platform/soc*/*/uevent');
+		@temp2 = globber('/sys/devices/platform/soc*/*/*/uevent');
+		@files = (@files,@temp2) if @temp2;
+	}
+	if (globber('/sys/devices/soc*')){
+		@temp2 = globber('/sys/devices/soc*/*/uevent');
+		@files = (@files,@temp2) if @temp2;
+		@temp2 = globber('/sys/devices/soc*/*/*/uevent');
+		@files = (@files,@temp2) if @temp2;
+	}
+	@temp2 = globber('/sys/devices/*/uevent'); # see case 8
 	@files = (@files,@temp2) if @temp2;
 	@temp2 = undef;
 	# not sure why, but even as root/sudo, /subsystem/uevent is unreadable with -r test true
 	@files = grep {!/subsystem/} @files if @files;
 	foreach my $file (@files){
+		next if -z $file;
 		my ($busid,$busid_nu,$chip_id,$device,$driver,$modules,$port,$rev,
-		$type,$type_id,$vendor_id,@working);
+		$temp,$type,$type_id,$vendor_id,@working);
 		$chip_id = $file;
 		# variants: /soc/20100000.ethernet /soc/soc:audio /soc:/ /soc@0/
-		$chip_id =~ /\/sys\/devices\/platform\/(soc[^\/]*\/)?soc[^\/]*\/([^\/]+)[\.:][^\/]+\/uevent/;
-		$chip_id = $2;
+		# mips: /sys/devices/soc.0/1180000001800.mdio/8001180000001800:07/
+		$chip_id =~ /\/sys\/devices\/(platform\/)?(soc[^\/]*\/)?([^\/]+\/)?([^\/]+\/)?([^\/]+)[\.:]([^\/]+)\/uevent$/;
+		$chip_id = $5;
+		$temp = $6;
 		@working = reader($file, 'strip') if -r $file;
 		foreach my $data (@working){
 			@temp2 = split /=/, $data;
@@ -17333,17 +17469,19 @@ sub set_arm_soc_data {
 				$vendor_id = $temp3[0];
 			}
 		}
-		$type = '' if ! defined $type;
+		# it's worthless, we can't use it
+		next if ! defined $type;
 		$driver = '' if ! defined $driver;
-		$busid =  '';
+		$busid = (defined $temp && $temp =~ /^[0-9]+$/) ? $temp: 0;
 		$busid_nu =  0;
 		$type_id =  '';
 		$port = '';
 		$rev = '';
 		$modules = '';
-		$b_arm_audio = 1 if ($type eq 'audio' || $type eq 'hdmi' );
-		$b_arm_gfx = 1 if ($type eq 'gpu' || $type eq 'fb' || $type eq 'hdmi');
-		$b_arm_net = 1 if $type eq 'ethernet' || $type =~ /wifi/;
+		# note: use these for main Card match for -AGN
+		$b_soc_audio = 1 if $type =~ /^(audio|daudio|hdmi|multimedia)$/;
+		$b_soc_gfx = 1 if $type =~ /^(vga|disp|display|3d|fb|gpu|hdmi)$/;
+		$b_soc_net = 1 if $type =~ /^(eth|ethernet|ethernet-phy|network|wifi|wlan)$/;
 		@temp3 = ($type,$type_id,$busid,$busid_nu,$device,$vendor_id,$chip_id,$rev,$port,$driver,$modules);
 		@pci = (@pci,[@temp3]);
 	}
@@ -17389,18 +17527,19 @@ sub set_ps_gui {
 	}
 	# wm:
 	if ($show{'system'} && $extra > 1){
-		@temp=qw(afterstep awesome blackbox budgie-wm compiz 3dwm dwm fluxbox 
-		flwm fvwm-crystal fvwm2 fvwm gnome-shell i3 jwm twin kwin_wayland 
-		kwin_x11 kwin matchbox-panel marco matchbox-window-manager metacity 
-		metisse mir muffin mutter mwm openbox sawfish scrotwm spectrwm twm 
-		WindowMaker wm2 wmii2 wmii xfwm4 xfwm5);
+		@temp=qw(9wm 3dwm afterstep amiwm awesome blackbox budgie-wm compiz 
+		dwm fluxbox flwm fvwm-crystal fvwm2 fvwm gala gnome-shell i3 jwm 
+		twin kwin_wayland kwin_x11 kwin marco matchbox-window-manager metacity 
+		metisse mir muffin mutter mwm notion openbox ratpoison sawfish 
+		scrotwm spectrwm twm windowlab WindowMaker wm2 wmii2 wmii xfwm4 
+		xfwm5 xmonad);
 		@match = (@match,@temp);
 	}
 	# info: 
 	if ($show{'system'} && $extra > 2){
 		@temp=qw(budgie-panel gnome-panel kicker lxpanel lxqt-panel 
 		matchbox-panel mate-panel plasma-desktop plasma-netbook razor-panel 
-		razorqt-panel xfce4-panel xfce5-panel);
+		razorqt-panel wingpanel xfce4-panel xfce5-panel);
 		@match = (@match,@temp);
 	}
 	# compositors (for wayland these are also the server, note 
