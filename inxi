@@ -31,8 +31,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.0.18';
-my $self_date='2018-07-16';
+my $self_version='3.0.19';
+my $self_date='2018-07-23';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -139,7 +139,7 @@ sub main {
 	eval $start if $b_log;
 	initialize();
 	## use for start client debugging
-	# $debug = 3; # 3 prints timers
+	# $debug = 10; # 3 prints timers
 	# set_debugger(); # for debugging of konvi issues
 	#my $ob_start = StartClient->new();
 	#$ob_start->get_client_data();
@@ -443,7 +443,9 @@ sub set_os {
 sub set_path {
 	# Extra path variable to make execute failures less likely, merged below
 	my (@path);
-	@paths = qw(/sbin /bin /usr/sbin /usr/bin /usr/local/sbin /usr/local/bin /usr/X11R6/bin);
+	# NOTE: recent Xorg's show error if you try /usr/bin/Xorg -version but work 
+	# if you use the /usr/lib/xorg-server/Xorg path.
+	@paths = qw(/sbin /bin /usr/sbin /usr/bin /usr/local/sbin /usr/local/bin);
 	@path = split /:/, $ENV{'PATH'} if $ENV{'PATH'};
 	# print "paths: @paths\nPATH: $ENV{'PATH'}\n";
 	# Create a difference of $PATH and $extra_paths and add that to $PATH:
@@ -835,7 +837,7 @@ sub create_color_selections {
 		if ($i > 9){
 			$spacer = '^';
 		}
-		if ($configs{'selection'} =~ /^global|irc-gui|irc-console|irc-virt-term$/ && $i > $safe_color_count ){
+		if ($configs{'selection'} =~ /^(global|irc-gui|irc-console|irc-virt-term)$/ && $i > $safe_color_count ){
 			last;
 		}
 		main::set_color_scheme($i);
@@ -875,7 +877,7 @@ sub get_selection {
 	@data = ();
 	my $response = <STDIN>;
 	chomp $response;
-	if ($response =~ /([^0-9]|^$)/ || ( $response =~ /^[0-9]+$/ && $response > ($count + 3) )){
+	if (!main::is_int($response) || $response > ($count + 3) ){
 		@data = (
 		[0, '', '', "Error - Invalid Selection. You entered this: $response. Hit <ENTER> to continue."],
 		[0, '', '',  "$line1"],
@@ -930,16 +932,29 @@ sub process_selection {
 		);
 		main::print_basic(@data); 
 		if ($configs{'selection'} eq 'global'){
-			delete_all_config_colors();
+			delete_all_colors();
+		}
+		else {
+			delete_global_color();
 		}
 		set_config_color_scheme($response);
 	}
 }
-sub delete_all_config_colors {
+sub delete_all_colors {
 	my @file_lines = main::reader( $user_config_file );
 	open( $w_fh, '>', $user_config_file ) or error_handler('open', $user_config_file, $!);
 	foreach ( @file_lines ) { 
 		if ( $_ !~ /^(CONSOLE_COLOR_SCHEME|GLOBAL_COLOR_SCHEME|IRC_COLOR_SCHEME|IRC_CONS_COLOR_SCHEME|IRC_X_TERM_COLOR_SCHEME|VIRT_TERM_COLOR_SCHEME)/){
+			print {$w_fh} "$_"; 
+		}
+	} 
+	close $w_fh;
+}
+sub delete_global_color {
+	my @file_lines = main::reader( $user_config_file );
+	open( $w_fh, '>', $user_config_file ) or error_handler('open', $user_config_file, $!);
+	foreach ( @file_lines ) { 
+		if ( $_ !~ /^GLOBAL_COLOR_SCHEME/){
 			print {$w_fh} "$_"; 
 		}
 	} 
@@ -1015,10 +1030,11 @@ sub get_configs {
 			s/^\s+//;
 			s/\s+$//;
 			s/'|"//g;
-			s/true/1/; # switch to 1/0 perl boolean
-			s/false/0/; # switch to 1/0 perl boolean
+			s/true/1/i; # switch to 1/0 perl boolean
+			s/false/0/i; # switch to 1/0 perl boolean
 			next unless length;
 			($key, $val) = split(/\s*=\s*/, $_, 2);
+			next unless length($val);
 			get_config_item($key,$val);
 			# print "f: $file key: $key val: $val\n";
 		}
@@ -1026,13 +1042,15 @@ sub get_configs {
 	}
 }
 
+# note: someone managed to make a config file with corrupted values, so check int 
+# explicitly, don't assume it was done correctly.
 # args: 0: key; 1: value
 sub get_config_item {
 	my ($key,$val) = @_;
-	if ($key eq 'ALLOW_UPDATE' || $key eq 'B_ALLOW_UPDATE') {$b_update = int($val)}
-	elsif ($key eq 'ALLOW_WEATHER' || $key eq 'B_ALLOW_WEATHER') {$b_weather = int($val)}
-	elsif ($key eq 'CPU_SLEEP') {$cpu_sleep = $val if $val =~ /^[0-9\.]$/}
-	elsif ($key eq 'DL_TIMEOUT') {$dl_timeout = int($val)}
+	if ($key eq 'ALLOW_UPDATE' || $key eq 'B_ALLOW_UPDATE') {$b_update = $val if is_int($val)}
+	elsif ($key eq 'ALLOW_WEATHER' || $key eq 'B_ALLOW_WEATHER') {$b_weather = $val if is_int($val)}
+	elsif ($key eq 'CPU_SLEEP') {$cpu_sleep = $val if is_numeric($val)}
+	elsif ($key eq 'DL_TIMEOUT') {$dl_timeout = $val if is_int($val)}
 	elsif ($key eq 'DOWNLOADER') {
 		if ($val =~ /^(curl|fetch|ftp|perl|wget)$/){
 			# this dumps all the other data and resets %dl for only the
@@ -1042,11 +1060,11 @@ sub get_config_item {
 		}}
 	elsif ($key eq 'FILTER_STRING') {$filter_string = $val}
 	elsif ($key eq 'LANGUAGE') {$language = $val if $val =~ /^(en)$/}
-	elsif ($key eq 'LIMIT') {$limit = int($val)}
-	elsif ($key eq 'OUTPUT_TYPE') {$output_type = $val if $val =~ /^json|screen|xml/}
-	elsif ($key eq 'PS_COUNT') {$ps_count = int($val) }
-	elsif ($key eq 'SENSORS_CPU_NO') {$sensors_cpu_nu = int($val)}
-	elsif ($key eq 'SHOW_HOST' || $key eq 'B_SHOW_HOST') { $show{'host'} = int($val)}
+	elsif ($key eq 'LIMIT') {$limit = $val if is_int($val)}
+	elsif ($key eq 'OUTPUT_TYPE') {$output_type = $val if $val =~ /^(json|screen|xml)$/}
+	elsif ($key eq 'PS_COUNT') {$ps_count = $val if is_int($val) }
+	elsif ($key eq 'SENSORS_CPU_NO') {$sensors_cpu_nu = $val if is_int($val)}
+	elsif ($key eq 'SHOW_HOST' || $key eq 'B_SHOW_HOST') { $show{'host'} = $val if is_int($val)}
 	elsif ($key eq 'WEATHER_UNIT') { 
 		$val = lc($val) if $val;
 		if ($val && $val =~ /^(c|f|cf|fc|i|m|im|mi)$/){
@@ -1056,23 +1074,23 @@ sub get_config_item {
 		}
 	}
 	# layout
-	elsif ($key eq 'CONSOLE_COLOR_SCHEME') {$colors{'console'} = int($val)}
-	elsif ($key eq 'GLOBAL_COLOR_SCHEME') {$colors{'global'} = int($val)}
-	elsif ($key eq 'IRC_COLOR_SCHEME') {$colors{'irc-gui'} = int($val)}
-	elsif ($key eq 'IRC_CONS_COLOR_SCHEME') {$colors{'irc-console'} = int($val)}
-	elsif ($key eq 'IRC_X_TERM_COLOR_SCHEME') {$colors{'irc-virt-term'} = int($val)}
-	elsif ($key eq 'VIRT_TERM_COLOR_SCHEME') {$colors{'virt-term'} = int($val)}
+	elsif ($key eq 'CONSOLE_COLOR_SCHEME') {$colors{'console'} = $val if is_int($val)}
+	elsif ($key eq 'GLOBAL_COLOR_SCHEME') {$colors{'global'} = $val if is_int($val)}
+	elsif ($key eq 'IRC_COLOR_SCHEME') {$colors{'irc-gui'} = $val if is_int($val)}
+	elsif ($key eq 'IRC_CONS_COLOR_SCHEME') {$colors{'irc-console'} = $val if is_int($val)}
+	elsif ($key eq 'IRC_X_TERM_COLOR_SCHEME') {$colors{'irc-virt-term'} = $val if is_int($val)}
+	elsif ($key eq 'VIRT_TERM_COLOR_SCHEME') {$colors{'virt-term'} = $val if is_int($val)}
 	# note: not using the old short SEP1/SEP2
 	elsif ($key eq 'SEP1_IRC') {$sep{'s1-irc'} = $val}
 	elsif ($key eq 'SEP1_CONSOLE') {$sep{'s1-console'} = $val}
-	elsif ($key eq 'SEP[23]_IRC') {$sep{'s2-irc'} = $val}
-	elsif ($key eq 'SEP[23]_CONSOLE') {$sep{'s2-console'} = $val}
+	elsif ($key eq 'SEP2_IRC') {$sep{'s2-irc'} = $val}
+	elsif ($key eq 'SEP2_CONSOLE') {$sep{'s2-console'} = $val}
 	# size
-	elsif ($key eq 'COLS_MAX_CONSOLE') {$size{'console'} = int($val)}
-	elsif ($key eq 'COLS_MAX_IRC') {$size{'irc'} = int($val)}
-	elsif ($key eq 'COLS_MAX_NO_DISPLAY') {$size{'no-display'} = int($val)}
-	elsif ($key eq 'INDENT') {$size{'indent'} = int($val)}
-	elsif ($key eq 'INDENT_MIN') {$size{'indent-min'} = int($val)}
+	elsif ($key eq 'COLS_MAX_CONSOLE') {$size{'console'} = $val if is_int($val)}
+	elsif ($key eq 'COLS_MAX_IRC') {$size{'irc'} = $val if is_int($val)}
+	elsif ($key eq 'COLS_MAX_NO_DISPLAY') {$size{'no-display'} = $val if is_int($val)}
+	elsif ($key eq 'INDENT') {$size{'indent'} = $val if is_int($val)}
+	elsif ($key eq 'INDENT_MIN') {$size{'indent-min'} = $val if is_int($val)}
 	#  print "mc: key: $key val: $val\n";
 	# print Dumper (keys %size) . "\n";
 }
@@ -1269,6 +1287,8 @@ sub new {
 }
 
 sub run_debugger {
+	#require File::Find;
+	#import File::Find::Functions;
 	require File::Copy;
 	import File::Copy;
 	require File::Spec::Functions;
@@ -1304,7 +1324,7 @@ sub run_debugger {
 			proc_traverse_data();
 		}
 		else {
-			print "Skipping /proc data collection. /proc not present, or empty.\n";
+			print "Skipping /proc data collection.\n";
 		}
 		print $line3;
 	}
@@ -1723,6 +1743,8 @@ sub system_files {
 	push (@files, '/etc/os-release');
 	copy_files(\@files,'system-distro');
 	@files = main::globber('/etc/upstream[-_]{[rR]elease,[vV]ersion}/*');
+	copy_files(\@files,'system-distro');
+	@files = main::globber('/etc/calamares/branding/*/branding.desc');
 	copy_files(\@files,'system-distro');
 	@files = (
 	'/proc/1/comm',
@@ -3044,6 +3066,18 @@ sub globber {
 	return @files;
 }
 
+## NOTE: for perl pre 5.012 length(undef) returns warning
+# receives string, returns boolean 0/1 if integer
+sub is_int {
+	return 1 if (defined $_[0] && length($_[0]) && length($_[0]) == ($_[0] =~ tr/0123456789//));
+}
+
+# receives string, returns boolean 0/1 if numeric. tr/// is 4x faster than regex
+sub is_numeric {
+	return 1 if ( defined $_[0] && ( $_[0] =~ tr/0123456789//) >= 1 && 
+	length($_[0]) == ($_[0] =~ tr/0123456789.//) && ($_[0] =~ tr/.//) <= 1);
+}
+
 # gets array ref, which may be undefined, plus join string
 # this helps avoid debugger print errors when we are printing arrays
 # which we don't know are defined or not null.
@@ -3065,9 +3099,10 @@ sub joiner {
 }
 
 # returns array of:
-# 0 - match string; 1 - search number; 2 - version string; 3 - Print name
-# 4 - console 0/1; 5 - 0/1 exit version loop at first iteration; 
-# 6 - 0/1 write to stderr
+# 0 - match string; 1 - search number; 2 - version string [alt: file]; 
+# 3 - Print name; 4 - console 0/1; 
+# 5 - 0/1 exit version loop at 1 [alt: if version=file replace value with \s]; 
+# 6 - 0/1 write to stderr [alt: if version=file, path for file]
 # arg: 1 - program lower case name
 sub program_values {
 	my ($app) = @_;
@@ -3102,9 +3137,14 @@ sub program_values {
 	'amiwm' => ['^amiwm',0,'0','AmiWM',0,1,0],
 	'awesome' => ['^awesome',2,'--version','Awesome',0,1,0],
 	'blackbox' => ['^Blackbox',2,'--version','Blackbox',0,1,0],
+	'bspwm' => ['^\S',1,'-v','bspwm',0,1,0],
 	'budgie' => ['^budgie-desktop',2,'--version','Budgie',0,1,0],
 	'cinnamon' => ['^cinnamon',2,'--version','Cinnamon',0,1,0],
 	'compiz' => ['^compiz',2,'--version','Compiz',0,1,0],
+	'deepin' => ['^Version',2,'file','Deepin',0,'=','/etc/deepin-version'],
+	'deepin-metacity' => ['^metacity',2,'--version','Deepin-Metacity',0,1,0],
+	'deepin-mutter' => ['^mutter',2,'--version','Deepin-Mutter',0,1,0],
+	'deepin-wm' => ['^gala',0,'0','DeepinWM',0,1,0],
 	'dwm' => ['^dwm',1,'-v','Dwm',0,1,1],
 	'fluxbox' => ['^fluxbox',2,'--version','Fluxbox',0,1,0],
 	'flwm' => ['^flwm',0,'0','FLWM',0,0,1],
@@ -3115,8 +3155,8 @@ sub program_values {
 	'gala' => ['^gala',2,'--version','gala',0,1,0], # super slow result
 	'gnome-about' => ['gnome',3,'--version','Gnome',0,1,0],
 	'gnome-shell' => ['gnome',3,'--version','Gnome',0,1,0],
-	# fails to return version when in wm, but outside does. weird.
-	'herbstluftwm' => ['^herbstluftwm',2,'--version','herbstluftwm',0,1,0],
+	# with path, returns /sbin/herbstluftwm [version]
+	'herbstluftwm' => ['herbstluftwm',2,'--version','herbstluftwm',0,1,0],
 	'jwm' => ['^jwm',2,'--version','JWM',0,1,0],
 	# i3 version 4.13 (2016-11-08) © 2009 Michael Stapelberg and contributors
 	'i3' => ['^i3',3,'--version','i3',0,1,0],
@@ -3126,9 +3166,12 @@ sub program_values {
 	'kded2' => ['^KDE Development Platform:',4,'--version','KDE',0,1,0],
 	'kded3' => ['^KDE Development Platform:',4,'--version','KDE',0,1,0],
 	'kded4' => ['^KDE Development Platform:',4,'--version','KDE',0,1,0],
+	'lumina' => ['^\S',1,'--version','Lumina',0,1,1],
 	'lxde' => ['^lxpanel',2,'--version','LXDE',0,1,0],
 	# command: lxqt-panel
 	'lxqt' => ['^lxqt-panel',2,'--version','LXQt',0,1,0],
+	'lxqt-variant' => ['^lxqt-panel',0,'0','LXQt-Variant',0,1,0],
+	'lxsession' => ['^lxsession',0,'0','lxsession',0,1,0],
 	'marco' => ['^marco',2,'--version','marco',0,1,0],
 	'matchbox' => ['^matchbox',0,'0','Matchbox',0,1,0],
 	'matchbox-window-manager' => ['^matchbox',2,'--help','Matchbox',0,0,0],
@@ -3144,6 +3187,7 @@ sub program_values {
 	'pekwm' => ['^pekwm',3,'--version','PekWM',0,1,0],
 	'plasmashell' => ['^plasmashell',2,'--version','KDE Plasma',0,1,0],
 	'qtdiag' => ['^qt',2,'--version','Qt',0,1,0],
+	'razor' => ['^razor',0,'0','Razor-Qt',0,1,0],
 	'ratpoison' => ['^ratpoison',2,'--version','Ratpoison',0,1,0],
 	'sawfish' => ['^sawfish',3,'--version','Sawfish',0,1,0],
 	'scrotwm' => ['^scrotwm.*welcome.*',5,'-v','Scrotwm',0,1,1],
@@ -3194,7 +3238,7 @@ sub program_values {
 # 5 - [optional] exit first find 0/1; 6 - [optional] 0/1 stderr output
 sub program_version {
 	eval $start if $b_log;
-	my ($app, $search, $num,$version,$exit,$b_stderr) = @_;
+	my ($app, $search, $num,$version,$exit,$stderr) = @_;
 	my ($cmd,$line,$output);
 	my $version_nu = '';
 	my $count = 0;
@@ -3232,21 +3276,32 @@ sub program_version {
 		}
 	}
 	# note, some wm/apps send version info to stderr instead of stdout
-	if ( $b_stderr ) {
+	if ( $stderr && $stderr ne 'file' ) {
 		$cmd = "$app $version 2>&1";
 	}
 # 	elsif ( $app eq 'csh' ){
 # 		$app = 'tcsh';
 # 	}
 	# quick debian/buntu hack until I find a universal way to get version for these
-	elsif ( $app eq 'dash' ){
+	elsif ( $app =~ /dash$/ ){
+		$app =~ s/^.*\///;
 		$cmd = "dpkg -l $app 2>/dev/null";
 	}
 	else {
 		$cmd = "$app $version 2>/dev/null";
 	}
 	log_data('data',"version: $version num: $num search: $search command: $cmd") if $b_log;
-	$output = qx($cmd);
+	# special case, in rare instances version comes from file
+	if ($version eq 'file' && $stderr){
+		return 0 unless -r $stderr;
+		my @data = reader($stderr,'strip');
+		@data = map {s/$exit/ /;$_} @data if $exit;
+		$output = join "\n",@data;
+		$exit = 100;
+	}
+	else {
+		$output = qx($cmd);
+	}
 	# print "$cmd : $output\n";
 	# sample: dwm-5.8.2, ©.. etc, why no space? who knows. Also get rid of v in number string
 	# xfce, and other, output has , in it, so dump all commas and parentheses
@@ -3265,7 +3320,7 @@ sub program_version {
 				# breaks version detection. A quick fix attempt is to just add 1 to $num 
 				# to get the next value.
 				$version_nu = $data[$num+1] if $data[$num+1] && $version_nu =~ /version/i;
-				$version_nu =~ s/(\([^)]+\)|,|dwm-|wmii2-|wmii-|\||\(|\))//g if $version_nu;
+				$version_nu =~ s/(\([^)]+\)|,|"|dwm-|wmii2-|wmii-|\||\(|\))//g if $version_nu;
 				# trim off leading v but only when followed by a number
 				$version_nu =~ s/^v([0-9])/$1/i if $version_nu; 
 				# print "$version_nu\n";
@@ -4077,7 +4132,7 @@ sub get_options{
 		# to detect wan/lan, we have to use long form to get as much data as possible
 		$usb_level = ($show{'usb'} || $show{'network'}) ? 2 : 1;
 	}
-	if ($bsd_type && ($show{'short'} || $show{'battery'} || $show{'cpu'} || $show{'cpu-basic'} || 
+	if ($bsd_type && ($show{'short'} || $show{'system'} || $show{'battery'} || $show{'cpu'} || $show{'cpu-basic'} || 
 	   $show{'info'} || $show{'machine'} || $show{'process'} || $show{'ram'}  || $show{'sensor'} ) ){
 		$b_sysctl = 1;
 	}
@@ -4184,7 +4239,7 @@ sub show_options {
 	['1', '-p', '--partitions-full', "Full $partition_string information (-P plus all other 
 	detected ${partition_string}s)." ],
 	['1', '-P', '--partitions', "Basic $partition_string info. Shows, if detected: 
-	/ /boot /home /opt /tmp /usr /var /var/log /var/tmp. Use -p to see all 
+	/ /boot /home /opt /tmp /usr /usr/home /var /var/log /var/tmp. Use -p to see all 
 	mounted ${partition_string}s." ],
 	['1', '-r', '--repos', "Distro repository data. Supported repo types: APK, 
 	APT, EOPKG, PACMAN, PACMAN-G2, PISI, PORTAGE, PORTS (BSDs), SLACKPKG, 
@@ -4637,7 +4692,14 @@ sub get_client_version {
 		elsif ( -f '~/.config/hexchat/xchat.conf' ){
 			@data = main::reader('~/.config/hexchat/xchat.conf','strip');
 		}
-		$client{'version'} = main::awk(\@data,'version',2,'\s*=\s*');
+		if (@data){
+			$client{'version'} = main::awk(\@data,'version',2,'\s*=\s*');
+		}
+		# fingers crossed, hexchat won't open gui!!
+		if (!$client{'version'}) {
+			@data = main::grabber("$client{'name'} --version 2>/dev/null");
+			$client{'version'} = main::awk(\@data,'hexchat',2,'\s+');
+		}
 		$client{'name-print'} = 'HexChat';
 	}
 	# note: see legacy inxi konvi logic if we need to restore any of the legacy code.
@@ -4778,7 +4840,7 @@ sub check_modern_konvi {
 	# main::log_data('data',"name: $client{'name'} :: qdb: $client{'qdbus'} :: version: $client{'version'} :: konvi: $client{'konvi'} :: PPID: $ppid") if $b_log;
 	# sabayon uses /usr/share/apps/konversation as path
 	if ( -d '/usr/share/kde4/apps/konversation' || -d '/usr/share/apps/konversation' ){
-		$pid = main::awk(\@ps_aux,'konversation',2,'\s+');
+		$pid = main::awk(\@ps_aux,'konversation -session',2,'\s+');
 		main::log_data('data',"pid: $pid") if $b_log;
 		$konvi = readlink ("/proc/$pid/exe");
 		$konvi =~ s/^.*\///; # basename
@@ -4941,7 +5003,7 @@ sub get_size {
 	my ($size,$b_int) = @_;
 	my (@data);
 	return ('','') if ! defined $size;
-	if ($size !~ /^[0-9\.]+$/){
+	if (!is_numeric($size)){
 		$data[0] = $size;
 		$data[1] = '';
 	}
@@ -6330,7 +6392,7 @@ sub create_output_full {
 		$b_flags = 1;
 	}
 	if ($extra > 0 && !$bsd_type){
-		my $bogomips = ($cpu{'bogomips'}) ? int($cpu{'bogomips'}) : 'N/A';
+		my $bogomips = (main::is_numeric($cpu{'bogomips'})) ? int($cpu{'bogomips'}) : 'N/A';
 		$rows[$j]{main::key($num++,'bogomips')} = $bogomips;
 	}
 	$j = scalar @rows;
@@ -8220,7 +8282,7 @@ sub device_vendor {
 	['^ADTRON','^(ADTRON)','Adtron',''],
 	['^ASUS','^ASUS','ASUS',''],
 	['^ATP','^ATP[\s\-]','ATP',''],
-	['^Corsair','^Corsair','Corsair',''],
+	['^(Corsair|Voyager)','^Corsair','Corsair',''],
 	['^(FUJITSU|MP)','^FUJITSU','Fujitsu',''],
 	# note: 2012:  wdc bought hgst
 	['^(HGST)','^HGST','HGST (Hitachi)',''], # HGST HUA
@@ -8245,12 +8307,15 @@ sub device_vendor {
 	['^BUFFALO','^BUFFALO','Buffalo',''],
 	['^CHN\b','','Zheino',''],
 	['^Colorful\b','^Colorful','Colorful',''],
-	['^DREVO\b','','Drevo',''],
+	['^DREVO\b','^DREVO','Drevo',''],
+	['^(Eaget|V8$)','^Eaget','Eaget',''],
 	['^EXCELSTOR','^EXCELSTOR( TECHNOLOGY)?','Excelstor',''],
 	['^FASTDISK','^FASTDISK','FASTDISK',''],
 	['^FORESEE','^FORESEE','Foresee',''],
 	['^GALAX\b','^GALAX','GALAX',''],
+	['^Galaxy\b','^Galaxy','Galaxy',''],
 	['^Generic','^Generic','Generic',''],
+	['^Gloway','^Gloway','Gloway',''],
 	['^GOODRAM','^GOODRAM','GOODRAM',''],
 	# supertalent also has FM: |FM
 	['^(G[\.]?SKILL)','^G[\.]?SKILL','G.SKILL',''],
@@ -8259,8 +8324,10 @@ sub device_vendor {
 	['^Imation','^Imation(\sImation)?','Imation',''], # Imation_ImationFlashDrive
 	['^(InnoDisk|Innolite)','^InnoDisk( Corp.)?','InnoDisk',''],
 	['^Innostor','^Innostor','Innostor',''],
-	['^Intenso','^Intenso','Intenso',''],
+	['^(Intenso|Rainbow Line)','^Intenso','Intenso',''],
 	['^KingDian','^KingDian','KingDian',''],
+	['^KingMAX','^KingMAX','KingMAX',''],
+	['^KINGSHARE','^KINGSHARE','KingShare',''],
 	['^(LITE[\-]?ON[\s\-]?IT)','^LITE[\-]?ON[\s\-]?IT','LITE-ON IT',''], # LITEONIT_LSS-24L6G
 	['^(LITE[\-]?ON|PH6)','^LITE[\-]?ON','LITE-ON',''], # PH6-CE240-L
 	['^M-Systems','^M-Systems','M-Systems',''],
@@ -8969,9 +9036,14 @@ sub x_drivers {
 	eval $end if $b_log;
 	return @driver_data;
 }
+# fallback if no glx x version data found
 sub x_version {
 	eval $start if $b_log;
 	my ($version,@data,$program);
+	# load the extra X paths, it's important that these are first, because
+	# later Xorg versions show error if run in console or ssh if the true path 
+	# is not used.
+	@paths = ( qw(/usr/lib/xorg /usr/lib/xorg-server /usr/X11R6/bin), @paths );
 	# IMPORTANT: both commands send version data to stderr!
 	if ($program = main::check_program('Xorg')){
 		@data = main::grabber("$program -version 2>&1");
@@ -8979,21 +9051,22 @@ sub x_version {
 	elsif ($program = main::check_program('X')){
 		@data = main::grabber("$program -version 2>&1");
 	}
+	#print join('^ ', @paths), " :: $program\n";
 	#print Data::Dumper::Dumper \@data;
 	if (@data){
 		foreach (@data){
 			if (/^X.org X server/i){
-				my @working = split /\s+/, $_;
-				$version = $working[3];
+				$version = (split /\s+/, $_)[3];
 				last;
 			}
 			elsif (/^X Window System Version/i) {
-				my @working = split /\s+/, $_;
-				$version = $working[4];
+				$version = (split /\s+/, $_)[4];
 				last;
 			}
 		}
 	}
+	# remove extra X paths
+	@paths = grep { !/xorg|X11R6/ } @paths;
 	eval $end if $b_log;
 	return $version;
 }
@@ -10003,7 +10076,7 @@ sub advanced_data_sys {
 			$b_wifi = 1 if !$b_wifi && ( -e "$_$if/wireless" || $if =~ /^(wl|ww)/);
 			if (!$b_wifi && $state ne 'down' && $state ne 'no'){
 				# make sure the value is strictly numeric before appending Mbps
-				$speed = ($speed =~ /^[0-9]+$/) ? "$speed Mbps" : $speed;
+				$speed = ( main::is_int($speed) ) ? "$speed Mbps" : $speed;
 				$row[0]{main::key($num++,'speed')} = $speed;
 				$row[0]{main::key($num++,'duplex')} = $duplex;
 			}
@@ -10071,7 +10144,7 @@ sub advanced_data_bsd {
 				# for 'down' string in that to skip showing speed/duplex
 				if (!$b_wifi && $state ne 'down' && $state ne 'no'){
 					# make sure the value is strictly numeric before appending Mbps
-					$speed = ($speed =~ /^[0-9]+$/) ? "$speed Mbps" : $speed;
+					$speed = ( main::is_int($speed) ) ? "$speed Mbps" : $speed;
 					$row[0]{main::key($num++,'speed')} = $speed;
 					$row[0]{main::key($num++,'duplex')} = $duplex;
 				}
@@ -10708,9 +10781,10 @@ sub partition_data {
 		#Filesystem 1024-blocks Used Available Capacity iused ifree %iused Mounted on
 		else {
 			$cols = 8;
-			$b_fake_map = 1;
 			($back_size,$back_used) = (7,6);
 		}
+		# turns out freebsd uses this junk too
+		$b_fake_map = 1;
 	}
 	# busybox only supports -k and -P, openbsd, darwin
 	if (!@partitions_working){
@@ -10739,7 +10813,9 @@ sub partition_data {
 		# stupid apple bullshit
 		$_ =~ s/^map\s+([\S]+)/map:\/$1/ if $b_fake_map;
 		my @row = split /\s+/, $_;
-		if ($row[0] =~ /$filters/ || $row[0] =~ /^ROOT/i || ($b_fs && $row[1] eq 'tmpfs')){
+		# autofs is a bsd thing, has size 0
+		if ($row[0] =~ /$filters/ || $row[0] =~ /^ROOT/i || 
+		   ($b_fs && ($row[2] == 0 || $row[1] eq 'tmpfs' || $row[1] eq 'autofs' ))){
 			next;
 		}
 		$dev_base = '';
@@ -10779,12 +10855,12 @@ sub partition_data {
 		}
 		# this handles yet another fredforfaen special case where a mounted drive
 		# has the search string in its name
-		if ($row[-1] =~ /^\/$|^\/boot$|^\/var$|^\/var\/tmp$|^\/var\/log$|^\/home$|^\/opt$|^\/tmp$|^\/usr$/){
+		if ($row[-1] =~ /^\/$|^\/boot$|^\/var$|^\/var\/tmp$|^\/var\/log$|^\/home$|^\/opt$|^\/tmp$|^\/usr$|^\/usr\/home$/){
 			$b_load = 1;
 			# note, older df in bsd do not have file system column
 			$type = 'main';
 		}
-		elsif ($row[$cols] !~ /^\/$|^\/boot$|^\/var$|^\/var\/tmp$|^\/var\/log$|^\/home$|^\/opt$|^\/tmp$|^\/usr$|^filesystem/){
+		elsif ($row[$cols] !~ /^\/$|^\/boot$|^\/var$|^\/var\/tmp$|^\/var\/log$|^\/home$|^\/opt$|^\/tmp$|^\/usr$|^\/usr\/home$|^filesystem/){
 			$b_load = 1;
 			$type = 'secondary';
 		}
@@ -11746,7 +11822,7 @@ sub zfs_data {
 		# this second is a single device not in an array
 		#  ada0s2    25.9G  14.6G  11.3G         -     0%    56%
 		#    gptid/3838f796-5c46-11e6-a931-d05099ac4dc2      -      -      -         -      -      -
-		elsif ($row[1] =~ /^([a-z0-9]+[0-9]+|([\S]+)\/.*)$/ && 
+		elsif ($row[1] =~ /^(sd[a-z]|[a-z0-9]+[0-9]+|([\S]+)\/.*)$/ && 
 		       ($row[2] eq '-' || $row[2] =~ /^[0-9\.]+[MGTP]$/ )){
 			$row[1] =~ /^([a-z0-9]+[0-9]+|([\S]+)\/.*)\s*(DEGRADED|FAULTED|OFFLINE)?$/;
 			my $working = $1;
@@ -12441,6 +12517,7 @@ sub get_repos_linux {
 	my $pacman_g2 = '/etc/pacman-g2.conf';
 	my $pisi_dir = '/etc/pisi/';
 	my $portage_dir = '/etc/portage/repos.conf/';
+	my $portage_gentoo_dir = '/etc/portage-gentoo/repos.conf/';
 	my $slackpkg = '/etc/slackpkg/mirrors';
 	my $slackpkg_plus = '/etc/slackpkg/slackpkgplus.conf';
 	my $yum_conf = '/etc/yum.conf';
@@ -12727,8 +12804,8 @@ sub get_repos_linux {
 		# print Data::Dumper::Dumper \@rows;
 	}
 	# gentoo 
-	if (-d $portage_dir && main::check_program('emerge')){
-		@files = main::globber("$portage_dir*.conf");
+	if ( (-d $portage_dir || -d $portage_gentoo_dir ) && main::check_program('emerge')){
+		@files = (main::globber("$portage_dir*.conf"),main::globber("$portage_gentoo_dir*.conf"));
 		$repo = 'portage';
 		if (@files){
 			foreach (sort @files){
@@ -12755,8 +12832,10 @@ sub get_repos_linux {
 						$url = $2;
 					}
 					# note: enabled = 1. enabled = 0 means disabled
-					elsif ($line =~ /^auto-sync\s*=\s*([01])/){
+					elsif ($line =~ /^auto-sync\s*=\s*(0|1|No|Yes)/){
 						$enabled = $1;
+						$enabled =~ s/No/0/;
+						$enabled =~ s/Yes/1/;
 					}
 					# print out the line if all 3 values are found, otherwise if a new
 					# repoTitle is hit above, it will print out the line there instead
@@ -13305,6 +13384,13 @@ sub ipmi_data {
 	$temp_working,$working_unit);
 	$program ||= 'ipmi-sensors'; # only for debugging, will always exist if reaches here
 	my ($b_ipmitool,$i_key,$i_value,$i_unit);
+	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmitool-sensors-archerseven-1.txt";$program='ipmitool';
+	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmitool-sensors-crazy-epyc-1.txt";$program='ipmitool';
+	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmitool-sensors-RK016013.txt";$program='ipmitool';
+	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmi-sensors-crazy-epyc-1.txt";
+	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmi-sensors-lathander.txt";
+	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmi-sensors-zwerg.txt";
+	#@data = main::reader($file);
 	if ($program =~ /ipmi-sensors$/){
 		$cmd = $program;
 		($b_ipmitool,$i_key,$i_value,$i_unit) = (0,1,3,4);
@@ -13314,21 +13400,16 @@ sub ipmi_data {
 		($b_ipmitool,$i_key,$i_value,$i_unit) = (1,0,1,2);
 	}
 	@data = main::grabber("$cmd 2>/dev/null");
-	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmitool-sensors-archerseven-1.txt";
-	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmitool-sensors-crazy-epyc-1.txt";
-	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmi-sensors-crazy-epyc-1.txt";$program='ipmi-sensors';
-	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmitool-sensors-RK016013.txt";$program='ipmi-sensors';
-	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmi-sensors-lathander.txt";
-	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/ipmitool/ipmi-sensors-zwerg.txt";
-	#@data = main::reader($file);
+	# print join ("\n", @data), "\n";
 	return if ! @data;
 	foreach (@data){
 		next if /^\s*$/;
 		# print "$_\n";
 		@row = split /\s*\|\s*/, $_;
-		next if $row[$i_value] !~ /^[0-9\.]+$/i;
+		#print "$row[$i_value]\n";
+		next if !main::is_numeric($row[$i_value]);
 		# print "$row[$i_key] - $row[$i_value]\n";
-		if ($row[$i_key] =~ /^(System[\s_]Temp|System[\s_]?Board)$/i){
+		if (!$sensors{'mobo-temp'} && $row[$i_key] =~ /^(MB_TEMP[0-9]|System[\s_]Temp|System[\s_]?Board)$/i){
 			$sensors{'mobo-temp'} = int($row[$i_value]);
 			$working_unit = $row[$i_unit];
 			$working_unit =~ s/degrees\s// if $b_ipmitool; 
@@ -13387,7 +13468,7 @@ sub ipmi_data {
 			}
 			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 		}
-		elsif (!$sensors{'sodimm-temp'} && $row[$i_key] =~ /^(DIMM-[0-9][A-Z]?)$/i){
+		elsif (!$sensors{'sodimm-temp'} && $row[$i_key] =~ /^(DIMM[-_]([A-Z][0-9][-_])?[A-Z]?[0-9][A-Z]?)$/i){
 			$sensors{'sodimm-temp'} = int($row[$i_value]);
 			$working_unit = $row[$i_unit];
 			$working_unit =~ s/degrees\s// if $b_ipmitool; 
@@ -13403,7 +13484,6 @@ sub ipmi_data {
 		# note: cpu/mobo/ps are 1/2/3
 		elsif ($row[$i_key] =~ /^(SYS[\s_])?FAN[\s_]?([0-9A-F]+)/i) {
 			$sys_fan_nu = hex($2);
-			next if $row[$i_value] !~ /^[0-9\.]+$/;
 			$fan_working = int($row[$i_value]);
 			$sensors{'fan-default'} = () if !$sensors{'fan-default'};
 			if ( $sys_fan_nu =~ /^([0-9]+)$/ ) {
@@ -13474,7 +13554,7 @@ sub lm_sensors_data {
 	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-asus-chassis-1.txt";
 	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-devnull-1.txt";
 	#@sensors_data = main::reader($file);
-	#print @sensors_data;
+	# print join ("\n", @sensors_data), "\n";
 	@sensors_data = map {$_ =~ s/\s*:\s*\+?/:/;$_} @sensors_data;
 	foreach (@sensors_data){
 		# we get this from gpu_data()
@@ -14239,6 +14319,8 @@ sub unmounted_data {
 		# need to exclude loop type file systems, squashfs for example
 		# NOTE: nvme needs special treatment because the main device is: nvme0n1
 		# note: $working[2] != 1 is wrong, it's not related
+		# note: for zfs using /dev/sda no partitions, this will also remove those from 
+		# the unmounted report because sdb is found in sdb1, this is acceptable
 		if ( $working[-1] !~ /^(nvme[0-9]+n|mmcblk|mtdblk|mtdblock)[0-9]+$/ && 
 		     $working[-1] =~ /[a-z][0-9]+$|dm-[0-9]+$/ && $working[-1] !~ /loop/ && 
 		     !(grep {$working[-1] =~ /$_/} @mounted)){
@@ -14386,7 +14468,7 @@ sub usb_data {
 				@row = split /:/, $line;
 				next if ! defined $row[0];
 				if ($row[0] eq 'bcdUSB' && defined $row[1]){
-					$speed  = ($row[1] =~ /^[0-9,\.]+$/) ? sprintf("%1.1f",$row[1]) : $row[1];
+					$speed  = ( main::is_numeric($row[1]) ) ? sprintf("%1.1f",$row[1]) : $row[1];
 				}
 				elsif ($row[0] eq '~bInterfaceProtocol' && $row[2] ){
 					$protocol = $row[2];
@@ -15056,7 +15138,8 @@ sub get_compiler_version_linux {
 # 6 - wm version
 {
 package DesktopEnvironment;
-my ($b_xprop,$desktop_session,$kde_session_version,$xdg_desktop,@desktop,@data,@xprop);
+my ($b_gtk,$b_qt,$b_xprop,$desktop_session,$kde_session_version,$xdg_desktop,
+@desktop,@data,@xprop);
 sub get {
 	# NOTE $XDG_CURRENT_DESKTOP envvar is not reliable, but it shows certain desktops better.
 	# most desktops are not using it as of 2014-01-13 (KDE, UNITY, LXDE. Not Gnome)
@@ -15082,6 +15165,8 @@ sub get {
 	if ($b_display && !$b_force_display && $extra > 1){
 		get_wm();
 	}
+	# set_gtk_data if $b_gtk && $extra > 1;
+	set_qt_data() if $b_qt && $extra > 1;
 	main::log_data('dump','@desktop', \@desktop) if $b_log;
 	# ($b_xprop,$kde_session_version,$xdg_desktop,@data,@xprop) = undef;
 	return @desktop;
@@ -15177,57 +15262,43 @@ sub get_env_de_data {
 			$desktop[3] = main::awk(\@version_data,'^Qt:',2,'\s+') if @version_data;
 		}
 	}
-	elsif ($xdg_desktop eq 'unity'){
-		@data = main::program_values('unity');
-		$desktop[0] = $data[3];
-		$desktop[0] ||= 'Unity';
-		$desktop[1] = main::program_version('cinnamon',$data[0],$data[1],$data[2],$data[5],$data[6]);
-		#set_gtk_data() if $extra > 1;
-	}
-	elsif ( $xdg_desktop =~ /budgie/ ){
-		@data = main::program_values('budgie');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('budgie-desktop',$data[0],$data[1],$data[2],$data[5],$data[6]);
-	}
-	# debian package: lxde-core. 
-	# NOTE: some distros fail to set XDG data for root
-	elsif ( $xdg_desktop =~ /^(lxde|razor|lxqt)$/ || (grep {/^(razor-session|lxsession|lxqt-session)$/} @ps_gui)){
-		# note: openbox-lxde --version may be present, but returns openbox data
-		if ($xdg_desktop eq 'lxde' || (grep {/^lxsession$/} @ps_gui )){
-			@data = main::program_values('lxde');
-			$desktop[0] = $data[3];
-			$desktop[1] = main::program_version('lxpanel',$data[0],$data[1],$data[2],$data[5],$data[6]);
-		}
-		# NOTE: lxqt-about opens a gui dialog
-		elsif ($xdg_desktop eq 'razor' || $xdg_desktop eq 'lxqt' || (grep {/^(razor-desktop|lxqt-session)$/} @ps_gui)) {
-			if (grep {/^lxqt-session$/} @ps_gui){
-				@data = main::program_values('lxqt');
+	if (!$desktop[0]){
+		# 1 equals 1/0; 2 env var search; 3 values; 4 version; 5 - gtk tk; 6 - qt tk
+		my @desktops =(
+		[1,'unity','unity','cinnamon',0,0],
+		[0,'budgie','budgie','budgie-desktop',0,0],
+		# debian package: lxde-core. 
+		# NOTE: some distros fail to set XDG data for root
+		[1,'lxde','lxde','lxpanel',0,0,'^lxsession$'],
+		[1,'razor','razor','razor-session',0,1,'^razor-session$'],
+		# BAD: lxqt-about opens dialogue, sigh. 
+		# Checked, lxqt-panel does show same version as lxqt-about
+		[1,'lxqt','lxqt','lxqt-panel',0,1,'^lxqt-session$'],
+		[0,'^(razor|lxqt)$','lxqt-variant','lxqt-panel',0,1,'^(razor-session|lxqt-session)$'],
+		# note, X-Cinnamon value strikes me as highly likely to change, so just 
+		# search for the last part
+		[0,'cinnamon','cinnamon','cinnamon',0,0],
+		# these two so far have no cli version data
+		[1,'pantheon','pantheon','pantheon',0,0],
+		[1,'lumina','lumina','lumina-desktop',0,1],
+		[1,'deepin','deepin','dde-desktop',0,1],
+		);
+		foreach my $ref (@desktops){
+			my @item = @$ref;
+			# Check if in xdg_desktop OR desktop_session OR if in $item[6] and in ps_gui
+			if ( (($item[0] && ($xdg_desktop eq $item[1] || $desktop_session eq $item[1] )) ||
+			   (!$item[0] && ($xdg_desktop =~ /$item[1]/ || $desktop_session  =~ /$item[1]/ )) ) ||
+			   ($item[6] && @ps_gui && (grep {/$item[6]/} @ps_gui) ) ){
+				@data = main::program_values($item[2]);
 				$desktop[0] = $data[3];
-				# BAD: lxqt-about opens dialogue, sigh
-				$desktop[1] = main::program_version('lxqt-panel',$data[0],$data[1],$data[2],$data[5],$data[6]);
+				$b_gtk = $item[4];
+				$b_qt = $item[5];
+				if ($data[1] && $data[2]){
+					$desktop[1] = main::program_version($item[3],$data[0],$data[1],$data[2],$data[5],$data[6]);
+				}
+				last;
 			}
-			elsif (grep {/^razor-session$/} @ps_gui){
-				$desktop[0] = 'Razor-Qt';
-			}
-			else {
-				$desktop[0] = 'LX-Qt-Variant';
-			}
-			set_qt_data() if $extra > 1;
 		}
-	}
-	# note, X-Cinnamon value strikes me as highly likely to change, so just 
-	# search for the last part
-	elsif ( $xdg_desktop =~ /cinnamon/ ){
-		@data = main::program_values('cinnamon');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('cinnamon',$data[0],$data[1],$data[2],$data[5],$data[6]);
-		#set_gtk_data() if $extra > 1;
-	}
-	elsif ($xdg_desktop eq 'pantheon' || $desktop_session eq 'pantheon'){
-		@data = main::program_values('pantheon');
-		$desktop[0] = $data[3];
-		#$desktop[1] = main::program_version('pantheon',$data[0],$data[1],$data[2],$data[5],$data[6]);
-		#set_gtk_data() if $extra > 1;
 	}
 	eval $end if $b_log;
 }
@@ -15246,7 +15317,7 @@ sub get_env_xprop_de_data {
 		@data = main::program_values('cinnamon');
 		$desktop[0] = $data[3];
 		$desktop[1] = main::program_version('cinnamon',$data[0],$data[1],$data[2],$data[5],$data[6]);
-		#set_gtk_data() if $extra > 1;
+		# $b_gtk = 1;
 		$desktop[0] ||= 'Cinnamon';
 	}
 	elsif ($xdg_desktop eq 'mate' || ( $b_xprop && main::awk(\@xprop,'_marco') )){
@@ -15259,7 +15330,7 @@ sub get_env_xprop_de_data {
 			$desktop[0] = $data[3];
 			$desktop[1] = main::program_version($program,$data[0],$data[1],$data[2],$data[5],$data[6]);
 		}
-		#set_gtk_data() if $extra > 1;
+		# $b_gtk = 1;
 		$desktop[0] ||= 'MATE';
 	}
 	# note, GNOME_DESKTOP_SESSION_ID is deprecated so we'll see how that works out
@@ -15275,7 +15346,7 @@ sub get_env_xprop_de_data {
 			@data = main::program_values('gnome-shell');
 			$desktop[1] = main::program_version('gnome-shell',$data[0],$data[1],$data[2],$data[5],$data[6]);
 		}
-		# set_gtk_data() if $extra > 1;
+		# $b_gtk = 1;
 		$desktop[0] = ( $data[3] ) ? $data[3] : 'Gnome';
 	}
 	eval $end if $b_log;
@@ -15288,9 +15359,6 @@ sub get_xprop_de_data {
 	# alternate: xfce4-about --version > xfce4-about 4.10.0 (Xfce 4.10)
 	# note: some distros/wm (e.g. bunsen) set xdg to xfce to solve some other 
 	# issues so don't test for that. $xdg_desktop eq 'xfce'
-	# the sequence here matters, some desktops like icewm, razor, let you set different 
-	# wm, so we want to get the main controlling desktop first, then fall back to the wm
-	# detections. get_wm() will handle alternate wm detections.
 	if ((main::check_program('xfdesktop')) && main::awk(\@xprop,'^(xfdesktop|xfce)' )){
 		# this is a very expensive test that doesn't usually result in a find
 		# talk to xfce to see what id they will be using for xfce 5
@@ -15336,60 +15404,37 @@ sub get_xprop_de_data {
 		$desktop[1] = (split /"/, $desktop[1])[1] if $desktop[1];
 		$desktop[1] = (split /\s+/, $desktop[1])[1] if $desktop[1];
 	}
-	# must come right after xfce 
-	elsif (main::check_program('icewm') && main::awk(\@xprop,'icewm' )){
-		@data = main::program_values('icewm');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('icewm',$data[0],$data[1],$data[2],$data[5],$data[6]);
-	}
-	# debian package: i3-wm
-	elsif (main::check_program('i3') && main::awk(\@xprop,'^i3_' )){
-		@data = main::program_values('i3');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('i3',$data[0],$data[1],$data[2],$data[5],$data[6]);
-	}
-	elsif (main::check_program('mwm') && main::awk(\@xprop,'^_motif' )){
-		@data = main::program_values('mwm');
-		$desktop[0] = $data[3];
-		# $desktop[1] = main::program_version('mwm',$data[0],$data[1],$data[2],$data[5],$data[6]);
-	}
-	# debian package name: wmaker
-	elsif (main::check_program('WindowMaker') && main::awk(\@xprop,'^_?windowmaker' )){
-		@data = main::program_values('wmaker');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('wmaker',$data[0],$data[1],$data[2],$data[5],$data[6]);
-	}
-	elsif (main::check_program('wm2') && main::awk(\@xprop,'^_wm2' )){
-		@data = main::program_values('wm2');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('wm2',$data[0],$data[1],$data[2],$data[5],$data[6]);
-	}
-	elsif (main::check_program('herbstluftwm') && main::awk(\@xprop,'herbstluftwm' )){
-		@data = main::program_values('herbstluftwm');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('herbstluftwm',$data[0],$data[1],$data[2],$data[5],$data[6]);
-	}
-	elsif ( (main::check_program('blackbox') || main::check_program('fluxbox')) && main::awk(\@xprop,'blackbox_pid' )){
-		if (@ps_gui && (grep {/^fluxbox$/} @ps_gui )){
-			@data = main::program_values('fluxbox');
-			$desktop[0] = $data[3];
-			$desktop[1] = main::program_version('fluxbox',$data[0],$data[1],$data[2],$data[5],$data[6]);
+	# the sequence here matters, some desktops like icewm, razor, let you set different 
+	# wm, so we want to get the main controlling desktop first, then fall back to the wm
+	# detections. get_ps_de_data() and get_wm() will handle alternate wm detections.
+	if (!$desktop[0]){
+		# 1 check program; 2 xprop search; 3 values; 4 version; 5 - optional: ps_gui search
+		my @desktops =(
+		['icewm','icewm','icewm','icewm'],
+		# debian package: i3-wm
+		['i3','i3','i3','i3'],
+		['mwm','^_motif','mwm','mwm'],
+		# debian package name: wmaker
+		['WindowMaker','^_?windowmaker','wmaker','wmaker'],
+		['wm2','^_wm2','wm2','wm2'],
+		['herbstluftwm','herbstluftwm','herbstluftwm','herbstluftwm'],
+		['fluxbox','blackbox_pid','fluxbox','fluxbox','^fluxbox$'],
+		['blackbox','blackbox_pid','blackbox','blackbox'],
+		['openbox','openbox_pid','openbox','openbox'],
+		['amiwm','amiwm','amiwm','amiwm'],
+		);
+		foreach my $ref (@desktops){
+			my @item = @$ref;
+			if (main::check_program($item[0]) && main::awk(\@xprop,$item[1]) && 
+			    (!$item[4] || (@ps_gui && (grep {/$item[4]/} @ps_gui ))) ){
+				@data = main::program_values($item[2]);
+				$desktop[0] = $data[3];
+				if ($data[1] && $data[2]){
+					$desktop[1] = main::program_version($item[3],$data[0],$data[1],$data[2],$data[5],$data[6]);
+				}
+				last;
+			}
 		}
-		else {
-			@data = main::program_values('blackbox');
-			$desktop[0] = $data[3];
-			$desktop[1] = main::program_version('blackbox',$data[0],$data[1],$data[2],$data[5],$data[6]);
-		}
-	}
-	elsif (main::check_program('openbox') && main::awk(\@xprop,'openbox_pid' )){
-		@data = main::program_values('openbox');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('openbox',$data[0],$data[1],$data[2],$data[5],$data[6]);
-	}
-	elsif (main::check_program('amiwm') && main::awk(\@xprop,'amiwm' )){
-		@data = main::program_values('amiwm');
-		$desktop[0] = $data[3];
-		#$desktop[1] = main::program_version('openbox',$data[0],$data[1],$data[2],$data[5],$data[6]);
 	}
 	# need to check starts line because it's so short
 	eval $end if $b_log;
@@ -15399,10 +15444,10 @@ sub get_ps_de_data {
 	my ($program,@version_data);
 	main::set_ps_gui() if !$b_ps_gui;
 	if (@ps_gui){
-		# 1 check program; 2 search; 3 values; 4 version; 5 -optional: print value
+		# 1 check program; 2 ps_gui search; 3 values; 4 version
 		my @desktops =(
 		['fluxbox','fluxbox','fluxbox','fluxbox'],
-		['fvwm-crystal','fvwm-crystal','fvwm-crystal','fvwm'],
+		['fvwm-crystal','fvwm.*-crystal','fvwm-crystal','fvwm'],
 		['fvwm2','fvwm2','fvwm2','fvwm2'],
 		['fvwm','fvwm','fvwm','fvwm'],
 		['pekwm','pekwm','pekwm','pekwm'],
@@ -15429,6 +15474,7 @@ sub get_ps_de_data {
 		['matchbox-window-manager','matchbox-window-manager',
 		  'matchbox-window-manager','matchbox-window-manager'],
 		['afterstep','afterstep','afterstep','afterstep'],
+		['bspwm','bspwm','bspwm','bspwm'],
 		['WindowMaker','WindowMaker','wmaker','wmaker'],
 		['windowlab','windowlab','windowlab','windowlab'],
 		['xmonad','xmonad','xmonad','xmonad'],
@@ -15462,6 +15508,7 @@ sub set_qt_data {
 		elsif ($program = main::check_program("kded") ){$kde_version = '';}
 	}
 	# alternate: qt4-default, qt4-qmake or qt5-default, qt5-qmake
+	# often this exists, is executable, but actually is nothing, shows error
 	if (!$desktop[3] && ($program = main::check_program("qmake"))){
 		@version_data = main::grabber("$program --version 2>/dev/null");
 		$desktop[2] = 'Qt';
@@ -15491,6 +15538,7 @@ sub get_wm {
 	if (!$b_wmctrl) {
 		get_wm_main();
 	}
+	# note, some wm, like cinnamon muffin, do not appear in ps aux, but do in wmctrl
 	if ( (!$desktop[5] || $b_wmctrl) && (my $program = main::check_program('wmctrl'))){
 		get_wm_wmctrl($program);
 	}
@@ -15502,10 +15550,10 @@ sub get_wm_main {
 	# xprop is set only if not kde/gnome/cinnamon/mate/budgie/lx..
 	if ($b_xprop){
 		#KWIN_RUNNING
-		$wms = 'blackbox|compiz|kwin_wayland|kwin_x11|kwin|marco|muffin|';
-		$wms .= 'openbox|herbstluftwm|twin|wm2|windowmaker|i3';
+		$wms = 'amiwm|blackbox|bspwm|compiz|kwin_wayland|kwin_x11|kwin|marco|';
+		$wms .= 'motif|muffin|openbox|herbstluftwm|twin|wm2|windowmaker|i3';
 		foreach (@xprop){
-			if (/\b($wms)\b/){
+			if (/($wms)/){
 				$working = $1;
 				$working = 'wmaker' if $working eq 'windowmaker';
 				last;
@@ -15515,10 +15563,11 @@ sub get_wm_main {
 	if (!$desktop[5]){
 		main::set_ps_gui() if ! $b_ps_gui;
 		# order matters, see above logic
-		$wms = '9wm|afterstep|amiwm|awesome|budgie-wm|compiz|fluxbox|blackbox|dwm|';
-		$wms .= 'flwm|fvwm-crystal|fvwm2|fvwm|gala|gnome-shell|i3|jwm|';
+		$wms = '9wm|afterstep|amiwm|awesome|bspwm|budgie-wm|compiz|fluxbox|blackbox|';
+		$wms .= 'deepin-wm|dwm|flwm|fvwm-crystal|fvwm2|fvwm|gala|gnome-shell|i3|jwm|';
 		$wms .= 'twin|kwin_wayland|kwin_x11|kwin|matchbox-window-manager|marco|';
-		$wms .= 'muffin|mutter|metacity|mwm|notion|openbox|ratpoison|sawfish|scrotwm|spectrwm|';
+		$wms .= 'muffin|deepin-mutter|mutter|deepin-metacity|metacity|mwm|';
+		$wms .= 'notion|openbox|ratpoison|sawfish|scrotwm|spectrwm|';
 		$wms .= 'twm|windowlab|WindowMaker|wm2|wmii2|wmii|xfwm4|xfwm5|xmonad';
 		foreach (@ps_gui){
 			if (/^($wms)$/){
@@ -15546,6 +15595,7 @@ sub get_wm_wmctrl {
 		$desktop[5] = main::trimmer($desktop[5]);
 		# change Metacity (Marco) to marco
 		if ($desktop[5] =~ /marco/i) {$desktop[5] = 'marco'}
+		elsif ($desktop[5] =~ /muffin/i) {$desktop[5] = 'muffin'}
 		elsif (lc($desktop[5]) eq 'gnome shell') {$desktop[5] = 'gnome-shell'}
 		elsif ($desktop_session eq 'trinity' && lc($desktop[5]) eq 'kwin') {$desktop[5] = 'Twin'}
 		get_wm_version('wmctrl',$desktop[5]);
@@ -15575,79 +15625,15 @@ sub get_wm_version {
 	}
 	eval $end if $b_log;
 }
-
-sub set_gtk_data {
-	eval $start if $b_log;
-	my ($version,$program,@data);
-	# this is a hack, and has to be changed with every toolkit version change, and 
-	# only dev systems 	# have this installed, but it's a cross distro command try it.
-	if ($program = main::check_program('pkg-config')){
-		@data = main::grabber("$program --modversion gtk+-4.0 2>/dev/null");
-		$version = main::awk(\@data,'\S');
-		# note: opensuse gets null output here, we need the command to get version and output sample
-		if ( !$version ){
-			@data = main::grabber("$program --modversion gtk+-3.0 2>/dev/null");
-			$version = main::awk(\@data,'\S');
-		}
-		if ( !$version ){
-			@data = main::grabber("$program --modversion gtk+-2.0 2>/dev/null");
-			$version = main::awk(\@data,'\S');
-		}
-	}
-	# now let's go to more specific version tests, this will never cover everything and that's fine.
-	if (!$version){
-		# we'll try some known package managers next. dpkg will handle a lot of distros 
-		# this is the most likely order as of: 2014-01-13. Not going to try to support all 
-		# package managers too much work, just the very biggest ones.
-		if ($program = main::check_program('dpkg')){
-			@data = main::grabber("$program -s libgtk-3-0 2>/dev/null");
-			$version = main::awk(\@data,'^\s*Version',2,'\s+');
-			# just guessing on gkt 4 package name
-			if (!$version){
-				@data = main::grabber("$program -s libgtk-4-0 2>/dev/null");
-				$version = main::awk(\@data,'^\s*Version',2,'\s+');
-			}
-			if (!$version){
-				@data = main::grabber("$program -s libgtk2.0-0 2>/dev/null");
-				$version = main::awk(\@data,'^\s*Version',2,'\s+');
-			}
-		}
-		elsif ($program = main::check_program('pacman')){
-			@data = main::grabber("$program -Qi gtk3 2>/dev/null");
-			$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
-			# just guessing on gkt 4 package name
-			if (!$version){
-				@data = main::grabber("$program -Qi gtk4 2>/dev/null");
-				$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
-			}
-			if (!$version){
-				@data = main::grabber("$program -Qi gtk2 2>/dev/null");
-				$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
-			}
-		}
-		elsif ($program = main::check_program('rpm')){
-			@data = main::grabber("$program -qi libgtk-3-0 2>/dev/null");
-			$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
-			# just guessing on gkt 4 package name
-			if (!$version){
-				@data = main::grabber("$program -qi libgtk-4-0 2>/dev/null");
-				$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
-			}
-			if (!$version){
-				@data = main::grabber("$program -qi libgtk-3-0 2>/dev/null");
-				$version = main::awk(\@data,'^\s*Version',2,'\s*:\s*');
-			}
-		}
-	}
-	$desktop[2] = 'Gtk';
-	eval $end if $b_log;
-}
+# see: inxi-fragments.txt for legacy code
+# sub set_gtk_data {
+# }
 sub set_info_data {
 	eval $start if $b_log;
 	my (@data,@info,$item);
-	my $pattern = 'gnome-panel|kicker|lxpanel|lxqt-panel|matchbox-panel|';
-	$pattern .= 'mate-panel|plasma-desktop|plasma-netbook|razor-panel|razorqt-panel|';
-	$pattern .= 'wingpanel|xfce4-panel|xfce5-panel';
+	my $pattern = 'dde-dock|gnome-panel|kicker|lemonbar|lxpanel|lxqt-panel|matchbox-panel|';
+	$pattern .= 'mate-panel|plasma-desktop|plasma-netbook|polybar|razor-panel|razorqt-panel|';
+	$pattern .= 'wingpanel|xfce4-panel|xfce5-panel|yabar';
 	if (@data = grep {/^($pattern)$/} @ps_gui ) {
 		# only one entry per type, can be multiple
 		foreach $item (@data){
@@ -15658,7 +15644,7 @@ sub set_info_data {
 			}
 		}
 	}
-	$desktop[4] = join (',', @info) if @info;
+	$desktop[4] = join (', ', @info) if @info;
 	eval $end if $b_log;
 }
 
@@ -15669,9 +15655,9 @@ sub set_xprop {
 		if (@xprop){
 			# add wm / de as required, but only add what is really tested for above
 			# XFDESKTOP_IMAGE_FILE; XFCE_DESKTOP
-			my $pattern = '^amiwm|blackbox_pid|compiz|enlightenment|^_gnome|herbstluftwm|';
-			$pattern .= '^kwin_|^i3_|icewm|_marco|^_motif|_muffin|openbox_pid|';
-			$pattern .= '^_?windowmaker|^_wm2|^(xfdesktop|xfce)';
+			my $pattern = '^amiwm|blackbox_pid|bspwm|compiz|enlightenment|^_gnome|';
+			$pattern .= 'herbstluftwm|^kwin_|^i3_|icewm|_marco|^_motif|_muffin|';
+			$pattern .= 'openbox_pid|^_?windowmaker|^_wm2|^(xfdesktop|xfce)';
 			# let's only do these searches once
 			@xprop = grep {/^\S/ && /($pattern)/i} @xprop;
 			$_ = lc for @xprop;
@@ -15693,9 +15679,9 @@ sub get_display_manager {
 	my @dms = qw(entranced.pid gdm.pid gdm3.pid kdm.pid ldm.pid 
 	lightdm.pid lxdm.pid mdm.pid nodm.pid pcdm.pid 	sddm.pid slim.lock 
 	tint2.pid wdm.pid xdm.pid xenodm.pid);
-	# this is the only one I know of so far that has --version
+	# these are the only one I know of so far that have --version
 	# lightdm outputs to stderr, so it has to be redirected
-	my @dms_version = qw(lightdm);
+	my @dms_version = qw(gdm3 lightdm);
 	$b_run = 1 if -d "/run";
 	# in most linux, /var/run is a sym link to /run, so no need to check it twice
 	if ( -d "/var/run" ){
@@ -15823,7 +15809,7 @@ sub get_linux_distro {
 	# Note that antergos changed this around 	# 2018-05, and now lists 
 	# antergos in os-release, sigh... We want these distros to use os-release 
 	# if it contains their names. Last check below
-	if ( @osr && (grep {/manjaro|antergos|chakra|pclinuxos/i} @osr ) ){
+	if ( @osr && ( grep {/(manjaro|antergos|chakra|pclinuxos|zorin)/i} @osr ) ){
 		$distro_file = $os_release;
 		#$system_base = 'Arch Linux';
 	}
@@ -15962,6 +15948,7 @@ sub get_linux_distro {
 		my $base_manual = 'kali'; # synthesize, no direct data available
 		my $base_osr = 'aptosid|grml|siduction'; # osr base, distro id in list of distro files
 		my $base_osr_issue = 'grml|linux lite'; # osr base, distro id in issue
+		my $base_osr_ubuntu = 'mint|zorin'; # osr has distro name but has ubuntu  ID_LIKE/UBUNTU_CODENAME
 		my $base_upstream_lsb = '/etc/upstream-release/lsb-release';
 		my $base_upstream_osr = '/etc/upstream-release/os-release';
 		# first: try, some distros have upstream-release, elementary, new mint
@@ -15989,7 +15976,7 @@ sub get_linux_distro {
 			elsif ( @distro_files && (grep {/($base_default)/} @distro_files) ){
 				$base_type = 'default';
 			}
-			elsif ($distro_id && $distro_id =~ /(mint)/){
+			elsif ( grep {/($base_osr_ubuntu)/} @osr ){
 				$base_type = 'ubuntu';
 			}
 			elsif ( ( ($distro_id && $distro_id =~ /($base_osr_issue)/ ) || 
@@ -16088,7 +16075,7 @@ sub get_os_release {
 		elsif ($working[0] eq 'VERSION_ID' && $working[1]){
 			$version_id = $working[1];
 		}
-		# for mint system base
+		# for mint/zorin, other ubuntu base system base
 		if ($base_type ){
 			if ($working[0] eq 'ID_LIKE' && $working[1]){
 				if ($base_type eq 'ubuntu'){
@@ -16173,6 +16160,7 @@ sub ubuntu_id {
 	return $id;
 }
 }
+
 sub get_gcc_data {
 	eval $start if $b_log;
 	my ($gcc,@data,@gccs,@temp);
@@ -16202,6 +16190,7 @@ sub get_gcc_data {
 	eval $end if $b_log;
 	return @gccs;
 }
+
 # rasberry pi only
 sub get_gpu_ram_arm {
 	eval $start if $b_log;
@@ -16217,6 +16206,7 @@ sub get_gpu_ram_arm {
 	eval $end if $b_log;
 	return $gpu_ram;
 }
+
 # standard systems
 sub get_gpu_ram {
 	eval $start if $b_log;
@@ -16900,7 +16890,6 @@ sub get_usb_path {
 	return $path
 }
 
-
 #### -------------------------------------------------------------------
 #### SET DATA VALUES
 #### -------------------------------------------------------------------
@@ -17472,7 +17461,7 @@ sub set_soc_data {
 		# it's worthless, we can't use it
 		next if ! defined $type;
 		$driver = '' if ! defined $driver;
-		$busid = (defined $temp && $temp =~ /^[0-9]+$/) ? $temp: 0;
+		$busid = (defined $temp && is_int($temp)) ? $temp: 0;
 		$busid_nu =  0;
 		$type_id =  '';
 		$port = '';
@@ -17521,25 +17510,26 @@ sub set_ps_gui {
 		@temp=qw(razor-desktop razor-session lxsession lxqt-session tdelauncher tdeinit_phase1);
 		@match = (@match,@temp);
 		@temp=qw(afterstep awesome blackbox 3dwm dwm fluxbox flwm 
-		fvwm-crystal fvwm2 fvwm i3 jwm matchbox-panel openbox sawfish 
+		fvwm.*-crystal fvwm2 fvwm i3 jwm matchbox-panel openbox sawfish 
 		scrotwm spectrwm twm WindowMaker wm2 wmii2 wmii);
 		@match = (@match,@temp);
 	}
 	# wm:
 	if ($show{'system'} && $extra > 1){
-		@temp=qw(9wm 3dwm afterstep amiwm awesome blackbox budgie-wm compiz 
-		dwm fluxbox flwm fvwm-crystal fvwm2 fvwm gala gnome-shell i3 jwm 
-		twin kwin_wayland kwin_x11 kwin marco matchbox-window-manager metacity 
-		metisse mir muffin mutter mwm notion openbox ratpoison sawfish 
-		scrotwm spectrwm twm windowlab WindowMaker wm2 wmii2 wmii xfwm4 
-		xfwm5 xmonad);
+		@temp=qw(9wm 3dwm afterstep amiwm awesome blackbox bspwm budgie-wm compiz 
+		deepin-wm dwm fluxbox flwm fvwm.*-crystal fvwm2 fvwm gala gnome-shell i3 jwm 
+		twin kwin_wayland kwin_x11 kwin marco matchbox-window-manager 
+		deepin-metacity metacity metisse mir muffin deepin-mutter mutter mwm 
+		notion openbox ratpoison sawfish scrotwm spectrwm twm 
+		windowlab WindowMaker wm2 wmii2 wmii xfwm4 xfwm5 xmonad);
 		@match = (@match,@temp);
 	}
 	# info: 
 	if ($show{'system'} && $extra > 2){
-		@temp=qw(budgie-panel gnome-panel kicker lxpanel lxqt-panel 
-		matchbox-panel mate-panel plasma-desktop plasma-netbook razor-panel 
-		razorqt-panel wingpanel xfce4-panel xfce5-panel);
+		@temp=qw(budgie-panel dde-dock gnome-panel kicker lemonbar 
+		lxpanel lxqt-panel 
+		matchbox-panel mate-panel plasma-desktop plasma-netbook polybar
+		razor-panel razorqt-panel wingpanel xfce4-panel xfce5-panel yabar);
 		@match = (@match,@temp);
 	}
 	# compositors (for wayland these are also the server, note 
@@ -17552,8 +17542,8 @@ sub set_ps_gui {
 	@match = uniq(@match);
 	my $matches = join '|', @match;
 	foreach (@ps_cmd){
-		if (/^[\S]*\b($matches)(\s|$)/){
-			$working = $1;
+		if (/^(|[\S]*\/)($matches)(\/|\s|$)/){
+			$working = $2;
 			push @ps_gui, $working; # deal with duplicates with uniq
 		}
 	}
@@ -17708,7 +17698,7 @@ sub set_lsusb_data_long {
 		#elsif (/^Bus\s/){
 			#if (/^Bus\s([0-9]+)\sDevice\s([0-9]+):\sID\s(([0-9a-f]{4}):([0-9a-f]{4})).*/){
 				$j = scalar @usb;
-				$bus_id = int($1);
+				$bus_id = int($1); # trim off leading 0's
 				$device_id = int($2);
 				$id = $3;
 				$b_skip = 0;
@@ -18039,14 +18029,15 @@ sub generate_short_data {
 	my (@temp,$size_holder,$used_holder);
 	if (@disk){
 		$size = $disk[0]{'size'};
-		if ($disk[0]{'size'} && $disk[0]{'size'} =~ /^[0-9\.]+$/){
+		# must be > 0
+		if ($disk[0]{'size'} && main::is_numeric($disk[0]{'size'}) ){
 			$size_holder = $disk[0]{'size'};
 			@temp = get_size($size);
 			$size = $temp[0];
 			$size_type = " $temp[1]";
 		}
 		$used = $disk[0]{'used'};
-		if (defined $disk[0]{'used'} && $disk[0]{'used'} =~ /^[0-9\.]+$/){
+		if (main::is_numeric($disk[0]{'used'}) ){
 			$used_holder = $disk[0]{'used'};
 			@temp = get_size($used);
 			$used = $temp[0];
@@ -18258,7 +18249,7 @@ sub generate_system_data {
 		}
 		# don't print the desktop if it's a wm and the same
 		if ($extra > 1 && $desktop_data[5] && 
-		    (!$desktop_data[0] || $desktop_data[5] =~ /^(gnome[\s\-_]shell|budgie-wm)$/i || 
+		    (!$desktop_data[0] || $desktop_data[5] =~ /^(deepin-.*|gnome[\s\-_]shell|budgie-.*)$/i || 
 		    index(lc($desktop_data[5]),lc($desktop_data[0])) == -1 )){
 			$wm = $desktop_data[5];
 			$wm .= ' ' . $desktop_data[6] if $extra > 2 && $desktop_data[6];
