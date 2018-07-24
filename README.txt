@@ -259,7 +259,7 @@ you get into it.
 OSX:
 Do not insult real BSDs by calling OSX a BSD. OSX is the least Unix-like 
 operating system I've ever seen that claims to be a Unix, its tools are 
-mutated, it's data randomly and non-standardly organized, and it totally fails 
+mutated, its data randomly and non-standardly organized, and it totally fails 
 to respect the 'spirit' of Unix, even though it might pass some random tests 
 that certify a system as a 'Unix'. 
 
