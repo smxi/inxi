@@ -31,8 +31,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.0.20';
-my $self_date='2018-07-30';
+my $self_version='3.0.21';
+my $self_date='2018-08-17';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -65,13 +65,14 @@ my (@dm_boot_disk,@dm_boot_optical,@glabel,@gpart,@hardware_raid,@labels,
 my @test = (0,0,0,0,0);
 
 ## Booleans
-my ($b_admin,$b_arm,$b_console_irc,$b_debug_gz,$b_debug_timers,
+my ($b_admin,$b_arm,$b_bb_ps,$b_console_irc,$b_debug_gz,$b_debug_timers,
 $b_display,$b_dmesg_boot_check,
 $b_dmi,$b_dmidecode_force,$b_fake_bsd,$b_fake_dboot,$b_fake_pciconf,
 $b_fake_sysctl,$b_fake_usbdevs,$b_force_display,$b_gpudata,$b_irc,
 $b_log,$b_log_colors,$b_log_full,$b_man,$b_mem,$b_mips,$b_pci,$b_pci_tool,
 $b_proc_debug,$b_ps_gui,$b_root,$b_running_in_display,$b_slot_tool,
-$b_soc_audio,$b_soc_gfx,$b_soc_net,$b_sudo,$b_sysctl,$b_usb_check,$b_wmctrl);
+$b_soc_audio,$b_soc_gfx,$b_soc_net,$b_sudo,$b_sysctl,$b_usb,$b_usb_check,
+$b_usb_sys,$b_usb_tool,$b_wmctrl);
 ## Disk checks
 my ($b_dm_boot_disk,$b_dm_boot_optical,$b_glabel,$b_hardware_raid,
 $b_label_uuid,$b_lsblk,$b_partitions,$b_raid);
@@ -80,7 +81,7 @@ my ($b_sysctl_disk,$b_update,$b_weather) = (1,1,1);
 ## System
 my ($bsd_type,$language,$os) = ('','','');
 my ($bits_sys,$cpu_arch);
-my ($cpu_sleep,$dl_timeout,$limit,$ps_count,$usb_level) = (0.35,4,10,5,0);
+my ($cpu_sleep,$dl_timeout,$limit,$ps_cols,$ps_count) = (0.35,4,10,0,5);
 my $sensors_cpu_nu = 0;
 my $weather_unit='mi';
 
@@ -268,7 +269,7 @@ sub check_tools {
 		%commands = ('sensors' => 'linux',);
 	}
 	# note: lsusb ships in FreeBSD ports sysutils/usbutils
-	if ( $usb_level ){
+	if ( $b_usb ){
 		%hash = ('lsusb' => 'all',);
 		%commands = (%commands,%hash);
 		%hash = ('usbdevs' => 'bsd',);
@@ -1065,6 +1066,7 @@ sub get_config_item {
 	elsif ($key eq 'PS_COUNT') {$ps_count = $val if is_int($val) }
 	elsif ($key eq 'SENSORS_CPU_NO') {$sensors_cpu_nu = $val if is_int($val)}
 	elsif ($key eq 'SHOW_HOST' || $key eq 'B_SHOW_HOST') { $show{'host'} = $val if is_int($val)}
+	elsif ($key eq 'USB_SYS') {$b_usb_sys = $val if is_int($val)}
 	elsif ($key eq 'WEATHER_UNIT') { 
 		$val = lc($val) if $val;
 		if ($val && $val =~ /^(c|f|cf|fc|i|m|im|mi)$/){
@@ -1704,6 +1706,7 @@ sub system_data {
 	['lspci','-mmnn'],
 	['lspci','-v'],
 	['lsusb',''],
+	['lsusb','-t'],
 	['lsusb','-v'],
 	['ps','aux'],
 	['ps','-e'],
@@ -2751,7 +2754,7 @@ sub item_data {
 	'rpm' => 'util-linux-ng',
 	}),
 	'lsusb' => ({
-	'info' => '-A usb audio; -N usb networking; --usb',
+	'info' => '-A usb audio; -N usb networking; --usb (optional)',
 	'info-bsd' => '-A; -N; --usb. Alternate to usbdevs',
 	'apt' => 'usbutils',
 	'pacman' => 'usbutils',
@@ -3155,7 +3158,7 @@ sub program_values {
 	'gala' => ['^gala',2,'--version','gala',0,1,0], # super slow result
 	'gnome-about' => ['gnome',3,'--version','Gnome',0,1,0],
 	'gnome-shell' => ['gnome',3,'--version','Gnome',0,1,0],
-	# with path, returns: /sbin/herbstluftwm [version]
+	# note, herbstluftwm when launched with full path returns full path in version string
 	'herbstluftwm' => ['herbstluftwm',2,'--version','herbstluftwm',0,1,0],
 	'jwm' => ['^jwm',2,'--version','JWM',0,1,0],
 	# i3 version 4.13 (2016-11-08) © 2009 Michael Stapelberg and contributors
@@ -3187,6 +3190,7 @@ sub program_values {
 	'pekwm' => ['^pekwm',3,'--version','PekWM',0,1,0],
 	'plasmashell' => ['^plasmashell',2,'--version','KDE Plasma',0,1,0],
 	'qtdiag' => ['^qt',2,'--version','Qt',0,1,0],
+	'qtile' => ['^qtile',0,'0','Qtile',0,0,1],
 	'razor' => ['^razor',0,'0','Razor-Qt',0,1,0],
 	'ratpoison' => ['^ratpoison',2,'--version','Ratpoison',0,1,0],
 	'sawfish' => ['^sawfish',3,'--version','Sawfish',0,1,0],
@@ -4106,6 +4110,10 @@ sub get_options{
 		else {
 			error_handler('distro-block', $opt);
 		} },
+	'usb-sys' => sub {
+		$b_usb_sys = 1 },
+	'usb-tool' => sub {
+		$b_usb_tool = 1 },
 	'V|version' => sub { 
 		$b_version = 1 },
 	'wm' => sub { 
@@ -4135,8 +4143,7 @@ sub get_options{
 		$b_pci = 1;
 	}
 	if ($show{'usb'} || $show{'audio'}  || $show{'network'} ){
-		# to detect wan/lan, we have to use long form to get as much data as possible
-		$usb_level = ($show{'usb'} || $show{'network'}) ? 2 : 1;
+		$b_usb = 1;
 	}
 	if ($bsd_type && ($show{'short'} || $show{'system'} || $show{'battery'} || $show{'cpu'} || $show{'cpu-basic'} || 
 	   $show{'info'} || $show{'machine'} || $show{'process'} || $show{'ram'}  || $show{'sensor'} ) ){
@@ -4332,7 +4339,7 @@ sub show_options {
 	and detected)" ],
 	['2', '-t', '', "Adds memory use output to CPU (-xt c), and CPU use to 
 	memory (-xt m)." ],
-	['2', '--usb', '', "For Devices, shows USB version/speed." ],
+	['2', '--usb', '', "For Devices, shows USB version/speed and driver." ],
 	);
 	push @data, @rows;
 	if ( $b_weather ){
@@ -4374,7 +4381,7 @@ sub show_options {
 	@rows = (
 	['1', '-xxx', '--extra 3', "Show extra, extra, extra data (only works 
 	with verbose or line output, not short form):" ],
-	['2', '-A', '', "Specific vendor/product information (if relevant)." ],
+	['2', '-A', '', "Specific vendor/product information (if relevant), serial number." ],
 	['2', '-B', '', "Chemistry, cycles, location (if available)." ],
 	['2', '-C', '', "CPU boost (turbo) enabled/disabled, if present." ],
 	['2', '-D', '', "Firmware rev. if available; partition scheme, in some cases; disk 
@@ -4385,12 +4392,14 @@ sub show_options {
 	['2', '-m', '', "Width of memory bus, data and total (if present and greater 
 	than data); Detail for Type, if present; module voltage, if available; serial 
 	number." ],
+	['2', '-N', '', "Serial number." ],
 	['2', '-R', '', "zfs-raid: portion allocated (used) by RAID devices/arrays. 
 	md-raid: system md-raid support types (kernel support, read ahead, RAID events).
 	Hardware RAID rev, ports, specific vendor/product information." ],
 	['2', '-S', '', "Panel/tray/bar info in desktop output, if in X (like lxpanel, 
 	xfce4-panel, mate-panel); (if available) dm version number, window manager
-	version number." ]
+	version number." ],
+	['2', '--usb', '', "For devices: serial number (if present), interface count." ],
 	);
 	push @data, @rows;
 	if ( $b_weather ){
@@ -4479,6 +4488,8 @@ sub show_options {
 	['1', '', '--sleep', "[0-x.x] Change CPU sleep time, in seconds, for -C 
 	(default:^$cpu_sleep). Allows system to catch up and show a more accurate CPU 
 	use. Example:^$self_name^-Cxxx^--sleep^0.15" ],
+	['1', '', '--usb-sys', "Force USB data to use /sys as data source (Linux only)." ],
+	['1', '', '--usb-tool', "Force USB data to use lsusb as data source (Linux only)." ],
 	['1', '', '--wm', "Force wm: to use wmctrl as data source. Default uses ps." ],
 	['0', '', '', $line ],
 	['0', '', '', "Debugging Options:" ],
@@ -5700,7 +5711,7 @@ sub card_data {
 				$card = main::pci_long_filter($card);
 			}
 			@data = ({
-			main::key($num++,'Card') => $card,
+			main::key($num++,'Device') => $card,
 			},);
 			@rows = (@rows,@data);
 			if ($extra > 2 && $b_pci_tool && $row[11]){
@@ -5758,7 +5769,7 @@ sub asound_data {
 				$j = scalar @rows;
 				$driver ||= 'N/A';
 				@data = ({
-				main::key($num++,'Card') => $card,
+				main::key($num++,'Device') => $card,
 				main::key($num++,'driver') => $driver,
 				},);
 				@rows = (@rows,@data);
@@ -5776,7 +5787,7 @@ sub asound_data {
 }
 sub usb_data {
 	eval $start if $b_log;
-	my (@rows,@data,@ids,$driver,$product,$product2,@temp2,$vendor,$vendor2);
+	my (@rows,@data,@ids,$driver,$path_id,$product,@temp2);
 	my ($j,$num) = (0,1);
 	if (-d '/proc/asound') {
 		# note: this will double the data, but it's easier this way.
@@ -5799,69 +5810,30 @@ sub usb_data {
 			foreach my $ref (@usb){
 				my @row = @$ref;
 				# a device will always be the second or > device on the bus
-				if ($row[1] > 1 && $row[2] eq $id){
+				if ($row[1] > 1 && $row[7] eq $id){
 					$num = 1;
 					# makre sure to reset, or second device trips last flag
-					($product,$product2,$vendor,$vendor2) = ('','','','');
-					if ($usb_level == 1){
-						$product = main::cleaner($row[3]);
-					}
-					else {
-						foreach my $line (@row){
-							my @working = split /:/, $line;
-							if ($working[0] eq 'idVendor' && $working[2]){
-								$vendor = main::cleaner($working[2]);
-							}
-							if ($working[0] eq 'idProduct' && $working[2]){
-								$product = main::cleaner($working[2]);
-							}
-							if ($working[0] eq 'iManufacturer' && $working[2]){
-								$vendor2 = main::cleaner($working[2]);
-							}
-							if ($working[0] eq 'iProduct' && $working[2]){
-								$product2 = main::cleaner($working[2]);
-							}
-							if ($working[0] eq 'Descriptor_Configuration'){
-								last;
-							}
-						}
-					}
-					if ($vendor && $product){
-						$product = ($product =~ /$vendor/) ? $product: "$vendor $product" ;
-					}
-					elsif (!$product) {
-						if ($vendor && $product2){
-							$product = ($product2 =~ /$vendor/) ? $product2: "$vendor $product2" ;
-						}
-						elsif ($vendor2 && $product2){
-							$product = ($product2 =~ /$vendor2/) ? $product2: "$vendor2 $product2" ;
-						}
-						elsif ($vendor){
-							$product = $vendor;
-						}
-						elsif ($vendor2){
-							$product = $vendor2;
-						}
-						else {
-							$product = 'N/A';
-						}
-					}
-					@temp2 = main::get_usb_drivers($row[0],$row[2]) if !$bsd_type && -d "/sys/devices";
-					if (@temp2 && $temp2[0]){
-						$driver = $temp2[0];
-					}
+					($driver,$path_id,$product) = ('','','');
+					$product = main::cleaner($row[13]) if $row[13];
+					$driver = $row[15] if $row[15];
+					$path_id = $row[2] if $row[2];
+					$product ||= 'N/A';
 					$driver ||= 'snd-usb-audio';
 					@data = ({
-					main::key($num++,'Card') => $product,
+					main::key($num++,'Device') => $product,
 					main::key($num++,'type') => 'USB',
 					main::key($num++,'driver') => $driver,
 					},);
 					@rows = (@rows,@data);
 					if ($extra > 0){
-						$rows[$j]{main::key($num++,'bus ID')} = "$row[0]:$row[1]";
+						$rows[$j]{main::key($num++,'bus ID')} = "$path_id:$row[1]";
 					}
 					if ($extra > 1){
-						$rows[$j]{main::key($num++,'chip ID')} = $row[2];
+						$row[7] ||= 'N/A';
+						$rows[$j]{main::key($num++,'chip ID')} = $row[7];
+					}
+					if ($extra > 2 && $row[16]){
+						$rows[$j]{main::key($num++,'serial')} = main::apply_filter($row[16]);
 					}
 				}
 			}
@@ -8318,8 +8290,9 @@ sub device_vendor {
 	# MU = Multiple_Flash_Reader too risky: |M[UZ][^L]
 	['(SAMSUNG|^MCG[0-9]+GC)','SAMSUNG','Samsung',''], # maybe ^SM
 	['(SanDisk|^SDS[S]?[DQ]|^SL([0-9]+)G|^AFGCE|ULTRA\sFIT|Cruzer)','SanDisk','SanDisk',''],
-	['(^ST[^T]|[S]?SEAGATE|^X[AFP]|^BUP|Expansion Desk)','[S]?SEAGATE','Seagate',''], # real, SSEAGATE Backup+; XP1600HE30002
-	['^(WD|Western Digital|My (Book|Passport)|00LPCX|Elements)','(^WDC|Western Digital)','Western Digital',''],
+	# real, SSEAGATE Backup+; XP1600HE30002
+	['(^ST[^T]|[S]?SEAGATE|^X[AFP]|^BUP|Expansion Desk)','[S]?SEAGATE','Seagate',''], 
+	['^(WD|Western Digital|My (Book|Passport)|00LPCX|Elements|M000)','(^WDC|Western Digital)','Western Digital',''],
 	## Then better known ones ##
 	['^(A-DATA|ADATA|AXN)','^(A-DATA|ADATA)','A-Data',''],
 	['^ADTRON','^(ADTRON)','Adtron',''],
@@ -8328,10 +8301,10 @@ sub device_vendor {
 	['^(Corsair|Voyager)','^Corsair','Corsair',''],
 	['^(FUJITSU|MP)','^FUJITSU','Fujitsu',''],
 	# note: 2012:  wdc bought hgst
-	['^(HGST)','^HGST','HGST (Hitachi)',''], # HGST HUA
+	['^(HGST|Touro)','^HGST','HGST (Hitachi)',''], # HGST HUA
 	['^(Hitachi|HDS|HDT|IC|HT|HU)','^Hitachi','Hitachi',''], 
 	['^Hoodisk','^Hoodisk','Hoodisk',''],
-	['^(HP\b)','^HP','HP',''], # vb: VB0250EAVER but clashes with vbox; HP_SSD_S700_120G
+	['^(HP\b|MB0)','^HP','HP',''], # vb: VB0250EAVER but clashes with vbox; HP_SSD_S700_120G
 	['^(LSD|Lexar|JumpDrive)','^Lexar','Lexar',''], # mmc-LEXAR_0xb016546c
 	# OCZSSD2-2VTXE120G is OCZ-VERTEX2_3.5
 	['^(OCZ|APOC|D2|DEN|DEN|DRSAK|EC188|FTNC|GFGC|MANG|MMOC|NIMC|NIMR|PSIR|TALOS2|TMSC|TRSAK)','^OCZ[\s\-]','OCZ',''],
@@ -8341,7 +8314,7 @@ sub device_vendor {
 	['^PNY','^PNY\s','PNY','','^PNY'],
 	# note: get rid of: M[DGK] becasue mushkin starts with MK
 	# note: seen: KXG50ZNV512G NVMe TOSHIBA 512GB | THNSN51T02DUK NVMe TOSHIBA 1024GB
-	['(^[S]?TOS|^THN|TOSHIBA)','[S]?TOSHIBA','Toshiba',''], # scsi-STOSHIBA_STOR.E_EDITION_
+	['(^[S]?TOS|^THN|TOSHIBA|TransMemory)','[S]?TOSHIBA','Toshiba',''], # scsi-STOSHIBA_STOR.E_EDITION_
 	## These go last because they are short and could lead to false ID, or are unlikely ##
 	['^Android','^Android','Android',''],
 	# must come before AP|Apacer
@@ -8352,7 +8325,7 @@ sub device_vendor {
 	['^Colorful\b','^Colorful','Colorful',''],
 	['^DREVO\b','^DREVO','Drevo',''],
 	['^(Eaget|V8$)','^Eaget','Eaget',''],
-	['^EXCELSTOR','^EXCELSTOR( TECHNOLOGY)?','Excelstor',''],
+	['^EXCELSTOR','^EXCELSTOR( TECHNO(LOGY)?)?','Excelstor',''],
 	['^FASTDISK','^FASTDISK','FASTDISK',''],
 	['^FORESEE','^FORESEE','Foresee',''],
 	['^GALAX\b','^GALAX','GALAX',''],
@@ -8374,15 +8347,17 @@ sub device_vendor {
 	['^(LITE[\-]?ON[\s\-]?IT)','^LITE[\-]?ON[\s\-]?IT','LITE-ON IT',''], # LITEONIT_LSS-24L6G
 	['^(LITE[\-]?ON|PH6)','^LITE[\-]?ON','LITE-ON',''], # PH6-CE240-L
 	['^M-Systems','^M-Systems','M-Systems',''],
-	['^MAXTOR','^MAXTOR','Maxtor',''],
+	['^(MAXTOR)','^MAXTOR','Maxtor',''], # note M3 is usually maxtor, but can be samsung
 	['^(MT|M5|Micron)','^Micron','Micron',''],
 	['^MARVELL','^MARVELL','Marvell',''],
 	['^Medion','^Medion','Medion',''],
 	['^Motorola','^Motorola','Motorola',''],
+	['^PALIT','PALIT','Palit',''], # ssd 
 	['^(PS[8F]|Patriot)','^Patriot','Patriot',''],
 	['^PIX[\s]?JR','^PIX[\s]?JR','Disney',''],
 	['^(PLEXTOR|PX-)','^PLEXTOR','Plextor',''],
 	['(^Quantum|Fireball)','^Quantum','Quantum',''],
+	['^QUMO','^QUMO','Qumo',''],
 	['^R3','','AMD Radeon',''], # ssd 
 	['^RENICE','^RENICE','Renice',''],
 	['^RIM[\s]','^RIM','RIM',''],
@@ -8402,7 +8377,9 @@ sub device_vendor {
 	# ['^(SUPERSPEED)','^SUPERSPEED','SuperSpeed',''], # superspeed is a generic term
 	['^TANDBERG','^TANDBERG','Tanberg',''],
 	['^TEAC','^TEAC','TEAC',''],
+	['^TEAM','^TEAM( Group)?','Team',''],
 	['^(TS|Transcend|JetFlash)','^Transcend','Transcend',''],
+	# Twister Line but if we slice out Twister it would just say Line
 	['^TrekStor','^TrekStor','TrekStor',''],
 	['^UDinfo','^UDinfo','UDinfo',''],
 	['^(UG|Unigen)','^Unigen','Unigen',''],
@@ -8635,7 +8612,7 @@ sub card_data {
 				$card = main::pci_long_filter($card);
 			}
 			@data = ({
-			main::key($num++,'Card') => $card,
+			main::key($num++,'Device') => $card,
 			},);
 			@rows = (@rows,@data);
 			if ($extra > 2 && $b_pci_tool && $row[11]){
@@ -8794,7 +8771,12 @@ sub display_data(){
 			$server_string = "$graphics{'vendor'}$version";
 		}
 		elsif ($graphics{'version'}) {
-			$server_string = "X.org $graphics{'version'}";
+			if ($graphics{'version'} =~ /^Xvesa/){
+				$server_string = $graphics{'version'};
+			}
+			else {
+				$server_string = "X.org $graphics{'version'}";
+			}
 		}
 		if ($graphics{'screens'}){
 			my $ref = $graphics{'screens'};
@@ -9094,6 +9076,9 @@ sub x_version {
 	elsif ($program = main::check_program('X')){
 		@data = main::grabber("$program -version 2>&1");
 	}
+	elsif ($program = main::check_program('Xvesa')){
+		@data = main::grabber("$program -version 2>&1");
+	}
 	#print join('^ ', @paths), " :: $program\n";
 	#print Data::Dumper::Dumper \@data;
 	if (@data){
@@ -9104,6 +9089,11 @@ sub x_version {
 			}
 			elsif (/^X Window System Version/i) {
 				$version = (split /\s+/, $_)[4];
+				last;
+			}
+			elsif (/^Xvesa from/i) {
+				$version = (split /\s+/, $_)[3];
+				$version = "Xvesa $version" if $version;
 				last;
 			}
 		}
@@ -9124,6 +9114,7 @@ sub display_compositor {
 		my @compositors = (
 		['budgie-wm','budgie-wm','','budgie-wm'],
 		['compton','compton','','compton'],
+		# as of version 20 is wayland compositor
 		['enlightenment','enlightenment','','enlightenment'],
 		['gnome-shell','gnome-shell','','gnome-shell'],
 		['kwin_wayland','kwin_wayland','','kwin wayland'],
@@ -9882,7 +9873,7 @@ sub card_data {
 			#$card ||= 'N/A';
 			$driver ||= 'N/A';
 			@data = ({
-			main::key($num++,'Card') => $card,
+			main::key($num++,'Device') => $card,
 			},);
 			@rows = (@rows,@data);
 			#if ($extra > 2 && $b_pci_tool && $row[11]){
@@ -9941,81 +9932,44 @@ sub card_data {
 }
 sub usb_data {
 	eval $start if $b_log;
-	my (@data,@rows,@temp2,$b_wifi,$driver,$path,$product,$product2,$test,$vendor,$vendor2);
+	my (@data,@rows,@temp2,$b_wifi,$driver,
+	$path,$path_id,$product,$test,$type);
 	my ($j,$num) = (0,1);
 	return if !@usb;
 	foreach my $ref (@usb){
 		my @row = @$ref;
-		# a device will always be the second or > device on the bus
-		if ($row[1] > 1){
+		# a device will always be the second or > device on the bus, except for 
+		# daisychained hubs
+		if ($row[1] > 1 && $row[4] ne '9'){
 			$num = 1;
-			($product,$product2,$test,$vendor,$vendor2) = ('','','','','');
-			if ($usb_level == 1){
-				$product = main::cleaner($row[3]);
-			}
-			else {
-				foreach my $line (@row){
-					my @working = split /:/, $line;
-					if ($working[0] eq 'idVendor' && $working[2]){
-						$vendor = main::cleaner($working[2]);
-					}
-					if ($working[0] eq 'idProduct' && $working[2]){
-						$product = main::cleaner($working[2]);
-					}
-					if ($working[0] eq 'iVendor' && $working[2]){
-						$product2 = main::cleaner($working[2]);
-					}
-					if ($working[0] eq 'iProduct' && $working[2]){
-						$product2 = main::cleaner($working[2]);
-					}
-					if ($working[0] eq 'Descriptor_Configuration'){
-						last;
-					}
-				}
-				if ($vendor && $product){
-					$product = ($product =~ /$vendor/) ? $product: "$vendor $product";
-				}
-				elsif ($vendor && $product2){
-					$product = ($product2 =~ /$vendor/) ? $product2: "$vendor $product2";
-				}
-				elsif ($vendor2 && $product){
-					$product = ($product =~ /$vendor2/) ? $product: "$vendor2 $product";
-				}
-				elsif ($vendor2 && $product2){
-					$product = ($product2 =~ /$vendor2/) ? $product2: "$vendor2 $product2";
-				}
-				elsif ($vendor){
-					$product = $vendor;
-				}
-				elsif ($vendor2){
-					$product = $vendor2;
-				}
-				$test = "$vendor $product $vendor2 $vendor2";
-			}
+			($driver,$path,$path_id,$product,$test,$type) = ('','','','','','');
+			$product = main::cleaner($row[13]) if $row[13];
+			$driver = $row[15] if $row[15];
+			$path = $row[3] if $row[3];
+			$path_id = $row[2] if $row[2];
+			$test = "$driver $product $type";
 			if ($product && network_device($test)){
-				@temp2 = main::get_usb_drivers($row[0],$row[2]) if !$bsd_type && -d "/sys/devices";
-				if (@temp2){
-					$driver = $temp2[0] if $temp2[0];
-					$path = $temp2[1] if $temp2[1];
-				}
 				$driver ||= 'usb-network';
 				@data = ({
-				main::key($num++,'Card') => $product,
+				main::key($num++,'Device') => $product,
 				main::key($num++,'type') => 'USB',
 				main::key($num++,'driver') => $driver,
 				},);
 				$b_wifi = check_wifi($product);
 				@rows = (@rows,@data);
 				if ($extra > 0){
-					$rows[$j]{main::key($num++,'bus ID')} = "$row[0]:$row[1]";
+					$rows[$j]{main::key($num++,'bus ID')} = "$path_id:$row[1]";
 				}
 				if ($extra > 1){
-					$rows[$j]{main::key($num++,'chip ID')} = $row[2];
+					$rows[$j]{main::key($num++,'chip ID')} = $row[7];
+				}
+				if ($extra > 2 && $row[16]){
+					$rows[$j]{main::key($num++,'serial')} = main::apply_filter($row[16]);
 				}
 				if ($show{'network-advanced'}){
 					if (!$bsd_type){
 						my (@temp,$vendor,$chip);
-						@temp = split (/:/, $row[2]) if $row[2];
+						@temp = split (/:/, $row[7]) if $row[7];
 						($vendor,$chip) = ($temp[0],$temp[1]) if @temp;
 						@data = advanced_data_sys($vendor,$chip,0,$b_wifi,$path);
 					}
@@ -10347,9 +10301,9 @@ sub network_device {
 	my ($device_string) = @_;
 	my ($b_network);
 	# belkin=050d; d-link=07d1; netgear=0846; ralink=148f; realtek=0bda; 
-	# Atmel makes other stuff
-	my @tests = qw(wifi Wi-Fi.*Adapter Ethernet \bLAN\b WLAN Network 802\.11 
-	Wireless.*Adapter 54\sMbps Network 100\/1000 Mobile\sBroadband Atheros D-Link.*Adapter 
+	# Atmel makes other stuff. NOTE: exclude 'networks': IMC Networks
+	my @tests = qw(wifi Wi-Fi.*Adapter Ethernet \bLAN\b WLAN Network\b Networking\b 802\.11 
+	Wireless.*Adapter 54\sMbps 100\/1000 Mobile\sBroadband Atheros D-Link.*Adapter 
 	Dell.*Wireless D-Link.*Wireless Linksys Netgea Ralink Realtek.*Network Realtek.*Wireless
 	Belkin.*Wireless Actiontec.*Wireless AirLink.*Wireless Asus.*Wireless 
 	Buffalo.*Wireless Davicom DWA-.*RangeBooster DWA-.*Wireless
@@ -10655,8 +10609,8 @@ sub optical_data_linux {
 				$devices{$key}{'rev'} = (main::reader("$device/rev"))[0];
 			}
 		}
-		elsif ( -e "/proc/ide/$_/model"){
-			$devices{$key}{'vendor'} = (main::reader("/proc/ide/$_/model"))[0];
+		elsif ( -e "/proc/ide/$key/model"){
+			$devices{$key}{'vendor'} = (main::reader("/proc/ide/$key/model"))[0];
 			$devices{$key}{'vendor'} = main::cleaner($devices{$key}{'vendor'});
 		}
 		if ($show{'optical'} && @info){
@@ -11246,13 +11200,20 @@ sub get {
 }
 sub cpu_processes {
 	eval $start if $b_log;
-	my ($j,$num,$cpu,$cpu_mem,$mem) = (0,0,'','','');
-	my (@processes);
+	my ($j,$num,$cpu,$cpu_mem,$mem,$pid) = (0,0,'','','','');
+	my ($pid_col,@processes,@rows);
 	my $count = ($b_irc)? 5: $ps_count;
-	my @rows = sort { 
+	if ($ps_cols >= 10){
+		@rows = sort { 
 		my @a = split(/\s+/,$a); 
 		my @b = split(/\s+/,$b); 
 		$b[2] <=> $a[2] } @ps_aux;
+		$pid_col = 1;
+	}
+	else {
+		@rows = @ps_aux;
+		$pid_col = 0 if $ps_cols == 2;
+	}
 	# if there's a count limit, for irc, etc, only use that much of the data
 	@rows = splice @rows,0,$count;
 	
@@ -11270,18 +11231,20 @@ sub cpu_processes {
 		$num = 1;
 		$j = scalar @processes;
 		my @row = split /\s+/, $_;
-		my @command = process_starter(scalar @row, $row[10],$row[11]);
+		my @command = process_starter(scalar @row, $row[$ps_cols],$row[$ps_cols + 1]);
+		$cpu = ($ps_cols >= 10 ) ? $row[2] . '%': 'N/A';
 		@data = ({
 		main::key($num++,$i++) => '',
-		main::key($num++,'cpu') => $row[2] . '%',
+		main::key($num++,'cpu') => $cpu,
 		main::key($num++,'command') => $command[0],
 		},);
 		@processes = (@processes,@data);
 		if ($command[1]) {
 			$processes[$j]{main::key($num++,'started by')} = $command[1];
 		}
-		$processes[$j]{main::key($num++,'pid')} = $row[1];
-		if ($extra > 0){
+		$pid = (defined $pid_col)? $row[$pid_col] : 'N/A';
+		$processes[$j]{main::key($num++,'pid')} = $pid;
+		if ($extra > 0 && $ps_cols >= 10){
 			my $decimals = ($row[5]/1024 > 10 ) ? 1 : 2;
 			$mem = (defined $row[5]) ? sprintf( "%.${decimals}f", $row[5]/1024 ) . ' MiB' : 'N/A';
 			$mem .= ' (' . $row[3] . '%)';
@@ -11294,13 +11257,20 @@ sub cpu_processes {
 }
 sub mem_processes {
 	eval $start if $b_log;
-	my ($j,$num,$cpu,$cpu_mem,$mem) = (0,0,'','','');
-	my (@data,@processes,$memory);
+	my ($j,$num,$cpu,$cpu_mem,$mem,$pid) = (0,0,'','','','');
+	my (@data,$pid_col,@processes,$memory,@rows);
 	my $count = ($b_irc)? 5: $ps_count;
-	my @rows = sort { 
+	if ($ps_cols >= 10){
+		@rows = sort { 
 		my @a = split(/\s+/,$a); 
 		my @b = split(/\s+/,$b); 
 		$b[5] <=> $a[5] } @ps_aux;
+		$pid_col = 1;
+	}
+	else {
+		@rows = @ps_aux;
+		$pid_col = 0 if $ps_cols == 2;
+	}
 	@rows = splice @rows,0,$count;
 	#print Data::Dumper::Dumper \@rows;
 	@processes = main::memory_data_full('process') if !$b_mem;
@@ -11318,10 +11288,15 @@ sub mem_processes {
 		$num = 1;
 		$j = scalar @processes;
 		my @row = split /\s+/, $_;
-		my $decimals = ($row[5]/1024 > 10 ) ? 1 : 2;
-		$mem = ($row[5]) ? sprintf( "%.${decimals}f", $row[5]/1024 ) . ' MiB' : 'N/A';
-		my @command = process_starter(scalar @row, $row[10],$row[11]);
-		$mem .= " (" . $row[3] . "%)"; 
+		if ($ps_cols >= 10){
+			my $decimals = ($row[5]/1024 > 10 ) ? 1 : 2;
+			$mem = ($row[5]) ? sprintf( "%.${decimals}f", $row[5]/1024 ) . ' MiB' : 'N/A';
+			$mem .= " (" . $row[3] . "%)"; 
+		}
+		else {
+			$mem = 'N/A';
+		}
+		my @command = process_starter(scalar @row, $row[$ps_cols],$row[$ps_cols + 1]);
 		@data = ({
 		main::key($num++,$i++) => '',
 		main::key($num++,'mem') => $mem,
@@ -11331,8 +11306,9 @@ sub mem_processes {
 		if ($command[1]) {
 			$processes[$j]{main::key($num++,'started by')} = $command[1];
 		}
-		$processes[$j]{main::key($num++,'pid')} = $row[1];
-		if ($extra > 0){
+		$pid = (defined $pid_col)? $row[$pid_col] : 'N/A';
+		$processes[$j]{main::key($num++,'pid')} = $pid;
+		if ($extra > 0 && $ps_cols >= 10){
 			$cpu = $row[2] . '%';
 			$processes[$j]{main::key($num++,'cpu')} = $cpu;
 		}
@@ -11345,7 +11321,7 @@ sub process_starter {
 	my ($count, $row10, $row11) = @_;
 	my (@return);
 	# note: [migration/0] would clear with a simple basename
-	if ($count > 11 && $row11 =~ /^\//){
+	if ($count > ($ps_cols + 1) && $row11 =~ /^\// && $row11 !~ /^\/(tmp|temp)/){
 		$row11 =~ s/^\/.*\///;
 		$return[0] = $row11;
 		$row10 =~ s/^\/.*\///;
@@ -12561,6 +12537,9 @@ sub get_repos_linux {
 	my $portage_gentoo_dir = '/etc/portage-gentoo/repos.conf/';
 	my $slackpkg = '/etc/slackpkg/mirrors';
 	my $slackpkg_plus = '/etc/slackpkg/slackpkgplus.conf';
+	my $slapt_get = '/etc/slapt-get/';
+	my $tce_app = '/usr/bin/tce';
+	my $tce_file = '/opt/tcemirror';
 	my $yum_conf = '/etc/yum.conf';
 	my $yum_repo_dir = '/etc/yum.repos.d/';
 	my $zypp_repo_dir = '/etc/zypp/repos.d/';
@@ -12725,11 +12704,18 @@ sub get_repos_linux {
 		}
 	}
 	# slackware
-	if (-f $slackpkg || -f $slackpkg_plus){
+	if (-f $slackpkg || -f $slackpkg_plus || -d $slapt_get){
 		#$slackpkg = "$ENV{HOME}/bin/scripts/inxi/data/repo/slackware/slackpkg-2.conf";
 		if (-f $slackpkg){
 			@data = repo_builder($slackpkg,'slackpkg','^[[:space:]]*[^#]+');
 			@rows = (@rows,@data);
+		}
+		if (-d $slapt_get){
+			@data2 = main::globber("${slapt_get}*");
+			foreach my $file (@data2){
+				@data = repo_builder($file,'slaptget','^\s*SOURCE','\s*=\s*',1);
+				@rows = (@rows,@data);
+			}
 		}
 		if (-f $slackpkg_plus){
 			push @dbg_files, $slackpkg_plus if $debugger_dir;
@@ -12910,6 +12896,11 @@ sub get_repos_linux {
 	# Alpine linux
 	if (-f $apk){
 		@data = repo_builder($apk,'apk','^\s*[^#]+');
+		@rows = (@rows,@data);
+	}
+	# TinyCore 
+	if (-e $tce_app || -f $tce_file){
+		@data = repo_builder($tce_file,'tce','^\s*[^#]+');
 		@rows = (@rows,@data);
 	}
 	# Mandriva/Mageia using: urpmq
@@ -13144,6 +13135,8 @@ sub repo_builder {
 	'no-files' => 'No repo files found in',
 	'slackpkg' => 'No active slackpkg repos in',
 	'slackpkg+' => 'No active slackpkg+ repos in',
+	'slaptget' => 'No active slapt-get repos in',
+	'tce' => 'No active tce mirrors in',
 	'yum' => 'No active yum repos in',
 	'zypp' => 'No active zypp repos in',
 	);
@@ -13165,16 +13158,20 @@ sub repo_builder {
 	'netbsd' => 'NetBSD pkg servers',
 	'slackpkg' => 'slackpkg repos in',
 	'slackpkg+' => 'slackpkg+ repos in',
+	'slaptget' => 'slapt-get repos in',
+	'tce' => 'Active tce mirrors in',
 	'yum' => 'Active yum repos in',
 	'zypp' => 'Active zypp repos in',
 	);
 	$key = $keys{$type};
 	return $key if $file eq 'active';
 	push @dbg_files, $file if $debugger_dir;
-	@content =  main::reader($file);
-	@content = grep {/$search/i && !/^\s*$/} @content if @content;
-	@content = data_cleaner(@content);
-	if ($split){
+	if (-r $file){
+		@content =  main::reader($file);
+		@content = grep {/$search/i && !/^\s*$/} @content if @content;
+		@content = data_cleaner(@content) if @content;
+	}
+	if ($split && @content){
 		@content = map { 
 		my @inner = split (/$split/, $_);
 		$inner[$count];
@@ -14462,7 +14459,7 @@ sub get {
 	my $num = 0;
 	my $ref = $alerts{'lsusb'};
 	my $ref2 = $alerts{'usbdevs'};
-	if ( $$ref{'action'} ne 'use' && $$ref2{'action'} ne 'use'){
+	if ( !@usb && $$ref{'action'} ne 'use' && $$ref2{'action'} ne 'use'){
 		if ($os eq 'linux' ){
 			$key1 = $$ref{'action'};
 			$val1 = $$ref{$key1};
@@ -14490,7 +14487,8 @@ sub get {
 sub usb_data {
 	eval $start if $b_log;
 	return if ! @usb;
-	my (@data,@row,@rows,$bus_id,$chip_id,$speed,$protocol,$class,$vendor,$product);
+	my (@data,@rows);
+	my ($b_hub,$bus_id,$chip_id,$driver,$path_id,$ports,$product,$serial,$speed,$type);
 	my $num = 0;
 	my $j = 0;
 	# note: the data has been presorted in set_lsusb_data by:
@@ -14499,126 +14497,63 @@ sub usb_data {
 		my @id = @$ref;
 		$j = scalar @rows;
 		$num = 1;
-		$bus_id = "$id[0]:$id[1]";
-		$chip_id = $id[2];
-		my $b_hub = 0;
+		$chip_id = $id[7];
+		$b_hub = 0;
+		($driver,$path_id,$ports,$product,
+		$serial,$speed,$type) = ('','','','','','','');
+		$speed  = ( main::is_numeric($id[8]) ) ? sprintf("%1.1f",$id[8]) : $id[8] if $id[8];
+		$product = main::cleaner($id[13]) if $id[13];
+		$serial = main::apply_filter($id[16]) if $id[16];
+		$product ||= 'N/A';
+		$speed ||= 'N/A';
+		$path_id = $id[2] if $id[2];
+		$bus_id = "$path_id:$id[1]";
 		# it's a hub
-		if ($id[1] == 1){
-			foreach my $line (@id){
-				#print "$line\n";
-				@row = split /:/, $line;
-				next if ! defined $row[0];
-				if ($row[0] eq 'bcdUSB' && defined $row[1]){
-					$speed  = ( main::is_numeric($row[1]) ) ? sprintf("%1.1f",$row[1]) : $row[1];
-				}
-				elsif ($row[0] eq '~bInterfaceProtocol' && $row[2] ){
-					$protocol = $row[2];
-				}
-			}
-			$protocol ||= 'N/A';
-			$speed ||= 'N/A';
+		if ($id[4] eq '9'){
+			$ports = $id[10] if $id[10];
+			$ports ||= 'N/A';
 			#print "pt0:$protocol\n";
 			@data = ({
 			main::key($num++,'Hub') => $bus_id,
 			main::key($num++,'usb') => $speed,
-			main::key($num++,'type') => $protocol,
+			main::key($num++,'type') => $product,
+			main::key($num++,'ports') => $ports,
 			},);
 			@rows = (@rows,@data);
-			if ($extra > 1){
-				$rows[$j]{main::key($num++,'chip ID')} = $chip_id;
-			}
+			$b_hub = 1;
 		}
 		# it's a device
 		else {
-			($class,$product,$protocol,$vendor,$speed) = ('','','','','');
-			foreach my $line (@id){
-				@row = split /:/, $line;
-				next if ! defined $row[0];
-				if ($row[0] eq 'bcdUSB' && defined $row[1]){
-					$speed  = sprintf("%.1f",$row[1]);
-				}
-				elsif ($row[0] eq 'bDeviceClass' && defined $row[1] && $row[1] == 9){
-					$b_hub = 1;
-				}
-				elsif ($row[0] eq 'idVendor' && $row[2]){
-					$vendor  = main::cleaner($row[2]);
-				}
-				elsif ($row[0] eq 'idProduct' && $row[2]){
-					$product = main::cleaner($row[2]);
-				}
-				# we want hubs to cascade to last item
-				elsif ($row[0] eq '~bInterfaceClass' && $row[2] && defined $row[1] && $row[1] != 9){
-					$class = main::cleaner($row[2]);
-				}
-				elsif ($row[0] eq '~bInterfaceProtocol' && defined $row[2]){
-					$protocol = $row[2];
-					$protocol =~ s/none//i if $protocol;
-					last if $class;
-				}
-			}
-			if ( $b_hub ){
-				if ($vendor && $product){
-					$protocol = "$vendor $product";
-				}
-				elsif (!$product && $protocol && $vendor){
-					$protocol = "$vendor $protocol";
-				}
-				$speed ||= 'N/A';
-				$protocol ||= 'N/A';
-				#print "pt2:$protocol\n";
-				@data = ({
-				main::key($num++,'Hub') => $bus_id,
-				main::key($num++,'usb') => $speed,
-				main::key($num++,'type') => $protocol,
-				},);
-				@rows = (@rows,@data);
-			}
-			else {
-				if ($vendor && $product){
-					if ($product !~ /$vendor/){
-						$product = "$vendor $product";
-					}
-				}
-				elsif (!$product && !$vendor && $protocol){
-					$product = $protocol;
-				}
-				elsif (!$product){
-					$product = $vendor;
-				}
-				# bInterfaceProtocol:0 but $row[2] undefined
-				#print "pt3:$class:$product\n";
-				# for we want Mass Storage Device instead of Bulk-Only
-				# we want to filter out certain protocol values that are less 
-				# informative than the class type.
-				if ($protocol && $class && $class ne $protocol && protocol_filter($protocol) ){
-					$class = $protocol;
-				}
-				$class ||= 'N/A';
-				#print "pt3:$class:$product\n";
-				$product ||= 'N/A';
-				$speed ||= 'N/A';
-				$rows[$j]{main::key($num++,'Device')} = $product;
-				$rows[$j]{main::key($num++,'bus ID')} = $bus_id;
-				if ($extra > 0){
-					$rows[$j]{main::key($num++,'usb')} = $speed;
-				}
-				$rows[$j]{main::key($num++,'type')} = $class;
-			}
+			$type = $id[14] if $id[14];
+			$driver = $id[15] if $id[15];
+			$type ||= 'N/A';
+			$driver ||= 'N/A';
+			#print "pt3:$class:$product\n";
+			$rows[$j]{main::key($num++,'Device')} = $product;
 			if ($extra > 1){
-				$rows[$j]{main::key($num++,'chip ID')} = $chip_id;
+				$rows[$j]{main::key($num++,'driver')} = $driver;
+			}
+			if ($extra > 0){
+				$rows[$j]{main::key($num++,'usb')} = $speed;
+			}
+			$rows[$j]{main::key($num++,'type')} = $type;
+			$rows[$j]{main::key($num++,'bus ID')} = $bus_id;
+		}
+		if ($extra > 1){
+			$rows[$j]{main::key($num++,'chip ID')} = $chip_id;
+		}
+		if (!$b_hub && $extra > 2){
+			if ($id[9]){
+				$rows[$j]{main::key($num++,'interfaces')} = $id[9];
+			}
+			if ($serial){
+				$rows[$j]{main::key($num++,'serial')} = main::apply_filter($serial);
 			}
 		}
 	}
 	#print Data::Dumper::Dumper \@rows;
 	eval $end if $b_log;
 	return @rows;
-}
-sub protocol_filter {
-	eval $start if $b_log;
-	my ($string) = @_;
-	$string =~ s/Bulk-Only|streaming|Bidirectional|None//i if $string;
-	eval $end if $b_log;
-	return $string;
 }
 }
 
@@ -15437,13 +15372,20 @@ sub get_xprop_de_data {
 			$desktop[2] = $data[3];
 		}
 	}
-	elsif (main::check_program('enlightenment') && main::awk(\@xprop,'enlightenment' )){
-		$desktop[0] = 'Enlightenment';
+	elsif ( (main::check_program('enlightenment') || main::check_program('moksha') ) && 
+	        main::awk(\@xprop,'moksha') ){
+		# no -v or --version but version is in xprop -root
+		# ENLIGHTENMENT_VERSION(STRING) = "Moksha 0.2.0.15989"
+		$desktop[0] = 'Moksha';
+		$desktop[1] = main::awk(\@xprop,'(enlightenment|moksha)_version',2,'\s+=\s+' );
+		$desktop[1] =~ s/"?(Moksha|Enlightenment)\s([^"]+)"?/$2/i if $desktop[1];
+	}
+	elsif ( main::check_program('enlightenment') && main::awk(\@xprop,'enlightenment' ) ){
 		# no -v or --version but version is in xprop -root
 		# ENLIGHTENMENT_VERSION(STRING) = "Enlightenment 0.16.999.49898"
-		$desktop[1] = main::awk(\@xprop,'enlightenment_version',2,'\s+=\s+' );
-		$desktop[1] = (split /"/, $desktop[1])[1] if $desktop[1];
-		$desktop[1] = (split /\s+/, $desktop[1])[1] if $desktop[1];
+		$desktop[0] = 'Enlightenment';
+		$desktop[1] = main::awk(\@xprop,'(enlightenment|moksha)_version',2,'\s+=\s+' );
+		$desktop[1] =~ s/"?(Moksha|Enlightenment)\s([^"]+)"?/$2/i if $desktop[1];
 	}
 	# the sequence here matters, some desktops like icewm, razor, let you set different 
 	# wm, so we want to get the main controlling desktop first, then fall back to the wm
@@ -15507,9 +15449,11 @@ sub get_ps_de_data {
 		['9wm','9wm','9wm','9wm'],
 		['amiwm','amiwm','amiwm','amiwm'],
 		['flwm','flwm','flwm','flwm'],
+		['flwm','flwm_topside','flwm','flwm'],
 		['jwm','jwm','jwm','jwm'],
 		['mwm','mwm','mwm','mwm'],
 		['notion','notion','notion','notion'],
+		['qtile','qtile','qtile','qtile'],
 		['ratpoison','ratpoison','ratpoison','ratpoison'],
 		['sawfish','sawfish','sawfish','sawfish'],
 		['matchbox-window-manager','matchbox-window-manager',
@@ -15608,7 +15552,7 @@ sub get_wm_main {
 		$wms .= 'deepin-wm|dwm|flwm|fvwm-crystal|fvwm2|fvwm|gala|gnome-shell|i3|jwm|';
 		$wms .= 'twin|kwin_wayland|kwin_x11|kwin|matchbox-window-manager|marco|';
 		$wms .= 'muffin|deepin-mutter|mutter|deepin-metacity|metacity|mwm|';
-		$wms .= 'notion|openbox|ratpoison|sawfish|scrotwm|spectrwm|';
+		$wms .= 'notion|openbox|qtile|ratpoison|sawfish|scrotwm|spectrwm|';
 		$wms .= 'twm|windowlab|WindowMaker|wm2|wmii2|wmii|xfwm4|xfwm5|xmonad';
 		foreach (@ps_gui){
 			if (/^($wms)$/){
@@ -15702,7 +15646,7 @@ sub set_xprop {
 			# add wm / de as required, but only add what is really tested for above
 			# XFDESKTOP_IMAGE_FILE; XFCE_DESKTOP
 			my $pattern = '^amiwm|blackbox_pid|bspwm|compiz|enlightenment|^_gnome|';
-			$pattern .= 'herbstluftwm|^kwin_|^i3_|icewm|_marco|^_motif|_muffin|';
+			$pattern .= 'herbstluftwm|^kwin_|^i3_|icewm|_marco|moksha|^_motif|_muffin|';
 			$pattern .= 'openbox_pid|^_?windowmaker|^_wm2|^(xfdesktop|xfce)';
 			# let's only do these searches once
 			@xprop = grep {/^\S/ && /($pattern)/i} @xprop;
@@ -15811,7 +15755,7 @@ sub get_linux_distro {
 	my ($distro,$distro_id,$distro_file,$system_base) = ('','','','');
 	my ($b_issue,$b_osr,$b_use_issue,@working);
 	# order matters!
-	my @derived = qw(antix-version aptosid-version kanotix-version knoppix-version 
+	my @derived = qw(antix-version aptosid-version bodhibuilder.conf kanotix-version knoppix-version 
 	pclinuxos-release mandrake-release manjaro-release mx-version pardus-release 
 	porteus-version sabayon-release siduction-version sidux-version slitaz-release 
 	solusos-release turbolinux-release zenwalk-version);
@@ -15828,6 +15772,7 @@ sub get_linux_distro {
 	# wait to handle since crunchbang file is one of the few in the world that 
 	# uses this method
 	my @distro_files = main::globber('/etc/*[-_]{[rR]elease,[vV]ersion,issue}*');
+	push @distro_files, '/etc/bodhibuilder.conf' if -r '/etc/bodhibuilder.conf';
 	my $lsb_release = '/etc/lsb-release';
 	my $b_lsb = 1 if -f $lsb_release;
 	my ($etc_issue,$issue,$lc_issue) = ('','/etc/issue','');
@@ -15925,6 +15870,11 @@ sub get_linux_distro {
 			@working = main::reader($distro_file);
 			$distro = main::awk(\@working,'suse');
 		}
+		elsif ($distro_file eq '/etc/bodhibuilder.conf'){
+			@working = main::reader($distro_file);
+			$distro = main::awk(\@working,'^LIVECDLABEL',2,'\s*=\s*');
+			$distro =~ s/"//g if $distro;
+		}
 		else {
 			$distro = (main::reader($distro_file))[0];
 		}
@@ -15990,9 +15940,9 @@ sub get_linux_distro {
 		my $base_default = 'antix-version|mx-version'; # osr has base ids
 		my $base_issue = 'bunsen'; # base only found in issue
 		my $base_manual = 'kali'; # synthesize, no direct data available
-		my $base_osr = 'aptosid|grml|siduction'; # osr base, distro id in list of distro files
+		my $base_osr = 'aptosid|grml|siduction|bodhi'; # osr base, distro id in list of distro files
 		my $base_osr_issue = 'grml|linux lite'; # osr base, distro id in issue
-		my $base_osr_ubuntu = 'mint|zorin'; # osr has distro name but has ubuntu  ID_LIKE/UBUNTU_CODENAME
+		my $base_osr_ubuntu = 'mint|neon|zorin'; # osr has distro name but has ubuntu  ID_LIKE/UBUNTU_CODENAME
 		my $base_upstream_lsb = '/etc/upstream-release/lsb-release';
 		my $base_upstream_osr = '/etc/upstream-release/os-release';
 		# first: try, some distros have upstream-release, elementary, new mint
@@ -16039,8 +15989,18 @@ sub get_linux_distro {
 			);
 			$system_base = $manual{$id};
 		}
+		if ($distro && -d '/etc/salixtools/' && $distro =~ /Slackware/i){
+			$system_base = $distro;
+		}
 	}
-	$distro =~ s/Debian/Armbian/ if ($distro && $distro_id eq 'armbian');
+	if ($distro){
+		if ($distro_id eq 'armbian'){
+			$distro =~ s/Debian/Armbian/;
+		}
+		elsif (-d '/etc/salixtools/' && $distro =~ /Slackware/i){
+			$distro =~ s/Slackware/Salix/;
+		}
+	}
 	## finally, if all else has failed, give up
 	$distro ||= 'unknown';
 	@distro_data = ($distro,$system_base);
@@ -16328,8 +16288,7 @@ sub get_init_data {
 			$init = 'SysVinit';
 			if (check_program('strings')){
 				@data = grabber('strings /sbin/init');
-				$init_version = awk(\@data,'version\s+[0-9]');
-				$init_version = get_piece($init_version,2) if $init_version;
+				$init_version = awk(\@data,'^version\s+[0-9]',2);
 			}
 		}
 		elsif ( -f '/etc/ttys' ){
@@ -16753,7 +16712,7 @@ sub get_start_parent {
 	eval $start if $b_log;
 	my ($parent) = @_;
 	# ps -j -fp : bsds ps do not have -f for PPID, so we can't get the ppid
-	my $cmd = "ps -j -fp $parent";
+	my $cmd = "ps -j -fp $parent 2>/dev/null";
 	log_data('cmd',$cmd) if $b_log;
 	my @data = grabber($cmd);
 	#shift @data if @data;
@@ -16766,9 +16725,9 @@ sub get_start_parent {
 sub get_shell_parent {
 	eval $start if $b_log;
 	my ($parent) = @_;
-	my $cmd = "ps -j -p $parent";
+	my $cmd = "ps -j -p $parent 2>/dev/null";
 	log_data('cmd',$cmd) if $b_log;
-	my @data = grabber($cmd,'strip');
+	my @data = grabber($cmd,'','strip');
 	#shift @data if @data;
 	my $shell_parent = awk(\@data, "$parent",-1,'\s+');
 	eval $end if $b_log;
@@ -16858,82 +16817,6 @@ sub get_uptime {
 	$uptime ||= 'N/A';
 	eval $end if $b_log;
 	return $uptime;
-}
-
-# NOTE: annoyingly, /sys does NOT actually use the id, it uses 
-# the count of physical devices, starting at 0 for hub, on the bus.
-# args: $1 - $bus number; $2 - vendor:chip id
-sub get_usb_drivers {
-	eval $start if $b_log;
-	my ($bus,$id) = @_;
-	return if !$bus || !$id;# these will be > 0
-	my ($chip,$driver,$file,$path,$vendor,$working,$working2,@drivers,@temp);
-	@temp = split /:/, $id;
-	$vendor = $temp[0];
-	$chip = $temp[1];
-	# some have it one level deeper than others
-	my @globs = ("/sys/bus/usb/devices/usb$bus/$bus-*/","/sys/bus/usb/devices/usb$bus/$bus-*/$bus-*/");
-	foreach (@globs){
-		$path = get_usb_path($vendor,$chip,$_);
-		last if $path;
-	}
-	if ($path){
-		if ( -e "${path}driver"){
-			if ($working = Cwd::abs_path("${path}driver")){
-				$working =~ s/^.*\///;
-				if ($working && $working ne 'usb' && $working ne 'usbhid'){
-					push @drivers, $working;
-				}
-			}
-		}
-		# test 2
-		@temp = main::globber("$path$bus-*/");
-		#print "@temp\n";
-		foreach (@temp){
-			#print "p2:". $_ . "driver\n";
-			$file = $_ . 'driver';
-			#print "f:$file\n";
-			if (-e $file){
-				#print "here\n";
-				#print (Cwd::abs_path($file), "\n");
-				if ($working = Cwd::abs_path($file)){
-					#print "w:$working\n";
-					$working =~ s/^.*\///;
-					if ($working && $working ne 'usb' && $working ne 'usbhid' && ! grep {/$working/} @drivers){
-						push @drivers, $working;
-					}
-				}
-			}
-		}
-		#print join "\n", @drivers, "\n";
-		$driver = join ',', @drivers if @drivers;
-	}
-	@temp = ($driver,$path);
-	eval $end if $b_log;
-	return @temp;
-}
-
-sub get_usb_path {
-	eval $start if $b_log;
-	my ($vendor,$chip,$glob) = @_;
-	my ($path,$working,$working2);
-	#print "$vendor,$chip,$glob\n";
-	my @temp = main::globber($glob);
-	#print join "\n", @temp, "\n";
-	# first we need to get the device path, since it's not predictable
-	foreach (@temp){
-		#print "$_\n";
-		$working = $_ . 'idVendor';
-		$working2 = $_ . 'idProduct';
-		if (-e $working && (main::reader($working))[0] eq $vendor && 
-		    -e $working2 && (main::reader($working2))[0] eq $chip){
-			$path = $_;
-			#print "$_\n";
-			last;
-		}
-	}
-	eval $end if $b_log;
-	return $path
 }
 
 #### -------------------------------------------------------------------
@@ -17532,8 +17415,16 @@ sub set_soc_data {
 }
 sub set_ps_aux {
 	eval $start if $b_log;
-	@ps_aux = split "\n",qx(ps aux);;
-	shift @ps_aux; # get rid of header row
+	@ps_aux = grabber("ps aux",'','strip');
+	my $header = shift @ps_aux; # get rid of header row
+	# handle busy box, which has 3 columns, regular ps aux has 11
+	# avoid deprecated implicit split error in older Perls
+	my @temp = split(/\s+/, $header);
+	$ps_cols = $#temp;
+	if ($ps_cols < 10){
+		my $version = qx(ps --version 2>&1);
+		$b_bb_ps = 1 if $version =~/busybox/i;
+	}
 	$_=lc for @ps_aux; # this is a super fast way to set to lower
 	# note: regular perl /.../inxi but sudo /.../inxi is added for sudo start
 	# for pinxi, we want to see the useage data for cpu/ram
@@ -17544,8 +17435,8 @@ sub set_ps_aux {
 		# slice out 10th to last elements of ps aux rows
 		my $final = $#split;
 		# some stuff has a lot of data, chrome for example
-		$final = ($final > 12) ? 12 : $final;
-		@split = @split[10 .. $final ];
+		$final = ($final > ($ps_cols + 2) ) ? $ps_cols + 2 : $final;
+		@split = @split[$ps_cols .. $final];
 		join " ", @split;
 	} @ps_aux;
 	#@ps_cmd = grep {!/^\[/} @ps_cmd;
@@ -17563,8 +17454,8 @@ sub set_ps_gui {
 		tdelauncher tdeinit_phase1);
 		@match = (@match,@temp);
 		@temp=qw(3dwm 9wm afterstep amiwm awesome blackbox bspwm 
-		dwm fluxbox flwm fvwm.*-crystal fvwm2 fvwm i3 jwm 
-		matchbox-window-manager mwm openbox notion pekwm ratpoison 
+		dwm fluxbox flwm flwm_topside fvwm.*-crystal fvwm2 fvwm i3 jwm 
+		matchbox-window-manager mwm openbox notion pekwm qtile ratpoison 
 		sawfish scrotwm spectrwm twm 
 		windowlab WindowMaker wm2 wmii2 wmii xmonad);
 		@match = (@match,@temp);
@@ -17591,7 +17482,7 @@ sub set_ps_gui {
 	}
 	# compositors (for wayland these are also the server, note 
 	if ($show{'graphic'} && $extra > 1){
-		@temp=qw(budgie-wm compiz compton dwc dcompmgr enlightenment 
+		@temp=qw(budgie-wm compiz compton dwc dcompmgr enlightenment
 		grefson ireplace kmscon kwin_wayland kwin_x11 metisse mir moblin 
 		rustland sway swc unagi wayhouse westford weston xcompmgr);
 		@match = (@match,@temp);
@@ -17652,19 +17543,34 @@ sub set_sysctl_data {
 	eval $end if $b_log;
 }
 
-# http://www.usb.org/developers/defined_class
+## @usb array indexes
+# 0 - bus id / sort id
+# 1 - device id
+# 2 - path_id
+# 3 - path
+# 4 - class id
+# 5 - subclass id
+# 6 - protocol id
+# 7 - vendor:chip id
+# 8 - usb version
+# 9 - interfaces
+# 10 - ports
+# 11 - vendor 
+# 12 - product
+# 13 - device-name
+# 14 - type string
+# 15 - driver
+# 16 - serial
+# 17 - configuration
 sub set_usb_data {
 	eval $start if $b_log;
 	$b_usb_check = 1;
-	if ($alerts{'lsusb'}{'action'} eq 'use' ){
-		#$usb_level = 2;
-		# NOTE: we can't get reliable usb network device with short
-		if ($usb_level == 2){
-			set_lsusb_data_long();
-		}
-		else {
-			set_lsusb_data_short();
-		}
+	# if user config sets USB_SYS you can override with --usb-tool
+	if ((!$b_usb_sys || $b_usb_tool) && $alerts{'lsusb'}{'action'} eq 'use' ){
+		set_lsusb_data();
+	}
+	elsif (-d '/sys/bus/usb/devices'){
+		UsbSysData::set('main');
 	}
 	elsif ( $alerts{'usbdevs'}{'action'} eq 'use'){
 		set_usbdevs_data();
@@ -17672,14 +17578,14 @@ sub set_usb_data {
 	eval $end if $b_log;
 }
 
-sub set_lsusb_data_short {
+sub set_lsusb_data {
 	eval $start if $b_log;
-	my ($content,@data);
+	my (@data,@temp,@working);
+	my ($addr_id,$bus_id,$chip_id,$name,$path_id);
 	my $b_live = 1;
 	if ($b_live){
 		my $path = check_program('lsusb');
-		$content = qx($path 2>/dev/null) if $path;
-		@data = split /\n/, $content if $content;
+		@data = grabber("$path 2>/dev/null") if $path;
 	}
 	else {
 		open my $fh, '<', "$ENV{'HOME'}/bin/scripts/inxi/data/lsusb/mdmarmer-lsusb.txt" or die $!;
@@ -17687,102 +17593,41 @@ sub set_lsusb_data_short {
 	}
 	foreach (@data){
 		next if /^\s*$|^Couldn't/; # expensive second call: || /UNAVAIL/
-		my @working = split /\s+/, $_;
+		@working = split /\s+/, $_;
 		$working[3] =~ s/:$//;
-		my $id = int($working[3]);
-		if ($id > 1){
-			my $bus = int($working[1]);
-			my $chip = $working[5];
-			my @temp = @working[6..$#working];
-			my $name = join ' ', @temp;
-			if ($name !~ /hub/i){
-				@usb = (@usb,[$bus,$id,$chip,$name]);
-			}
-		}
+		$addr_id = int($working[3]);
+		$bus_id = int($working[1]);
+		$path_id = "$bus_id-$addr_id";
+		$chip_id = $working[5];
+		@temp = @working[6..$#working];
+		$name = join ' ', @temp;
+		$name = $name;
+		#print "$name\n";
+		$working[0] = $bus_id;
+		$working[1] = $addr_id;
+		$working[2] = $path_id;
+		$working[3] = '';
+		$working[4] = 0;
+		$working[5] = '';
+		$working[6] = '';
+		$working[7] = $chip_id;
+		$working[8] = '';
+		$working[9] = '';
+		$working[10] = 0;
+		$working[11] = '';
+		$working[12] = '';
+		$working[13] = $name;
+		$working[14] = '';
+		$working[15] = '';
+		$working[16] = '';
+		@
+		usb = (@usb,[@working]);
+		#print join ("\n",@working),"\n\n=====\n";
 	}
 	print Dumper \@usb if $test[6];
-	main::log_data('dump','@usb: short',\@usb) if $b_log;
-	eval $end if $b_log;
-}
-
-sub set_lsusb_data_long {
-	eval $start if $b_log;
-	my ($content,@data,@working,$bus_id,$device_id,$id,$b_skip);
-	my $j = 0;
-	my $b_live = 1;
-	if ($b_live){
-		my $path = check_program('lsusb');
-		$content = qx($path -v 2>/dev/null) if $path;
-		@data = split /\n/, $content if $content;
-	}
-	else {
-		my $file;
-		#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/lsusb/mdmarmer-lsusb-v.txt";
-		$file = "$ENV{'HOME'}/bin/scripts/inxi/data/lsusb/lsusb-v-dz64.txt";
-		open my $fh, '<', $file or die $!;
-		chomp(@data = <$fh>);
-	}
-	foreach (@data){
-		# we won't need all the lsusb data, so set it to skip
-		# after the last item we might want
-		# Couldn't open device, some information will be missing
-		next if /^\s*$|^Couldn't/; # expensive second call: || /UNAVAIL/
-		if (!$b_skip && $bus_id && /^\s\s/){
-			#if ($_ =~ /\bDescriptor\b:/){
-			if ($_ =~ /^\s+([\S]+)\sDescriptor:/){
-				#$_ =~ /^\s+([\S]+)\sDescriptor:/;
-				$_ = "Descriptor_$1";
-			}
-			else {
-				$_ =~ s/^\s\s|[\s]+$//g;
-				$_ =~ s/^[\s]+/~/g;
-				#$_ =~ s/[\s]+$//g;
-				$_ =~ s/\sType/_Type/g;
-				$_ =~ s/^([\S]+)[\s]+(.*)//;
-				my $one = ($1) ? $1: '';
-				my $two = ($2) ? $2: '';
-				$_ = "$one:$two";
-				$b_skip = 1 if $one eq '~bInterfaceProtocol';
-				#$_ = cleaner($_);
-				if (/([\S]+):([0-9]+|0x[0-9a-f]+)\s(.*)/){
-					$_ = "$1:$2:$3";
-					#$b_skip = 1 if $1 eq '~bInterfaceProtocol';
-				}
-				#print "$1\n";
-			}
-			push @working, $_;
-		}
-		elsif (/^Bus\s([0-9]+)\sDevice\s([0-9]+):\sID\s(([0-9a-f]{4}):([0-9a-f]{4})).*/){
-		#elsif (/^Bus\s/){
-			#if (/^Bus\s([0-9]+)\sDevice\s([0-9]+):\sID\s(([0-9a-f]{4}):([0-9a-f]{4})).*/){
-				$j = scalar @usb;
-				$bus_id = int($1); # trim off leading 0's
-				$device_id = int($2);
-				$id = $3;
-				$b_skip = 0;
-				# we don't need 32, system boot, or 127, end of table
-				if (@working){
-					if ($working[0] != 32 && $working[0] != 127){
-						$usb[$j] = (
-						[@working],
-						);
-					}
-				}
-				@working = ($bus_id,$device_id,$id);
-			#}
-		}
-	}
-	if (@working){
-		$j = scalar @usb;
-		$usb[$j] = (
-		[@working],
-		);
-	}
-	# last by not least, sort it by dmi type, now we don't have to worry
-	# about random dmi type ordering in the data, which happens
-	@usb = sort { $a->[0] <=> $b->[0] || $a->[1] <=> $b->[1] } @usb;
+	UsbSysData::set('lsusb') if @usb;
 	print Dumper \@usb if $test[6];
-	main::log_data('dump','@usb: long',\@usb) if $b_log;
+	main::log_data('dump','@usb: plain',\@usb) if $b_log;
 	eval $end if $b_log;
 }
 
@@ -17792,13 +17637,12 @@ sub set_lsusb_data_long {
 #  port 2 powered
 sub set_usbdevs_data {
 	eval $start if $b_log;
-	my (@data,@working,$class,$bus_id,$addr_id,$id,$speed,$protocol);
-	my $j = 0;
-	my $ports = 0;
+	my (@data,@working,$addr_id,$class,$bus_id,$chip_id,$hub_id,
+	$path_id,$port,$port_value,$name,$speed);
+	my ($ports,$j,$k) = (0,0,0);
 	if (!$b_fake_usbdevs){
 		my $program = check_program('usbdevs');
-		my $content = qx($program -v 2>/dev/null);
-		@data = split /\n/, $content;
+		@data = grabber("$program -v 2>/dev/null");
 	}
 	else {
 		open my $fh, '<', "$ENV{'HOME'}/bin/scripts/inxi/data/lsusb/bsd-usbdevs-v-1.txt" or die $!;
@@ -17806,45 +17650,75 @@ sub set_usbdevs_data {
 	}
 	foreach (@data){
 		if (/^Controller\s\/dev\/usb([0-9]+)/){
-			$j = scalar @usb;
-			$ports = 0;
+			# $j = scalar @usb;
+			($j,$ports) = (0,0);
+			$port_value = '';
 			$bus_id = $1;
 			@working = ();
 		}
 		elsif (/^addr\s([0-9]+):\s([^,]+),[^,]+,[^,]+,\s?([^,]+)\(0x([0-9a-f]{4})\),\s?([^,]+)\s?\(0x([0-9a-f]{4})\)/){
 			$j = scalar @usb;
+			$k = $j;
+			$hub_id = $1;
 			$addr_id = $1;
-			$speed = "bcdUSB:$2";
-			$id = "$4:$6";
-			$protocol="~bInterfaceProtocol:0:$5 $3";
+			$speed = $2;
+			$chip_id = "$4:$6";
+			$name="$5 $3";
 			#print "p1:$protocol\n";
-			$class='bDeviceClass:9:Hub';
-			@working = ($bus_id,$addr_id,$id,$speed,$class,$protocol);
-			if (@working){
-				$usb[$j] = (
-				[@working],
-				);
-			}
+			$path_id = "$bus_id-$hub_id";
+			$port_value = '';
+			$working[0] = $bus_id;
+			$working[1] = $addr_id;
+			$working[2] = $path_id;
+			$working[3] = '';
+			$working[4] = 9;
+			$working[5] = '';
+			$working[6] = '';
+			$working[7] = $chip_id;
+			$working[8] = $speed;
+			$working[9] = '';
+			$working[10] = 0;
+			$working[13] = $name;
+			$working[14] = 'Hub';
+			$working[15] = '';
+			$working[16] = '';
+			$usb[$j] = ([@working],);
 			@working = ();
 		}
 		elsif (/^\s+port\s([0-9]+)\saddr\s([0-9]+):\s([^,]+),[^,]+,[^,]+,\s?([^,]+)\(0x([0-9a-f]{4})\),\s?([^,]+)\s?\(0x([0-9a-f]{4})\)/){
 			$j = scalar @usb;
+			$port = $1;
 			$addr_id = "$2";
-			$speed = "bcdUSB:$3";
-			$id = "$5:$7";
-			$protocol="~bInterfaceProtocol:0:$6 $4";
+			$speed = "$3";
+			$chip_id = "$5:$7";
+			$name="$6 $4";
 			#print "p2:$protocol\n";
 			$ports++;
-			@working = ($bus_id,$addr_id,$id,$speed,$protocol);
-			if (@working){
-				$usb[$j] = (
-				[@working],
-				);
-			}
+			$path_id = "$bus_id-$hub_id.$port";
+			$working[0] = $bus_id;
+			$working[1] = $addr_id;
+			$working[2] = $path_id;
+			$working[3] = '';
+			$working[4] = 1;
+			$working[5] = '';
+			$working[6] = '';
+			$working[7] = $chip_id;
+			$working[8] = $speed;
+			$working[9] = '';
+			$working[10] = 0;
+			$working[11] = '';
+			$working[12] = '';
+			$working[13] = $name;
+			$working[14] = '';
+			$working[15] = '';
+			$working[16] = '';
+			$usb[$j] = ([@working],);
+			${$usb[$k]}[10] = $ports;
 			@working = ();
 		}
 		elsif (/^\s+port\s([0-9]+)\spowered/){
 			$ports++;
+			${$usb[$k]}[10] = $ports;
 		}
 	}
 	if (@working){
@@ -17856,6 +17730,255 @@ sub set_usbdevs_data {
 	main::log_data('dump','@usb: usbdevs',\@usb) if $b_log;
 	print Dumper \@usb if $test[6];
 	eval $end if $b_log;
+}
+
+## UsbSysData
+{
+package UsbSysData;
+
+my ($b_hub,$class_id,$protocol_id,$source,$subclass_id,$type);
+
+sub set {
+	eval $start if $b_log;
+	($source) = @_;
+	my (@drivers,@uevent,@usb_sys,@working);
+	my ($bus_id,$bus_id_alpha,$chip_id,$configuration,$device_id,$driver,$ids,$interfaces,
+	$name,$path,$path_id,$ports,$product,$serial,$usb_version,$vendor,$vendor_id,);
+	my $i = 0;
+	my @files = main::globber('/sys/bus/usb/devices/*');
+	# we want to get rid of the hubs with x-0: syntax, those are hubs found in /usbx
+	@files = grep {!/\/[0-9]+-0:/} @files;
+	#print join "\n", @files;
+	foreach (@files){
+		@uevent = main::reader("$_/uevent") if -r "$_/uevent";
+		$ids = main::awk(\@uevent,'^(DEVNAME|DEVICE\b)',2,'=');
+		if ( $ids){
+			@drivers = ();
+			($b_hub,$class_id,$protocol_id,$subclass_id) = (0,0,0,0);
+			($driver,$interfaces,$name,$ports,$product,$serial,$type,
+			$usb_version,$vendor) = ('','','','','','','','','');
+			#print Cwd::abs_path($_),"\n";
+			#print "f1: $_\n";
+			$path_id = $_;
+			$path_id =~ s/^.*\///;
+			$path_id =~ s/^usb([0-9]+)/$1-0/;
+			# if DEVICE= then path = /proc/bus/usb/001/001 else: bus/usb/006/001
+			$ids =~ s/^\///;
+			@working = split /\//, $ids;
+			shift @working if $working[0] eq 'proc';
+			$bus_id = int($working[2]);
+			$bus_id_alpha = bus_id_alpha($path_id);
+			$device_id = int($working[3]);
+			$class_id = sys_item("$_/bDeviceClass");
+			$class_id = hex($class_id) if $class_id;
+			@drivers = uevent_data("$_/[0-9]*/uevent");
+			@drivers = (@drivers, uevent_data("$_/[0-9]*/*/uevent")) if !$b_hub;
+			$ports = sys_item("$_/maxchild") if $b_hub;
+			$driver = join ',', sort(main::uniq(@drivers)) if @drivers;
+			$interfaces = sys_item("$_/bNumInterfaces");
+			$serial = sys_item("$_/serial");
+			$usb_version = sys_item("$_/version");
+			if ($source eq 'lsusb'){
+				for ($i = 0; $i < scalar @usb; $i++){
+					if (${$usb[$i]}[0] eq $bus_id && ${$usb[$i]}[1] == $device_id){
+						#print $type,"\n";
+						${$usb[$i]}[0] = $bus_id_alpha;
+						${$usb[$i]}[2] = $path_id;
+						${$usb[$i]}[3] = $_;
+						${$usb[$i]}[4] = $class_id;
+						${$usb[$i]}[5] = $subclass_id;
+						${$usb[$i]}[6] = $protocol_id;
+						${$usb[$i]}[8] = $usb_version;
+						${$usb[$i]}[9] = $interfaces;
+						${$usb[$i]}[10] = $ports if $ports;
+						if ($type && $b_hub && (!${$usb[$i]}[13] || ${$usb[$i]}[13] =~ /^linux foundation/i )){
+							${$usb[$i]}[13] = "$type";
+						}
+						${$usb[$i]}[14] = $type if ($type && !$b_hub);
+						${$usb[$i]}[15] = $driver if $driver;
+						${$usb[$i]}[16] = $serial if $serial;
+						#print join("\n",@{$usb[$i]}),"\n\n";# if !$b_hub; 
+						last;
+					}
+				}
+			}
+			else {
+				$chip_id = sys_item("$_/idProduct");
+				$vendor_id = sys_item("$_/idVendor");
+				# we don't want the device, it's probably a bad path in /sys/bus/usb/devices
+				next if !$vendor_id && !$chip_id;
+				$configuration = sys_item("$_/configuration");
+				$product = sys_item("$_/product");
+				$product = main::cleaner($product) if $product;
+				$vendor = sys_item("$_/manufacturer");
+				$vendor = main::cleaner($vendor) if $vendor;
+				if (!$b_hub && ($product || $vendor )){
+					if ($vendor && $product && $product !~ /$vendor/){
+						$name = "$vendor $product";
+					}
+					elsif ($product){
+						$name = $product;
+					}
+					elsif ($vendor){
+						$name = $vendor;
+					}
+				}
+				elsif ($b_hub){
+					$name = $type;
+				}
+				# this isn't that useful, but save in case something shows up
+				#if ($configuration){
+				#	$name = ($name) ? "$name $configuration" : $configuration;
+				#}
+				$type = 'Hub' if $b_hub;
+				${$usb[$i]}[0] = $bus_id_alpha;
+				${$usb[$i]}[1] = $device_id;
+				${$usb[$i]}[2] = $path_id;
+				${$usb[$i]}[3] = $_;
+				${$usb[$i]}[4] = $class_id;
+				${$usb[$i]}[5] = $subclass_id;
+				${$usb[$i]}[6] = $protocol_id;
+				${$usb[$i]}[7] = "$vendor_id:$chip_id";
+				${$usb[$i]}[8] = $usb_version;
+				${$usb[$i]}[9] = $interfaces;
+				${$usb[$i]}[10] = $ports;
+				${$usb[$i]}[11] = $vendor;
+				${$usb[$i]}[12] = $product;
+				${$usb[$i]}[13] = $name;
+				${$usb[$i]}[14] = $type;
+				${$usb[$i]}[15] = $driver;
+				${$usb[$i]}[16] = $serial;
+				${$usb[$i]}[17] = $configuration;
+				$i++;
+			}
+			#print "$path_id ids: $bus_id:$device_id driver: $driver ports: $ports\n==========\n"; # if $test[6];;
+		}
+	}
+	@usb = sort { $a->[0] cmp $b->[0] } @usb;
+	print Data::Dumper::Dumper \@usb if $source eq 'main' && $test[6];
+	main::log_data('dump','@usb: sys',\@usb) if $source eq 'main' && $b_log;
+	eval $end if $b_log;
+}
+# get driver, interface [type:] data
+sub uevent_data {
+	my ($path) = @_;
+	my ($driver,$interface,$temp,@interfaces,@drivers,@working);
+	my @files = main::globber($path);
+	@files = grep {!/\/(subsystem|driver|ep_[^\/]+)\/uevent$/} @files if @files;
+	foreach (@files){
+		last if $b_hub;
+		# print "f2: $_\n";
+		($interface) = ('');
+		@working = main::reader($_) if -r $_;
+		#print join ("\n",@working), "\n";
+		if (@working){
+			$driver = main::awk(\@working,'^DRIVER',2,'=');
+			$interface = main::awk(\@working,'^INTERFACE',2,'=');
+			if ($interface){
+				$interface = device_type($interface);
+				if ($interface){
+					if ($interface ne '<vendor specific>'){
+						push @interfaces, $interface;
+					}
+					# networking requires more data but this test is reliable
+					elsif (!@interfaces) {
+						$temp = $_;
+						$temp =~ s/\/uevent$//;
+						push @interfaces, 'Network' if -d "$temp/net/";
+					}
+					if (!@interfaces){
+						push @interfaces, $interface;
+					}
+				}
+			}
+		}
+		#print "driver:$driver\n";
+		$b_hub = 1 if $driver && $driver eq 'hub';
+		$driver = '' if $driver && ($driver eq 'usb' || $driver eq 'hub');
+		push @drivers,$driver if $driver;
+	}
+	if (@interfaces){
+		@interfaces = main::uniq(@interfaces);
+		# clear out values like: <vendor defined>,Printer
+		if ( scalar @interfaces > 1 && (grep {/^<vendor/} @interfaces) && (grep {!/^<vendor/} @interfaces) ){
+			@interfaces = grep {/^<vendor/} @interfaces;
+		}
+		$type = join ',', @interfaces;
+		# print "type:$type\n";
+	}
+	return @drivers;
+}
+sub sys_item {
+	my ($path) = @_;
+	my ($item,@working);
+	$item = (main::reader($path))[0] if -r $path;
+	$item = '' if ! defined $item;
+	$item = main::trimmer($item) if $item;
+	return $item;
+}
+
+sub device_type {
+	my ($data) = @_;
+	my ($type);
+	my @types = split /\//, $data if $data;
+	#print @types,"\n";
+	if (scalar @types == 3){
+		$class_id = $types[0];
+		$subclass_id = $types[1];
+		$protocol_id = $types[2];
+	}
+	if (!@types || $types[0] eq '0' || scalar @types != 3) {return '';}
+	elsif ($types[0] eq '255') { return '<vendor specific>';}
+	
+	if ($types[0] eq '1'){$type = 'Audio';}
+	elsif ($types[0] eq '2'){
+		if ($types[1] eq '2'){$type = 'Abstract (modem)';}
+		elsif ($types[1] eq '6'){$type = 'Ethernet Network';}
+		elsif ($types[1] eq '10'){$type = 'Mobile Direct Line';}
+		elsif ($types[1] eq '12'){$type = 'Ethernet Emulation';}
+		else {$type = 'Communication';}
+	}
+	elsif ($types[0] eq '3'){
+		if ($types[2] eq '0'){$type = 'HID';} # actual value: None
+		elsif ($types[2] eq '1'){$type = 'Keyboard';}
+		elsif ($types[2] eq '2'){$type = 'Mouse';}
+	}
+	elsif ($types[0] eq '6'){$type = 'Still Imaging';}
+	elsif ($types[0] eq '7'){$type = 'Printer';}
+	elsif ($types[0] eq '8'){$type = 'Mass Storage';}
+	elsif ($types[0] eq '9'){
+		if ($types[2] eq '0'){$type = 'Full speed (or root) Hub';}
+		elsif ($types[2] eq '1'){$type = 'Hi-speed hub with single TT';}
+		elsif ($types[2] eq '2'){$type = 'Hi-speed hub with multiple TTs';}
+	}
+	elsif ($types[0] eq '10'){$type = 'CDC-Data';}
+	elsif ($types[0] eq '11'){$type = 'Smart Card';}
+	elsif ($types[0] eq '13'){$type = 'Content Security';}
+	elsif ($types[0] eq '14'){$type = 'Video';}
+	elsif ($types[0] eq '15'){$type = 'Personal Healthcare';}
+	elsif ($types[0] eq '16'){$type = 'Audio-Video';}
+	elsif ($types[0] eq '17'){$type = 'Billboard';}
+	elsif ($types[0] eq '18'){$type = 'Type-C Bridge';}
+	elsif ($types[0] eq '88'){$type = 'Xbox';}
+	elsif ($types[0] eq '220'){$type = 'Diagnostic';}
+	elsif ($types[0] eq '224'){
+		if ($types[1] eq '1'){$type = 'Bluetooth';}
+		elsif ($types[1] eq '2'){
+			if ($types[2] eq '1'){$type = 'Host Wire Adapter';}
+			elsif ($types[2] eq '2'){$type = 'Device Wire Adapter';}
+			elsif ($types[2] eq '3'){$type = 'Device Wire Adapter';}
+		}
+	}
+	
+	return $type;
+}
+# this is used to create an alpha sortable bus id for main $usb[0]
+sub bus_id_alpha {
+	my ($id) = @_;
+	$id =~ s/^([1-9])-/0$1-/;
+	$id =~ s/([-\.:])([0-9])\b/${1}0$2/g;
+	return $id;
+}
 }
 
 ########################################################################
