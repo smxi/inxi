@@ -31,8 +31,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.0.21';
-my $self_date='2018-08-17';
+my $self_version='3.0.22';
+my $self_date='2018-08-28';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -70,9 +70,9 @@ $b_display,$b_dmesg_boot_check,
 $b_dmi,$b_dmidecode_force,$b_fake_bsd,$b_fake_dboot,$b_fake_pciconf,
 $b_fake_sysctl,$b_fake_usbdevs,$b_force_display,$b_gpudata,$b_irc,
 $b_log,$b_log_colors,$b_log_full,$b_man,$b_mem,$b_mips,$b_pci,$b_pci_tool,
-$b_proc_debug,$b_ps_gui,$b_root,$b_running_in_display,$b_slot_tool,
-$b_soc_audio,$b_soc_gfx,$b_soc_net,$b_sudo,$b_sysctl,$b_usb,$b_usb_check,
-$b_usb_sys,$b_usb_tool,$b_wmctrl);
+$b_ppc,$b_proc_debug,$b_ps_gui,$b_root,$b_running_in_display,$b_slot_tool,
+$b_soc_audio,$b_soc_gfx,$b_soc_net,$b_sparc,$b_sudo,$b_sys_debug,$b_sysctl,
+$b_usb,$b_usb_check,$b_usb_sys,$b_usb_tool,$b_wmctrl);
 ## Disk checks
 my ($b_dm_boot_disk,$b_dm_boot_optical,$b_glabel,$b_hardware_raid,
 $b_label_uuid,$b_lsblk,$b_partitions,$b_raid);
@@ -415,6 +415,8 @@ sub set_os {
 	$cpu_arch = lc($uname[-1]);
 	if ($cpu_arch =~ /arm|aarch/){$b_arm = 1}
 	elsif ($cpu_arch =~ /mips/) {$b_mips = 1}
+	elsif ($cpu_arch =~ /power|ppc/) {$b_ppc = 1}
+	elsif ($cpu_arch =~ /sparc/) {$b_sparc = 1}
 	# aarch32 mips32 intel/amd handled in cpu
 	if ($cpu_arch =~ /(armv[1-7]|32|sparc_v9)/){
 		$bits_sys = 32;
@@ -1313,7 +1315,8 @@ sub run_debugger {
 	if (!$b_debug){
 		if ( -d '/sys' && main::count_dir_files('/sys') ){
 			build_tree('sys');
-			sys_traverse_data();
+			# kernel crash, not sure what creates it, for ppc, as root
+			sys_traverse_data() if (!$b_root || !$b_ppc || $b_sys_debug) ; 
 		}
 		else {
 			print "Skipping /sys data collection. /sys not present, or empty.\n";
@@ -1358,6 +1361,8 @@ sub create_debug_directory {
 	$bsd_string = "-BSD-$bsd_type" if $bsd_type;
 	if ($b_arm ){$alt_string = '-ARM'}
 	elsif ($b_mips) {$alt_string = '-MIPS'}
+	elsif ($b_ppc) {$alt_string = '-PPC'}
+	elsif ($b_sparc) {$alt_string = '-SPARC'}
 	$debug_dir = "$self_name$alt_string$bsd_string-$host-$today$root_string-$self_version";
 	$debug_gz = "$debug_dir.tar.gz";
 	$data_dir = "$user_data_dir/$debug_dir";
@@ -2025,7 +2030,7 @@ sub wanted {
 		# not use it. Also do not need . files or __ starting files
 		# print $File::Find::name . "\n";
 		# block maybe: cfgroup\/
-		return if $File::Find::name =~ /\/(\.[a-z]|kernel\/|parameters\/|debug\/)/;
+		return if $File::Find::name =~ /\/(\.[a-z]|kernel\/|trace\/|parameters\/|debug\/)/;
 		# comment this one out if you experience hangs or if 
 		# we discover syntax of foreign language characters
 		# Must be ascii like. This is questionable and might require further
@@ -3019,6 +3024,25 @@ sub cleanup {
 	}
 }
 
+# args: $1, $2, version numbers to compare by turning them to strings
+# note that the structure of the two numbers is expected to be fairly 
+# similar, otherwise it may not work perfectly.
+sub compare_versions {
+	my ($one,$two) = @_;
+	if ($one && !$two){return $one;}
+	elsif ($two && !$one){return $two;}
+	elsif (!$one && !$two){return}
+	my ($pad1,$pad2) = ('','');
+	my (@temp1) = split /[\.\-_]/, $one;
+	my (@temp2) = split /[\.\-_]/, $two;
+	@temp1 = map {$_ = sprintf("%04s", $_);$_ } @temp1;
+	@temp2 = map {$_ = sprintf("%04s", $_);$_ } @temp2;
+	$pad1 = join '', @temp1;
+	$pad2 = join '', @temp2;
+	# print "p1:$pad1 p2:$pad2\n";
+	if ($pad1 ge $pad2){return $one}
+	elsif ($pad2 gt $pad1){return $two}
+}
 # returns count of files in directory, if 0, dir is empty
 sub count_dir_files {
 	return unless -d $_[0];
@@ -3101,6 +3125,30 @@ sub joiner {
 	return $string;
 }
 
+# returns array of: 0: program print name 1: program version
+# args: 1: program values id  2: program version string
+# 3: extra level. Note that StartClient runs BEFORE -x levels are set!
+# Only use this function when you only need the name/version data returned
+# Important: all tests that use this must explicitly have program_values 
+# set for each item tested for!!
+sub program_data {
+	eval $start if $b_log;
+	my ($values_id,$version_id,$level) = @_;
+	my (@data,$path,@program_data);
+	$level = 0 if ! $level;
+	#print "val_id: $values_id ver_id:$version_id lev:$level ex:$extra\n";
+	$version_id = $values_id if ! $version_id;
+	@data = main::program_values($values_id);
+	$program_data[0] = $data[3];
+	# programs that have no version method return 0 0 for index 1 and 2
+	if ( $extra >= $level && $data[1] && $data[2]){
+		$program_data[1] = main::program_version($version_id,$data[0],$data[1],$data[2],$data[5],$data[6]);
+	}
+	$program_data[1] = '' if ! defined $program_data[1];
+	eval $end if $b_log;
+	return @program_data;
+}
+
 # returns array of:
 # 0 - match string; 1 - search number; 2 - version string [alt: file]; 
 # 3 - Print name; 4 - console 0/1; 
@@ -3138,43 +3186,60 @@ sub program_values {
 	'9wm' => ['^9wm',3,'-version','9wm',0,1,0],
 	'afterstep' => ['^afterstep',3,'--version','AfterStep',0,1,0],
 	'amiwm' => ['^amiwm',0,'0','AmiWM',0,1,0],
+	'asc' => ['^asc',0,'0','asc',0,1,0],
 	'awesome' => ['^awesome',2,'--version','Awesome',0,1,0],
 	'blackbox' => ['^Blackbox',2,'--version','Blackbox',0,1,0],
 	'bspwm' => ['^\S',1,'-v','bspwm',0,1,0],
 	'budgie' => ['^budgie-desktop',2,'--version','Budgie',0,1,0],
+	'budgie-wm' => ['^budgie',0,'0','budgie-wm',0,1,0],
 	'cinnamon' => ['^cinnamon',2,'--version','Cinnamon',0,1,0],
 	'compiz' => ['^compiz',2,'--version','Compiz',0,1,0],
+	'compton' => ['^\d',1,'--version','Compton',0,1,0],
+	'dcompmgr' => ['^dcompmgr',0,'0','dcompmgr',0,1,0],
 	'deepin' => ['^Version',2,'file','Deepin',0,'=','/etc/deepin-version'],
 	'deepin-metacity' => ['^metacity',2,'--version','Deepin-Metacity',0,1,0],
 	'deepin-mutter' => ['^mutter',2,'--version','Deepin-Mutter',0,1,0],
 	'deepin-wm' => ['^gala',0,'0','DeepinWM',0,1,0],
+	'dwc' => ['^dwc',0,'0','dwc',0,1,0],
 	'dwm' => ['^dwm',1,'-v','dwm',0,1,1],
+	# only listed here for compositor values, version data comes from xprop
+	'enlightenment' => ['^enlightenment',0,'0','enlightenment',0,1,0],
+	'fireplace' => ['^fireplace',0,'0','fireplace',0,1,0],
 	'fluxbox' => ['^fluxbox',2,'-v','Fluxbox',0,1,0],
 	'flwm' => ['^flwm',0,'0','FLWM',0,0,1],
 	'fvwm' => ['^fvwm',2,'--version','FVWM',0,0,1],
 	'fvwm2' => ['^fvwm',2,'--version','FVWM2',0,0,1],
 	# command: fvwm
 	'fvwm-crystal' => ['^fvwm',2,'--version','FVWM-Crystal',0,0,0], 
-	'gala' => ['^gala',2,'--version','gala',0,1,0], # super slow result
+	'gala' => ['^gala',0,'0','gala',0,1,0], # super slow result, but 2, '--version' works?
 	'gnome-about' => ['gnome',3,'--version','Gnome',0,1,0],
 	'gnome-shell' => ['gnome',3,'--version','Gnome',0,1,0],
+	'grefson' => ['^grefson',0,'0','grefson',0,1,0],
 	# note, herbstluftwm when launched with full path returns full path in version string
 	'herbstluftwm' => ['herbstluftwm',2,'--version','herbstluftwm',0,1,0],
 	'jwm' => ['^jwm',2,'--version','JWM',0,1,0],
 	# i3 version 4.13 (2016-11-08) © 2009 Michael Stapelberg and contributors
 	'i3' => ['^i3',3,'--version','i3',0,1,0],
 	'icewm' => ['^icewm',2,'--version','IceWM',0,1,0],
+	'ion' => ['^ion',0,'0','Ion',0,1,0],
 	'kded' => ['^KDE Development Platform:',4,'--version','KDE',0,1,0],
 	'kded1' => ['^KDE Development Platform:',4,'--version','KDE',0,1,0],
 	'kded2' => ['^KDE Development Platform:',4,'--version','KDE',0,1,0],
 	'kded3' => ['^KDE Development Platform:',4,'--version','KDE',0,1,0],
 	'kded4' => ['^KDE Development Platform:',4,'--version','KDE',0,1,0],
+	'ksmcon' => ['^ksmcon',0,'0','ksmcon',0,1,0],
+	'kwin' => ['^kwin',0,'0','kwin',0,1,0],
+	'kwin_wayland' => ['^kwin_wayland',0,'0','kwin_wayland',0,1,0],
+	'kwin_x11' => ['^kwin_x11',0,'0','kwin_x11',0,1,0],
+	'liri' => ['^liri',0,'0','liri',0,1,0],
 	'lumina' => ['^\S',1,'--version','Lumina',0,1,1],
+	'lwm' => ['^lwm',0,'0','lwm',0,1,0],
 	'lxde' => ['^lxpanel',2,'--version','LXDE',0,1,0],
 	# command: lxqt-panel
 	'lxqt' => ['^lxqt-panel',2,'--version','LXQt',0,1,0],
 	'lxqt-variant' => ['^lxqt-panel',0,'0','LXQt-Variant',0,1,0],
 	'lxsession' => ['^lxsession',0,'0','lxsession',0,1,0],
+	'manokwari' => ['^manokwari',0,'0','Manokwari',0,1,0],
 	'marco' => ['^marco',2,'--version','marco',0,1,0],
 	'matchbox' => ['^matchbox',0,'0','Matchbox',0,1,0],
 	'matchbox-window-manager' => ['^matchbox',2,'--help','Matchbox',0,0,0],
@@ -3182,28 +3247,50 @@ sub program_values {
 	# note, mate-session when launched with full path returns full path in version string
 	'mate-session' => ['mate-session',-1,'--version','MATE',0,1,0], 
 	'metacity' => ['^metacity',2,'--version','Metacity',0,1,0],
+	'metisse' => ['^metisse',0,'0','metisse',0,1,0],
+	'mir' => ['^mir',0,'0','mir',0,1,0],
+	'motorcar' => ['^motorcar',0,'0','motorcar',0,1,0],
 	'muffin' => ['^muffin',2,'--version','muffin',0,1,0],
+	'moblin' => ['^moblin',0,'0','moblin',0,1,0],
+	'mutter' => ['^mutter',2,'--version','mutter',0,1,0],
 	'mwm' => ['^mwm',0,'0','mwm',0,1,0],
+	'nawm' => ['^nawm',0,'0','nawm',0,1,0],
 	'notion' => ['^.',1,'--version','notion',0,1,0],
 	'openbox' => ['^openbox',2,'--version','Openbox',0,1,0],
+	'orbital' => ['^orbital',0,'0','orbital',0,1,0],
 	'pantheon' => ['^pantheon',0,'0','Pantheon',0,1,0],
+	'papyros' => ['^papyros',0,'0','papyros',0,1,0],
 	'pekwm' => ['^pekwm',3,'--version','PekWM',0,1,0],
+	'perceptia' => ['^perceptia',0,'0','perceptia',0,1,0],
 	'plasmashell' => ['^plasmashell',2,'--version','KDE Plasma',0,1,0],
 	'qtdiag' => ['^qt',2,'--version','Qt',0,1,0],
 	'qtile' => ['^qtile',0,'0','Qtile',0,0,1],
 	'razor' => ['^razor',0,'0','Razor-Qt',0,1,0],
 	'ratpoison' => ['^ratpoison',2,'--version','Ratpoison',0,1,0],
+	'rustland' => ['^rustland',0,'0','rustland',0,1,0],
 	'sawfish' => ['^sawfish',3,'--version','Sawfish',0,1,0],
 	'scrotwm' => ['^scrotwm.*welcome.*',5,'-v','Scrotwm',0,1,1],
+	'sommelier' => ['^sommelier',0,'0','sommelier',0,1,0],
 	'spectrwm' => ['^spectrwm.*welcome.*wm',5,'-v','Spectrwm',0,1,1],
+	'sway' => ['^sway',0,'0','sway',0,1,0],
+	'swc' => ['^swc',0,'0','swc',0,1,0],
+	'tvtwm' => ['^tvtwm',0,'0','tvtwm',0,1,0],
 	'twin' => ['^Twin:',2,'--version','Twin',0,0,0],
 	'twm' => ['^twm',0,'0','twm',0,1,0],
+	'unagi' => ['^unagi',0,'0','unagi',0,1,0],
 	'unity' => ['^unity',2,'--version','Unity',0,1,0],
+	'wavy' => ['^wavy',0,'0','wavy',0,1,0],
+	'way-cooler' => ['^way',0,'0','way-cooler',0,1,0],
+	'wayhouse' => ['^wayhouse',0,'0','wayhouse',0,1,0],
+	'westford' => ['^westford',0,'0','westford',0,1,0],
+	'weston' => ['^weston',0,'0','weston',0,1,0],
 	'windowlab' => ['^windowlab',2,'-about','WindowLab',0,1,0],
 	'wm2' => ['^wm2',0,'0','wm2',0,1,0],
 	'wmaker' => ['^Window[[:space:]]*Maker',-1,'--version','WindowMaker',0,1,0],
 	'wmii' => ['^wmii',0,'0','wmii',0,1,0], # note: in debian, wmii is wmii3
 	'wmii2' => ['^wmii2',1,'--version','wmii2',0,1,0],
+	'wmx' => ['^wmx',0,'0','wmx',0,1,0],
+	'xcompmgr' => ['^xcompmgr',0,'0','xcompmgr',0,1,0],
 	'xfce4-panel' => ['^xfce4-panel',2,'--version','Xfce',0,1,0],
 	'xfce5-panel' => ['^xfce5-panel',2,'--version','Xfce',0,1,0],
 	'xfdesktop' => ['xfdesktop[[:space:]]version',5,'--version','Xfce',0,1,0],
@@ -3211,10 +3298,21 @@ sub program_values {
 	'xfdesktop-toolkit' => ['Built[[:space:]]with[[:space:]]GTK',4,'--version','Gtk',0,1,0],
 	'xmonad' => ['^xmonad',2,'--version','XMonad',0,1,0],
 	## display managers (dm)
-	'gdm' => ['^gdm',2,'--version','gdm',0,1,0],
-	'gdm3' => ['^gdm',2,'--version','gdm3',0,1,0],
-	'lightdm' => ['^lightdm',2,'--version','lightdm',0,1,1],
-	'slim' => ['slim version',3,'-v','slim',0,1,0],
+	'entrance' => ['^entrance',0,'0','Entrance',0,1,0],
+	'gdm' => ['^gdm',2,'--version','GDM',0,1,0],
+	'gdm3' => ['^gdm',2,'--version','GDM3',0,1,0],
+	'kdm' => ['^kdm',0,'0','KDM',0,1,0],
+	'ldm' => ['^ldm',0,'0','LDM',0,1,0],
+	'lightdm' => ['^lightdm',2,'--version','LightDM',0,1,1],
+	'lxdm' => ['^lxdm',0,'0','LXDM',0,1,0],
+	'mdm' => ['^mdm',0,'0','MDM',0,1,0],
+	'nodm' => ['^nodm',0,'0','nodm',0,1,0],
+	'pcdm' => ['^pcdm',0,'0','PCDM',0,1,0],
+	'sddm' => ['^sddm',0,'0','SDDM',0,1,0],
+	'slim' => ['slim version',3,'-v','SLiM',0,1,0],
+	'wdm' => ['^wdm',0,'0','WINGs DM',0,1,0],
+	'xdm' => ['^xdm',0,'0','XDM',0,1,0],
+	'xenodm' => ['^xenodm',0,'0','xenodm',0,1,0],
 	## Shells
 	'bash' => ['^GNU[[:space:]]bash,[[:space:]]version',4,'--version','Bash',1,0,0],
 	'csh' => ['^tcsh',2,'--version','csh',1,0,0],
@@ -3388,7 +3486,6 @@ sub uniq {
 	my %seen;
 	grep !$seen{$_}++, @_;
 }
-
 
 # arg: 1 file full  path to write to; 2 - arrayof data to write. 
 # note: turning off strict refs so we can pass it a scalar or an array reference.
@@ -4036,6 +4133,8 @@ sub get_options{
 		$b_irc = 1; },
 	'man' => sub {
 		$b_use_man = 1; },
+	'mips' => sub {
+		$b_mips = 1 },
 	'output:s' => sub {
 		my ($opt,$arg) = @_;
 		if ($arg =~ /^(json|screen|xml)$/){
@@ -4068,10 +4167,16 @@ sub get_options{
 		else {
 			error_handler('bad-arg', $opt, $arg);
 		}},
+	'ppc' => sub {
+		$b_ppc = 1 },
 	'proc' => sub {
 		$b_proc_debug = 1; },
 	'recommends' => sub {
 		$b_recommends = 1; },
+	'sparc' => sub {
+		$b_sparc = 1; },
+	'sys' => sub {
+		$b_sys_debug = 1; },
 	'U|update:s' => sub { # 1,2,3 OR http://myserver/path/inxi
 		my ($opt,$arg) = @_;
 		$b_downloader = 1;
@@ -4386,7 +4491,8 @@ sub show_options {
 	['2', '-C', '', "CPU boost (turbo) enabled/disabled, if present." ],
 	['2', '-D', '', "Firmware rev. if available; partition scheme, in some cases; disk 
 	rotation speed (if detected)." ],
-	['2', '-G', '', "Specific vendor/product information (if relevant)." ],
+	['2', '-G', '', "Specific vendor/product information (if relevant); compositor 
+	version (if detectable)." ],
 	['2', '-I', '', "For 'Shell:' adds ([su|sudo|login]) to shell name if present; 
 	for 'running in:' adds (SSH) if SSH session." ],
 	['2', '-m', '', "Width of memory bus, data and total (if present and greater 
@@ -4396,7 +4502,7 @@ sub show_options {
 	['2', '-R', '', "zfs-raid: portion allocated (used) by RAID devices/arrays. 
 	md-raid: system md-raid support types (kernel support, read ahead, RAID events).
 	Hardware RAID rev, ports, specific vendor/product information." ],
-	['2', '-S', '', "Panel/tray/bar info in desktop output, if in X (like lxpanel, 
+	['2', '-S', '', "Panel/tray/bar/dock info in desktop output, if in X (like lxpanel, 
 	xfce4-panel, mate-panel); (if available) dm version number, window manager
 	version number." ],
 	['2', '--usb', '', "For devices: serial number (if present), interface count." ],
@@ -4959,10 +5065,11 @@ sub clean_characters {
 	# etc/issue often has junk stuff like (\l)  \n \l
 	return if ! $data;
 	$data =~ s/[:\47]|\\[a-z]|\n|,|\"|\*|\||\+|\[\s\]|n\/a|\s\s+/ /g; 
-	$data =~ s/\(\)//;
+	$data =~ s/\(\s*\)//;
 	$data =~ s/^\s+|\s+$//g;
 	return $data;
 }
+
 sub cleaner {
 	my ($item) = @_;
 	return $item if !$item;# handle cases where it was 0 or ''
@@ -5175,9 +5282,9 @@ sub row_defaults {
 	'partition-data' => "No Partition data was found.",
 	'pci-advanced-data' => 'bus/chip ids unavailable',
 	'pci-card-data' => "No PCI card data found.",
-	'pci-slot-data' => "No PCI slot data found. SBC?",
+	'pci-slot-data' => "No PCI slot data found.",
 	'raid-data' => "No RAID data was found.",
-	'ram-data' => "No RAM data was found. SBC?",
+	'ram-data' => "No RAM data was found.",
 	'root-required' => "<root required>",
 	'sensors-data-ipmi' => "No ipmi sensors data was found.",
 	'sensors-data-linux' => "No sensors data was found. Is sensors configured?",
@@ -6342,12 +6449,12 @@ sub create_output_full {
 	main::key($num++,'model') => $cpu{'model_name'},
 	},);
 	@rows = (@rows,@data);
-	if ($cpu{'arm-cpus'}){
-		my $ref = $cpu{'arm-cpus'};
-		my %arm_cpus = %$ref;
+	if ($cpu{'system-cpus'}){
+		my $ref = $cpu{'system-cpus'};
+		my %system_cpus = %$ref;
 		my $i = 1;
-		my $counter = ( %arm_cpus && scalar keys %arm_cpus > 1 ) ? '-' : '';
-		foreach my $key (keys %arm_cpus){
+		my $counter = ( %system_cpus && scalar keys %system_cpus > 1 ) ? '-' : '';
+		foreach my $key (keys %system_cpus){
 			$counter = '-' . $i++ if $counter;
 			$rows[$j]{main::key($num++,'variant'.$counter)} = $key;
 		}
@@ -6580,7 +6687,8 @@ sub data_cpuinfo {
 	# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/intel/2-1-core-xeon-vm-vs2017.txt";
 	# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/intel/4-1-core-xeon-vps-frodo1.txt";
 	# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/intel/4-6-core-xeon-no-mt-lathander.txt";
-	#$file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/mips/mips-mainusg-cpuinfo.txt";
+	# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/mips/mips-mainusg-cpuinfo.txt";
+	# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/ppc/ppc-debian-ppc64-cpuinfo.txt";
 	my %speeds = set_cpu_speeds_sys();
 	my @cpuinfo = main::reader($file);
 	my @phys_cpus = (0);# start with 1 always
@@ -6659,11 +6767,15 @@ sub data_cpuinfo {
 				$cpu{'arch'} = $line[1];
 			}
 		}
-		elsif (!$cpu{'rev'} && ($line[0] eq 'stepping' || $line[0] eq 'cpu revision' )){
+		elsif (!$cpu{'rev'} && ($line[0] eq 'stepping' || $line[0] eq 'cpu revision')){
 			$cpu{'rev'} = uc(sprintf("%x", $line[1]));
 		}
+		# ppc
+		elsif (!$cpu{'rev'} && $line[0] eq 'revision'){
+			$cpu{'rev'} = $line[1];
+		}
 		# this is hex so uc for cpu arch id
-		elsif (!$cpu{'model_id'} && $line[0] eq 'model' ){
+		elsif (!$cpu{'model_id'} && (!$b_ppc && $line[0] eq 'model') ){
 			$cpu{'model_id'} = uc(sprintf("%x", $line[1]));
 		}
 		elsif (!$cpu{'model_id'} && $line[0] eq 'cpu variant' ){
@@ -6692,7 +6804,7 @@ sub data_cpuinfo {
 				$cpu{'type'} = 'mips';
 			}
 		}
-		elsif ( $line[0] eq 'cpu mhz' ){
+		elsif ( $line[0] eq 'cpu mhz' || $line[0] eq 'clock' ){
 			$speed = speed_cleaner($line[1]);
 			$cpu{'processors'}[$proc_count-1] = $speed;
 			#$ids[$phys_id][$die_id] = ([($speed)]);
@@ -6777,22 +6889,23 @@ sub data_cpuinfo {
 	}
 	$cpu{'phys'} = scalar @phys_cpus;
 	$cpu{'dies'} = $die_id++; # count starts at 0, all cpus have 1 die at least
-	if ($b_arm){
+	if ($b_arm || $b_mips){
 		if ($cpu{'dies'} <= 1){
 			my $arm_dies = cpu_dies_sys();
 			# case were 4 core arm returned 4 sibling lists, obviously wrong
 			$cpu{'dies'} = $arm_dies if $arm_dies && $proc_count != $arm_dies;
 		}
-		$cpu{'type'} = 'arm' if !$cpu{'type'};
+		$cpu{'type'} = ($b_arm) ? 'arm' : 'mips' if !$cpu{'type'};
 		if (!$bsd_type){
-			my %arm_cpus = arm_cpu_name();
-			$cpu{'arm-cpus'} = \%arm_cpus if %arm_cpus;
+			my %system_cpus = system_cpu_name();
+			$cpu{'system-cpus'} = \%system_cpus if %system_cpus;
 		}
 	}
 	$cpu{'ids'} = (\@ids);
 	if ( $extra > 0 && !$cpu{'arch'} && $type ne 'short' ){
 		$cpu{'arch'} = cpu_arch($cpu{'type'},$cpu{'family'},$cpu{'model_id'});
-		$cpu{'arch'} = $cpu_arch if (!$cpu{'arch'} && $cpu_arch && ($b_mips || $b_arm))
+		# cpu_arch comes from set_os()
+		$cpu{'arch'} = $cpu_arch if (!$cpu{'arch'} && $cpu_arch && ($b_mips || $b_arm || $b_ppc));
 		#print "$cpu{'type'},$cpu{'family'},$cpu{'model_id'},$cpu{'arch'}\n";
 	}
 	if (!$speeds{'cur-freq'}){
@@ -7369,7 +7482,7 @@ sub get_boost_status {
 	eval $end if $b_log;
 	return $boost;
 }
-sub arm_cpu_name {
+sub system_cpu_name {
 	eval $start if $b_log;
 	my (%cpus,$compat,@working);
 	if (@working = main::globber('/sys/firmware/devicetree/base/cpus/cpu@*/compatible')){
@@ -7467,6 +7580,9 @@ sub cpu_arch {
 		if ($family ne ''){$arch="ARMv$family";}
 		else {$arch='ARM';}
 	}
+# 	elsif ( $type eq 'ppc'){
+# 		$arch='PPC';
+# 	}
 	# aka VIA
 	elsif ( $type eq 'centaur'){ 
 		if ($family eq '5'){
@@ -8288,11 +8404,12 @@ sub device_vendor {
 	# must come before samsung MU. NOTE: toshiba can have: TOSHIBA_MK6475GSX: mush: MKNSSDCR120GB_
 	['(^MKN|Mushkin)','Mushkin','Mushkin',''], # MKNS
 	# MU = Multiple_Flash_Reader too risky: |M[UZ][^L]
-	['(SAMSUNG|^MCG[0-9]+GC)','SAMSUNG','Samsung',''], # maybe ^SM
-	['(SanDisk|^SDS[S]?[DQ]|^SL([0-9]+)G|^AFGCE|ULTRA\sFIT|Cruzer)','SanDisk','SanDisk',''],
+	['(SAMSUNG|^MCG[0-9]+GC|^G2 Portable)','SAMSUNG','Samsung',''], # maybe ^SM
+	['(SanDisk|^SDS[S]?[DQ]|^SL([0-9]+)G|^AFGCE|ULTRA\sFIT|Clip Sport|Cruzer)','SanDisk','SanDisk',''],
+	['^STEC\b','^STEC\b','STEC',''], # ssd drive, must come before seagate ST test
 	# real, SSEAGATE Backup+; XP1600HE30002
-	['(^ST[^T]|[S]?SEAGATE|^X[AFP]|^BUP|Expansion Desk)','[S]?SEAGATE','Seagate',''], 
-	['^(WD|Western Digital|My (Book|Passport)|00LPCX|Elements|M000)','(^WDC|Western Digital)','Western Digital',''],
+	['(^ST[^T]|[S]?SEAGATE|^X[AFP]|^BUP|Expansion Desk|GoFlex)','[S]?SEAGATE','Seagate',''], 
+	['^(WD|Western Digital|My (Book|Passport)|\d*LPCX|Elements|M000|EARX|EFRX|\d*EAVS)','(^WDC|Western Digital)','Western Digital',''],
 	## Then better known ones ##
 	['^(A-DATA|ADATA|AXN)','^(A-DATA|ADATA)','A-Data',''],
 	['^ADTRON','^(ADTRON)','Adtron',''],
@@ -8323,6 +8440,7 @@ sub device_vendor {
 	['^BUFFALO','^BUFFALO','Buffalo',''],
 	['^CHN\b','','Zheino',''],
 	['^Colorful\b','^Colorful','Colorful',''],
+	['^DGM','^DGM\b','DGM',''],
 	['^DREVO\b','^DREVO','Drevo',''],
 	['^(Eaget|V8$)','^Eaget','Eaget',''],
 	['^EXCELSTOR','^EXCELSTOR( TECHNO(LOGY)?)?','Excelstor',''],
@@ -8337,11 +8455,12 @@ sub device_vendor {
 	['^(G[\.]?SKILL)','^G[\.]?SKILL','G.SKILL',''],
 	['^HUAWEI','^HUAWEI','Huawei',''],
 	['^(IBM|DT)','^IBM','IBM',''], 
-	['^Imation','^Imation(\sImation)?','Imation',''], # Imation_ImationFlashDrive
+	['^Imation','^Imation(\sImation)?','Imation',''], # Imation_ImationFlashDrive; TF20 is imation/tdk
 	['^(InnoDisk|Innolite)','^InnoDisk( Corp.)?','InnoDisk',''],
 	['^Innostor','^Innostor','Innostor',''],
-	['^(Intenso|Rainbow Line)','^Intenso','Intenso',''],
+	['^(Intenso|(Rainbow|Speed) Line)','^Intenso','Intenso',''],
 	['^KingDian','^KingDian','KingDian',''],
+	['^Kingfast','^Kingfast','Kingfast',''],
 	['^KingMAX','^KingMAX','KingMAX',''],
 	['^KINGSHARE','^KINGSHARE','KingShare',''],
 	['^(LITE[\-]?ON[\s\-]?IT)','^LITE[\-]?ON[\s\-]?IT','LITE-ON IT',''], # LITEONIT_LSS-24L6G
@@ -8356,6 +8475,7 @@ sub device_vendor {
 	['^(PS[8F]|Patriot)','^Patriot','Patriot',''],
 	['^PIX[\s]?JR','^PIX[\s]?JR','Disney',''],
 	['^(PLEXTOR|PX-)','^PLEXTOR','Plextor',''],
+	['QEMU','^[0-9]*QEMU( QEMU)?','QEMU',''], # 0QUEMU QEMU HARDDISK
 	['(^Quantum|Fireball)','^Quantum','Quantum',''],
 	['^QUMO','^QUMO','Qumo',''],
 	['^R3','','AMD Radeon',''], # ssd 
@@ -8376,6 +8496,7 @@ sub device_vendor {
 	['^(SF|Swissbit)','^Swissbit','Swissbit',''],
 	# ['^(SUPERSPEED)','^SUPERSPEED','SuperSpeed',''], # superspeed is a generic term
 	['^TANDBERG','^TANDBERG','Tanberg',''],
+	['^TCSUNBOW','^TCSUNBOW','TCSunBow',''],
 	['^TEAC','^TEAC','TEAC',''],
 	['^TEAM','^TEAM( Group)?','Team',''],
 	['^(TS|Transcend|JetFlash)','^Transcend','Transcend',''],
@@ -8575,6 +8696,7 @@ sub get {
 	eval $end if $b_log;
 	return @rows;
 }
+# @pci:
 # 0 type
 # 1 type_id
 # 2 bus_id
@@ -8672,6 +8794,10 @@ sub display_data(){
 		# initial tests, if wayland, it is certainly a compositor
 		$protocol = lc($protocol) if $protocol;
 		$graphics{'compositor'} = display_compositor($protocol);
+		# gnome-shell is incredibly slow to return version
+		if ($extra > 2 && $graphics{'compositor'} && (!$show{'system'} || $graphics{'compositor'} ne 'gnome-shell' ) ){
+			$graphics{'compositor-version'} = (main::program_data($graphics{'compositor'},$graphics{'compositor'},3))[1];
+		}
 	}
 	if ( $b_display){
 		# X vendor and version detection.
@@ -8817,6 +8943,9 @@ sub display_data(){
 			}
 			if ($graphics{'compositor'}){
 				$row[0]{main::key($num++,'compositor')} = $graphics{'compositor'};
+				if ($graphics{'compositor-version'}){
+					$row[0]{main::key($num++,'v')} = $graphics{'compositor-version'};
+				}
 			}
 		}
 		if ($resolution){
@@ -9112,7 +9241,10 @@ sub display_compositor {
 	if (@ps_gui){
 		# 1 check program; 2 search; 3 unused version; 4 print
 		my @compositors = (
+		['asc','asc','','asc'],
 		['budgie-wm','budgie-wm','','budgie-wm'],
+		# owned by: compiz-core in debian
+		['compiz','compiz','','compiz'],
 		['compton','compton','','compton'],
 		# as of version 20 is wayland compositor
 		['enlightenment','enlightenment','','enlightenment'],
@@ -9124,21 +9256,28 @@ sub display_compositor {
 		['muffin','muffin','','muffin'],
 		['mutter','mutter','','mutter'],
 		['weston','weston','','weston'],
-		# owned by: compiz-core in debian
-		['compiz','compiz','','compiz'],
-		# did not find follwing in debian apt
+		# these are more obscure, so check for them last
 		['3dwm','3dwm','','3dwm'],
+		['dcompmgr','dcompmgr','','dcompmgr'],
 		['dwc','dwc','','dwc'],
+		['fireplace','fireplace','','fireplace'],
 		['grefson','grefson','','grefson'],
-		['ireplace','ireplace','','ireplace'],
 		['kmscon','kmscon','','kmscon'],
+		['liri','liri','','liri'],
 		['metisse','metisse','','metisse'],
 		['mir','mir','','mir'],
 		['moblin','moblin','','moblin'],
+		['motorcar','motorcar','','motorcar'],
+		['orbital','orbital','','orbital'],
+		['papyros','papyros','','papyros'],
+		['perceptia','perceptia','','perceptia'],
 		['rustland','rustland','','rustland'],
+		['sommelier','sommelier','','sommelier'],
 		['sway','sway','','sway'],
 		['swc','swc','','swc'],
 		['unagi','unagi','','unagi'],
+		['way-cooler','way-cooler','','way-cooler'],
+		['wavy','wavy','','wavy'],
 		['wayhouse','wayhouse','','wayhouse'],
 		['westford','westford','','westford'],
 		['xcompmgr','xcompmgr','','xcompmgr'],
@@ -9198,7 +9337,7 @@ sub get {
 	}
 	elsif (!$bsd_type) {
 		# this uses /proc/cpuinfo so only GNU/Linux
-		if ($b_arm || $b_mips){
+		if ($b_arm || $b_mips || $b_ppc){
 			%soc_machine = machine_data_soc();
 			@data = create_output_soc(%soc_machine) if %soc_machine;
 		}
@@ -9347,15 +9486,17 @@ sub create_output {
 	return @rows;
 }
 sub create_output_soc {
-	my (%data,@row,@rows);
 	my (%soc_machine) = @_;
+	my ($key,%data,@row,@rows);
 	my $num = 0;
 	my $j = 0;
 	#print Data::Dumper::Dumper \%soc_machine;
 	# this is sketchy, /proc/device-tree/model may be similar to Hardware value from /proc/cpuinfo
 	# raspi: Hardware	: BCM2835 model: Raspberry Pi Model B Rev 2
 	if ($soc_machine{'device'} || $soc_machine{'model'}){
-		my $key = ($b_arm) ? 'ARM Device': 'MIPS Device';
+		if ($b_arm){$key = 'ARM Device'}
+		elsif ($b_mips){$key = 'MIPS Device'}
+		elsif ($b_ppc){$key = 'PowerPC Device'}
 		$rows[$j]{main::key($num++,'Type')} = $key;
 		my $system = 'System';
 		if (defined $soc_machine{'model'}){
@@ -9818,7 +9959,7 @@ sub get {
 		# shift @ifs_found;
 		# pop @ifs_found;
 		if (!$bsd_type){
-			@data = advanced_data_sys('check','',0,'','');
+			@data = advanced_data_sys('check','',0,'','','');
 			@rows = (@rows,@data) if @data;
 		}
 		else {
@@ -9854,7 +9995,7 @@ sub card_data {
 		#print "$row[0] $row[3]\n"; 
 		# NOTE: class 06 subclass 80 
 		# https://www-s.acm.illinois.edu/sigops/2007/roll_your_own/7.c.1.html
-		if (($row[0] && $row[0] =~ /^(eth|ethernet|ethernet-phy|network|wifi|wlan)$/ )|| ($row[1] && $row[1] eq '0680' ) ){
+		if (($row[0] && $row[0] =~ /^(eth|ethernet|ethernet-phy|lan|l-lan|network|wifi|wlan)$/ )|| ($row[1] && $row[1] eq '0680' ) ){
 			#print "$row[0] $row[3]\n";
 			$j = scalar @rows;
 			my $driver = $row[9];
@@ -9884,6 +10025,12 @@ sub card_data {
 				$rows[$j]{main::key($num++,'type')} = 'network bridge';
 			}
 			$rows[$j]{main::key($num++,'driver')} = $driver;
+			my $bus_id = 'N/A';
+			# note: for arm/mips we want to see the single item bus id, why not?
+			# note: we can have bus id: 0002 / 0 which is valid, but 0 / 0 is invalid
+			if (defined $row[2] && $row[2] ne '0' && defined $row[3]){$bus_id = "$row[2].$row[3]"}
+			elsif (defined $row[2] && $row[2] ne '0'){$bus_id = $row[2]}
+			elsif (defined $row[3] && $row[3] ne '0'){$bus_id = $row[3]}
 			if ($extra > 0){
 				if ($row[9] && !$bsd_type){
 					my $version = main::get_module_version($row[9]);
@@ -9893,11 +10040,6 @@ sub card_data {
 				$row[8] ||= 'N/A';
 				# as far as I know, wifi has no port, but in case it does in future, use it
 				$rows[$j]{main::key($num++,'port')} = $row[8] if (!$b_wifi || ( $b_wifi && $row[8] ne 'N/A') );
-				my $bus_id = 'N/A';
-				# note: for arm/mips we want to see the single item bus id, why not?
-				if ($row[2] && $row[3]){$bus_id = "$row[2].$row[3]"}
-				elsif ($row[2]){$bus_id = $row[2]}
-				elsif ($row[3]){$bus_id = $row[3]}
 				$rows[$j]{main::key($num++,'bus ID')} = $bus_id;
 			}
 			if ($extra > 1){
@@ -9905,7 +10047,7 @@ sub card_data {
 			}
 			if ($show{'network-advanced'}){
 				if (!$bsd_type){
-					@data = advanced_data_sys($row[5],$row[6],$holder{$chip_id},$b_wifi,'');
+					@data = advanced_data_sys($row[5],$row[6],$holder{$chip_id},$b_wifi,'',$bus_id);
 				}
 				else {
 					@data = advanced_data_bsd("$row[9]$row[11]",$b_wifi);
@@ -9971,7 +10113,7 @@ sub usb_data {
 						my (@temp,$vendor,$chip);
 						@temp = split (/:/, $row[7]) if $row[7];
 						($vendor,$chip) = ($temp[0],$temp[1]) if @temp;
-						@data = advanced_data_sys($vendor,$chip,0,$b_wifi,$path);
+						@data = advanced_data_sys($vendor,$chip,0,$b_wifi,$path,'');
 					}
 					# NOTE: we need the driver.number, like wlp0 to get a match, and 
 					# we can't get that from usb data, so we have to let it fall back down 
@@ -9991,7 +10133,7 @@ sub usb_data {
 sub advanced_data_sys {
 	eval $start if $b_log;
 	return if ! -d '/sys/class/net';
-	my ($vendor,$chip,$count,$b_wifi,$path_usb) = @_;
+	my ($vendor,$chip,$count,$b_wifi,$path_usb,$bus_id) = @_;
 	my $num = 0;
 	my $key = 'IF';
 	my ($b_check,$b_usb,$if,$path,@paths,@row,@rows);
@@ -10018,7 +10160,7 @@ sub advanced_data_sys {
 		my ($data1,$data2,$duplex,$mac,$speed,$state);
 		# for usb, we already know where we are
 		if (!$b_usb){
-			if (!$b_arm || $b_pci_tool ){
+			if (( !$b_arm && !$b_ppc) || $b_pci_tool ){
 				$path = "$_/device/vendor";
 				$data1 = (main::reader($path))[0] if -e $path;
 				$data1 =~ s/^0x// if $data1;
@@ -10028,7 +10170,7 @@ sub advanced_data_sys {
 				# this is a fix for a redhat bug in virtio 
 				$data2 = (defined $data2 && $data2 eq '0001' && defined $chip && $chip eq '1000') ? '1000' : $data2;
 			}
-			elsif ($b_arm) {
+			elsif ($b_arm || $b_ppc) {
 				$path = Cwd::abs_path($_);
 				$path =~ /($chip)/;
 				if ($1){
@@ -10037,8 +10179,10 @@ sub advanced_data_sys {
 				}
 			}
 		}
-		#print "d1:$data1 v:$vendor d2:$data2 c:$chip\n";
-		if ( $b_usb || $b_check || ( $data1 && $data2 && $data1 eq $vendor && $data2 eq $chip )) {
+		# print "d1:$data1 v:$vendor d2:$data2 c:$chip bus_id: $bus_id\n";
+		# print Cwd::abs_path($_), "\n" if $bus_id;
+		if ( $b_usb || $b_check || ( $data1 && $data2 && $data1 eq $vendor && $data2 eq $chip && 
+		( ($b_arm || $b_mips || $b_ppc || $b_sparc) || $bus_id && Cwd::abs_path($_) =~ /$bus_id\// ) )) {
 			$if = $_;
 			$if =~ s/^\/.+\///;
 			# print "top: if: $if ifs: @ifs_found\n";
@@ -15254,10 +15398,11 @@ sub get_env_de_data {
 		# note, X-Cinnamon value strikes me as highly likely to change, so just 
 		# search for the last part
 		[0,'cinnamon','cinnamon','cinnamon',0,0],
-		# these two so far have no cli version data
+		# these so far have no cli version data
+		[1,'deepin','deepin','dde-desktop',0,1], # version comes from file read
 		[1,'pantheon','pantheon','pantheon',0,0],
 		[1,'lumina','lumina','lumina-desktop',0,1],
-		[1,'deepin','deepin','dde-desktop',0,1],
+		[0,'manokwari','manokwari','manokwari',1,0],
 		);
 		foreach my $ref (@desktops){
 			my @item = @$ref;
@@ -15287,25 +15432,28 @@ sub get_env_xprop_de_data {
 	# but it will still trigger the next gnome true case, so this needs to go 
 	# before gnome test eventually this needs to be better organized so all the 
 	# xprop tests are in the same section, but this is good enough for now.
-	# NOTE: was checking for 'muffinr' but that's not part of cinnom
+	# NOTE: was checking for 'muffin' but that's not part of cinnamon
 	if ( (main::check_program('muffin') || main::check_program('cinnamon-session') ) && 
 	     ($b_xprop && main::awk(\@xprop,'_muffin') )){
-		@data = main::program_values('cinnamon');
-		$desktop[0] = $data[3];
-		$desktop[1] = main::program_version('cinnamon',$data[0],$data[1],$data[2],$data[5],$data[6]);
+		@data = main::program_data('cinnamon','cinnamon',0);
+		$desktop[0] = $data[0];
+		$desktop[1] = $data[1];
 		# $b_gtk = 1;
 		$desktop[0] ||= 'Cinnamon';
 	}
 	elsif ($xdg_desktop eq 'mate' || ( $b_xprop && main::awk(\@xprop,'_marco') )){
-		# NOTE: mate-about reported wrong version, 1.18.0 when actual was 1.18.2
-		if ($program = main::check_program('mate-session') ) {
-			$value = 'mate-session';
+		# NOTE: mate-about and mate-sesssion vary which has the higher number, neither 
+		# consistently corresponds to the actual MATE version, so check both.
+		my %versions = ('mate-about' => '','mate-session' => '');
+		foreach my $key (keys %versions){
+			if ($program = main::check_program($key) ) {
+				@data = main::program_data($key,$program,0);
+				$desktop[0] = $data[0];
+				$versions{$key} = $data[1];
+			}
 		}
-		if ($value){
-			@data = main::program_values($value);
-			$desktop[0] = $data[3];
-			$desktop[1] = main::program_version($program,$data[0],$data[1],$data[2],$data[5],$data[6]);
-		}
+		# no consistent rule about which version is higher, so just compare them and take highest
+		$desktop[1] = main::compare_versions($versions{'mate-about'},$versions{'mate-session'});
 		# $b_gtk = 1;
 		$desktop[0] ||= 'MATE';
 	}
@@ -15410,11 +15558,9 @@ sub get_xprop_de_data {
 			my @item = @$ref;
 			if (main::check_program($item[0]) && main::awk(\@xprop,$item[1]) && 
 			    (!$item[4] || (@ps_gui && (grep {/$item[4]/} @ps_gui ))) ){
-				@data = main::program_values($item[2]);
-				$desktop[0] = $data[3];
-				if ($data[1] && $data[2]){
-					$desktop[1] = main::program_version($item[3],$data[0],$data[1],$data[2],$data[5],$data[6]);
-				}
+				@data =  main::program_data($item[2],$item[3],0);
+				$desktop[0] = $data[0];
+				$desktop[1] = $data[1];
 				last;
 			}
 		}
@@ -15448,11 +15594,17 @@ sub get_ps_de_data {
 		['wmii','wmii','wmii','wmii'],
 		['9wm','9wm','9wm','9wm'],
 		['amiwm','amiwm','amiwm','amiwm'],
+		['fireplace','fireplace','fireplace','fireplace'],
 		['flwm','flwm','flwm','flwm'],
 		['flwm','flwm_topside','flwm','flwm'],
+		['ion','ion','ion','ion'],
 		['jwm','jwm','jwm','jwm'],
+		['lwm','lwm','lwm','lwm'],
 		['mwm','mwm','mwm','mwm'],
+		['nawm','nawm','nawm','nawm'],
 		['notion','notion','notion','notion'],
+		['orbital','orbital','orbital','orbital'],
+		['perceptia','perceptia','perceptia','perceptia'],
 		['qtile','qtile','qtile','qtile'],
 		['ratpoison','ratpoison','ratpoison','ratpoison'],
 		['sawfish','sawfish','sawfish','sawfish'],
@@ -15460,8 +15612,10 @@ sub get_ps_de_data {
 		  'matchbox-window-manager','matchbox-window-manager'],
 		['afterstep','afterstep','afterstep','afterstep'],
 		['bspwm','bspwm','bspwm','bspwm'],
+		['tvtwm','tvtwm','tvtwm','tvtwm'],
 		['WindowMaker','WindowMaker','wmaker','wmaker'],
 		['windowlab','windowlab','windowlab','windowlab'],
+		['wmx','wmx','wmx','wmx'],
 		['xmonad','xmonad','xmonad','xmonad'],
 		);
 		foreach my $ref (@desktops){
@@ -15469,11 +15623,9 @@ sub get_ps_de_data {
 			# no need to use check program with short list of ps_gui
 			# if ( main::check_program($item[0]) && (grep {/^$item[1]$/} @ps_gui)){
 			if (grep {/^$item[1]$/} @ps_gui){
-				@data = main::program_values($item[2]);
-				$desktop[0] = $data[3];
-				if ($data[1] && $data[2]){
-					$desktop[1] = main::program_version($item[3],$data[0],$data[1],$data[2],$data[5],$data[6]);
-				}
+				@data =  main::program_data($item[2],$item[3],0);
+				$desktop[0] = $data[0];
+				$desktop[1] = $data[1];
 				last;
 			}
 		}
@@ -15549,11 +15701,11 @@ sub get_wm_main {
 		main::set_ps_gui() if ! $b_ps_gui;
 		# order matters, see above logic
 		$wms = '9wm|afterstep|amiwm|awesome|bspwm|budgie-wm|compiz|fluxbox|blackbox|';
-		$wms .= 'deepin-wm|dwm|flwm|fvwm-crystal|fvwm2|fvwm|gala|gnome-shell|i3|jwm|';
-		$wms .= 'twin|kwin_wayland|kwin_x11|kwin|matchbox-window-manager|marco|';
+		$wms .= 'deepin-wm|dwm|fireplace|flwm|fvwm-crystal|fvwm2|fvwm|gala|gnome-shell|i3|ion|jwm|';
+		$wms .= 'twin|kwin_wayland|kwin_x11|kwin|lwm|matchbox-window-manager|marco|';
 		$wms .= 'muffin|deepin-mutter|mutter|deepin-metacity|metacity|mwm|';
-		$wms .= 'notion|openbox|qtile|ratpoison|sawfish|scrotwm|spectrwm|';
-		$wms .= 'twm|windowlab|WindowMaker|wm2|wmii2|wmii|xfwm4|xfwm5|xmonad';
+		$wms .= 'nawm|notion|openbox|orbital|perceptia|qtile|ratpoison|sawfish|scrotwm|spectrwm|';
+		$wms .= 'tvtwm|twm|windowlab|WindowMaker|wm2|wmii2|wmii|wmx|xfwm4|xfwm5|xmonad';
 		foreach (@ps_gui){
 			if (/^($wms)$/){
 				$working = $1;
@@ -15598,15 +15750,11 @@ sub get_wm_version {
 		$temp = (split /\s+/, $temp)[0];
 		$temp = lc($temp);
 		$temp = 'wmaker' if $temp eq 'windowmaker';
-		my @data = main::program_values($temp);
-		return if !@data;
+		my @data = main::program_data($temp,$temp,3);
+		return if !$data[0];
 		# print Data::Dumper::Dumper \@data;
-		$desktop[5] = $data[3] if $type eq 'manual';
-		# note: if values returns 0 for 1 and 2, it doesn't support versioning
-		if ($extra > 2 && $data[1] && $data[2]){
-			my $version = main::program_version($temp,$data[0],$data[1],$data[2],$data[5],$data[6]);
-			$desktop[6] = $version if $version;
-		}
+		$desktop[5] = $data[0] if $type eq 'manual';
+		$desktop[6] = $data[1] if $data[1];
 	}
 	eval $end if $b_log;
 }
@@ -15616,12 +15764,13 @@ sub get_wm_version {
 sub set_info_data {
 	eval $start if $b_log;
 	my (@data,@info,$item);
-	my $pattern = 'awn|bar|bmpanel|bmpanel2|budgie-panel|cairo-dock|';
-	$pattern .= 'dde-dock|dmenu|dockbarx|docky|dzen|dzen2|';
-	$pattern .= 'fbpanel|fspanel|gnome-panel|hpanel|i3bar|icewmtray|kicker|';
-	$pattern .= 'lemonbar|ltpanel|lxpanel|lxqt-panel|matchbox-panel|';
-	$pattern .= 'mate-panel|plank|plasma-desktop|plasma-netbook|polybar|pypanel|';
-	$pattern .= 'razor-panel|razorqt-panel|tint2|';
+	my $pattern = 'alltray|awn|bar|bmpanel|bmpanel2|budgie-panel|cairo-dock|';
+	$pattern .= 'dde-dock|dmenu|dockbarx|docker|docky|dzen|dzen2|';
+	$pattern .= 'fbpanel|fspanel|glx-dock|gnome-panel|hpanel|i3bar|icewmtray|';
+	$pattern .= 'kdocker|kicker|';
+	$pattern .= 'latte|lemonbar|ltpanel|lxpanel|lxqt-panel|matchbox-panel|mate-panel|';
+	$pattern .= 'ourico|perlpanel|plank|plasma-desktop|plasma-netbook|polybar|pypanel|';
+	$pattern .= 'razor-panel|razorqt-panel|stalonetray|taskbar|tint2|trayer|';
 	$pattern .= 'vala-panel|wbar|wharf|wingpanel|witray|';
 	$pattern .= 'xfce4-panel|xfce5-panel|xmobar|yabar';
 	if (@data = grep {/^($pattern)$/} @ps_gui ) {
@@ -15634,7 +15783,10 @@ sub set_info_data {
 			}
 		}
 	}
-	$desktop[4] = join (', ', @info) if @info;
+	if (@info){
+		@info = main::uniq(@info);
+		$desktop[4] = join (', ', @info);
+	}
 	eval $end if $b_log;
 }
 
@@ -15662,13 +15814,13 @@ sub set_xprop {
 
 sub get_display_manager {
 	eval $start if $b_log;
-	my (@data,@found,$temp,$working,$b_run,$b_vrun,$b_vrunrc);
+	my (@data,@found,$path,$working,$b_run,$b_vrun,$b_vrunrc);
 	# ldm - LTSP display manager. Note that sddm does not appear to have a .pid 
 	# extension in Arch note: to avoid positives with directories, test for -f 
 	# explicitly, not -e
 	my @dms = qw(entranced.pid gdm.pid gdm3.pid kdm.pid ldm.pid 
-	lightdm.pid lxdm.pid mdm.pid nodm.pid pcdm.pid 	sddm.pid slim.lock 
-	tint2.pid wdm.pid xdm.pid xenodm.pid);
+	lightdm.pid lxdm.pid mdm.pid nodm.pid pcdm.pid sddm.pid slim.lock 
+	wdm.pid xdm.pid xenodm.pid);
 	# these are the only one I know of so far that have version info
 	my @dms_version = qw(gdm gdm3 lightdm slim);
 	$b_run = 1 if -d "/run";
@@ -15691,11 +15843,12 @@ sub get_display_manager {
 		   ( $b_vrun && ( -f "/var/run/$id" || -d "/var/run/$working" ) ) || 
 		   ( $b_vrunrc && ( -f "/var/run/rc.d/$working" || -d "/var/run/rc.d/$id" ) ) ) && 
 		   ! grep {/$working/} @found ){
-			if ($extra > 2 && awk( \@dms_version, $working) && (my $path = main::check_program($working)) ){
-				@data = main::program_values($working);
-				$temp = main::program_version($path,$data[0],$data[1],$data[2],$data[5],$data[6]);
-				$working .= ' ' . $temp if $temp;
-			}
+			if ($extra > 2 && awk( \@dms_version, $working) && ($path = main::check_program($working)) ){}
+			else {$path = $working;}
+			# print "$path $extra\n";
+			@data = main::program_data($working,$path,3);
+			$working = $data[0];
+			$working .= ' ' . $data[1] if $data[1];
 			push @found, $working;
 		}
 	}
@@ -15939,7 +16092,7 @@ sub get_linux_distro {
 	if ($extra > 0){
 		my $base_default = 'antix-version|mx-version'; # osr has base ids
 		my $base_issue = 'bunsen'; # base only found in issue
-		my $base_manual = 'kali'; # synthesize, no direct data available
+		my $base_manual = 'blankon|deepin|kali'; # synthesize, no direct data available
 		my $base_osr = 'aptosid|grml|siduction|bodhi'; # osr base, distro id in list of distro files
 		my $base_osr_issue = 'grml|linux lite'; # osr base, distro id in issue
 		my $base_osr_ubuntu = 'mint|neon|zorin'; # osr has distro name but has ubuntu  ID_LIKE/UBUNTU_CODENAME
@@ -15985,6 +16138,8 @@ sub get_linux_distro {
 		if (!$system_base && $lc_issue && $lc_issue =~ /($base_manual)/){
 			my $id = $1;
 			my %manual = (
+			'blankon' => 'Debian unstable',
+			'deepin' => 'Debian unstable',
 			'kali' => 'Debian testing',
 			);
 			$system_base = $manual{$id};
@@ -17129,7 +17284,7 @@ sub set_pci_data {
 			# ! -d '/proc/bus/pci'
 			# this is sketchy, a sbc won't have pci, but a non sbc arm may have it, so 
 			# build up both and see what happens
-			if ($b_arm || $b_mips){
+			if ($b_arm || $b_mips || $b_ppc || $b_sparc){
 				set_soc_data();
 			}
 		}
@@ -17346,6 +17501,8 @@ sub set_pciconf_data {
 # /sys/devices/wlan.26/uevent [from pine64]
 ## 9
 # sys/devices/platform/audio/uevent:["DRIVER=bcm2835_AUD0", "OF_NAME=audio"
+## 10
+# /sys/devices/vio/71000002/uevent:["DRIVER=ibmveth", "OF_NAME=l-lan"
 sub set_soc_data {
 	eval $start if $b_log;
 	my ($content,@files,@temp2,@temp3,@working);
@@ -17364,9 +17521,12 @@ sub set_soc_data {
 	}
 	@temp2 = globber('/sys/devices/*/uevent'); # see case 8
 	@files = (@files,@temp2) if @temp2;
+	@temp2 = globber('/sys/devices/*/*/uevent'); # see case 10
+	@files = (@files,@temp2) if @temp2;
 	@temp2 = undef;
 	# not sure why, but even as root/sudo, /subsystem|driver/uevent are unreadable with -r test true
 	@files = grep {!/\/(subsystem|driver)\//} @files if @files;
+	@files = uniq(@files);
 	foreach my $file (@files){
 		next if -z $file;
 		my ($busid,$busid_nu,$chip_id,$device,$driver,$modules,$port,$rev,
@@ -17374,9 +17534,10 @@ sub set_soc_data {
 		$chip_id = $file;
 		# variants: /soc/20100000.ethernet /soc/soc:audio /soc:/ /soc@0/
 		# mips: /sys/devices/soc.0/1180000001800.mdio/8001180000001800:07/
-		$chip_id =~ /\/sys\/devices\/(platform\/)?(soc[^\/]*\/)?([^\/]+\/)?([^\/]+\/)?([^\/]+)[\.:]([^\/]+)\/uevent$/;
+		# ppc: /sys/devices/vio/71000002/
+		$chip_id =~ /\/sys\/devices\/(platform\/)?(soc[^\/]*\/)?([^\/]+\/)?([^\/]+\/)?([^\/\.:]+)([\.:])?([^\/]+)?\/uevent$/;
 		$chip_id = $5;
-		$temp = $6;
+		$temp = $7;
 		@working = reader($file, 'strip') if -r $file;
 		foreach my $data (@working){
 			@temp2 = split /=/, $data;
@@ -17395,6 +17556,8 @@ sub set_soc_data {
 		}
 		# it's worthless, we can't use it
 		next if ! defined $type;
+		$chip_id = '' if ! defined $chip_id;
+		$vendor_id = '' if ! defined $vendor_id;
 		$driver = '' if ! defined $driver;
 		$busid = (defined $temp && is_int($temp)) ? $temp: 0;
 		$busid_nu =  0;
@@ -17405,7 +17568,7 @@ sub set_soc_data {
 		# note: use these for main Card match for -AGN
 		$b_soc_audio = 1 if $type =~ /^(audio|daudio|hdmi|hdmi-audio|multimedia)$/;
 		$b_soc_gfx = 1 if $type =~ /^(vga|disp|display|display-port-controller|3d|fb|gpu|hdmi|mali)$/;
-		$b_soc_net = 1 if $type =~ /^(eth|ethernet|ethernet-phy|network|wifi|wlan)$/;
+		$b_soc_net = 1 if $type =~ /^(eth|ethernet|ethernet-phy|lan|l-lan|network|wifi|wlan)$/;
 		@temp3 = ($type,$type_id,$busid,$busid_nu,$device,$vendor_id,$chip_id,$rev,$port,$driver,$modules);
 		@pci = (@pci,[@temp3]);
 	}
@@ -17454,10 +17617,10 @@ sub set_ps_gui {
 		tdelauncher tdeinit_phase1);
 		@match = (@match,@temp);
 		@temp=qw(3dwm 9wm afterstep amiwm awesome blackbox bspwm 
-		dwm fluxbox flwm flwm_topside fvwm.*-crystal fvwm2 fvwm i3 jwm 
-		matchbox-window-manager mwm openbox notion pekwm qtile ratpoison 
-		sawfish scrotwm spectrwm twm 
-		windowlab WindowMaker wm2 wmii2 wmii xmonad);
+		dwm fluxbox flwm flwm_topside fvwm.*-crystal fvwm2 fvwm i3 ion jwm lwm
+		matchbox-window-manager mwm nawm openbox notion orbital pekwm perceptia 
+		qtile ratpoison sawfish scrotwm spectrwm tvtwm twm 
+		windowlab WindowMaker wm2 wmii2 wmii wmx xmonad);
 		@match = (@match,@temp);
 	}
 	# wm:
@@ -17468,23 +17631,25 @@ sub set_ps_gui {
 		xfwm4 xfwm5);
 		@match = (@match,@temp);
 	}
-	# info: 
+	# info: NOTE: glx-dock is cairo-dock
 	if ($show{'system'} && $extra > 2){
-		@temp=qw(awn bar bmpanel bmpanel2 budgie-panel cairo-dock 
-		dde-dock dmenu dockbarx docky dzen dzen2
-		fbpanel fspanel gnome-panel hpanel 
-		i3bar icewmtray kicker lemonbar ltpanel lxpanel lxqt-panel 
-		matchbox-panel mate-panel 
+		@temp=qw(alltray awn bar bmpanel bmpanel2 budgie-panel 
+		cairo-dock dde-dock dmenu dockbarx docker docky dzen dzen2
+		fbpanel fspanel glx-dock gnome-panel hpanel i3bar icewmtray 
+		kdocker kicker latte lemonbar ltpanel lxpanel lxqt-panel 
+		matchbox-panel mate-panel ourico
 		perlpanel plank plasma-desktop plasma-netbook polybar pypanel
-		razor-panel razorqt-panel tint2 vala-panel wbar wharf wingpanel witray
-		xfce4-panel xfce5-panel xmobar yabar);
+		razor-panel razorqt-panel stalonetray taskbar tint2 trayer vala-panel
+		wbar wharf wingpanel witray xfce4-panel xfce5-panel xmobar yabar);
 		@match = (@match,@temp);
 	}
 	# compositors (for wayland these are also the server, note 
 	if ($show{'graphic'} && $extra > 1){
-		@temp=qw(budgie-wm compiz compton dwc dcompmgr enlightenment
-		grefson ireplace kmscon kwin_wayland kwin_x11 metisse mir moblin 
-		rustland sway swc unagi wayhouse westford weston xcompmgr);
+		@temp=qw(3dwm asc budgie-wm compiz compton deepin-wm dwc dcompmgr 
+		enlightenment fireplace gnome-shell grefson kmscon kwin_wayland kwin_x11
+		liri marco metisse mir moblin motorcar muffin mutter
+		orbital papyros perceptia rustland sommelier sway swc unagi 
+		wavy way-cooler wayhouse westford weston xcompmgr);
 		@match = (@match,@temp);
 	}
 	@match = uniq(@match);
@@ -18421,7 +18586,7 @@ sub generate_system_data {
 		}
 		# don't print the desktop if it's a wm and the same
 		if ($extra > 1 && $desktop_data[5] && 
-		    (!$desktop_data[0] || $desktop_data[5] =~ /^(deepin-.*|gnome[\s\-_]shell|budgie-.*)$/i || 
+		    (!$desktop_data[0] || $desktop_data[5] =~ /^(deepin.+|gnome[\s\-_]shell|budgie.+)$/i || 
 		    index(lc($desktop_data[5]),lc($desktop_data[0])) == -1 )){
 			$wm = $desktop_data[5];
 			$wm .= ' ' . $desktop_data[6] if $extra > 2 && $desktop_data[6];
