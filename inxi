@@ -31,8 +31,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.0.22';
-my $self_date='2018-08-28';
+my $self_version='3.0.23';
+my $self_date='2018-09-07';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -1776,13 +1776,15 @@ sub system_files {
 	'/var/run/dmesg.boot',
 	);
 	copy_files(\@files,'system-bsd');
+	@files = main::globber('/sys/devices/system/cpu/vulnerabilities/*');
+	copy_files(\@files,'security');
 }
 ## SELF EXECUTE FOR LOG/OUTPUT
 sub run_self {
 	print "Creating $self_name output file now. This can take a few seconds...\n";
 	print "Starting $self_name from: $self_path\n";
 	my $i = ($option eq 'main-full')? ' -i' : '';
-	my $cmd = "$self_path/$self_name -FRfrploudmxxx$i -c 0 --usb --slots --debug 10 -y 120 > $data_dir/$self_name-FRfrploudmxxxyusbslots120.txt 2>&1";
+	my $cmd = "$self_path/$self_name -FRfrploudmxxx$i --admin --usb --slots --debug 10 -y 120 > $data_dir/$self_name-FRfrploudmxxxy-usb-slots-admin120.txt 2>&1";
 	system($cmd);
 	copy($log_file, "$data_dir") or main::error_handler('copy-failed', "$log_file", "$!");
 	system("$self_path/$self_name --recommends -y 120 > $data_dir/$self_name-recommends-120.txt 2>&1");
@@ -2077,7 +2079,7 @@ sub upload_file {
 	
 	if ($host && ( $file_path && -e $file_path ) ){
 		# NOTE: important: must explicitly set to passive true/1
-		$ftp = Net::FTP->new($host, Debug => 0, Passive => 1);
+		$ftp = Net::FTP->new($host, Debug => 0, Passive => 1) || main::error_handler('ftp-connect', $ftp->message);
 		$ftp->login($user, $pass) || main::error_handler('ftp-login', $ftp->message);
 		$ftp->binary();
 		$ftp->cwd($dir);
@@ -2330,10 +2332,12 @@ sub error_handler {
 		## FTP
 		elsif ( $err eq 'ftp-bad-path' ) { 
 			$errno=70; "Unable to locate for FTP upload file:\n$one" }
+		elsif ( $err eq 'ftp-connect' ) { 
+			$errno=71; "There was an error with connection to ftp server: $one" }
 		elsif ( $err eq 'ftp-login' ) { 
-			$errno=71; "There was an error with login to ftp server: $one" }
+			$errno=72; "There was an error with login to ftp server: $one" }
 		elsif ( $err eq 'ftp-upload' ) { 
-			$errno=72; "There was an error with upload to ftp server: $one" }
+			$errno=73; "There was an error with upload to ftp server: $one" }
 		## Modules
 		elsif ( $err eq 'required-module' ) { 
 			$errno=80; $b_recommends=1; "The required $one Perl module is not installed:\n$two" }
@@ -3935,6 +3939,7 @@ sub get_options{
 				$extra = 3;
 			}
 			if ($arg >= 8 ){
+				$b_admin = 1;
 				$b_downloader = 1;
 				$show{'slot'} = 1;
 				$show{'process'} = 1;
@@ -4308,7 +4313,8 @@ sub show_options {
 	['1', '-b', '--basic', "Basic output, short form. Same as $self_name^-v^2." ],
 	['1', '-B', '--battery', "System battery info, including charge and condition, plus 
 	extra info (if battery present)." ],
-	['1', '-c', '--color', "Set color scheme (0-42). Example:^$self_name^-c^11" ],
+	['1', '-c', '--color', "Set color scheme (0-42). For piped or redirected output,
+	you must use an explicit color selector. Example:^$self_name^-c^11" ],
 	['1', '', '', "Color selectors let you set the config file value for the 
 	selection (NOTE: IRC and global only show safe color set)" ],
 	['2', '94', '', "Console, out of X" ],
@@ -4360,7 +4366,7 @@ sub show_options {
 	/ /boot /home /opt /tmp /usr /usr/home /var /var/log /var/tmp. Use -p to see all 
 	mounted ${partition_string}s." ],
 	['1', '-r', '--repos', "Distro repository data. Supported repo types: APK, 
-	APT, EOPKG, PACMAN, PACMAN-G2, PISI, PORTAGE, PORTS (BSDs), SLACKPKG, 
+	APT, EOPKG, PACMAN, PACMAN-G2, PISI, PORTAGE, PORTS (BSDs), SLACKPKG, TCE,
 	URPMQ, YUM/ZYPP." ],
 	['1', '-R', '--raid', "RAID data. Shows RAID devices, states, levels, 
 	and components. md-raid: If device is resyncing, also shows resync progress line." ],
@@ -4396,7 +4402,7 @@ sub show_options {
 	optical drive (-d), USB (--usb), full RAID; triggers -xx." ],
 	['2', '7', '', "Network IP data (-i); triggers -xxx."],
 	['2', '8', '', "Everything available, including repos (-r), processes 
-	(-tcm), PCI slots (--slots)."],
+	(-tcm), PCI slots (--slots), extra admin data (--admin)."],
 	);
 	push @data, @rows;
 	# if distro maintainers don't want the weather feature disable it
@@ -4444,7 +4450,7 @@ sub show_options {
 	and detected)" ],
 	['2', '-t', '', "Adds memory use output to CPU (-xt c), and CPU use to 
 	memory (-xt m)." ],
-	['2', '--usb', '', "For Devices, shows USB version/speed and driver." ],
+	['2', '--usb', '', "For Device: driver." ],
 	);
 	push @data, @rows;
 	if ( $b_weather ){
@@ -4505,7 +4511,7 @@ sub show_options {
 	['2', '-S', '', "Panel/tray/bar/dock info in desktop output, if in X (like lxpanel, 
 	xfce4-panel, mate-panel); (if available) dm version number, window manager
 	version number." ],
-	['2', '--usb', '', "For devices: serial number (if present), interface count." ],
+	['2', '--usb', '', "For Device: serial number (if present), interface count." ],
 	);
 	push @data, @rows;
 	if ( $b_weather ){
@@ -4516,7 +4522,7 @@ sub show_options {
 	@rows = (
 	['1', '', '--admin', "Adds advanced sys admin data (only works with 
 	verbose or line output, not short form):" ],
-	['2', '-C', '', "If available: CPU errata (bugs); family, model-id, stepping - format:
+	['2', '-C', '', "If available: CPU vulnerabilities (bugs); family, model-id, stepping - format:
 	hex (decimal) if greater than 9, otherwise hex; microcode - format: hex." ],
 	['1', '-y', '--width', "Output line width max (integer >= 80). Overrides IRC/Terminal 
 	settings or actual widths. Example:^inxi^-y^130" ],
@@ -5254,6 +5260,7 @@ sub row_defaults {
 	'arm-pci' => "No ARM data found for this feature.",
 	'battery-data' => "No system battery data found. Is one present?",
 	'battery-data-sys' => "No /sys data found. Old system?",
+	'cpu-bugs-null' => "No CPU vulnerability/bugs data available.",
 	'cpu-model-null' => "Model N/A",
 	'cpu-speeds' => "No speed data found for $id cores.",
 	'darwin-feature' => "Feature not supported iu Darwin/OSX.",
@@ -6557,14 +6564,32 @@ sub create_output_full {
 		},);
 		@rows = (@rows,@data);
 	}
-	if ($b_admin && $cpu{'bugs'}){
-		my @bugs = split /\s+/, $cpu{'bugs'};
-		@bugs = sort(@bugs);
-		my $bug = join ' ', @bugs;
+	if ($b_admin){
+		my @bugs = cpu_bugs_sys();
+		my $value = '';
+		if (!@bugs){
+			if ( $cpu{'bugs'}){
+				my @proc_bugs = split /\s+/, $cpu{'bugs'};
+				@proc_bugs = sort(@proc_bugs);
+				$value = join ' ', @bugs;
+			}
+			else {
+				$value = main::row_defaults('cpu-bugs-null');
+			}
+		}
 		@data = ({
-		main::key($num++,'Errata') => $bug,
+		main::key($num++,'Vulnerabilities') => $value,
 		},);
 		@rows = (@rows,@data);
+		if (@bugs){
+			$j = $#rows;
+			foreach my $ref (@bugs){
+				my @bug = @$ref;
+				$rows[$j]{main::key($num++,'Type')} = $bug[0];
+				$rows[$j]{main::key($num++,$bug[1])} = $bug[2];
+				$j++;
+			}
+		}
 	}
 	eval $end if $b_log;
 	return @rows;
@@ -6872,6 +6897,7 @@ sub data_cpuinfo {
 			}
 		}
 		if ($b_admin ){
+			# note: not used unless maybe /sys data missing?
 			if ( !$cpu{'bugs'} && $line[0] eq 'bugs'){
 				$cpu{'bugs'} = $line[1];
 			}
@@ -7316,6 +7342,26 @@ sub cpu_properties {
 	eval $end if $b_log;
 	return %cpu_properties;
 }
+sub cpu_bugs_sys {
+	eval $start if $b_log;
+	my (@bugs,$type,$value);
+	return if ! -d '/sys/devices/system/cpu/vulnerabilities/';
+	my @items = main::globber('/sys/devices/system/cpu/vulnerabilities/*');
+	if (@items){
+		foreach (@items){
+			$value = (main::reader($_))[0];
+			$type = ($value =~ /^Mitigation:/) ? 'mitigation': 'status';
+			$_ =~ s/.*\/([^\/]+)$/$1/;
+			$value =~ s/Mitigation: //;
+			@bugs = (@bugs,[($_,$type,$value)]);
+		}
+	}
+	main::log_data('dump','@bugs',\@bugs) if $b_log;
+	# print Data::Dumper::Dumper \@bugs;
+	eval $end if $b_log;
+	return @bugs;
+}
+
 sub cpu_speeds {
 	eval $start if $b_log;
 	my (@processors) = @_;
@@ -8408,7 +8454,7 @@ sub device_vendor {
 	['(SanDisk|^SDS[S]?[DQ]|^SL([0-9]+)G|^AFGCE|ULTRA\sFIT|Clip Sport|Cruzer)','SanDisk','SanDisk',''],
 	['^STEC\b','^STEC\b','STEC',''], # ssd drive, must come before seagate ST test
 	# real, SSEAGATE Backup+; XP1600HE30002
-	['(^ST[^T]|[S]?SEAGATE|^X[AFP]|^BUP|Expansion Desk|GoFlex)','[S]?SEAGATE','Seagate',''], 
+	['(^ST[^T]|[S]?SEAGATE|^X[AFP]|^BUP|Expansion Desk|GoFlex|Backup(\+|\s?Plus)\s?Hub)','[S]?SEAGATE','Seagate',''], 
 	['^(WD|Western Digital|My (Book|Passport)|\d*LPCX|Elements|M000|EARX|EFRX|\d*EAVS)','(^WDC|Western Digital)','Western Digital',''],
 	## Then better known ones ##
 	['^(A-DATA|ADATA|AXN)','^(A-DATA|ADATA)','A-Data',''],
@@ -8421,7 +8467,7 @@ sub device_vendor {
 	['^(HGST|Touro)','^HGST','HGST (Hitachi)',''], # HGST HUA
 	['^(Hitachi|HDS|HDT|IC|HT|HU)','^Hitachi','Hitachi',''], 
 	['^Hoodisk','^Hoodisk','Hoodisk',''],
-	['^(HP\b|MB0)','^HP','HP',''], # vb: VB0250EAVER but clashes with vbox; HP_SSD_S700_120G
+	['^(HP\b|MB0|GJ0)','^HP','HP',''], # vb: VB0250EAVER but clashes with vbox; HP_SSD_S700_120G
 	['^(LSD|Lexar|JumpDrive)','^Lexar','Lexar',''], # mmc-LEXAR_0xb016546c
 	# OCZSSD2-2VTXE120G is OCZ-VERTEX2_3.5
 	['^(OCZ|APOC|D2|DEN|DEN|DRSAK|EC188|FTNC|GFGC|MANG|MMOC|NIMC|NIMR|PSIR|TALOS2|TMSC|TRSAK)','^OCZ[\s\-]','OCZ',''],
@@ -8444,6 +8490,7 @@ sub device_vendor {
 	['^DREVO\b','^DREVO','Drevo',''],
 	['^(Eaget|V8$)','^Eaget','Eaget',''],
 	['^EXCELSTOR','^EXCELSTOR( TECHNO(LOGY)?)?','Excelstor',''],
+	['^Fantom','^Fantom( Drive[s]?)?','Fantom Drives',''],
 	['^FASTDISK','^FASTDISK','FASTDISK',''],
 	['^FORESEE','^FORESEE','Foresee',''],
 	['^GALAX\b','^GALAX','GALAX',''],
@@ -8455,6 +8502,7 @@ sub device_vendor {
 	['^(G[\.]?SKILL)','^G[\.]?SKILL','G.SKILL',''],
 	['^HUAWEI','^HUAWEI','Huawei',''],
 	['^(IBM|DT)','^IBM','IBM',''], 
+	['^IEI Tech','^IEI Tech(\.|nology)?( Corp(\.|oration)?)?','IEI Technology',''],
 	['^Imation','^Imation(\sImation)?','Imation',''], # Imation_ImationFlashDrive; TF20 is imation/tdk
 	['^(InnoDisk|Innolite)','^InnoDisk( Corp.)?','InnoDisk',''],
 	['^Innostor','^Innostor','Innostor',''],
@@ -8463,6 +8511,7 @@ sub device_vendor {
 	['^Kingfast','^Kingfast','Kingfast',''],
 	['^KingMAX','^KingMAX','KingMAX',''],
 	['^KINGSHARE','^KINGSHARE','KingShare',''],
+	['^KingSpec','^KingSpec','KingSpec',''],
 	['^(LITE[\-]?ON[\s\-]?IT)','^LITE[\-]?ON[\s\-]?IT','LITE-ON IT',''], # LITEONIT_LSS-24L6G
 	['^(LITE[\-]?ON|PH6)','^LITE[\-]?ON','LITE-ON',''], # PH6-CE240-L
 	['^M-Systems','^M-Systems','M-Systems',''],
@@ -9249,8 +9298,8 @@ sub display_compositor {
 		# as of version 20 is wayland compositor
 		['enlightenment','enlightenment','','enlightenment'],
 		['gnome-shell','gnome-shell','','gnome-shell'],
-		['kwin_wayland','kwin_wayland','','kwin wayland'],
-		['kwin_x11','kwin_x11','','kwin x11'],
+		['kwin_wayland','kwin_wayland','','kwin_wayland'],
+		['kwin_x11','kwin_x11','','kwin_x11'],
 		#['kwin','kwin','','kwin'],
 		['marco','marco','','marco'],
 		['muffin','muffin','','muffin'],
@@ -13735,6 +13784,7 @@ sub lm_sensors_data {
 	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-w-other-biker.txt";
 	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-asus-chassis-1.txt";
 	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-devnull-1.txt";
+	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-jammin1.txt";
 	#@sensors_data = main::reader($file);
 	# print join ("\n", @sensors_data), "\n";
 	@sensors_data = map {$_ =~ s/\s*:\s*\+?/:/;$_} @sensors_data;
@@ -13762,10 +13812,13 @@ sub lm_sensors_data {
 		# note that because of charset issues, no "°" degree sign used, but it is required 
 		# in testing regex to avoid error. It might be because I got that data from a forum post,
 		# note directly via debugger.
-		if ($_ =~ /^(AMBIENT|M\/B|MB|SIO|SYS).*:([0-9\.]+)[\s°]*(C|F)/i) {
-			$sensors{'mobo-temp'} = $2;
-			$working_unit = $3;
-			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
+		if ($_ =~ /^(AMBIENT|M\/B|MB|Motherboard|SIO|SYS).*:([0-9\.]+)[\s°]*(C|F)/i) {
+			# avoid SYSTIN: 118 C
+			if (main::is_numeric($2) && $2 < 90 ){
+				$sensors{'mobo-temp'} = $2;
+				$working_unit = $3;
+				$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
+			}
 		}
 		# issue 58 msi/asus show wrong for CPUTIN so overwrite it if PECI 0 is present
 		# http://www.spinics.net/lists/lm-sensors/msg37308.html
@@ -13844,7 +13897,7 @@ sub lm_sensors_data {
 			$sensors{'fan-main'} = () if !$sensors{'fan-main'};
 			$sensors{'fan-main'}[1] = $2;
 		}
-		elsif (!$sensors{'fan-main'}[2] && $_ =~ /^(M\/B|MB|SYS).*:([0-9]+)[\s]RPM/i) {
+		elsif (!$sensors{'fan-main'}[2] && $_ =~ /^(M\/B|MB|SYS|Motherboard).*:([0-9]+)[\s]RPM/i) {
 			$sensors{'fan-main'} = () if !$sensors{'fan-main'};
 			$sensors{'fan-main'}[2] = $2;
 		}
@@ -14659,9 +14712,9 @@ sub usb_data {
 			#print "pt0:$protocol\n";
 			@data = ({
 			main::key($num++,'Hub') => $bus_id,
-			main::key($num++,'usb') => $speed,
-			main::key($num++,'type') => $product,
+			main::key($num++,'info') => $product,
 			main::key($num++,'ports') => $ports,
+			main::key($num++,'usb') => $speed,
 			},);
 			@rows = (@rows,@data);
 			$b_hub = 1;
@@ -14673,23 +14726,21 @@ sub usb_data {
 			$type ||= 'N/A';
 			$driver ||= 'N/A';
 			#print "pt3:$class:$product\n";
-			$rows[$j]{main::key($num++,'Device')} = $product;
-			if ($extra > 1){
+			$rows[$j]{main::key($num++,'Device')} = $bus_id;
+			$rows[$j]{main::key($num++,'info')} = $product;
+			$rows[$j]{main::key($num++,'type')} = $type;
+			if ($extra > 0){
 				$rows[$j]{main::key($num++,'driver')} = $driver;
 			}
-			if ($extra > 0){
-				$rows[$j]{main::key($num++,'usb')} = $speed;
+			if ($extra > 2 && $id[9]){
+				$rows[$j]{main::key($num++,'interfaces')} = $id[9];
 			}
-			$rows[$j]{main::key($num++,'type')} = $type;
-			$rows[$j]{main::key($num++,'bus ID')} = $bus_id;
+			$rows[$j]{main::key($num++,'usb')} = $speed;
 		}
 		if ($extra > 1){
 			$rows[$j]{main::key($num++,'chip ID')} = $chip_id;
 		}
 		if (!$b_hub && $extra > 2){
-			if ($id[9]){
-				$rows[$j]{main::key($num++,'interfaces')} = $id[9];
-			}
 			if ($serial){
 				$rows[$j]{main::key($num++,'serial')} = main::apply_filter($serial);
 			}
@@ -15763,13 +15814,15 @@ sub get_wm_version {
 # }
 sub set_info_data {
 	eval $start if $b_log;
+	main::set_ps_gui() if ! $b_ps_gui;
 	my (@data,@info,$item);
 	my $pattern = 'alltray|awn|bar|bmpanel|bmpanel2|budgie-panel|cairo-dock|';
 	$pattern .= 'dde-dock|dmenu|dockbarx|docker|docky|dzen|dzen2|';
 	$pattern .= 'fbpanel|fspanel|glx-dock|gnome-panel|hpanel|i3bar|icewmtray|';
 	$pattern .= 'kdocker|kicker|';
-	$pattern .= 'latte|lemonbar|ltpanel|lxpanel|lxqt-panel|matchbox-panel|mate-panel|';
-	$pattern .= 'ourico|perlpanel|plank|plasma-desktop|plasma-netbook|polybar|pypanel|';
+	$pattern .= 'latte|latte-dock|lemonbar|ltpanel|lxpanel|lxqt-panel|';
+	$pattern .= 'matchbox-panel|mate-panel|ourico|';
+	$pattern .= 'perlpanel|plank|plasma-desktop|plasma-netbook|polybar|pypanel|';
 	$pattern .= 'razor-panel|razorqt-panel|stalonetray|taskbar|tint2|trayer|';
 	$pattern .= 'vala-panel|wbar|wharf|wingpanel|witray|';
 	$pattern .= 'xfce4-panel|xfce5-panel|xmobar|yabar';
@@ -16090,12 +16143,15 @@ sub get_linux_distro {
 		}
 	}
 	if ($extra > 0){
+		my $base_debian_version_distro = 'sidux';
+		my $base_debian_version_osr = 'lmde|neptune|pureos|sparky|tails';
 		my $base_default = 'antix-version|mx-version'; # osr has base ids
 		my $base_issue = 'bunsen'; # base only found in issue
 		my $base_manual = 'blankon|deepin|kali'; # synthesize, no direct data available
 		my $base_osr = 'aptosid|grml|siduction|bodhi'; # osr base, distro id in list of distro files
 		my $base_osr_issue = 'grml|linux lite'; # osr base, distro id in issue
-		my $base_osr_ubuntu = 'mint|neon|zorin'; # osr has distro name but has ubuntu  ID_LIKE/UBUNTU_CODENAME
+		# osr has distro name but has ubuntu  ID_LIKE/UBUNTU_CODENAME
+		my $base_osr_ubuntu = 'mint|neon|nitrux|zorin'; 
 		my $base_upstream_lsb = '/etc/upstream-release/lsb-release';
 		my $base_upstream_osr = '/etc/upstream-release/os-release';
 		# first: try, some distros have upstream-release, elementary, new mint
@@ -16123,17 +16179,24 @@ sub get_linux_distro {
 			elsif ( @distro_files && (grep {/($base_default)/} @distro_files) ){
 				$base_type = 'default';
 			}
+			# must go before base_osr_ubuntu test
+			elsif ( grep {/($base_debian_version_osr)/i} @osr ){
+				$system_base = debian_id();
+			}
 			elsif ( grep {/($base_osr_ubuntu)/} @osr ){
 				$base_type = 'ubuntu';
 			}
 			elsif ( ( ($distro_id && $distro_id =~ /($base_osr_issue)/ ) || 
-			      (@distro_files && (grep {/($base_osr)/} @distro_files)) ) && 
+			      (@distro_files && (grep {/($base_osr)/} @distro_files) ) ) && 
 			      !(grep {/($base_osr)/i} @osr)){
 				$system_base = get_os_release();
 			}
 			if (!$system_base && $base_type){
 				$system_base = get_os_release($base_type);
 			}
+		}
+		if (!$system_base && @distro_files && ( grep {/($base_debian_version_distro)/i} @distro_files ) ){
+			$system_base = debian_id();
 		}
 		if (!$system_base && $lc_issue && $lc_issue =~ /($base_manual)/){
 			my $id = $1;
@@ -16246,6 +16309,9 @@ sub get_os_release {
 			elsif ($base_type eq 'ubuntu' && $working[0] eq 'UBUNTU_CODENAME' && $working[1]){
 				$base_version = ucfirst($working[1]);
 			}
+			elsif ($base_type eq 'debian' && $working[0] eq 'DEBIAN_CODENAME' && $working[1]){
+				$base_version = $working[1];
+			}
 		}
 	}
 	# NOTE: tumbleweed has pretty name but pretty name does not have version id
@@ -16282,14 +16348,53 @@ sub get_os_release {
 		elsif ($base_type eq 'default' && ($pretty_name || ($name && $version_name) ) ){
 			$distro = ($name && $version_name) ? "$name $version_name" : $pretty_name;
 		}
-		# LMDE has only limited data in os-release, no _LIKE values
+		# LMDE 2 has only limited data in os-release, no _LIKE values. 3 has like and debian_codename
 		elsif ( $base_type eq 'ubuntu' && $lc_name =~ /^(debian|ubuntu)/ && ($pretty_name || ($name && $version_name))){
 			$distro = ($name && $version_name) ? "$name $version_name": $pretty_name;
+		}
+		elsif ( $base_type eq 'debian' && $base_version ){
+			$distro = debian_id($base_version);
 		}
 	}
 	eval $end if $b_log;
 	return $distro;
 }
+# arg: 1 - optional: debian codename
+sub debian_id {
+	eval $start if $b_log;
+	my ($codename) = @_;
+	my ($debian_version,$id);
+	$debian_version = (main::reader('/etc/debian_version','strip'))[0] if -r '/etc/debian_version';
+	$id = 'Debian';
+	return if !$debian_version && !$codename;
+	# note, 3.0, woody, 3.1, sarge, but after it's integer per version
+	my %debians = (
+	'4' => 'etch',
+	'5' => 'lenny',
+	'6' => 'squeeze',
+	'7' => 'wheezy',
+	'8' => 'jessie',
+	'9' => 'stretch',
+	'10' => 'buster',
+	'11' => 'bullseye',
+	'12' => 'bookworm', # ?
+	);
+	if (main::is_numeric($debian_version)){
+		$id .= " $debian_version $debians{int($debian_version)}";
+	}
+	elsif ($codename) {
+		my %by_value = reverse %debians;
+		my $version = (main::is_numeric($debian_version)) ? "$debian_version $codename": $debian_version;
+		$id .= " $version";
+	}
+	# like buster/sid
+	elsif ($debian_version) {
+		$id .= " $debian_version";
+	}
+	eval $end if $b_log;
+	return $id;
+}
+
 # note, these are only for matching derived names, no need to go
 # all the way back here, update as new names are known. This is because 
 # Mint is using UBUNTU_CODENAME without ID data.
@@ -17636,7 +17741,7 @@ sub set_ps_gui {
 		@temp=qw(alltray awn bar bmpanel bmpanel2 budgie-panel 
 		cairo-dock dde-dock dmenu dockbarx docker docky dzen dzen2
 		fbpanel fspanel glx-dock gnome-panel hpanel i3bar icewmtray 
-		kdocker kicker latte lemonbar ltpanel lxpanel lxqt-panel 
+		kdocker kicker latte latte-dock lemonbar ltpanel lxpanel lxqt-panel 
 		matchbox-panel mate-panel ourico
 		perlpanel plank plasma-desktop plasma-netbook polybar pypanel
 		razor-panel razorqt-panel stalonetray taskbar tint2 trayer vala-panel
