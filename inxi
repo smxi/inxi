@@ -31,8 +31,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.0.23';
-my $self_date='2018-09-07';
+my $self_version='3.0.24';
+my $self_date='2018-09-10';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -67,8 +67,9 @@ my @test = (0,0,0,0,0);
 ## Booleans
 my ($b_admin,$b_arm,$b_bb_ps,$b_console_irc,$b_debug_gz,$b_debug_timers,
 $b_display,$b_dmesg_boot_check,
-$b_dmi,$b_dmidecode_force,$b_fake_bsd,$b_fake_dboot,$b_fake_pciconf,
-$b_fake_sysctl,$b_fake_usbdevs,$b_force_display,$b_gpudata,$b_irc,
+$b_dmi,$b_dmidecode_force,$b_fake_bsd,$b_fake_dboot,$b_fake_dmidecode,
+$b_fake_pciconf,$b_fake_sysctl,$b_fake_usbdevs,
+$b_force_display,$b_gpudata,$b_irc,
 $b_log,$b_log_colors,$b_log_full,$b_man,$b_mem,$b_mips,$b_pci,$b_pci_tool,
 $b_ppc,$b_proc_debug,$b_ps_gui,$b_root,$b_running_in_display,$b_slot_tool,
 $b_soc_audio,$b_soc_gfx,$b_soc_net,$b_sparc,$b_sudo,$b_sys_debug,$b_sysctl,
@@ -4113,6 +4114,8 @@ sub get_options{
 		else {
 			error_handler('bad-arg', $opt, $arg);
 		} },
+	'fake-dmi' => sub {
+		$b_fake_dmidecode = 1 },
 	'ftp:s'  => sub { 
 		my ($opt,$arg) = @_;
 		# pattern: ftp.x.x/x
@@ -4245,7 +4248,16 @@ sub get_options{
 			error_handler('bad-arg', '--output', '--output-file not provided');
 		}
 	}
-	if ( $show{'ram'} || $show{'slot'} || 
+	$b_sudo = 1 if ( $show{'unmounted'} || ($extra > 0 && $show{'disk'}) );
+	# override for things like -b or -v2 to -v3
+	$show{'cpu-basic'} = 0 if $show{'cpu'};
+	$show{'optical-basic'} = 0 if $show{'optical'};
+	$show{'partition'} = 0 if $show{'partition-full'};
+	if ($show{'disk'} || $show{'optical'} ){
+		$show{'disk-basic'} = 0;
+		$show{'disk-total'} = 0;
+	}
+	if ( $show{'ram'} || $show{'slot'} || ($show{'cpu'} && $extra > 1) ||
 	     ( ( $bsd_type || $b_dmidecode_force ) && ($show{'machine'} || $show{'battery'}) ) ){
 		$b_dmi = 1;
 	}
@@ -4261,15 +4273,6 @@ sub get_options{
 	}
 	if ($show{'filter-override'}){
 		$show{'filter'} = 0;
-	}
-	$b_sudo = 1 if ( $show{'unmounted'} || ($extra > 0 && $show{'disk'}) );
-	# override for things like -b or -v2 to -v3
-	$show{'cpu-basic'} = 0 if $show{'cpu'};
-	$show{'optical-basic'} = 0 if $show{'optical'};
-	$show{'partition'} = 0 if $show{'partition-full'};
-	if ($show{'disk'} || $show{'optical'} ){
-		$show{'disk-basic'} = 0;
-		$show{'disk-total'} = 0;
 	}
 	if ($bsd_type && ($show{'short'} || $show{'disk-basic'} || $show{'disk-total'} || $show{'disk'})){
 		$b_dm_boot_disk = 1;
@@ -4467,7 +4470,7 @@ sub show_options {
 	or line output, not short form):" ],
 	['2', '-A', '', "Chip vendor:product ID for each audio device." ],
 	['2', '-B', '', "Serial number, voltage now/minimum (if available)." ],
-	['2', '-C', '', "Minimum CPU speed, if available." ],
+	['2', '-C', '', "L1/L3 cache (if root and dmidecode installed)." ],
 	['2', '-D', '', "Disk transfer speed; NVMe lanes; Disk serial number." ],
 	['2', '-G', '', "Chip vendor:product ID for each video card; OpenGL 
 	compatibility version, if free drivers and available; compositor (experimental);
@@ -5317,22 +5320,22 @@ sub translate_size {
 	#print ":$working:\n";
 	return if ! defined $working;
 	my $math = ( $working =~ /B$/) ? 1000: 1024;
-	if ( $working =~ /^([0-9\.]+)M[B]?$/i){
+	if ( $working =~ /^([0-9\.]+)\s*M[B]?$/i){
 		$size = $1 * $math;
 	}
-	elsif ( $working =~ /^([0-9\.]+)G[B]?$/i){
+	elsif ( $working =~ /^([0-9\.]+)\s*G[B]?$/i){
 		$size = $1 * $math**2;
 	}
-	elsif ( $working =~ /^([0-9\.]+)T[B]?$/i){
+	elsif ( $working =~ /^([0-9\.]+)\s*T[B]?$/i){
 		$size = $1 * $math**3;
 	}
-	elsif ( $working =~ /^([0-9\.]+)P[B]?$/i){
+	elsif ( $working =~ /^([0-9\.]+)\s*P[B]?$/i){
 		$size = $1 * $math**4;
 	}
-	elsif ( $working =~ /^([0-9\.]+)E[B]?$/i){
+	elsif ( $working =~ /^([0-9\.]+)\s*E[B]?$/i){
 		$size = $1 * $math**5;
 	}
-	elsif ( $working =~ /^([0-9\.]+)K[B]?$/i){
+	elsif ( $working =~ /^([0-9\.]+)\s*[kK][B]?$/i){
 		$size = $1;
 	}
 	$size = int($size) if $size;
@@ -6485,9 +6488,15 @@ sub create_output_full {
 		$cpu{'microcode'} ||= 'N/A';
 		$rows[$j]{main::key($num++,'microcode')} = $cpu{'microcode'};
 	}
+	if ($extra > 1 && $properties{'l1-cache'}){
+		$rows[$j]{main::key($num++,'L1 cache')} = $properties{'l1-cache'};
+	}
 	$properties{'l2-cache'} ||= 'N/A';
 	if (!$b_arm || ($b_arm && $properties{'l2-cache'} ne 'N/A')){
 		$rows[$j]{main::key($num++,'L2 cache')} = $properties{'l2-cache'};
+	}
+	if ($extra > 1 && $properties{'l3-cache'}){
+		$rows[$j]{main::key($num++,'L3 cache')} = $properties{'l3-cache'};
 	}
 	if ($extra > 0 && !$show{'cpu-flag'}){
 		$j = scalar @rows;
@@ -6717,7 +6726,7 @@ sub data_cpuinfo {
 	my %speeds = set_cpu_speeds_sys();
 	my @cpuinfo = main::reader($file);
 	my @phys_cpus = (0);# start with 1 always
-	my ($cache,$core_count,$die_holder,$die_id,$phys_id,$proc_count,$speed) = (0,0,0,0,0,0,0);
+	my ($core_count,$die_holder,$die_id,$phys_id,$proc_count,$speed) = (0,0,0,0,0,0,0);
 	my ($phys_holder) = (undef);
 	# need to prime for arm cpus, which do not have physical/core ids usually
 	# level 0 is phys id, level 1 is die id, level 2 is core id
@@ -6956,7 +6965,7 @@ sub data_sysctl {
 	my %cpu = set_cpu_data();
 	my (@ids,@line,%speeds,@working);
 	my ($sep) = ('');
-	my ($cache,$die_holder,$die_id,$phys_holder,$phys_id,$proc_count,$speed) = (0,0,0,0,0,0,0);
+	my ($die_holder,$die_id,$phys_holder,$phys_id,$proc_count,$speed) = (0,0,0,0,0,0,0);
 	foreach (@sysctl){
 		@line = split /\s*:\s*/, $_;
 		next if ! $line[0];
@@ -6996,6 +7005,9 @@ sub data_sysctl {
 		}
 		elsif ($line[0] eq 'hw.l2cachesize') {
 			$cpu{'l2-cache'} = $line[1]/1024;
+		}
+		elsif ($line[0] eq 'hw.l3cachesize') {
+			$cpu{'l3-cache'} = $line[1]/1024;
 		}
 		# this is in mghz in samples
 		elsif ($line[0] eq 'hw.clockrate' || $line[0] eq 'hw.cpuspeed') {
@@ -7127,7 +7139,17 @@ sub cpu_properties {
 	#print Data::Dumper::Dumper \@processors;
 	# $cpu_cores is per physical cpu
 	my ($cpu_layout,$cpu_type,$min_max,$min_max_key) = ('','','','');
-	my ($cache,$core_count,$cpu_cores,$die_count) = (0,0,0,0);
+	my ($l1_cache,$l2_cache,$l3_cache,$core_count,$cpu_cores,$die_count) = (0,0,0,0,0,0);
+	if ($extra > 1){
+		# note: dmidecode has one entry per cpu per cache type, so this already 
+		# has done the arithmetic on > 1 cpus for L1 and L3. 
+		my %caches = cpu_cache_dmi();
+		$l1_cache = $caches{'L1'} if $caches{'L1'};
+		$l3_cache = $caches{'L3'} if $caches{'L3'};
+		# bsd sysctl can have these values so let's check just in case
+		$l1_cache = $cpu{'l1-cache'} * $phyical_count if !$l1_cache && $cpu{'l1-cache'};
+		$l3_cache = $cpu{'l3-cache'} * $phyical_count if !$l3_cache && $cpu{'l3-cache'};
+	}
 	foreach my $die_ref ( @phys ){
 		next if ! $die_ref;
 		my @dies = @$die_ref;
@@ -7274,25 +7296,34 @@ sub cpu_properties {
 	$cpu_layout .= ' (' . $cpu{'dies'}. '-Die)' if !$bsd_type && $cpu{'dies'} > 1;
 	# the only possible change for bsds is if we can get phys counts in the future
 	if ($bsd_type){
-		$cache = $cpu{'l2-cache'} * $phyical_count;
+		$l2_cache = $cpu{'l2-cache'} * $phyical_count;
 	}
 	# AMD SOS chips appear to report full L2 cache per core
 	elsif ($cpu{'type'} eq 'amd' && ($cpu{'family'} eq '14' || $cpu{'family'} eq '15' || $cpu{'family'} eq '16')){
-		$cache = $cpu{'l2-cache'} * $phyical_count;
+		$l2_cache = $cpu{'l2-cache'} * $phyical_count;
 	}
 	elsif ($cpu{'type'} ne 'intel'){
-		$cache = $cpu{'l2-cache'} * $cpu_cores * $phyical_count;
+		$l2_cache = $cpu{'l2-cache'} * $cpu_cores * $phyical_count;
 	}
 	## note: this handles how intel reports L2, total instead of per core like AMD does
 	# note that we need to multiply by number of actual cpus here to get true cache size
 	else {
-		$cache = $cpu{'l2-cache'} * $phyical_count;
+		$l2_cache = $cpu{'l2-cache'} * $phyical_count;
 	}
-	if ($cache > 10000){
-		$cache = sprintf("%.01f MiB",$cache/1024); # trim to no decimals?
+	if ($l1_cache > 0){
+		$l1_cache = "$l1_cache KiB";
 	}
-	elsif ($cache > 0){
-		$cache = "$cache KiB";
+	if ($l2_cache > 10000){
+		$l2_cache = sprintf("%.01f MiB",$l2_cache/1024); # trim to no decimals?
+	}
+	elsif ($l2_cache > 0){
+		$l2_cache = "$l2_cache KiB";
+	}
+	if ($l3_cache > 10000){
+		$l3_cache = sprintf("%.01f MiB",$l3_cache/1024); # trim to no decimals?
+	}
+	elsif ($l3_cache > 0){
+		$l3_cache = "$l3_cache KiB";
 	}
 	if ($cpu{'cur-freq'} && $cpu{'min-freq'} && $cpu{'max-freq'} ){
 		$min_max = "$cpu{'min-freq'}/$cpu{'max-freq'} MHz";
@@ -7332,7 +7363,9 @@ sub cpu_properties {
 	'min-max' => $min_max,
 	'speed-key' => $speed_key,
 	'speed' => $speed,
-	'l2-cache' => $cache,
+	'l1-cache' => $l1_cache,
+	'l2-cache' => $l2_cache,
+	'l3-cache' => $l3_cache,
 	);
 	main::log_data('dump','%cpu_properties',\%cpu_properties) if $b_log;
 	#print Data::Dumper::Dumper \%cpu;
@@ -7341,6 +7374,36 @@ sub cpu_properties {
 	#print 'phys: ' . $pc . ' dies: ' . $dc, "\n";
 	eval $end if $b_log;
 	return %cpu_properties;
+}
+sub cpu_cache_dmi {
+	eval $start if $b_log;
+	return if !@dmi;
+	my %caches = ('L1' => 0, 'L2' => 0,'L3' => 0);
+	my ($id,$amount);
+	foreach my $ref (@dmi){
+		next if ref $ref ne 'ARRAY';
+		my @item = @$ref;
+		next if $item[0] != 7;
+		last if $item[0] > 7;
+		($id,$amount) = ('',0);
+		foreach my $value (@item){
+		 # variants: L3 - Cache; L3 Cache
+			if ($value =~ /^Socket Designation: (L[1-3])\s/){
+				$id = $1;
+			}
+			if ($value =~ /^Installed Size: (.*B)$/){
+				$amount = main::translate_size($1);
+			}
+			if ($id && $amount){
+				$caches{$id} += $amount;
+				last;
+			}
+		}
+	}
+	main::log_data('dump','%caches',\%caches) if $b_log;
+	#print Data::Dumper::Dumper \%caches;
+	eval $end if $b_log;
+	return %caches;
 }
 sub cpu_bugs_sys {
 	eval $start if $b_log;
@@ -8444,8 +8507,8 @@ sub device_vendor {
 	# Data URLs: inxi-resources.txt Section: DiskData device_vendor()
 	my @vendors = (
 	## These go first because they are the most likely and common ##
-	['(Crucial|^CT|-CT|^M4-)','Crucial','Crucial',''],
-	['^INTEL','^INTEL','Intel',''],
+	['(Crucial|^CT|-CT|^M4\b)','Crucial','Crucial',''],
+	['^(INTEL|SSDPAM)','^INTEL','Intel',''],
 	['(KINGSTON|DataTraveler|^SMS|^SHS|^SUV)','KINGSTON','Kingston',''], # maybe SHS: SHSS37A SKC SUV
 	# must come before samsung MU. NOTE: toshiba can have: TOSHIBA_MK6475GSX: mush: MKNSSDCR120GB_
 	['(^MKN|Mushkin)','Mushkin','Mushkin',''], # MKNS
@@ -8467,7 +8530,7 @@ sub device_vendor {
 	['^(HGST|Touro)','^HGST','HGST (Hitachi)',''], # HGST HUA
 	['^(Hitachi|HDS|HDT|IC|HT|HU)','^Hitachi','Hitachi',''], 
 	['^Hoodisk','^Hoodisk','Hoodisk',''],
-	['^(HP\b|MB0|GJ0)','^HP','HP',''], # vb: VB0250EAVER but clashes with vbox; HP_SSD_S700_120G
+	['^(HP\b|MB0|GJ0|v210w)','^HP','HP',''], # vb: VB0250EAVER but clashes with vbox; HP_SSD_S700_120G
 	['^(LSD|Lexar|JumpDrive)','^Lexar','Lexar',''], # mmc-LEXAR_0xb016546c
 	# OCZSSD2-2VTXE120G is OCZ-VERTEX2_3.5
 	['^(OCZ|APOC|D2|DEN|DEN|DRSAK|EC188|FTNC|GFGC|MANG|MMOC|NIMC|NIMR|PSIR|TALOS2|TMSC|TRSAK)','^OCZ[\s\-]','OCZ',''],
@@ -9364,7 +9427,7 @@ sub get {
 	}
 	elsif ($bsd_type || $b_dmidecode_force){
 		my $ref = $alerts{'dmidecode'};
-		if ( $$ref{'action'} ne 'use'){
+		if ( !$b_fake_dmidecode && $$ref{'action'} ne 'use'){
 			$key1 = $$ref{'action'};
 			$val1 = $$ref{$key1};
 			$key1 = ucfirst($key1);
@@ -12153,7 +12216,7 @@ sub get {
 	my $num = 0;
 	my $ref = $alerts{'dmidecode'};
 	@rows = main::memory_data_full('ram') if !$b_mem;
-	if ( $$ref{'action'} ne 'use'){
+	if ( !$b_fake_dmidecode && $$ref{'action'} ne 'use'){
 		$key1 = $$ref{'action'};
 		$val1 = $$ref{$key1};
 		@data = ({
@@ -12187,10 +12250,11 @@ sub create_output {
 	return if !@ram;
 	my $num = 0;
 	my $j = 0;
-	my (@data,@rows);
+	my (@data,@rows,$b_non_system);
 	foreach (@ram){
 		$j = scalar @rows;
 		my %ref = %$_;
+		$b_non_system = ($ref{'use'} && lc($ref{'use'}) ne 'system memory') ? 1:0 ;
 		$num = 1;
 		@data = ({
 		main::key($num++,'Array') => '',
@@ -12200,15 +12264,18 @@ sub create_output {
 		if ($ref{'cap-qualifier'}){
 			$rows[$j]{main::key($num++,'note')} = $ref{'cap-qualifier'};
 		}
+		$rows[$j]{main::key($num++,'use')} = $ref{'use'} if $b_non_system;
 		$rows[$j]{main::key($num++,'slots')} = $ref{'slots'};
 		$rows[$j]{main::key($num++,'EC')} = $ref{'eec'};
-		if ($extra > 0 ){
+		if ($extra > 0 && (!$b_non_system || 
+		   ( main::is_numeric($ref{'max-module-size'}) && $ref{'max-module-size'} > 10 ) ) ){
 			$rows[$j]{main::key($num++,'max module size')} = process_size($ref{'max-module-size'});
 			if ($ref{'mod-qualifier'}){
 				$rows[$j]{main::key($num++,'note')} = $ref{'mod-qualifier'};
 			}
 		}
 		foreach my $ref2 ($ref{'modules'}){
+			next if ref $ref2 ne 'ARRAY';
 			my @modules = @$ref2;
 			# print Data::Dumper::Dumper \@modules;
 			foreach my $ref3 ( @modules){
@@ -12266,6 +12333,7 @@ sub dmidecode_data {
 	my ($i,$j,$k) = (0,0,0);
 	foreach (@dmi){
 		my @ref = @$_;
+		($derived_module_size,$max_cap_5,$max_cap_16,$max_module_size) = (0,0,0,0);
 		# Portable Battery
 		if ($ref[0] == 5){
 			$ram[$k] = ({}) if !$ram[$k];
@@ -12303,7 +12371,7 @@ sub dmidecode_data {
 					$size = calculate_size($temp[1],0);
 					# get data after module size
 					$temp[1] =~ s/ Connection\)?//;
-					$temp[1] =~ s/^[0-9]+\s*[MGTP]B\s*\(?//;
+					$temp[1] =~ s/^[0-9]+\s*[KkMGTP]B\s*\(?//;
 					$type = lc($temp[1]);
 				}
 				elsif ($temp[0] eq 'Current Speed'){
@@ -12374,7 +12442,7 @@ sub dmidecode_data {
 				# do not try to guess from installed modules, only use this to correct type 5 data
 				elsif ($temp[0] eq 'Size'){
 					# we want any non real size data to be preserved
-					if ( $temp[1] =~ /^[0-9]+\s*[MTPG]B/ ) {
+					if ( $temp[1] =~ /^[0-9]+\s*[KkMTPG]B/ ) {
 						$derived_module_size = calculate_size($temp[1],$derived_module_size);
 						$working_size = calculate_size($temp[1],0);
 						$device_size = $working_size;
@@ -12634,8 +12702,11 @@ sub data_processor {
 sub process_size {
 	my ($size) = @_;
 	my ($b_trim,$unit) = (0,'');
+	#print "size0: $size\n";
 	return 'N/A' if ( ! $size );
-	return $size if $size =~ /\D/;
+	#return $size if $size =~ /\D/;
+	return $size if !main::is_numeric($size);
+	#print "size: $size\n";
 	if ( $size < 1024 ){
 		$unit='MiB';
 	}
@@ -12658,7 +12729,8 @@ sub process_size {
 }
 sub calculate_size {
 	my ($data, $size) = @_;
-	if ( $data =~ /^[0-9]+\s*[GMTP]B/) {
+	# technically k is KiB, K is KB but can't trust that
+	if ( $data =~ /^[0-9]+\s*[kKGMTP]B/) {
 		if ( $data =~ /([0-9]+)\s*GB/ ) {
 			$data = $1 * 1024;
 		}
@@ -12671,13 +12743,20 @@ sub calculate_size {
 		elsif ( $data =~ /([0-9]+)\s*PB/ ) {
 			$data = $1 * 1024 * 1000 * 1000;
 		}
-		if ($data =~ /^[0-9][0-9]+$/ && $data > $size ) {
+		elsif ( $data =~ /([0-9]+)\s*[kK]B/ ) {
+			$data = $1/1024;
+			#print "d3:$data\n";
+		}
+		if (main::is_numeric($data) && $data > $size ) {
+		#if ($data =~ /^[0-9][0-9]+$/ && $data > $size ) {
 			$size=$data;
 		}
+		#print "d1: $data s1: $size\n";
 	}
 	else {
 		$size = 0;
 	}
+	#print "d2: $data s2: $size\n";
 	return $size;
 }
 }
@@ -14380,7 +14459,7 @@ sub get {
 	my (@data,@rows,$key1,$val1);
 	my $num = 0;
 	my $ref = $alerts{'dmidecode'};
-	if ( $$ref{'action'} eq 'use' && (!$b_arm || $b_slot_tool )){
+	if ($b_fake_dmidecode || ( $$ref{'action'} eq 'use' && (!$b_arm || $b_slot_tool ) )){
 		@rows = slot_data();
 	}
 	elsif ($b_arm && !$b_slot_tool){
@@ -16144,7 +16223,7 @@ sub get_linux_distro {
 	}
 	if ($extra > 0){
 		my $base_debian_version_distro = 'sidux';
-		my $base_debian_version_osr = 'lmde|neptune|pureos|sparky|tails';
+		my $base_debian_version_osr = 'lmde|neptune|parrot|pureos|sparky|tails';
 		my $base_default = 'antix-version|mx-version'; # osr has base ids
 		my $base_issue = 'bunsen'; # base only found in issue
 		my $base_manual = 'blankon|deepin|kali'; # synthesize, no direct data available
@@ -17144,7 +17223,7 @@ sub set_dmesg_boot_data {
 sub set_dmi_data {
 	eval $start if $b_log;
 	$_[0] = 1; # check boolean passed by reference
-	if ($alerts{'dmidecode'}{'action'} eq 'use' ){
+	if ($b_fake_dmidecode || $alerts{'dmidecode'}{'action'} eq 'use' ){
 		set_dmidecode_data();
 	}
 	eval $end if $b_log;
@@ -17153,12 +17232,18 @@ sub set_dmi_data {
 sub set_dmidecode_data {
 	eval $start if $b_log;
 	my ($content,@data,@working,$type,$handle);
-	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmidecode/pci-freebsd-8.2-2";
-	#open my $fh, '<', $file or die "can't open $file: $!";
-	#chomp(@data = <$fh>);
-	my $path = check_program('dmidecode'); 
-	$content = qx($path 2>/dev/null) if $path;
-	@data = split /\n/, $content;
+	if ($b_fake_dmidecode){
+		#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmidecode/pci-freebsd-8.2-2";
+		# my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmidecode/dmidecode-loki-1.txt";
+		#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmidecode/dmidecode-t41-1.txt";
+		#open my $fh, '<', $file or die "can't open $file: $!";
+		#chomp(@data = <$fh>);
+	}
+	else {
+		my $path = check_program('dmidecode'); 
+		$content = qx($path 2>/dev/null) if $path;
+		@data = split /\n/, $content;
+	}
 	# we don't need the opener lines of dmidecode output
 	# but we do want to preserve the indentation. Empty lines
 	# won't matter, they will be skipped, so no need to handle them.
@@ -18316,6 +18401,7 @@ sub generate_lines {
 		}
 		if ( $show{'cpu'} || $show{'cpu-basic'} ){
 			set_pci_data($b_pci_check) if $b_arm && !$b_pci_check;
+			set_dmi_data($b_dmi_check) if $b_dmi && !$b_dmi_check; 
 			set_dmesg_boot_data() if ($bsd_type && !$b_dmesg_boot_check);
 			my $arg = ($show{'cpu-basic'}) ? 'basic' : 'full' ;
 			%row = line_handler('CPU','cpu',$arg);
