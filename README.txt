@@ -60,11 +60,11 @@ current commit/version in master. All past versions are not supported.
 git clone https://github.com/smxi/inxi --branch master --single-branch
 
 OR direct fast and easy install:
-wget -Nc https://github.com/smxi/inxi/raw/master/inxi
+wget -O inxi https://github.com/smxi/inxi/raw/master/inxi
 
 OR easy to remember shortcut (which redirects to github):
-wget -Nc https://smxi.org/inxi
-wget -Nc smxi.org/inxi
+wget -O inxi https://smxi.org/inxi
+wget -O inxi smxi.org/inxi
 
 NOTE: Just because github calls tagged commits 'Releases' does not mean they 
 are releases! I can't change the words on the tag page. They are tagged 
@@ -77,11 +77,11 @@ All active development is now done on the inxi-perl branch (pinxi):
 git clone https://github.com/smxi/inxi --branch inxi-perl --single-branch
 
 OR direct fast and easy install:
-wget -Nc https://github.com/smxi/inxi/raw/inxi-perl/pinxi
+wget -O pinxi https://github.com/smxi/inxi/raw/inxi-perl/pinxi
 
 OR easy to remember shortcut (which redirects to github):
-wget -Nc https://smxi.org/pinxi
-wget -Nc smxi.org/pinxi
+wget -O pinxi https://smxi.org/pinxi
+wget -O pinxi smxi.org/pinxi
 
 Once new features have been debugged, tested, and are reasonably stable, pinxi 
 is copied to inxi in the master branch.
@@ -97,10 +97,10 @@ find it here, at the inxi-legacy branch (binxi):
 git clone https://github.com/smxi/inxi --branch inxi-legacy --single-branch
 
 OR direct fast and easy install:
-wget -Nc https://github.com/smxi/inxi/raw/inxi-legacy/binxi
+wget -O binxi https://github.com/smxi/inxi/raw/inxi-legacy/binxi
 
 OR easy to remember shortcut (which redirects to github):
-wget -Nc https://smxi.org/binxi
+wget -O binxi https://smxi.org/binxi
 
 This version will not be maintained, and it's unlikely that any time will be
 spent on it in the future, but it is there in case it's of use or interest to
