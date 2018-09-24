@@ -31,8 +31,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.0.24';
-my $self_date='2018-09-10';
+my $self_version='3.0.25';
+my $self_date='2018-09-24';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -56,31 +56,33 @@ my ( %alerts,%client,%colors,%dl,%files,%rows,%system_files,%use );
 
 ## Arrays
 # ps_aux is full output, ps_cmd is only the last 10 columns to last
-my (@app,@dmesg_boot,@dmi,@gpudata,@ifs,@ifs_bsd,@paths,@pci,@ps_aux,
-@ps_cmd,@ps_gui,@sysctl,@sysctl_battery,@sysctl_sensors,@sysctl_machine,
-@uname,@usb);
+my (@app,@dmesg_boot,@devices_audio,@devices_graphics,@devices_network,
+@devices_hwraid,@devices_timer,@dmi,@gpudata,@ifs,@ifs_bsd,
+@paths,@proc_partitions,@ps_aux,@ps_cmd,@ps_gui,
+@sysctl,@sysctl_battery,@sysctl_sensors,@sysctl_machine,@uname,@usb);
 ## Disk arrays 
 my (@dm_boot_disk,@dm_boot_optical,@glabel,@gpart,@hardware_raid,@labels,
 @lsblk,@partitions,@raid,@sysctl_disks,@uuids);
 my @test = (0,0,0,0,0);
 
 ## Booleans
-my ($b_admin,$b_arm,$b_bb_ps,$b_console_irc,$b_debug_gz,$b_debug_timers,
-$b_display,$b_dmesg_boot_check,
+my ($b_admin,$b_arm,$b_bb_ps,$b_block_tool,$b_console_irc,
+$b_debug_gz,$b_debug_timers,$b_debug_z,$b_display,$b_dmesg_boot_check,
 $b_dmi,$b_dmidecode_force,$b_fake_bsd,$b_fake_dboot,$b_fake_dmidecode,
 $b_fake_pciconf,$b_fake_sysctl,$b_fake_usbdevs,
-$b_force_display,$b_gpudata,$b_irc,
-$b_log,$b_log_colors,$b_log_full,$b_man,$b_mem,$b_mips,$b_pci,$b_pci_tool,
-$b_ppc,$b_proc_debug,$b_ps_gui,$b_root,$b_running_in_display,$b_slot_tool,
-$b_soc_audio,$b_soc_gfx,$b_soc_net,$b_sparc,$b_sudo,$b_sys_debug,$b_sysctl,
-$b_usb,$b_usb_check,$b_usb_sys,$b_usb_tool,$b_wmctrl);
+$b_force_display,$b_force_sys_debug,$b_gpudata,$b_irc,
+$b_log,$b_log_colors,$b_log_full,$b_man,$b_mem,$b_mips,
+$b_pci,$b_pci_tool,$b_ppc,$b_proc_debug,$b_proc_partitions,$b_ps_gui,
+$b_root,$b_running_in_display,
+$b_slot_tool,$b_soc_audio,$b_soc_gfx,$b_soc_net,$b_soc_timer,$b_sparc,
+$b_sudo,$b_sysctl,$b_usb,$b_usb_check,$b_usb_sys,$b_usb_tool,$b_wmctrl);
 ## Disk checks
 my ($b_dm_boot_disk,$b_dm_boot_optical,$b_glabel,$b_hardware_raid,
 $b_label_uuid,$b_lsblk,$b_partitions,$b_raid);
-my ($b_sysctl_disk,$b_update,$b_weather) = (1,1,1);
+my ($b_sys_debug,$b_sysctl_disk,$b_update,$b_weather) = (1,1,1,1);
 
 ## System
-my ($bsd_type,$language,$os) = ('','','');
+my ($bsd_type,$language,$os,$pci_tool,$device_vm) = ('','','','','');
 my ($bits_sys,$cpu_arch);
 my ($cpu_sleep,$dl_timeout,$limit,$ps_cols,$ps_count) = (0.35,4,10,0,5);
 my $sensors_cpu_nu = 0;
@@ -235,7 +237,7 @@ sub check_tools {
 		}
 		else {
 			if ($b_pci ){
-				%hash = ('pciconf' => '-l',);
+				%hash = ('pciconf' => '-l','pcictl' => 'list', 'pcidump' => '');
 				%commands = (%commands,%hash);
 			}
 			if ($b_sysctl ){
@@ -250,6 +252,7 @@ sub check_tools {
 				# > 0 means error in shell
 				#my $cmd = "$program $commands{$_} >/dev/null";
 				#print "$cmd\n";
+				$pci_tool = $_ if $_ =~ /pci/;
 				$action = 'permissions' if system("$program $commands{$_} >/dev/null 2>&1");
 			}
 			else {
@@ -280,6 +283,14 @@ sub check_tools {
 		%hash = (
 		'ip' => 'linux',
 		'ifconfig' => 'all',
+		);
+		%commands = (%commands,%hash);
+	}
+	# can't check permissions since we need to know the partition
+	if ($b_block_tool){
+		%hash = (
+		'blockdev' => 'linux',
+		'lsblk' => 'linux',
 		);
 		%commands = (%commands,%hash);
 	}
@@ -328,7 +339,8 @@ sub set_basics {
 	$ENV{'LANG'}='C';
 	$ENV{'LC_ALL'}='C';
 	# remember, perl uses the opposite t/f return as shell!!!
-	$b_irc = ( system('tty >/dev/null') ) ? 1 : 0;
+	# some versions of busybox do not have tty, like openwrt
+	$b_irc = ( check_program('tty') && system('tty >/dev/null') ) ? 1 : 0;
 	# print "birc: $b_irc\n";
 	$b_display = ( $ENV{'DISPLAY'} ) ? 1 : 0;
 	$b_root = ( $ENV{'HOME'} eq '/root' ) ? 1 : 0;
@@ -346,6 +358,7 @@ sub set_basics {
 	$client{'su-start'} = ''; # shows sudo/su
 	$client{'version'} = '';
 	$colors{'default'} = 2;
+	$show{'partition-sort'} = 'id'; # sort order for partitions
 }
 
 # args: $1 - default OR override default cols max integer count. $_[0]
@@ -425,7 +438,7 @@ sub set_os {
 	elsif ($cpu_arch =~ /(alpha|64)/){
 		$bits_sys = 64;
 	}
-	if ( $os =~ /(bsd|dragonfly|darwin|indiana|sunos|solaris)/ ){
+	if ( $os =~ /(aix|bsd|cosix|dragonfly|darwin|hp-?ux|indiana|irix|sunos|solaris|ultrix|unix)/ ){
 		if ( $os =~ /openbsd/ ){
 			$os = 'openbsd';
 		}
@@ -1066,6 +1079,7 @@ sub get_config_item {
 	elsif ($key eq 'LANGUAGE') {$language = $val if $val =~ /^(en)$/}
 	elsif ($key eq 'LIMIT') {$limit = $val if is_int($val)}
 	elsif ($key eq 'OUTPUT_TYPE') {$output_type = $val if $val =~ /^(json|screen|xml)$/}
+	elsif ($key eq 'PARTITION_SORT') {$show{'partition-sort'} = $val if ($val =~ /^(dev-base|fs|id|label|percent-used|size|uuid|used)$/) }
 	elsif ($key eq 'PS_COUNT') {$ps_count = $val if is_int($val) }
 	elsif ($key eq 'SENSORS_CPU_NO') {$sensors_cpu_nu = $val if is_int($val)}
 	elsif ($key eq 'SHOW_HOST' || $key eq 'B_SHOW_HOST') { $show{'host'} = $val if is_int($val)}
@@ -1317,7 +1331,7 @@ sub run_debugger {
 		if ( -d '/sys' && main::count_dir_files('/sys') ){
 			build_tree('sys');
 			# kernel crash, not sure what creates it, for ppc, as root
-			sys_traverse_data() if (!$b_root || !$b_ppc || $b_sys_debug) ; 
+			sys_traverse_data() if ($b_sys_debug && ($b_force_sys_debug || !$b_root || !$b_ppc )) ; 
 		}
 		else {
 			print "Skipping /sys data collection. /sys not present, or empty.\n";
@@ -1443,6 +1457,7 @@ sub disk_data {
 	}
 	copy_files(\@files, 'disk');
 	my @cmds = (
+	['blockdev', '--report'],
 	['btrfs', 'filesystem show'],
 	['btrfs', 'filesystem show --mounted'],
 	# ['btrfs', 'filesystem show --all-devices'],
@@ -1462,10 +1477,10 @@ sub disk_data {
 	['lsblk', '-pr'],
 	['lsblk', '-pP'],
 	['lsblk', '-r'],
-	['lsblk', '-r --output NAME,PKNAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,MOUNTPOINT'],
-	['lsblk', '-rb --output NAME,PKNAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,MOUNTPOINT'],
+	['lsblk', '-r --output NAME,PKNAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,MOUNTPOINT,PHY-SEC,LOG-SEC'],
+	['lsblk', '-rb --output NAME,PKNAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,MOUNTPOINT,PHY-SEC,LOG-SEC'],
 	['lsblk', '-Pb --output NAME,PKNAME,TYPE,RM,FSTYPE,SIZE'],
-	['lsblk', '-Pb --output NAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,SERIAL,MOUNTPOINT'],
+	['lsblk', '-Pb --output NAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,SERIAL,MOUNTPOINT,PHY-SEC,LOG-SEC'],
 	['gpart', 'list'],
 	['gpart', 'show'],
 	['gpart', 'status'],
@@ -1568,6 +1583,7 @@ sub display_data {
 	['kf5-config','--version'],
 	['kf6-config','--version'],
 	['kwin_x11','--version'],
+	# ['locate','/Xorg'], # for Xorg.wrap problem
 	['loginctl','--no-pager list-sessions'],
 	['nvidia-settings','-q screens'],
 	['nvidia-settings','-c :0.0 -q all'],
@@ -1785,7 +1801,10 @@ sub run_self {
 	print "Creating $self_name output file now. This can take a few seconds...\n";
 	print "Starting $self_name from: $self_path\n";
 	my $i = ($option eq 'main-full')? ' -i' : '';
-	my $cmd = "$self_path/$self_name -FRfrploudmaxxx$i --usb --slots --debug 10 -y 120 > $data_dir/$self_name-FRfrploudmaxxxy-usb-slots-y120.txt 2>&1";
+	my $z = ($b_debug_z) ? ' -z' : '';
+	my $iz = "$i$z";
+	$iz =~ s/[\s\-]//g;
+	my $cmd = "$self_path/$self_name -FRfrploudmaxxx$i$z --usb --slots --debug 10 -y 120 > $data_dir/$self_name-FRfrploudmaxxx$iz-usb-slots-y120.txt 2>&1";
 	system($cmd);
 	copy($log_file, "$data_dir") or main::error_handler('copy-failed', "$log_file", "$!");
 	system("$self_path/$self_name --recommends -y 120 > $data_dir/$self_name-recommends-120.txt 2>&1");
@@ -2022,6 +2041,7 @@ sub sys_traverse_processsor {
 	close $fh;
 	# print $fh "$result";
 }
+
 sub wanted {
 	return if -d; # not directory
 	return unless -e; # Must exist
@@ -2452,8 +2472,8 @@ sub check_items {
 			$info_os = 'info-bsd';
 		}
 		else {
-			@data = qw(dig dmidecode fdisk file hddtemp ifconfig ip ipmitool ipmi-sensors
-			lsblk lsusb modinfo runlevel sensors strings sudo tree upower uptime);
+			@data = qw(blockdev dig dmidecode fdisk file hddtemp ifconfig ip ipmitool 
+			ipmi-sensors lsblk lsusb modinfo runlevel sensors strings sudo tree upower uptime);
 		}
 		$b_program = 1;
 		$item = 'Program';
@@ -2644,6 +2664,13 @@ sub item_data {
 	}),
 	# system tools
 	# apt-dpkg,apt-get; pm-arch,pacman; rpm-redhat,suse
+	'blockdev' => ({
+	'info' => '--admin -p/-P (filesystem blocksize)',
+	'info-bsd' => '',
+	'apt' => 'util-linux',
+	'pacman' => 'util-linux',
+	'rpm' => 'util-linux',
+	}),
 	'curl' => ({
 	'info' => '-i (if no dig); -w,-W; -U',
 	'info-bsd' => '-i (if no dig); -w,-W; -U',
@@ -3284,15 +3311,17 @@ sub program_values {
 	'scrotwm' => ['^scrotwm.*welcome.*',5,'-v','Scrotwm',0,1,1],
 	'sommelier' => ['^sommelier',0,'0','sommelier',0,1,0],
 	'spectrwm' => ['^spectrwm.*welcome.*wm',5,'-v','Spectrwm',0,1,1],
-	'sway' => ['^sway',0,'0','sway',0,1,0],
+	'sway' => ['^sway',3,'-v','sway',0,1,0],
 	'swc' => ['^swc',0,'0','swc',0,1,0],
 	'tvtwm' => ['^tvtwm',0,'0','tvtwm',0,1,0],
 	'twin' => ['^Twin:',2,'--version','Twin',0,0,0],
 	'twm' => ['^twm',0,'0','twm',0,1,0],
 	'unagi' => ['^unagi',0,'0','unagi',0,1,0],
 	'unity' => ['^unity',2,'--version','Unity',0,1,0],
+	'unity-system-compositor' => ['^unity-system-compositor',2,'--version','unity-system-compositor (mir)',0,0,0],
 	'wavy' => ['^wavy',0,'0','wavy',0,1,0],
-	'way-cooler' => ['^way',0,'0','way-cooler',0,1,0],
+	'waycooler' => ['^way',3,'--version','way-cooler',0,1,0],
+	'way-cooler' => ['^way',3,'--version','way-cooler',0,1,0],
 	'wayhouse' => ['^wayhouse',0,'0','wayhouse',0,1,0],
 	'westford' => ['^westford',0,'0','westford',0,1,0],
 	'weston' => ['^weston',0,'0','weston',0,1,0],
@@ -3326,6 +3355,7 @@ sub program_values {
 	'xdm' => ['^xdm',0,'0','XDM',0,1,0],
 	'xenodm' => ['^xenodm',0,'0','xenodm',0,1,0],
 	## Shells
+	'ash' => ['^ash',0,'0','ash',1,0,0],
 	'bash' => ['^GNU[[:space:]]bash,[[:space:]]version',4,'--version','Bash',1,0,0],
 	'csh' => ['^tcsh',2,'--version','csh',1,0,0],
 	'dash' => ['dash',3,'--version','Dash',1,0,0], # no version, uses dpkg query, sigh
@@ -3841,6 +3871,14 @@ sub get_options{
 	'P|partitions|partition' => sub {
 		$show{'short'} = 0;
 		$show{'partition'} = 1; },
+	'partition-sort:s' => sub {
+		my ($opt,$arg) = @_;
+		if ($arg =~ /^(dev-base|fs|id|label|percent-used|size|uuid|used)$/){
+			$show{'partition-sort'} = $arg;
+		}
+		else {
+			error_handler('bad-arg',$opt,$arg);
+		} },
 	'r|repos|repo' => sub {
 		$show{'short'} = 0;
 		$show{'repo'} = 1; },
@@ -4085,6 +4123,8 @@ sub get_options{
 		else {
 			error_handler('bad-arg', $opt, $arg);
 		} },
+	'debug-z' => sub {
+		$b_debug_z = 1 },
 	'display:s' => sub { 
 		my ($opt,$arg) = @_;
 		if ($arg =~ /^:?([0-9]+)?$/){
@@ -4169,6 +4209,8 @@ sub get_options{
 		$b_no_man_force = 0; },
 	'no-ssl' => sub {
 		$dl{'no-ssl-opt'}=1 },
+	'no-sys-debug' => sub {
+		$b_sys_debug = 0; },
 	'output-file:s' => sub {
 		my ($opt,$arg) = @_;
 		if ($arg){
@@ -4184,14 +4226,14 @@ sub get_options{
 		}},
 	'ppc' => sub {
 		$b_ppc = 1 },
-	'proc' => sub {
+	'proc-debug' => sub {
 		$b_proc_debug = 1; },
 	'recommends' => sub {
 		$b_recommends = 1; },
 	'sparc' => sub {
 		$b_sparc = 1; },
-	'sys' => sub {
-		$b_sys_debug = 1; },
+	'sys-debug' => sub {
+		$b_force_sys_debug = 1; },
 	'U|update:s' => sub { # 1,2,3 OR http://myserver/path/inxi
 		my ($opt,$arg) = @_;
 		$b_downloader = 1;
@@ -4255,6 +4297,7 @@ sub get_options{
 			error_handler('bad-arg', '--output', '--output-file not provided');
 		}
 	}
+	$b_block_tool = 1 if ( $b_admin && ($show{'partition'} || $show{'partition-full'} ));
 	$b_sudo = 1 if ( $show{'unmounted'} || ($extra > 0 && $show{'disk'}) );
 	# override for things like -b or -v2 to -v3
 	$show{'cpu-basic'} = 0 if $show{'cpu'};
@@ -4323,6 +4366,10 @@ sub show_options {
 	verbose or line output, not short form):" ],
 	['2', '-C', '', "If available: CPU vulnerabilities (bugs); family, model-id, stepping - format:
 	hex (decimal) if greater than 9, otherwise hex; microcode - format: hex." ],
+	['2', '-d', '', "If available: logical and physical block sizes." ],
+	['2', '-p,-P', '', "If available: raw size of partition, percent available for user, 
+	block size of file system (root required); for swap, shows swapiness and vfs cache 
+	pressure, and if values are default or not." ],
 	['1', '-A', '--audio', "Audio/sound card(s), driver, sound server." ],
 	['1', '-b', '--basic', "Basic output, short form. Same as $self_name^-v^2." ],
 	['1', '-B', '--battery', "System battery info, including charge and condition, plus 
@@ -4381,7 +4428,7 @@ sub show_options {
 	mounted ${partition_string}s." ],
 	['1', '-r', '--repos', "Distro repository data. Supported repo types: APK, 
 	APT, EOPKG, PACMAN, PACMAN-G2, PISI, PORTAGE, PORTS (BSDs), SLACKPKG, TCE,
-	URPMQ, YUM/ZYPP." ],
+	URPMQ, XBPS, YUM/ZYPP." ],
 	['1', '-R', '--raid', "RAID data. Shows RAID devices, states, levels, 
 	and components. md-raid: If device is resyncing, also shows resync progress line." ],
 	['1', '-s', '--sensors', "Sensors output (if sensors installed/configured): 
@@ -4518,14 +4565,14 @@ sub show_options {
 	['2', '-m', '', "Width of memory bus, data and total (if present and greater 
 	than data); Detail for Type, if present; module voltage, if available; serial 
 	number." ],
-	['2', '-N', '', "Serial number." ],
+	['2', '-N', '', "Specific vendor/product information (if relevant); serial number." ],
 	['2', '-R', '', "zfs-raid: portion allocated (used) by RAID devices/arrays. 
 	md-raid: system md-raid support types (kernel support, read ahead, RAID events).
 	Hardware RAID rev, ports, specific vendor/product information." ],
 	['2', '-S', '', "Panel/tray/bar/dock info in desktop output, if in X (like lxpanel, 
 	xfce4-panel, mate-panel); (if available) dm version number, window manager
 	version number." ],
-	['2', '--usb', '', "For Device: serial number (if present), interface count." ],
+	['2', '--usb', '', "For Device: serial number (if present), interface count; USB speed." ],
 	);
 	push @data, @rows;
 	if ( $b_weather ){
@@ -4606,6 +4653,8 @@ sub show_options {
 	['1', '', '--output', "[json|screen|xml] Change data output type. Requires --output-file 
 	if not screen." ],
 	['1', '', '--output-file', "[Full filepath|print] Output file to be used for --output." ],
+	['1', '', '--partition-sort', "[dev-base|fs|id|label|percent-used|size|uuid|used] 
+	Change sort order of partition output. See man page for specifics." ],
 	['1', '', '--proc', "Force debugger parsing of /proc as sudo/root." ],
 	['1', '', '--sleep', "[0-x.x] Change CPU sleep time, in seconds, for -C 
 	(default:^$cpu_sleep). Allows system to catch up and show a more accurate CPU 
@@ -5186,38 +5235,6 @@ sub increment_starters {
 	return $result;
 }
 
-sub memory_data_full {
-	eval $start if $b_log;
-	my ($source) = @_;
-	my $num = 0;
-	my ($memory,@rows);
-	my ($gpu_ram,$percent,$total,$used) = (0,'','','');
-	if (!$show{'info'}){
-		$memory = get_memory_data('splits');
-		if ($memory){
-			my @temp = split /:/, $memory;
-			my @temp2 = get_size($temp[0]);
-			$gpu_ram = $temp[3] if $temp[3];
-			$total = ($temp2[1]) ? $temp2[0] . ' ' . $temp2[1] : $temp2[0];
-			@temp2 = get_size($temp[1]);
-			$used = ($temp2[1]) ? $temp2[0] . ' ' . $temp2[1] : $temp2[0];
-			$used .= " ($temp[2]%)" if $temp[2];
-			if ($gpu_ram){
-				@temp2 = get_size($gpu_ram);
-				$gpu_ram = $temp2[0] . ' ' . $temp2[1] if $temp2[1];
-			}
-		}
-		my $key = ($source eq 'process') ? 'System RAM': 'RAM';
-		$rows[0]{main::key($num++,$key)} = '';
-		$rows[0]{main::key($num++,'total')} = $total;
-		$rows[0]{main::key($num++,'used')} = $used;
-		$rows[0]{main::key($num++,'gpu')} = $gpu_ram if $gpu_ram;
-	}
-	$b_mem = 1;
-	eval $end if $b_log;
-	return @rows;
-}
-
 sub pci_cleaner {
 	my ($string,$type) = @_;
 	#print "st1 $type:$string\n";
@@ -5298,14 +5315,17 @@ sub row_defaults {
 	'output-limit' => "Output throttled. IPs: $id; Limit: $limit; Override: --limit [1-x;-1 all]",
 	'partition-data' => "No Partition data was found.",
 	'pci-advanced-data' => 'bus/chip ids unavailable',
-	'pci-card-data' => "No PCI card data found.",
+	'pci-card-data' => "No Device data found.",
+	'pci-card-data-root' => "Device data requires root.",
 	'pci-slot-data' => "No PCI slot data found.",
+	'ps-data-null' => "No Process data available.",
 	'raid-data' => "No RAID data was found.",
 	'ram-data' => "No RAM data was found.",
 	'root-required' => "<root required>",
 	'sensors-data-ipmi' => "No ipmi sensors data was found.",
 	'sensors-data-linux' => "No sensors data was found. Is sensors configured?",
 	'sensors-ipmi-root' => "Unable to run ipmi sensors. Are you root?",
+	'tool-missing' => "<missing $id>",
 	'unmounted-data' => "No unmounted partitions found.",
 	'unmounted-data-bsd' => "No unmounted partition data found for this BSD system.",
 	'unmounted-file' => "No /proc/partitions file found.",
@@ -5766,17 +5786,6 @@ sub print_line {
 #### -------------------------------------------------------------------
 #### PRIMARY DATA GENERATORS
 #### -------------------------------------------------------------------
-# 0 type
-# 1 type_id
-# 2 bus_id
-# 3 sub_id
-# 4 device
-# 5 vendor_id
-# 6 chip_id
-# 7 rev
-# 8 port
-# 9 driver
-# 10 modules
 
 ## AudioData 
 {
@@ -5787,9 +5796,10 @@ sub get {
 	my (@data,@rows);
 	my $num = 0;
 	if (($b_arm || $b_mips) && !$b_soc_audio && !$b_pci_tool){
-		my $key = ($b_arm) ? 'ARM' : 'MIPS';
+		my $type = ($b_arm) ? 'arm' : 'mips';
+		my $key = 'Message';
 		@data = ({
-		main::key($num++,$key) => main::row_defaults(lc($key) . '-pci',''),
+		main::key($num++,$key) => main::row_defaults($type . '-pci',''),
 		},);
 		@rows = (@rows,@data);
 	}
@@ -5806,8 +5816,12 @@ sub get {
 	@rows = (@rows,@data);
 	if (!@rows){
 		my $key = 'Message';
+		my $type = 'pci-card-data';
+		if ($pci_tool && ${$alerts{$pci_tool}}{'action'} eq 'permissions'){
+			$type = 'pci-card-data-root';
+		}
 		@data = ({
-		main::key($num++,$key) => main::row_defaults('pci-card-data',''),
+		main::key($num++,$key) => main::row_defaults($type,''),
 		},);
 		@rows = (@rows,@data);
 	}
@@ -5821,47 +5835,45 @@ sub card_data {
 	eval $start if $b_log;
 	my (@rows,@data);
 	my ($j,$num) = (0,1);
-	foreach (@pci){
+	foreach (@devices_audio){
 		$num = 1;
 		my @row = @$_;
-		if ($row[0] =~ /^(audio|daudio|hdmi|hdmi-audio|multimedia)$/){
-			$j = scalar @rows;
-			my $driver = $row[9];
-			$driver ||= 'N/A';
-			my $card = $row[4];
-			$card = ($card) ? main::pci_cleaner($card,'output') : 'N/A';
-			# have seen absurdly verbose card descriptions, with non related data etc
-			if (length($card) > 85 || $size{'max'} < 110){
-				$card = main::pci_long_filter($card);
+		$j = scalar @rows;
+		my $driver = $row[9];
+		$driver ||= 'N/A';
+		my $card = $row[4];
+		$card = ($card) ? main::pci_cleaner($card,'output') : 'N/A';
+		# have seen absurdly verbose card descriptions, with non related data etc
+		if (length($card) > 85 || $size{'max'} < 110){
+			$card = main::pci_long_filter($card);
+		}
+		@data = ({
+		main::key($num++,'Device') => $card,
+		},);
+		@rows = (@rows,@data);
+		if ($extra > 2 && $b_pci_tool && $row[12]){
+			my $item = main::get_pci_vendor($row[4],$row[12]);
+			$rows[$j]{main::key($num++,'vendor')} = $item if $item;
+		}
+		$rows[$j]{main::key($num++,'driver')} = $driver;
+		if ($extra > 0 && !$bsd_type){
+			if ($row[9] ){
+				my $version = main::get_module_version($row[9]);
+				$rows[$j]{main::key($num++,'v')} = $version if $version;
 			}
-			@data = ({
-			main::key($num++,'Device') => $card,
-			},);
-			@rows = (@rows,@data);
-			if ($extra > 2 && $b_pci_tool && $row[11]){
-				my $item = main::get_pci_vendor($row[4],$row[11]);
-				$rows[$j]{main::key($num++,'vendor')} = $item if $item;
+		}
+		if ($extra > 0){
+			$rows[$j]{main::key($num++,'bus ID')} = (!$row[2] && !$row[3]) ? 'N/A' : "$row[2].$row[3]";
+		}
+		if ($extra > 1){
+			my $chip_id = 'N/A';
+			if ($row[5] && $row[6]){
+				$chip_id = "$row[5]:$row[6]";
 			}
-			$rows[$j]{main::key($num++,'driver')} = $driver;
-			if ($extra > 0 && !$bsd_type){
-				if ($row[9] ){
-					my $version = main::get_module_version($row[9]);
-					$rows[$j]{main::key($num++,'v')} = $version if $version;
-				}
+			elsif ($row[6]){
+				$chip_id = $row[6];
 			}
-			if ($extra > 0){
-				$rows[$j]{main::key($num++,'bus ID')} = (!$row[2] && !$row[3]) ? 'N/A' : "$row[2].$row[3]";
-			}
-			if ($extra > 1){
-				my $chip_id = 'N/A';
-				if ($row[5] && $row[6]){
-					$chip_id = "$row[5]:$row[6]";
-				}
-				elsif ($row[6]){
-					$chip_id = $row[6];
-				}
-				$rows[$j]{main::key($num++,'chip ID')} = $chip_id;
-			}
+			$rows[$j]{main::key($num++,'chip ID')} = $chip_id;
 		}
 		#print "$row[0]\n";
 	}
@@ -5924,7 +5936,7 @@ sub usb_data {
 		# lsusb is a very expensive operation
 		if (@ids){
 			if (!$bsd_type && !$b_usb_check){
-				main::set_usb_data();
+				main::USBData::set();
 			}
 		}
 		main::log_data('dump','@ids',\@ids) if $b_log;
@@ -7619,8 +7631,8 @@ sub system_cpu_name {
 	}
 	# synthesize it, [4] will be like: cortex-a15-timer; sunxi-timer
 	# so far all with this directory show soc name, not cpu name for timer
-	elsif (! -d '/sys/firmware/devicetree/base' && @pci){
-		foreach my $ref (@pci){
+	elsif (! -d '/sys/firmware/devicetree/base' && @devices_timer){
+		foreach my $ref (@devices_timer){
 			@working = @$ref;
 			next if $working[0] ne 'timer' || !$working[4];
 			$working[4] =~ s/(-system)?-timer$//;
@@ -7993,6 +8005,13 @@ sub create_output {
 			}
 			$rows[$j]{main::key($num++,'model')} = $model;
 			$rows[$j]{main::key($num++,'size')} = $size;
+			if ($b_admin && $row{'block-physical'}){
+				# this is the same size, no point in showing it
+				# $rows[$j]{main::key($num++,'raw size')} = join ' ', main::get_size($row{'raw-size'});
+				$rows[$j]{main::key($num++,'block size')} = '';
+				$rows[$j]{main::key($num++,'physical')} = $row{'block-physical'} . ' B';
+				$rows[$j]{main::key($num++,'logical')} = ($row{'block-logical'})?$row{'block-logical'} . ' B':'N/A';
+			}
 			if ($extra > 1 && $row{'speed'}){
 				$rows[$j]{main::key($num++,'speed')} = $row{'speed'};
 				$rows[$j]{main::key($num++,'lanes')} = $row{'lanes'} if $row{'lanes'};
@@ -8043,10 +8062,10 @@ sub disk_data {
 			push @devs, $row{'dev-base'};
 		}
 	}
-	if (!$bsd_type && (my $file = main::system_files('partitions'))){
-		@data = proc_data($used,$file);
+	if (!$bsd_type){
+		@data = proc_data($used);
 	}
-	elsif ($bsd_type) {
+	else {
 		@data = dmesg_boot_data($used);
 	}
 	#print Data::Dumper::Dumper \@data;
@@ -8056,11 +8075,10 @@ sub disk_data {
 }
 sub proc_data {
 	eval $start if $b_log;
-	my ($used,$file) = @_;
+	my ($used) = @_;
 	my (@data,@drives);
 	my ($b_hdx,$size,$drive_size) = (0,0,0);
-	my @proc_partitions = main::reader($file,'strip');
-	shift @proc_partitions;
+	set_proc_partitions() if !$b_proc_partitions;
 	foreach (@proc_partitions){
 		next if (/^\s*$/);
 		my @row = split /\s+/, $_;
@@ -8112,14 +8130,23 @@ sub proc_data {
 	eval $end if $b_log;
 	return @data;
 }
+sub set_proc_partitions {
+	eval $start if $b_log;
+	$b_proc_partitions = 1;
+	if (my $file = main::system_files('partitions')){
+		@proc_partitions = main::reader($file,'strip');
+		shift @proc_partitions;
+	}
+	eval $end if $b_log;
+}
 sub proc_data_advanced {
 	eval $start if $b_log;
 	my ($b_hdx,@drives) = @_;
 	my ($i) = (0);
 	my (@data,@disk_data,@rows,@scsi,@temp,@working);
 	my ($pt_cmd) = ('unset');
-	my ($block_type,$file,$firmware,$model,$path,$partition_scheme,
-	$serial,$vendor,$working_path);
+	my ($block_type,$file,$firmware,$model,$path,
+	$partition_scheme,$serial,$vendor,$working_path);
 	@by_id = main::globber('/dev/disk/by-id/*');
 	# these do not contain any useful data, no serial or model name
 	# wwn-0x50014ee25fb50fc1 and nvme-eui.0025385b71b07e2e 
@@ -8176,6 +8203,12 @@ sub proc_data_advanced {
 			$working_path =~ s/nvme[^\/]*$//;
 		}
 		main::log_data('data',"working path: $working_path") if $b_log;
+		if ($b_admin && -e "/sys/block/"){
+				my @working = main::get_raw_disk_data('disk','',$drives[$i]{'id'},0);
+				$drives[$i]{'raw-size'} = $working[0];
+				$drives[$i]{'block-logical'} = $working[2];
+				$drives[$i]{'block-physical'} = $working[3];
+			}
 		if ($block_type && @scsi && @by_id && ! -e "${working_path}model" && ! -e "${working_path}name"){
 			## ok, ok, it's incomprehensible, search /dev/disk/by-id for a line that contains the
 			# discovered disk name AND ends with the correct identifier, sdx
@@ -8536,7 +8569,7 @@ sub device_vendor {
 	# must come before samsung MU. NOTE: toshiba can have: TOSHIBA_MK6475GSX: mush: MKNSSDCR120GB_
 	['(^MKN|Mushkin)','Mushkin','Mushkin',''], # MKNS
 	# MU = Multiple_Flash_Reader too risky: |M[UZ][^L]
-	['(SAMSUNG|^MCG[0-9]+GC|^G2 Portable)','SAMSUNG','Samsung',''], # maybe ^SM
+	['(SAMSUNG|^MCG[0-9]+GC|^G2 Portable|^DUO\b|^SP[0-9][0-9])','SAMSUNG','Samsung',''], # maybe ^SM
 	['(SanDisk|^SDS[S]?[DQ]|^SL([0-9]+)G|^AFGCE|ULTRA\sFIT|Clip Sport|Cruzer)','SanDisk','SanDisk',''],
 	['^STEC\b','^STEC\b','STEC',''], # ssd drive, must come before seagate ST test
 	# real, SSEAGATE Backup+; XP1600HE30002
@@ -8592,20 +8625,25 @@ sub device_vendor {
 	['^Imation','^Imation(\sImation)?','Imation',''], # Imation_ImationFlashDrive; TF20 is imation/tdk
 	['^(InnoDisk|Innolite)','^InnoDisk( Corp.)?','InnoDisk',''],
 	['^Innostor','^Innostor','Innostor',''],
-	['^(Intenso|(Rainbow|Speed) Line)','^Intenso','Intenso',''],
+	['^(Intenso|(Alu|Mobile|Rainbow|Speed) Line)','^Intenso','Intenso',''],
+	['^(Iomega|ZIP\b)','^Iomega','Iomega',''],
+	['^JMicron','^JMicron','JMicron',''], #JMicron H/W raid
 	['^KingDian','^KingDian','KingDian',''],
 	['^Kingfast','^Kingfast','Kingfast',''],
 	['^KingMAX','^KingMAX','KingMAX',''],
 	['^KINGSHARE','^KINGSHARE','KingShare',''],
 	['^KingSpec','^KingSpec','KingSpec',''],
+	['^LDLC','^LDLC','LDLC',''],
 	['^(LITE[\-]?ON[\s\-]?IT)','^LITE[\-]?ON[\s\-]?IT','LITE-ON IT',''], # LITEONIT_LSS-24L6G
 	['^(LITE[\-]?ON|PH6)','^LITE[\-]?ON','LITE-ON',''], # PH6-CE240-L
 	['^M-Systems','^M-Systems','M-Systems',''],
 	['^(MAXTOR)','^MAXTOR','Maxtor',''], # note M3 is usually maxtor, but can be samsung
 	['^(MT|M5|Micron)','^Micron','Micron',''],
 	['^MARVELL','^MARVELL','Marvell',''],
+	['^MDT\b','^MDT','MDT (rebuilt WD/Seagate)',''], # mdt rebuilds wd/seagate hdd
 	['^Medion','^Medion','Medion',''],
 	['^Motorola','^Motorola','Motorola',''],
+	['^OOS[1-9]','','Utania',''],
 	['^PALIT','PALIT','Palit',''], # ssd 
 	['^(PS[8F]|Patriot)','^Patriot','Patriot',''],
 	['^PIX[\s]?JR','^PIX[\s]?JR','Disney',''],
@@ -8634,9 +8672,11 @@ sub device_vendor {
 	['^TCSUNBOW','^TCSUNBOW','TCSunBow',''],
 	['^TEAC','^TEAC','TEAC',''],
 	['^TEAM','^TEAM( Group)?','Team',''],
+	['^TopSunligt','^TopSunligt','TopSunligt',''], # is this a typo? hard to know
+	['^TopSunlight','^TopSunlight','TopSunlight',''],
 	['^(TS|Transcend|JetFlash)','^Transcend','Transcend',''],
 	# Twister Line but if we slice out Twister it would just say Line
-	['^TrekStor','^TrekStor','TrekStor',''],
+	['^(TrekStor|DS maxi)','^TrekStor','TrekStor',''],
 	['^UDinfo','^UDinfo','UDinfo',''],
 	['^(UG|Unigen)','^Unigen','Unigen',''],
 	['^VBOX','','VirtualBox',''],
@@ -8807,9 +8847,10 @@ sub get {
 	my (@data,@rows);
 	my $num = 0;
 	if (($b_arm || $b_mips) && !$b_soc_gfx && !$b_pci_tool){
-		my $key = ($b_arm) ? 'ARM' : 'MIPS';
+		my $type = ($b_arm) ? 'arm' : 'mips';
+		my $key = 'Message';
 		@data = ({
-		main::key($num++,$key) => main::row_defaults(lc($key) . '-pci',''),
+		main::key($num++,$key) => main::row_defaults($type . '-pci',''),
 		},);
 		@rows = (@rows,@data);
 	}
@@ -8818,8 +8859,12 @@ sub get {
 		@rows = (@rows,@data);
 		if (!@rows){
 			my $key = 'Message';
+			my $type = 'pci-card-data';
+			if ($pci_tool && ${$alerts{$pci_tool}}{'action'} eq 'permissions'){
+				$type = 'pci-card-data-root';
+			}
 			@data = ({
-			main::key($num++,$key) => main::row_defaults('pci-card-data',''),
+			main::key($num++,$key) => main::row_defaults($type,''),
 			},);
 			@rows = (@rows,@data);
 		}
@@ -8831,63 +8876,50 @@ sub get {
 	eval $end if $b_log;
 	return @rows;
 }
-# @pci:
-# 0 type
-# 1 type_id
-# 2 bus_id
-# 3 sub_id
-# 4 device
-# 5 vendor_id
-# 6 chip_id
-# 7 rev
-# 8 port
-# 9 driver
-# 10 modules
-# not using 3D controller yet, needs research: |3D controller |display controller
-# note: this is strange, but all of these can be either a separate or the same
-# card. However, by comparing bus id, say: 00:02.0 we can determine that the
-# cards are  either the same or different. We want only the .0 version as a valid
-# card. .1 would be for example: Display Adapter with bus id x:xx.1, not the right one
+
 sub card_data {
 	eval $start if $b_log;
 	my (@rows,@data);
 	my ($j,$num) = (0,1);
-	foreach (@pci){
+	foreach (@devices_graphics){
 		$num = 1;
 		my @row = @$_;
 		#print "$row[0] $row[3]\n";
-		if ($row[3] == 0 && ( $row[0] =~ /^(vga|disp|display|display-port-controller|3d|fb|gpu|hdmi|mali)$/ ) ){
-			#print "$row[0] $row[3]\n";
-			$j = scalar @rows;
-			$driver = $row[9];
-			$driver ||= 'N/A';
-			my $card = main::trimmer($row[4]);
-			$card = ($card) ? main::pci_cleaner($card,'output') : 'N/A';
-			#$card ||= 'N/A';
-			# have seen absurdly verbose card descriptions, with non related data etc
-			if (length($card) > 85 || $size{'max'} < 110){
-				$card = main::pci_long_filter($card);
-			}
-			@data = ({
-			main::key($num++,'Device') => $card,
-			},);
-			@rows = (@rows,@data);
-			if ($extra > 2 && $b_pci_tool && $row[11]){
-				my $item = main::get_pci_vendor($row[4],$row[11]);
-				$rows[$j]{main::key($num++,'vendor')} = $item if $item;
-			}
-			$rows[$j]{main::key($num++,'driver')} = $driver;
-			if ($row[9] && !$bsd_type){
-				my $version = main::get_module_version($row[9]);
-				$version ||= 'N/A';
-				$rows[$j]{main::key($num++,'v')} = $version;
-			}
-			if ($extra > 0){
-				$rows[$j]{main::key($num++,'bus ID')} = (!$row[2] && !$row[3]) ? 'N/A' : "$row[2].$row[3]";
-			}
-			if ($extra > 1){
-				$rows[$j]{main::key($num++,'chip ID')} = ($row[5]) ? "$row[5]:$row[6]" : $row[6];
-			}
+		# not using 3D controller yet, needs research: |3D controller |display controller
+		# note: this is strange, but all of these can be either a separate or the same
+		# card. However, by comparing bus id, say: 00:02.0 we can determine that the
+		# cards are  either the same or different. We want only the .0 version as a valid
+		# card. .1 would be for example: Display Adapter with bus id x:xx.1, not the right one
+		next if $row[3] != 0;
+		#print "$row[0] $row[3]\n";
+		$j = scalar @rows;
+		$driver = $row[9];
+		$driver ||= 'N/A';
+		my $card = main::trimmer($row[4]);
+		$card = ($card) ? main::pci_cleaner($card,'output') : 'N/A';
+		# have seen absurdly verbose card descriptions, with non related data etc
+		if (length($card) > 85 || $size{'max'} < 110){
+			$card = main::pci_long_filter($card);
+		}
+		@data = ({
+		main::key($num++,'Device') => $card,
+		},);
+		@rows = (@rows,@data);
+		if ($extra > 2 && $b_pci_tool && $row[12]){
+			my $item = main::get_pci_vendor($row[4],$row[12]);
+			$rows[$j]{main::key($num++,'vendor')} = $item if $item;
+		}
+		$rows[$j]{main::key($num++,'driver')} = $driver;
+		if ($row[9] && !$bsd_type){
+			my $version = main::get_module_version($row[9]);
+			$version ||= 'N/A';
+			$rows[$j]{main::key($num++,'v')} = $version;
+		}
+		if ($extra > 0){
+			$rows[$j]{main::key($num++,'bus ID')} = (!$row[2] && !$row[3]) ? 'N/A' : "$row[2].$row[3]";
+		}
+		if ($extra > 1){
+			$rows[$j]{main::key($num++,'chip ID')} = ($row[5]) ? "$row[5]:$row[6]" : $row[6];
 		}
 		#print "$row[0]\n";
 	}
@@ -9332,7 +9364,7 @@ sub x_version {
 	# load the extra X paths, it's important that these are first, because
 	# later Xorg versions show error if run in console or ssh if the true path 
 	# is not used.
-	@paths = ( qw(/usr/lib/xorg /usr/lib/xorg-server /usr/X11R6/bin), @paths );
+	@paths = ( qw(/usr/lib /usr/lib/xorg /usr/lib/xorg-server /usr/libexec /usr/X11R6/bin), @paths );
 	# IMPORTANT: both commands send version data to stderr!
 	if ($program = main::check_program('Xorg')){
 		@data = main::grabber("$program -version 2>&1");
@@ -9363,7 +9395,7 @@ sub x_version {
 		}
 	}
 	# remove extra X paths
-	@paths = grep { !/xorg|X11R6/ } @paths;
+	@paths = grep { !/^\/usr\/lib|xorg|X11R6|libexec/ } @paths;
 	eval $end if $b_log;
 	return $version;
 }
@@ -9411,6 +9443,7 @@ sub display_compositor {
 		['sway','sway','','sway'],
 		['swc','swc','','swc'],
 		['unagi','unagi','','unagi'],
+		['unity-system-compositor','unity-system-compositor','','unity-system-compositor'],
 		['way-cooler','way-cooler','','way-cooler'],
 		['wavy','wavy','','wavy'],
 		['wayhouse','wayhouse','','wayhouse'],
@@ -10018,7 +10051,8 @@ sub get_device_vm {
 	}
 	# this will catch many Linux systems and some BSDs
 	if (!$vm || lc($vm) eq 'bochs' ) {
-		my @vm_data = (@pci,@sysctl,@dmesg_boot);
+		# $device_vm is '' if nothing detected
+		my @vm_data = (@sysctl,@dmesg_boot,$device_vm);
 		if (-e '/dev/disk/by-id'){
 			my @dev = glob('/dev/disk/by-id/*');
 			@vm_data = (@vm_data,@dev);
@@ -10083,9 +10117,10 @@ sub get {
 	@rows = (@rows,@data) if @data;
 	# note: rasberry pi uses usb networking only 
 	if (!@rows && ($b_arm || $b_mips)){
-		my $key = ($b_arm) ? 'ARM' : 'MIPS';
+		my $type = ($b_arm) ? 'arm' : 'mips';
+		my $key = 'Message';
 		@data = ({
-		main::key($num++,$key) => main::row_defaults(lc($key) . '-pci',''),
+		main::key($num++,$key) => main::row_defaults($type . '-pci',''),
 		},);
 		@rows = (@rows,@data);
 	}
@@ -10109,95 +10144,86 @@ sub get {
 	eval $end if $b_log;
 	return @rows;
 }
-# 1 type_id
-# 2 bus_id
-# 3 sub_id
-# 4 device
-# 5 vendor_id
-# 6 chip_id
-# 7 rev
-# 8 port
-# 9 driver
-# 10 modules
-# 11 driver nu (bsds)
+
 sub card_data {
 	eval $start if $b_log;
 	my ($b_wifi,@rows,@data,%holder);
 	my ($j,$num) = (0,1);
-	foreach (@pci){
+	foreach (@devices_network){
 		$num = 1;
 		my @row = @$_;
 		#print "$row[0] $row[3]\n"; 
-		# NOTE: class 06 subclass 80 
-		# https://www-s.acm.illinois.edu/sigops/2007/roll_your_own/7.c.1.html
-		if (($row[0] && $row[0] =~ /^(eth|ethernet|ethernet-phy|lan|l-lan|network|wifi|wlan)$/ )|| ($row[1] && $row[1] eq '0680' ) ){
-			#print "$row[0] $row[3]\n";
-			$j = scalar @rows;
-			my $driver = $row[9];
-			my $chip_id = "$row[5]:$row[6]";
-			# working around a virtuo bug same chip id is used on two nics
-			if (!defined $holder{$chip_id}){
-				$holder{$chip_id} = 0;
+		#print "$row[0] $row[3]\n";
+		$j = scalar @rows;
+		my $driver = $row[9];
+		my $chip_id = "$row[5]:$row[6]";
+		# working around a virtuo bug same chip id is used on two nics
+		if (!defined $holder{$chip_id}){
+			$holder{$chip_id} = 0;
+		}
+		else {
+			$holder{$chip_id}++; 
+		}
+		# first check if it's a known wifi id'ed card, if so, no print of duplex/speed
+		$b_wifi = check_wifi($row[4]);
+		my $card = $row[4];
+		$card = ($card) ? main::pci_cleaner($card,'output') : 'N/A';
+		#$card ||= 'N/A';
+		$driver ||= 'N/A';
+		@data = ({
+		main::key($num++,'Device') => $card,
+		},);
+		@rows = (@rows,@data);
+		if ($extra > 2 && $b_pci_tool && $row[12]){
+			my $item = main::get_pci_vendor($row[4],$row[12]);
+			$rows[$j]{main::key($num++,'vendor')} = $item if $item;
+		}
+		if ($row[1] eq '0680'){
+			$rows[$j]{main::key($num++,'type')} = 'network bridge';
+		}
+		$rows[$j]{main::key($num++,'driver')} = $driver;
+		my $bus_id = 'N/A';
+		# note: for arm/mips we want to see the single item bus id, why not?
+		# note: we can have bus id: 0002 / 0 which is valid, but 0 / 0 is invalid
+		if (defined $row[2] && $row[2] ne '0' && defined $row[3]){$bus_id = "$row[2].$row[3]"}
+		elsif (defined $row[2] && $row[2] ne '0'){$bus_id = $row[2]}
+		elsif (defined $row[3] && $row[3] ne '0'){$bus_id = $row[3]}
+		if ($extra > 0){
+			if ($row[9] && !$bsd_type){
+				my $version = main::get_module_version($row[9]);
+				$version ||= 'N/A';
+				$rows[$j]{main::key($num++,'v')} = $version;
+			}
+			$row[8] ||= 'N/A';
+			# as far as I know, wifi has no port, but in case it does in future, use it
+			$rows[$j]{main::key($num++,'port')} = $row[8] if (!$b_wifi || ( $b_wifi && $row[8] ne 'N/A') );
+			$rows[$j]{main::key($num++,'bus ID')} = $bus_id;
+		}
+		if ($extra > 1){
+			$rows[$j]{main::key($num++,'chip ID')} = $chip_id;
+		}
+		if ($show{'network-advanced'}){
+			@data = ();
+			if (!$bsd_type){
+				@data = advanced_data_sys($row[5],$row[6],$holder{$chip_id},$b_wifi,'',$bus_id);
 			}
 			else {
-				$holder{$chip_id}++; 
+				@data = advanced_data_bsd("$row[9]$row[11]",$b_wifi) if defined $row[9] && defined $row[11];
 			}
-			# first check if it's a known wifi id'ed card, if so, no print of duplex/speed
-			$b_wifi = check_wifi($row[4]);
-			my $card = $row[4];
-			$card = ($card) ? main::pci_cleaner($card,'output') : 'N/A';
-			#$card ||= 'N/A';
-			$driver ||= 'N/A';
-			@data = ({
-			main::key($num++,'Device') => $card,
-			},);
-			@rows = (@rows,@data);
-			#if ($extra > 2 && $b_pci_tool && $row[11]){
-			#	my $item = main::get_pci_vendor($row[4],$row[11]);
-			#	$rows[$j]{main::key($num++,'model')} = $item if $item;
-			#}
-			if ($row[1] eq '0680'){
-				$rows[$j]{main::key($num++,'type')} = 'network bridge';
-			}
-			$rows[$j]{main::key($num++,'driver')} = $driver;
-			my $bus_id = 'N/A';
-			# note: for arm/mips we want to see the single item bus id, why not?
-			# note: we can have bus id: 0002 / 0 which is valid, but 0 / 0 is invalid
-			if (defined $row[2] && $row[2] ne '0' && defined $row[3]){$bus_id = "$row[2].$row[3]"}
-			elsif (defined $row[2] && $row[2] ne '0'){$bus_id = $row[2]}
-			elsif (defined $row[3] && $row[3] ne '0'){$bus_id = $row[3]}
-			if ($extra > 0){
-				if ($row[9] && !$bsd_type){
-					my $version = main::get_module_version($row[9]);
-					$version ||= 'N/A';
-					$rows[$j]{main::key($num++,'v')} = $version;
-				}
-				$row[8] ||= 'N/A';
-				# as far as I know, wifi has no port, but in case it does in future, use it
-				$rows[$j]{main::key($num++,'port')} = $row[8] if (!$b_wifi || ( $b_wifi && $row[8] ne 'N/A') );
-				$rows[$j]{main::key($num++,'bus ID')} = $bus_id;
-			}
-			if ($extra > 1){
-				$rows[$j]{main::key($num++,'chip ID')} = $chip_id;
-			}
-			if ($show{'network-advanced'}){
-				if (!$bsd_type){
-					@data = advanced_data_sys($row[5],$row[6],$holder{$chip_id},$b_wifi,'',$bus_id);
-				}
-				else {
-					@data = advanced_data_bsd("$row[9]$row[11]",$b_wifi);
-				}
-				@rows = (@rows,@data);
-			}
+			@rows = (@rows,@data) if @data;
 		}
 		#print "$row[0]\n";
 	}
 	# @rows = ();
 	# we want to handle ARM errors in main get
-	if (!@rows && !$b_arm){
+	if (!@rows && !$b_arm && !$b_mips){
 		my $key = 'Message';
+		my $type = 'pci-card-data';
+		if ($pci_tool && ${$alerts{$pci_tool}}{'action'} eq 'permissions'){
+			$type = 'pci-card-data-root';
+		}
 		@data = ({
-		main::key($num++,$key) => main::row_defaults('pci-card-data',''),
+		main::key($num++,$key) => main::row_defaults($type,''),
 		},);
 		@rows = (@rows,@data);
 		
@@ -10224,6 +10250,7 @@ sub usb_data {
 			$driver = $row[15] if $row[15];
 			$path = $row[3] if $row[3];
 			$path_id = $row[2] if $row[2];
+			$type = $row[14] if $row[14];
 			$test = "$driver $product $type";
 			if ($product && network_device($test)){
 				$driver ||= 'usb-network';
@@ -10244,6 +10271,7 @@ sub usb_data {
 					$rows[$j]{main::key($num++,'serial')} = main::apply_filter($row[16]);
 				}
 				if ($show{'network-advanced'}){
+					@data = ();
 					if (!$bsd_type){
 						my (@temp,$vendor,$chip);
 						@temp = split (/:/, $row[7]) if $row[7];
@@ -10317,7 +10345,7 @@ sub advanced_data_sys {
 		# print "d1:$data1 v:$vendor d2:$data2 c:$chip bus_id: $bus_id\n";
 		# print Cwd::abs_path($_), "\n" if $bus_id;
 		if ( $b_usb || $b_check || ( $data1 && $data2 && $data1 eq $vendor && $data2 eq $chip && 
-		( ($b_arm || $b_mips || $b_ppc || $b_sparc) || $bus_id && Cwd::abs_path($_) =~ /$bus_id\// ) )) {
+		( ($b_arm || $b_mips || $b_ppc || $b_sparc) || check_bus_id($_,$bus_id) ) ) ) {
 			$if = $_;
 			$if =~ s/^\/.+\///;
 			# print "top: if: $if ifs: @ifs_found\n";
@@ -10370,6 +10398,7 @@ sub advanced_data_sys {
 	eval $end if $b_log;
 	return @rows;
 }
+
 sub advanced_data_bsd {
 	eval $start if $b_log;
 	return if ! @ifs_bsd;
@@ -10599,6 +10628,22 @@ sub network_device {
 	}
 	eval $end if $b_log;
 	return $b_network;
+}
+sub check_bus_id {
+	eval $start if $b_log;
+	my ($path,$bus_id) = @_;
+	my ($b_valid);
+	if ($bus_id){
+		# legacy, not link, but uevent has path: 
+		# PHYSDEVPATH=/devices/pci0000:00/0000:00:0a.1/0000:05:00.0
+		if (Cwd::abs_path($path) =~ /$bus_id\// || 
+		 ( -r "$path/uevent" && -s "$path/uevent" && 
+		 (grep {/$bus_id/} main::reader("$path/uevent") ) ) ){
+			$b_valid = 1;
+		}
+	}
+	eval $end if $b_log;
+	return $b_valid;
 }
 sub check_wifi {
 	my ($item) = @_;
@@ -10969,17 +11014,17 @@ sub create_output {
 	eval $start if $b_log;
 	my $num = 0;
 	my $j = 0;
-	my (@data,@data2,%part,@rows,$dev,$dev_type,$fs);
-	@partitions = sort { $a->{'id'} cmp $b->{'id'} } @partitions;
+	my (@data,@data2,%part,@rows,$dev,$dev_type,$fs,$percent,$raw_size,$size,$used);
+	@partitions = sort { $a->{$show{'partition-sort'}} cmp $b->{$show{'partition-sort'}} } @partitions;
 	foreach my $ref (@partitions){
 		my %row = %$ref;
 		$num = 1;
 		next if $row{'type'} eq 'secondary' && $show{'partition'};
 		@data2 = main::get_size($row{'size'}) if (defined $row{'size'});
-		my $size = (@data2) ? $data2[0] . ' ' . $data2[1]: 'N/A';
+		$size = (@data2) ? $data2[0] . ' ' . $data2[1]: 'N/A';
 		@data2 = main::get_size($row{'used'}) if (defined $row{'used'});
-		my $used = (@data2) ? $data2[0] . ' ' . $data2[1]: 'N/A';
-		my $percent = (defined $row{'percent-used'}) ? ' (' . $row{'percent-used'} . '%)' : '';
+		$used = (@data2) ? $data2[0] . ' ' . $data2[1]: 'N/A';
+		$percent = (defined $row{'percent-used'}) ? ' (' . $row{'percent-used'} . '%)' : '';
 		%part = ();
 		if (defined $row{'dev-base'}){
 			if ($row{'dev-base'} =~ /^non-dev-/){
@@ -11010,12 +11055,37 @@ sub create_output {
 		$j = scalar @rows;
 		@data = ({
 		main::key($num++,'ID') => $row{'id'},
-		main::key($num++,'size') => $size,
-		main::key($num++,'used') => $used . $percent,
-		main::key($num++,'fs') => $fs,
-		main::key($num++,$dev_type) => $dev,
 		});
 		@rows = (@rows,@data);
+		if ($b_admin && $row{'raw-size'} ){
+			# It's an error! permissions or missing tool
+			if (!main::is_numeric($row{'raw-size'})){
+				$raw_size = $row{'raw-size'};
+			}
+			else {
+				@data2 = main::get_size($row{'raw-size'});
+				$raw_size = (@data2) ? $data2[0] . ' ' . $data2[1]: 'N/A';
+			}
+			$rows[$j]{main::key($num++,'raw size')} = $raw_size;
+		}
+		if ($b_admin && $row{'raw-available'} && $size ne 'N/A'){
+			$size .=  ' (' . $row{'raw-available'} . '%)';
+		}
+		$rows[$j]{main::key($num++,'size')} = $size;
+		$rows[$j]{main::key($num++,'used')} = $used . $percent;
+		$rows[$j]{main::key($num++,'fs')} = $fs;
+		if ($b_admin && $fs eq 'swap' && $row{'swappiness'}){
+			$rows[$j]{main::key($num++,'swappiness')} = $row{'swappiness'};
+		}
+		if ($b_admin && $fs eq 'swap' && $row{'cache-pressure'}){
+			$rows[$j]{main::key($num++,'cache pressure')} = $row{'cache-pressure'};
+		}
+		if ($b_admin && $row{'block-size'}){
+			$rows[$j]{main::key($num++,'block size')} = $row{'block-size'} . ' B';;
+			#$rows[$j]{main::key($num++,'physical')} = $row{'block-size'} . ' B';
+			#$rows[$j]{main::key($num++,'logical')} = $row{'block-logical'} . ' B';
+		}
+		$rows[$j]{main::key($num++,$dev_type)} = $dev;
 		if ($show{'label'}){
 			$rows[$j]{main::key($num++,'label')} = ($row{'label'}) ? $row{'label'}: 'N/A';
 		}
@@ -11030,11 +11100,18 @@ sub create_output {
 sub partition_data {
 	eval $start if $b_log;
 	#return if $bsd_type && $bsd_type eq 'darwin'; # darwin has muated output, of course
-	my (@data,@rows,@mapper,@mount,@partitions_working,%part);
+	my (@data,@rows,@mapper,@mount,@partitions_working,%part,@working);
 	my ($b_fake_map,$b_fs,$b_load,$cols,$roots) = (0,1,0,6,0);
 	my ($back_size,$back_used) = (4,3);
-	my ($dev_base,$fs,$id,$label,$percent_used,$size,$type,$uuid,$used);
+	my ($block_log,$block_size,$blockdev,$dev_base,$fs,$id,$label,$percent_used,$raw_size,
+	$size_available,$size,$type,$uuid,$used);
 	$b_partitions = 1;
+	if ($b_admin){
+		# for partition block size
+		$blockdev = main::check_program('blockdev');
+		# for raw partition sizes
+		DiskData::set_proc_partitions() if !$bsd_type && !$b_proc_partitions;
+	}
 	set_lsblk() if !$bsd_type && !$b_lsblk;
 	# set labels, uuid, gpart
 	set_label_uuid() if !$b_label_uuid;
@@ -11091,17 +11168,10 @@ sub partition_data {
 		   ($b_fs && ($row[2] == 0 || $row[1] eq 'tmpfs' || $row[1] eq 'autofs' ))){
 			next;
 		}
-		$dev_base = '';
-		$fs = '';
-		$id = '';
-		$label = '';
-		$size = 0;
-		$used = 0;
+		($dev_base,$fs,$id,$label,$type,$uuid) = ('','','','','');
+		($b_load,$block_log,$block_size,$percent_used,$raw_size,
+		$size_available,$size,$used) = (0,0,0,0,0,0,0,0);
 		%part = ();
-		$percent_used = 0;
-		$type = '';
-		$uuid = '';
-		$b_load = 0;
 		# NOTE: using -P for linux fixes line wraps, and for bsds, assuming they don't use such long file names
 		if ($row[0] =~ /^\/dev\/|:\/|\/\//){
 			# this could point to by-label or by-uuid so get that first. In theory, abs_path should 
@@ -11175,13 +11245,24 @@ sub partition_data {
 			$id = join ' ', @row[$cols .. $#row];
 			$id =~ s/\/home\/[^\/]+\/(.*)/\/home\/$filter_string\/$1/ if $show{'filter'};
 			$size = $row[$cols - $back_size];
+			if ($b_admin && -e "/sys/block/"){
+				@working = main::get_raw_disk_data('part',$blockdev,$dev_base,$size);
+				$raw_size = $working[0];
+				$size_available = $working[1];
+				$block_log = $working[2];
+				$block_size = $working[3];
+			}
 			$used = $row[$cols - $back_used];
 			$percent_used = sprintf( "%.1f", ( $used/$size )*100 ) if ($size);
 			@data = ({
+			'block-logical' => $block_log,
+			'block-size' => $block_size,
 			'id' => $id,
 			'dev-base' => $dev_base,
 			'fs' => $fs,
 			'label' => $label,
+			'raw-size' => $raw_size,
+			'raw-available' => $size_available,
 			'size' => $size,
 			'type' => $type,
 			'used' => $used,
@@ -11200,7 +11281,7 @@ sub partition_data {
 
 sub swap_data {
 	eval $start if $b_log;
-	my (@swap,@working,$path,$label,$uuid);
+	my (@swap,@working,$cache_pressure,$path,$label,$swappiness,$uuid);
 	my ($s,$j,$size_id,$used_id) = (1,0,2,3);
 	if (!$bsd_type){
 		# faster, avoid subshell, same as swapon -s
@@ -11211,6 +11292,11 @@ sub swap_data {
 			# note: while -s is deprecated, --show --bytes is not supported
 			# on older systems
 			@working = main::grabber("$path -s 2>/dev/null");
+		}
+		if ($b_admin){
+			my @data = swap_advanced_data();
+			$swappiness = $data[0];
+			$cache_pressure = $data[1];
 		}
 	}
 	else {
@@ -11245,11 +11331,13 @@ sub swap_data {
 			}
 		}
 		@data = ({
-		'id' => "swap-$s",
+		'cache-pressure' => $cache_pressure,
 		'dev-base' => $dev_base,
 		'fs' => 'swap',
+		'id' => "swap-$s",
 		'label' => $label,
 		'size' => $size,
+		'swappiness' => $swappiness,
 		'type' => 'main',
 		'used' => $used,
 		'uuid' => $uuid,
@@ -11260,6 +11348,24 @@ sub swap_data {
 	}
 	eval $end if $b_log;
 	return @swap;
+}
+sub swap_advanced_data {
+	eval $start if $b_log;
+	my ($swappiness,$cache_pressure) = ('','');
+	if (-r "/proc/sys/vm/swappiness"){
+		$swappiness = (main::reader("/proc/sys/vm/swappiness"))[0];
+		if (defined $swappiness){
+			$swappiness .= ($swappiness == 60) ? ' (default)' : ' (default 60)' ;
+		}
+	}
+	if (-r "/proc/sys/vm/vfs_cache_pressure"){
+		$cache_pressure = (main::reader("/proc/sys/vm/vfs_cache_pressure"))[0];
+		if (defined $cache_pressure){
+			$cache_pressure .= ($cache_pressure == 100) ? ' (default)' : ' (default 100)' ;
+		}
+	}
+	eval $end if $b_log;
+	return ($swappiness,$cache_pressure);
 }
 sub get_mounts_fs {
 	eval $start if $b_log;
@@ -11340,9 +11446,9 @@ sub set_lsblk {
 	$b_lsblk = 1;
 	my (@temp,@working);
 	if (my $program = main::check_program('lsblk')){
-		@working = main::grabber("$program -bP --output NAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,SERIAL,MOUNTPOINT 2>/dev/null");
+		@working = main::grabber("$program -bP --output NAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,SERIAL,MOUNTPOINT,PHY-SEC,LOG-SEC 2>/dev/null");
 		foreach (@working){
-			if (/NAME="([^"]*)"\s+TYPE="([^"]*)"\s+RM="([^"]*)"\s+FSTYPE="([^"]*)"\s+SIZE="([^"]*)"\s+LABEL="([^"]*)"\s+UUID="([^"]*)"\s+SERIAL="([^"]*)"\s+MOUNTPOINT="([^"]*)"/){
+			if (/NAME="([^"]*)"\s+TYPE="([^"]*)"\s+RM="([^"]*)"\s+FSTYPE="([^"]*)"\s+SIZE="([^"]*)"\s+LABEL="([^"]*)"\s+UUID="([^"]*)"\s+SERIAL="([^"]*)"\s+MOUNTPOINT="([^"]*)"\s+PHY-SEC="([^"]*)"\s+LOG-SEC="([^"]*)"/){
 				my $size = ($5) ? $5/1024: 0;
 				# some versions of lsblk do not return serial, fs, uuid, or label
 				my @temp = ({
@@ -11355,19 +11461,21 @@ sub set_lsblk {
 				'uuid' => $7,
 				'serial' => $8,
 				'mount' => $9,
+				'block-physical' => $10,
+				'block-logical' => $11,
 				});
 				@lsblk = (@lsblk,@temp);
 			}
 		}
 	}
-	# print Data::Dumper::Dumper \@lsblk;
+	#print Data::Dumper::Dumper \@lsblk;
 	main::log_data('dump','@lsblk',\@lsblk) if $b_log;
 	eval $end if $b_log;
 }
 sub check_lsblk {
 	eval $start if $b_log;
 	my ($name,$b_size) = @_;
-	my (%part,@row);
+	my (%part);
 	foreach my $ref (@lsblk){
 		my %row = %$ref;
 		next if ! $row{'name'};
@@ -11466,12 +11574,21 @@ package ProcessData;
 sub get {
 	eval $start if $b_log;
 	my (@processes,@rows);
-	if ($show{'ps-cpu'}){
-		@rows = cpu_processes();
-		@processes = (@processes,@rows);
+	if (@ps_aux){
+		if ($show{'ps-cpu'}){
+			@rows = cpu_processes();
+			@processes = (@processes,@rows);
+		}
+		if ($show{'ps-mem'}){
+			@rows = mem_processes();
+			@processes = (@processes,@rows);
+		}
 	}
-	if ($show{'ps-mem'}){
-		@rows = mem_processes();
+	else {
+		my $key = 'Message';
+		@rows = ({
+		main::key(1,$key) => main::row_defaults('ps-data-null',''),
+		},);
 		@processes = (@processes,@rows);
 	}
 	return @processes;
@@ -11552,7 +11669,7 @@ sub mem_processes {
 	}
 	@rows = splice @rows,0,$count;
 	#print Data::Dumper::Dumper \@rows;
-	@processes = main::memory_data_full('process') if !$b_mem;
+	@processes = main::get_memory_data_full('process') if !$b_mem;
 	$j = scalar @rows;
 	my $throttled = throttled($ps_count,$count,$j);
 	#$cpu_mem = ' - CPU: % used' if $extra > 0;
@@ -11915,9 +12032,8 @@ sub raid_data {
 sub hardware_raid {
 	eval $start if $b_log;
 	my ($driver,$vendor,@data,@working);
-	foreach my $ref (@pci){
+	foreach my $ref (@devices_hwraid){
 		@working = @$ref;
-		next if $working[1] ne '0104';
 		$driver = ($working[9]) ? lc($working[9]): '';
 		$driver =~ s/-/_/g if $driver;
 		my $driver_version = ($driver) ? main::get_module_version($driver): '';
@@ -12238,7 +12354,7 @@ sub get {
 	my (@data,@rows,$key1,@ram,$val1);
 	my $num = 0;
 	my $ref = $alerts{'dmidecode'};
-	@rows = main::memory_data_full('ram') if !$b_mem;
+	@rows = main::get_memory_data_full('ram') if !$b_mem;
 	if ( !$b_fake_dmidecode && $$ref{'action'} ne 'use'){
 		$key1 = $$ref{'action'};
 		$val1 = $$ref{$key1};
@@ -12837,6 +12953,8 @@ sub get_repos_linux {
 	my $tce_file = '/opt/tcemirror';
 	my $yum_conf = '/etc/yum.conf';
 	my $yum_repo_dir = '/etc/yum.repos.d/';
+	my $xbps_dir_1 = '/etc/xbps.d/';
+	my $xbps_dir_2 = '/usr/share/xbps.d/';
 	my $zypp_repo_dir = '/etc/zypp/repos.d/';
 	my $b_test = 0;
 	# apt - debian, buntus, also sometimes some yum/rpm repos may create 
@@ -13198,6 +13316,16 @@ sub get_repos_linux {
 		@data = repo_builder($tce_file,'tce','^\s*[^#]+');
 		@rows = (@rows,@data);
 	}
+	# void  $xbps_dir_1
+	if (-d $xbps_dir_1 || -d $xbps_dir_2){
+		@files = main::globber("$xbps_dir_1*.conf");
+		@files = (@files,main::globber("$xbps_dir_2*.conf")) if -d $xbps_dir_2;
+		main::log_data('data',"xbps repo files:\n" . main::joiner(\@files, "\n", 'unset') ) if $b_log;
+		foreach ( sort @files){
+			@data = repo_builder($_,'xbps','^\s*repository\s*=','\s*=\s*',1) if -r $_;
+			@rows = (@rows,@data);
+		}
+	}
 	# Mandriva/Mageia using: urpmq
 	if ( $path = main::check_program('urpmq') ){
 		@data2 = main::grabber("$path --list-media active --list-url","\n",'strip');
@@ -13432,6 +13560,7 @@ sub repo_builder {
 	'slackpkg+' => 'No active slackpkg+ repos in',
 	'slaptget' => 'No active slapt-get repos in',
 	'tce' => 'No active tce mirrors in',
+	'xbps' => 'No active xbps repos in',
 	'yum' => 'No active yum repos in',
 	'zypp' => 'No active zypp repos in',
 	);
@@ -13455,6 +13584,7 @@ sub repo_builder {
 	'slackpkg+' => 'slackpkg+ repos in',
 	'slaptget' => 'slapt-get repos in',
 	'tce' => 'Active tce mirrors in',
+	'xbps' => 'Active xbps repos in',
 	'yum' => 'Active yum repos in',
 	'zypp' => 'Active zypp repos in',
 	);
@@ -14816,7 +14946,7 @@ sub usb_data {
 			main::key($num++,'Hub') => $bus_id,
 			main::key($num++,'info') => $product,
 			main::key($num++,'ports') => $ports,
-			main::key($num++,'usb') => $speed,
+			main::key($num++,'rev') => $speed,
 			},);
 			@rows = (@rows,@data);
 			$b_hub = 1;
@@ -14837,7 +14967,13 @@ sub usb_data {
 			if ($extra > 2 && $id[9]){
 				$rows[$j]{main::key($num++,'interfaces')} = $id[9];
 			}
-			$rows[$j]{main::key($num++,'usb')} = $speed;
+			$rows[$j]{main::key($num++,'rev')} = $speed;
+		}
+		if ($extra > 2 && main::is_numeric($id[17])){
+			my $speed = $id[17];
+			if ($speed >= 1000) {$speed = ($id[17] / 1000 ) . " Gb/s"}
+			else {$speed = $id[17] . " Mb/s"}
+			$rows[$j]{main::key($num++,'speed')} = $speed;
 		}
 		if ($extra > 1){
 			$rows[$j]{main::key($num++,'chip ID')} = $chip_id;
@@ -15761,11 +15897,14 @@ sub get_ps_de_data {
 		['qtile','qtile','qtile','qtile'],
 		['ratpoison','ratpoison','ratpoison','ratpoison'],
 		['sawfish','sawfish','sawfish','sawfish'],
+		['sway','sway','sway','sway'],
 		['matchbox-window-manager','matchbox-window-manager',
 		  'matchbox-window-manager','matchbox-window-manager'],
 		['afterstep','afterstep','afterstep','afterstep'],
 		['bspwm','bspwm','bspwm','bspwm'],
 		['tvtwm','tvtwm','tvtwm','tvtwm'],
+		['waycooler','waycooler','way-cooler','way-cooler'],
+		['way-cooler','way-cooler','way-cooler','way-cooler'],
 		['WindowMaker','WindowMaker','wmaker','wmaker'],
 		['windowlab','windowlab','windowlab','windowlab'],
 		['wmx','wmx','wmx','wmx'],
@@ -15858,7 +15997,7 @@ sub get_wm_main {
 		$wms .= 'twin|kwin_wayland|kwin_x11|kwin|lwm|matchbox-window-manager|marco|';
 		$wms .= 'muffin|deepin-mutter|mutter|deepin-metacity|metacity|mwm|';
 		$wms .= 'nawm|notion|openbox|orbital|perceptia|qtile|ratpoison|sawfish|scrotwm|spectrwm|';
-		$wms .= 'tvtwm|twm|windowlab|WindowMaker|wm2|wmii2|wmii|wmx|xfwm4|xfwm5|xmonad';
+		$wms .= 'sway|tvtwm|twm|way-?cooler|windowlab|WindowMaker|wm2|wmii2|wmii|wmx|xfwm4|xfwm5|xmonad';
 		foreach (@ps_gui){
 			if (/^($wms)$/){
 				$working = $1;
@@ -15925,7 +16064,7 @@ sub set_info_data {
 	$pattern .= 'latte|latte-dock|lemonbar|ltpanel|lxpanel|lxqt-panel|';
 	$pattern .= 'matchbox-panel|mate-panel|ourico|';
 	$pattern .= 'perlpanel|plank|plasma-desktop|plasma-netbook|polybar|pypanel|';
-	$pattern .= 'razor-panel|razorqt-panel|stalonetray|taskbar|tint2|trayer|';
+	$pattern .= 'razor-panel|razorqt-panel|stalonetray|swaybar|taskbar|tint2|trayer|';
 	$pattern .= 'vala-panel|wbar|wharf|wingpanel|witray|';
 	$pattern .= 'xfce4-panel|xfce5-panel|xmobar|yabar';
 	if (@data = grep {/^($pattern)$/} @ps_gui ) {
@@ -16632,15 +16771,19 @@ sub get_init_data {
 		# missing data: note, runit can install as a dependency without being the 
 		# init system: http://smarden.org/runit/sv.8.html
 		# NOTE: the proc test won't work on bsds, so if runit is used on bsds we 
-		# will need more data
+		# will need more datas
 		elsif ($comm =~ /runit/){
 			$init = 'runit';
+		}
+		elsif ($comm =~ /^s6/){
+			$init = 's6';
 		}
 	}
 	if (!$init){
 		# output: /sbin/init --version:  init (upstart 1.1)
 		# init (upstart 0.6.3)
-		if ($init_version = program_version('init', 'upstart', '3','--version')){
+		# openwrt /sbin/init hangs on --version command, I think
+		if ((!$b_mips && !$b_sparc && !$b_arm) && ($init_version = program_version('init', 'upstart', '3','--version') )){
 			$init = 'Upstart';
 		}
 		elsif (check_program('launchctl')){
@@ -16720,6 +16863,38 @@ sub get_kernel_bits {
 	$bits ||= 'N/A';
 	eval $end if $b_log;
 	return $bits;
+}
+
+sub get_memory_data_full {
+	eval $start if $b_log;
+	my ($source) = @_;
+	my $num = 0;
+	my ($memory,@rows);
+	my ($gpu_ram,$percent,$total,$used) = (0,'','','');
+	if ($show{'ram'} || (!$show{'info'} && $show{'process'} )){
+		$memory = get_memory_data('splits');
+		if ($memory){
+			my @temp = split /:/, $memory;
+			my @temp2 = get_size($temp[0]);
+			$gpu_ram = $temp[3] if $temp[3];
+			$total = ($temp2[1]) ? $temp2[0] . ' ' . $temp2[1] : $temp2[0];
+			@temp2 = get_size($temp[1]);
+			$used = ($temp2[1]) ? $temp2[0] . ' ' . $temp2[1] : $temp2[0];
+			$used .= " ($temp[2]%)" if $temp[2];
+			if ($gpu_ram){
+				@temp2 = get_size($gpu_ram);
+				$gpu_ram = $temp2[0] . ' ' . $temp2[1] if $temp2[1];
+			}
+		}
+		my $key = ($source eq 'process') ? 'System RAM': 'RAM';
+		$rows[0]{main::key($num++,$key)} = '';
+		$rows[0]{main::key($num++,'total')} = $total;
+		$rows[0]{main::key($num++,'used')} = $used;
+		$rows[0]{main::key($num++,'gpu')} = $gpu_ram if $gpu_ram;
+		$b_mem = 1;
+	}
+	eval $end if $b_log;
+	return @rows;
 }
 
 sub get_memory_data {
@@ -16907,6 +17082,59 @@ sub get_pci_vendor {
 	eval $end if $b_log;
 	return $vendor;
 }
+# args: 1: type disk/part; 2: blockdev full path (part only); 
+# 3: block id; 4: size (part only)
+sub get_raw_disk_data {
+	eval $start if $b_log;
+	my ($type,$blockdev,$id,$size) = @_;
+	# 0: calc block 1: available percent 2: logical block size 
+	# 3: disk physical block size/partition block size;
+	my @sizes = (0,0,0,0); 
+	my ($block_log,$block_size,$percent,$size_raw) = (0,0,0,0);
+	if ($type eq 'part'){
+		foreach (@proc_partitions){
+			my @row = split /\s+/, $_;
+			if ($row[-1] eq $id){
+				$size_raw = $row[2];
+				last;
+			}
+		}
+		# fallback, old systems don't have lsblk
+		if ($blockdev){
+			# this is the actual logical block size
+			$block_size = (main::grabber("$blockdev --getbsz /dev/$id 2>/dev/null"))[0];
+		}
+		if (!$size_raw){
+			$size_raw = 'N/A';
+		}
+		else {
+			$percent = sprintf("%.2f", ($size/$size_raw ) * 100) if $size && $size_raw;
+		}
+	}
+	else {
+		#my $path_size = "/sys/block/$id/size";
+		my $path_log_block = "/sys/block/$id/queue/logical_block_size";
+		my $path_phy_block = "/sys/block/$id/queue/physical_block_size";
+		# legacy system path
+		if (! -e $path_phy_block && -r "/sys/block/$id/queue/hw_sector_size" ){
+			$path_phy_block = "/sys/block/$id/queue/hw_sector_size";
+		}
+		if ( -r $path_log_block || -r $path_phy_block ){
+			# not used
+			# $size_raw = (main::reader($path_size))[0] if -r $path_size;
+			$block_log = (main::reader($path_log_block))[0] if  -r $path_log_block;
+			$block_size = (main::reader($path_phy_block))[0] if -r $path_phy_block;
+			#if ($size_raw && $block_log){
+			#	$size_raw = sprintf("%.1f", $block_log * ($size_raw/1024 ) );
+			#}
+		}
+	}
+	# print "$id size: $size %: $percent l-b: $block_log p-b: $block_size raw: $size_raw\n";
+	@sizes = ($size_raw,$percent,$block_log,$block_size); 
+	main::log_data('dump','@sizes',\@sizes) if $b_log;
+	eval $end if $b_log;
+	return @sizes;
+}
 
 # # check? /var/run/nologin for bsds?
 sub get_runlevel_data {
@@ -17041,7 +17269,7 @@ sub get_shell_source {
 		# so: perl (2) started pinxi with sudo (3) in sh (4) in terminal
 		for my $i (2..4){
 			if ( $shell_parent && 
-		     $shell_parent =~ /^(bash|csh|dash|ksh|lksh|loksh|mksh|pdksh|perl|sh|su|sudo|tcsh|zsh)$/ ){
+		     $shell_parent =~ /^(ash|bash|csh|dash|ksh|lksh|loksh|mksh|pdksh|perl|sh|su|sudo|tcsh|zsh)$/ ){
 				# no idea why have to do script_parent action twice in su case, but you do.
 				$self_parent = get_start_parent($self_parent);
 				$shell_parent = get_shell_parent($self_parent);
@@ -17154,6 +17382,7 @@ sub get_tty_number {
 # 10:23PM  up 5 days, 16:17, 1 user, load averages: 0.85, 0.90, 1.00
 # 05:36:47 up 1 day,  3:28,  4 users,  load average: 1,88, 0,98, 0,62
 # 05:36:47 up 1 day,  3 min,  4 users,  load average: 1,88, 0,98, 0,62
+# 04:41:23 up  2:16,  load average: 7.13, 6.06, 3.41 # root openwrt
 sub get_uptime {
 	eval $start if $b_log;
 	my ($days,$hours,$minutes,$uptime) = ('','','','');
@@ -17162,7 +17391,7 @@ sub get_uptime {
 		$uptime = trimmer($uptime);
 		#$uptime = '05:36:47 up 3 min,  4 users,  load average: 1,88, 0,98, 0,62';
 		if ($uptime && 
-		 $uptime =~ /[\S]+\s+up\s+(([0-9]+)\s+day[s]?,\s+)?(([0-9]{1,2}):([0-9]{1,2})|([0-9]+)\smin[s]?),\s+[0-9]+\s+user/){
+		 $uptime =~ /[\S]+\s+up\s+(([0-9]+)\s+day[s]?,\s+)?(([0-9]{1,2}):([0-9]{1,2})|([0-9]+)\smin[s]?),\s+([0-9]+\s+user|load average)/){
 			$days = $2 . 'd' if $2;
 			$days .= ' ' if ($days && ($4 || $6));
 			if ($4 && $5){
@@ -17184,6 +17413,522 @@ sub get_uptime {
 #### -------------------------------------------------------------------
 #### SET DATA VALUES
 #### -------------------------------------------------------------------
+
+## creates arrays: @devices_audio; @devices_graphics; @devices_hwraid; 
+## @devices_network; @devices_timer plus @devices for logging/debugging
+# 0 type
+# 1 type_id
+# 2 bus_id
+# 3 sub_id
+# 4 device
+# 5 vendor_id
+# 6 chip_id
+# 7 rev
+# 8 port
+# 9 driver
+# 10 modules
+# 11 driver_nu [bsd, like: em0 - driver em; nu 0. Used to match IF in -n
+# 12 subsystem/vendor
+# 13 subsystem vendor_id:chip id
+# 14 soc handle
+## DeviceData / PCI / SOC
+{
+package DeviceData;
+my (@data,@devices,@files,@full_names,@pcis,@temp,@temp2,@temp3);
+
+my ($busid,$busid_nu,$chip_id,$content,$device,$driver,$driver_nu,$file,
+$handle,$modules,$port,$rev,$temp,$type,$type_id,$vendor,$vendor_id);
+
+sub set {
+	eval $start if $b_log;
+	$_[0] = 1; # check boolean passed by reference
+	if ( $b_pci ){
+		if (!$bsd_type){
+			if ($alerts{'lspci'}{'action'} eq 'use' ){
+				lspci_data();
+			}
+			# ! -d '/proc/bus/pci'
+			# this is sketchy, a sbc won't have pci, but a non sbc arm may have it, so 
+			# build up both and see what happens
+			if ($b_arm || $b_mips || $b_ppc || $b_sparc){
+				soc_data();
+			}
+		}
+		else {
+			#if (1 == 1){
+			if ($alerts{'pciconf'}{'action'} eq 'use'){
+				pciconf_data();
+			}
+			elsif ($alerts{'pcidump'}{'action'} eq 'use'){
+				pcidump_data();
+			}
+		}
+		if ($test[9]){
+			print Data::Dumper::Dumper \@devices_audio;
+			print Data::Dumper::Dumper \@devices_graphics;
+			print Data::Dumper::Dumper \@devices_network;
+			print Data::Dumper::Dumper \@devices_hwraid;
+			print Data::Dumper::Dumper \@devices_timer;
+			print "vm: $device_vm\n";
+		}
+		if ( $b_log){
+			main::log_data('dump','@devices_audio',\@devices_audio);
+			main::log_data('dump','@devices_graphics',\@devices_graphics);
+			main::log_data('dump','@devices_hwraid',\@devices_hwraid);
+			main::log_data('dump','@devices_network',\@devices_network);
+			main::log_data('dump','@devices_timer',\@devices_timer);
+		}
+	}
+	@devices = undef;
+	eval $end if $b_log;
+}
+
+sub lspci_data {
+	eval $start if $b_log;
+	my ($subsystem,$subsystem_id);
+	@data = pci_grabber('lspci');
+	#print Data::Dumper::Dumper \@data;
+	foreach (@data){
+		#print "$_\n";
+		if ($device){
+			if ($_ =~ /^~$/) {
+				@temp = ($type,$type_id,$busid,$busid_nu,$device,$vendor_id,$chip_id,
+				$rev,$port,$driver,$modules,$driver_nu,$subsystem,$subsystem_id);
+				assign_data('pci',@temp);
+				$device = '';
+				#print "$busid $device_id r:$rev p: $port\n$type\n$device\n";
+			}
+			elsif ($_ =~ /^Subsystem.*\[([a-f0-9]{4}:[a-f0-9]{4})\]/){
+				$subsystem_id = $1;
+				$subsystem = (split /^Subsystem:\s*/,$_)[1];
+				$subsystem =~ s/(\s?\[[^\]]+\])+$//g;
+				$subsystem = main::cleaner($subsystem);
+				$subsystem = main::pci_cleaner($subsystem,'pci');
+				$subsystem = main::pci_cleaner_subsystem($subsystem);
+				#print "ss:$subsystem\n";
+			}
+			elsif ($_ =~ /^I\/O\sports/){
+				$port = (split /\s+/,$_)[3];
+				#print "p:$port\n";
+			}
+			elsif ($_ =~ /^Kernel\sdriver\sin\suse/){
+				$driver = (split /:\s*/,$_)[1];
+			}
+			elsif ($_ =~ /^Kernel\smodules/i){
+				$modules = (split /:\s*/,$_)[1];
+			}
+		}
+		# note: arm servers can have more complicated patterns
+		# 0002:01:02.0 Ethernet controller [0200]: Cavium, Inc. THUNDERX Network Interface Controller virtual function [177d:a034] (rev 08)
+		elsif ($_ =~ /^(([0-9a-f]{2,4}:)?[0-9a-f]{2}:[0-9a-f]{2})[.:]([0-9a-f]+)\s(.*)\s\[([0-9a-f]{4}):([0-9a-f]{4})\](\s\(rev\s([^\)]+)\))?/){
+			$busid = $1;
+			$busid_nu = hex($3);
+			@temp = split /:\s+/, $4;
+			$device = $temp[1];
+			$type = $temp[0];
+			$vendor_id = $5;
+			$chip_id = $6;
+			$rev = ($8)? $8 : '';
+			$device = main::cleaner($device);
+			$temp[0] =~ /\[([^\]]+)\]$/;
+			$type_id = $1;
+			$b_hardware_raid = 1 if $type_id eq '0104';
+			$type = lc($type);
+			$type = main::pci_cleaner($type,'pci');
+			$type =~ s/\s+$//;
+			#print "$type\n";
+			($driver,$driver_nu,$modules,$subsystem,$subsystem_id) = ('','','','','');
+		}
+	}
+	print Data::Dumper::Dumper \@devices if $test[4];
+	main::log_data('dump','lspci @devices',\@devices) if $b_log;
+	eval $end if $b_log;
+}
+
+# em0@pci0:6:0:0:	class=0x020000 card=0x10d315d9 chip=0x10d38086 rev=0x00 hdr=0x00
+#     vendor     = 'Intel Corporation'
+#     device     = 'Intel 82574L Gigabit Ethernet Controller (82574L)'
+#     class      = network
+#     subclass   = ethernet
+sub pciconf_data {
+	eval $start if $b_log;
+	@data = pci_grabber('pciconf');
+	foreach (@data){
+		if ($driver){
+			if ($_ =~ /^~$/) {
+				$vendor = main::cleaner($vendor);
+				$device = main::cleaner($device);
+				if ($vendor && $device){
+					if ($vendor !~ /$device/i){
+						$device = "$vendor $device";
+					}
+				}
+				elsif (!$device){
+					$device = $vendor;
+				}
+				@temp = ($type,$type_id,$busid,$busid_nu,$device,$vendor_id,$chip_id,
+				$rev,$port,$driver,$modules,$driver_nu);
+				assign_data('pci',@temp);
+				$driver = '';
+				#print "$busid $device_id r:$rev p: $port\n$type\n$device\n";
+			}
+			elsif ($_ =~ /^vendor/){
+				$vendor = (split /\s+=\s+/,$_)[1];
+				#print "p:$port\n";
+			}
+			elsif ($_ =~ /^device/){
+				$device = (split /\s+=\s+/,$_)[1];
+			}
+			elsif ($_ =~ /^class/i){
+				$type = (split /\s+=\s+/,$_)[1];
+			}
+		}
+		elsif (/^([^@]+)\@pci([0-9]{1,3}:[0-9]{1,3}:[0-9]{1,3}):([0-9]{1,3}).*class=([^\s]+)\scard=([^\s]+)\schip=([^\s]+)\srev=([^\s]+)/){
+			$driver = $1;
+			$busid = $2;
+			$busid_nu = $3;
+			$type_id = $4;
+			#$vendor_id = $5;
+			$vendor_id = substr($6,6,4);
+			$chip_id = substr($6,2,4);
+			$rev = $7;
+			$driver =~ /(^[a-z]+)([0-9]+$)/;
+			$driver = $1;
+			$driver_nu = $2;
+			# convert to 4 character, strip off 0x, and last trailing sub sub class.
+			$type_id =~ s/^(0x)?([0-9a-f]{4}).*/$2/ if $type_id;
+			($device,$type,$vendor) = ('','','');
+		}
+	}
+	print Data::Dumper::Dumper \@devices if $test[4];
+	main::log_data('dump','pciconf @devices',\@devices) if $b_log;
+	eval $end if $b_log;
+}
+
+sub pcidump_data {
+	eval $start if $b_log;
+	@data = pci_grabber('pcidump');
+	foreach (@data){
+		if ($_ =~ /^~$/ && $busid && $device) {
+			@temp = ($type,$type_id,$busid,$busid_nu,$device,$vendor_id,$chip_id,
+			$rev,$port,$driver,$modules,$driver_nu);
+			assign_data('pci',@temp);
+			($type,$type_id,$busid,$busid_nu,$device,$vendor_id,$chip_id,
+			$rev,$port,$driver,$modules,$driver_nu) = undef;
+			next;
+		}
+		if ($_ =~ /^([0-9a-f:]+):([0-9]+):\s([^:]+)$/i){
+			$busid = $1;
+			$busid_nu = $2;
+			$device = main::cleaner($3);
+		}
+		elsif ($_ =~ /^0x[\S]{4}: Vendor ID: ([0-9a-f]{4}) Product ID: ([0-9a-f]{4})/ ){
+			$vendor_id = $1;
+			$chip_id = $2;
+		}
+		elsif ($_ =~ /^0x[\S]{4}: Class: ([0-9a-f]{2}) Subclass: ([0-9a-f]{2}) Interface: ([0-9a-f]+) Revision: ([0-9a-f]+)/){
+			$type = pci_class($1);
+			$type_id = "$1$2";
+		}
+	}
+	print Data::Dumper::Dumper \@devices if $test[4];
+	main::log_data('dump','pcidump @devices',\@devices) if $b_log;
+	eval $end if $b_log;
+}
+sub pci_grabber {
+	eval $start if $b_log;
+	my ($program) = @_;
+	my ($args,$pattern,@working);
+	if ($program eq 'lspci'){
+		$args = ' -knnv';
+		$pattern = '^[0-9a-f]+:';
+	}
+	elsif ($program eq 'pciconf'){
+		$args = ' -lv';
+		$pattern = '^([^@]+)\@pci';
+	}
+	elsif ($program eq 'pcidump'){
+		$args = ' -v';
+		$pattern = '^[0-9a-f]+:';
+	}
+	my $path = main::check_program($program);
+	@data = main::grabber("$path $args 2>/dev/null",'','strip');
+	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/pciconf/pci-freebsd-8.2-2";
+	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/pcidump/pci-openbsd-6.1-vm.txt";
+	#my $file = "$ENV{HOME}/bin/scripts/inxi/data/lspci/racermach-1-knnv.txt";
+	#my $file = "$ENV{HOME}/bin/scripts/inxi/data/lspci/rk016013-knnv.txt";
+	#@data = main::reader($file,'strip');
+	if (@data){
+		$b_pci_tool = 1 if scalar @data > 10;
+		foreach (@data){
+			if ($_ =~ /$pattern/i){
+				push @working, '~';
+			}
+			push @working, $_;
+		}
+		push @working, '~';
+	}
+	#print Data::Dumper::Dumper \@working;
+	eval $end if $b_log;
+	return @working;
+}
+
+sub soc_data {
+	eval $start if $b_log;
+	soc_devices_files();
+	soc_devices();
+	soc_devicetree();
+	print Data::Dumper::Dumper \@devices if $test[4];
+	main::log_data('dump','soc @devices',\@devices) if $b_log;
+	eval $end if $b_log;
+}
+# 1: /sys/devices/platform/soc/1c30000.ethernet/uevent:["DRIVER=dwmac-sun8i", "OF_NAME=ethernet", 
+# "OF_FULLNAME=/soc/ethernet@1c30000", "OF_COMPATIBLE_0=allwinner,sun8i-h3-emac", 
+# "OF_COMPATIBLE_N=1", "OF_ALIAS_0=ethernet0", # "MODALIAS=of:NethernetT<NULL>Callwinner,sun8i-h3-emac"]
+# 2: /sys/devices/platform/soc:audio/uevent:["DRIVER=bcm2835_audio", "OF_NAME=audio", "OF_FULLNAME=/soc/audio", 
+# "OF_COMPATIBLE_0=brcm,bcm2835-audio", "OF_COMPATIBLE_N=1", "MODALIAS=of:NaudioT<NULL>Cbrcm,bcm2835-audio"]
+# 3: /sys/devices/platform/soc:fb/uevent:["DRIVER=bcm2708_fb", "OF_NAME=fb", "OF_FULLNAME=/soc/fb", 
+# "OF_COMPATIBLE_0=brcm,bcm2708-fb", "OF_COMPATIBLE_N=1", "MODALIAS=of:NfbT<NULL>Cbrcm,bcm2708-fb"]
+# 4: /sys/devices/platform/soc/1c40000.gpu/uevent:["OF_NAME=gpu", "OF_FULLNAME=/soc/gpu@1c40000", 
+# "OF_COMPATIBLE_0=allwinner,sun8i-h3-mali", "OF_COMPATIBLE_1=allwinner,sun7i-a20-mali", 
+# "OF_COMPATIBLE_2=arm,mali-400", "OF_COMPATIBLE_N=3", 
+# "MODALIAS=of:NgpuT<NULL>Callwinner,sun8i-h3-maliCallwinner,sun7i-a20-maliCarm,mali-400"]
+# 5: /sys/devices/platform/soc/soc:internal-regs/d0018180.gpio/uevent
+# 6: /sys/devices/soc.0/1180000001800.mdio/8001180000001800:05/uevent
+#  ["DRIVER=AR8035", "OF_NAME=ethernet-phy"
+# 7: /sys/devices/soc.0/1c30000.eth/uevent
+# 8: /sys/devices/wlan.26/uevent [from pine64]
+# 9: /sys/devices/platform/audio/uevent:["DRIVER=bcm2835_AUD0", "OF_NAME=audio"
+# 10: /sys/devices/vio/71000002/uevent:["DRIVER=ibmveth", "OF_NAME=l-lan"
+# 11: /sys/devices/platform/soc:/soc:i2c-hdmi:/i2c-2/2-0050/uevent:['OF_NAME=hdmiddc'
+# 12: /sys/devices/platform/soc:/soc:i2c-hdmi:/uevent:['DRIVER=i2c-gpio', 'OF_NAME=i2c-hdmi'
+sub soc_devices_files {
+	eval $start if $b_log;
+	if (-d '/sys/devices/platform/'){
+		@files = main::globber('/sys/devices/platform/soc*/*/uevent');
+		@temp2 = main::globber('/sys/devices/platform/soc*/*/*/uevent');
+		@files = (@files,@temp2) if @temp2;
+		@temp2 = main::globber('/sys/devices/platform/*/uevent');
+		@files = (@files,@temp2) if @temp2;
+	}
+	if (main::globber('/sys/devices/soc*')){
+		@temp2 = main::globber('/sys/devices/soc*/*/uevent');
+		@files = (@files,@temp2) if @temp2;
+		@temp2 = main::globber('/sys/devices/soc*/*/*/uevent');
+		@files = (@files,@temp2) if @temp2;
+	}
+	@temp2 = main::globber('/sys/devices/*/uevent'); # see case 8
+	@files = (@files,@temp2) if @temp2;
+	@temp2 = main::globber('/sys/devices/*/*/uevent'); # see case 10
+	@files = (@files,@temp2) if @temp2;
+	@temp2 = undef;
+	# not sure why, but even as root/sudo, /subsystem|driver/uevent are unreadable with -r test true
+	@files = grep {!/\/(subsystem|driver)\//} @files if @files;
+	@files = main::uniq(@files);
+	eval $end if $b_log;
+}
+sub soc_devices {
+	eval $start if $b_log;
+	my (@working);
+	foreach $file (@files){
+		next if -z $file;
+		$chip_id = $file;
+		# variants: /soc/20100000.ethernet/ /soc/soc:audio/ /soc:/ /soc@0/ /soc:/12cb0000.i2c:/
+		# mips: /sys/devices/soc.0/1180000001800.mdio/8001180000001800:07/
+		# ppc: /sys/devices/vio/71000002/
+		$chip_id =~ /\/sys\/devices\/(platform\/)?(soc[^\/]*\/)?([^\/]+\/)?([^\/]+\/)?([^\/\.:]+)([\.:])?([^\/:]+)?:?\/uevent$/;
+		$chip_id = $5;
+		$temp = $7;
+		@working = main::reader($file, 'strip') if -r $file;
+		foreach my $data (@working){
+			@temp2 = split /=/, $data;
+			if ($temp2[0] eq 'DRIVER'){
+				$driver = $temp2[1];
+				$driver =~ s/-/_/g if $driver; # kernel uses _, not - in module names
+			}
+			elsif ($temp2[0] eq 'OF_NAME'){
+				$type = $temp2[1];
+			}
+			# we'll use these paths to test in device tree pci completer
+			elsif ($temp2[0] eq 'OF_FULLNAME' && $temp2[1]){
+				# we don't want the short names like /soc, /led and so on
+				push @full_names, $temp2[1] if (() = $temp2[1] =~ /\//g) > 1;
+				$handle = (split /@/, $temp2[1])[-1] if $temp2[1] =~ /@/;
+			}
+			elsif ($temp2[0] eq 'OF_COMPATIBLE_0'){
+				@temp3 = split /,/, $temp2[1];
+				$device = $temp3[-1];
+				$vendor_id = $temp3[0];
+			}
+		}
+		# it's worthless, we can't use it
+		next if ! defined $type;
+		$type_id = $type;
+		$type = soc_type($type);
+		$chip_id = '' if ! defined $chip_id;
+		$vendor_id = '' if ! defined $vendor_id;
+		$driver = '' if ! defined $driver;
+		$handle = '' if ! defined $handle;
+		$busid = (defined $temp && main::is_int($temp)) ? $temp: 0;
+		($busid_nu,$modules,$port,$rev) = (0,'','','');
+		@temp3 = ($type,$type_id,$busid,$busid_nu,$device,$vendor_id,$chip_id,$rev,
+		$port,$driver,$modules,'','','',$handle);
+		assign_data('soc',@temp3);
+	}
+	eval $end if $b_log;
+}
+sub soc_devicetree {
+	eval $start if $b_log;
+	# now we want to fill in stuff that was not in /sys/devices/ 
+	if (-d '/sys/firmware/devicetree/base/soc'){
+		@files = main::globber('/sys/firmware/devicetree/base/soc/*/compatible');
+		my $test = (@full_names) ? join('|', sort @full_names) : 'xxxxxx';
+		foreach $file (@files){
+			if ( $file !~ m%$test%){
+				($handle,$content,$device,$type,$type_id,$vendor_id) = ('','','','','','');
+				$content = (main::reader($file, 'strip'))[0] if -r $file;
+				$file =~ m%soc/([^@]+)@([^/]+)/compatible$%;
+				$type = $1;
+				next if !$type || !$content;
+				$handle = $2 if $2;
+				$type_id = $type;
+				$type = soc_type($type);
+				if ($content){
+					@temp3 = split /,/, $content;
+					$vendor_id = $temp3[0];
+					$device = $temp3[-1];
+					# strip off those weird device tree special characters
+					$device =~ s/\x01|\x02|\x03|\x00//g;
+				}
+				@temp3 = ($type,$type_id,0,0,$device,$vendor_id,'soc','','','','','','','',$handle);
+				assign_data('soc',@temp3);
+				main::log_data('dump','@devices @temp3',\@temp3) if $b_log;
+			}
+		}
+	}
+	eval $end if $b_log;
+}
+sub assign_data {
+	my ($tool,@data) = @_;
+	if (check_graphics($data[0],$data[1])){
+		@devices_graphics = (@devices_graphics,[@data]);
+		$b_soc_gfx = 1 if $tool eq 'soc';
+	}
+	# for hdmi, we need gfx/audio both
+	if (check_audio($data[0],$data[1])){
+		@devices_audio = (@devices_audio,[@data]);
+		$b_soc_audio = 1 if $tool eq 'soc';
+	}
+	elsif (check_hwraid($data[0],$data[1])){
+		@devices_hwraid = (@devices_hwraid,[@data]);
+		$b_soc_net = 1 if $tool eq 'soc';
+	}
+	elsif (check_network($data[0],$data[1])){
+		@devices_network = (@devices_network,[@data]);
+		$b_soc_net = 1 if $tool eq 'soc';
+	}
+	elsif (check_timer($data[0],$data[1])){
+		@devices_timer = (@devices_timer,[@data]);
+		$b_soc_timer = 1;
+	}
+	# not used at this point, -M comes before ANG
+	# $device_vm = check_vm($data[4]) if ( (!$b_ppc && !$b_mips) && !$device_vm );
+	@devices = (@devices,[@data]);
+}
+# note: for soc, these have been converted in set_soc_type()
+sub check_audio {
+	if ( ( $_[1] && length($_[1]) == 4 && $_[1] =~/^04/ ) ||
+		( $_[0] && $_[0] =~ /^(audio|hdmi|multimedia|sound)$/ )){
+		return 1;
+	}
+	else {return 0}
+}
+sub check_graphics {
+	if ( ( $_[1] && length($_[1]) == 4 && $_[1] =~/^03/ ) ||
+	( $_[0] && $_[0] =~ /^(vga|display|hdmi|3d)$/)){
+		return 1;
+	}
+	else {return 0}
+}
+sub check_hwraid {
+	return 1 if ( $_[1] && $_[1] eq '0104' );
+}
+# NOTE: class 06 subclass 80 
+# https://www-s.acm.illinois.edu/sigops/2007/roll_your_own/7.c.1.html
+sub check_network {
+	if ( ( $_[1] && length($_[1]) == 4 && ($_[1] =~/^02/ || $_[1] eq '0680' ) ) ||
+		( $_[0] && $_[0] =~  /^(ethernet|network|wifi|wlan)$/ ) ){
+		return 1;
+	}
+	else {return 0}
+}
+sub check_timer {
+	return 1 if ( $_[0] && $_[0] eq 'timer' );
+}
+sub check_vm {
+	if ( $_[0] && $_[0] =~ /(innotek|vbox|virtualbox|vmware|qemu)/i ) {
+		return $1
+	}
+	else {return ''}
+}
+
+sub soc_type {
+	my ($type) = @_;
+	if ($type =~ /^(daudio|.*hifi.*|.*sound[\-_]card)$/){
+		$type = 'audio';
+	}
+	elsif ($type =~ /^((meson)?fb|disp|display(-[^\s]+)?|gpu|mali)$/){
+		$type = 'display';
+	}
+	# includes ethernet-phy, meson-eth
+	elsif ($type =~ /^(([^\s]+-)?eth|ethernet(-[^\s]+)?|lan|l-lan)$/){
+		$type = 'ethernet';
+	}
+	elsif ($type =~ /^(.*wlan.*|.*wifi.*)$/){
+		$type = 'wifi';
+	}
+	# needs to catch variants like hdmi-tx but not hdmi-connector
+	elsif ($type =~ /^(.*hdmi(-?tx)?)$/){
+		$type = 'hdmi';
+	}
+	elsif ($type =~ /^timer$/){
+		$type = 'timer';
+	}
+	return $type;
+}
+sub pci_class {
+	eval $start if $b_log;
+	my ($id) = @_;
+	$id = lc($id);
+	my %classes = (
+	'00' => 'unclassified',
+	'01' => 'mass-storage',
+	'02' => 'network',
+	'03' => 'display',
+	'04' => 'audio',
+	'05' => 'memory',
+	'06' => 'bridge',
+	'07' => 'communication',
+	'08' => 'peripheral',
+	'09' => 'input',
+	'0a' => 'docking',
+	'0b' => 'processor',
+	'0c' => 'serialbus',
+	'0d' => 'wireless',
+	'0e' => 'intelligent',
+	'0f' => 'satellite',
+	'10' => 'encryption',
+	'11' => 'signal-processing',
+	'12' => 'processing-accelerators',
+	'13' => 'non-essential-instrumentation',
+	'40' => 'coprocessor',
+	'ff' => 'unassigned',
+	);
+	my $type = (defined $classes{$id}) ? $classes{$id}: 'unhandled';
+	eval $end if $b_log;
+	return $type;
+}
+}
 
 sub set_dmesg_boot_data {
 	eval $start if $b_log;
@@ -17228,16 +17973,16 @@ sub set_dmesg_boot_data {
 		if ($b_dm_boot_disk && @dmesg_boot){
 			@dm_boot_disk = grep {/^(ad|ada|da|mmcblk|mmcsd|nvme[0-9]+n|sd|wd)[0-9]+(:|\sat\s)/} @dmesg_boot;
 			log_data('dump','@dm_boot_disk',\@dm_boot_disk) if $b_log;
-			print Dumper \@dm_boot_disk if $test[9];
+			print Dumper \@dm_boot_disk if $test[11];
 		}
 		if ($b_dm_boot_optical && @dmesg_boot){
 			@dm_boot_optical = grep {/^(cd)[0-9]+(\([^)]+\))?(:|\sat\s)/} @dmesg_boot;
 			log_data('dump','@dm_boot_optical',\@dm_boot_optical) if $b_log;
-			print Dumper \@dm_boot_optical if $test[9];
+			print Dumper \@dm_boot_optical if $test[11];
 		}
 	}
 	log_data('dump','@dmesg_boot',\@dmesg_boot) if $b_log;
-	#print Dumper \@dmesg_boot if $test[9];
+	#print Dumper \@dmesg_boot if $test[11];
 	eval $end if $b_log;
 }
 
@@ -17487,321 +18232,22 @@ sub set_ifconfig {
 	eval $end if $b_log;
 }
 
-sub set_pci_data {
-	eval $start if $b_log;
-	$_[0] = 1; # check boolean passed by reference
-	if ( $b_pci ){
-		if (!$bsd_type){
-			if ($alerts{'lspci'}{'action'} eq 'use' ){
-				set_lspci_data();
-			}
-			# ! -d '/proc/bus/pci'
-			# this is sketchy, a sbc won't have pci, but a non sbc arm may have it, so 
-			# build up both and see what happens
-			if ($b_arm || $b_mips || $b_ppc || $b_sparc){
-				set_soc_data();
-			}
-		}
-		else {
-			#if (1 == 1){
-			if ($alerts{'pciconf'}{'action'} eq 'use'){
-				set_pciconf_data();
-			}
-		}
-	}
-	eval $end if $b_log;
-}
-
-# 0 type
-# 1 type_id
-# 2 bus_id
-# 3 sub_id
-# 4 device
-# 5 vendor_id
-# 6 chip_id
-# 7 rev
-# 8 port
-# 9 driver
-# 10 modules
-# 11 driver_nu [bsd, like: em0 - driver em; nu 0. Used to match IF in -n
-# 12 subsystem/vendor
-# 13 subsystem vendor:chip id
-sub set_lspci_data {
-	eval $start if $b_log;
-	my ($busid,$busid_nu,$content,$port,$driver,$modules,$device,$vendor_id,$chip_id,$rev,
-	$subsystem,$subsystem_id,$type,$type_id,@pcis,@temp,@working);
-	# my @pcis = grabber('lspci -nnv','\n','strip');
-	my $path = check_program('lspci');
-	$content = qx($path -nnv 2>/dev/null) if $path;
-	@pcis = split /\n/, $content if $content;
-	#my $file = "$ENV{HOME}/bin/scripts/inxi/data/lspci/racermach-1-knnv.txt";
-	#my $file = "$ENV{HOME}/bin/scripts/inxi/data/lspci/rk016013-knnv.txt";
-	#@pcis = reader($file);
-	#print scalar @pcis;
-	@pcis = map {$_ =~ s/^\s+//; $_} @pcis if @pcis;
-	$b_pci_tool = 1 if @pcis && scalar @pcis > 10;
-	foreach (@pcis){
-		#print "$_\n";
-		if ($device){
-			if ($_ =~ /^\s*$/) {
-				@temp = ($type,$type_id,$busid,$busid_nu,$device,$vendor_id,$chip_id,
-				$rev,$port,$driver,$modules,$subsystem,$subsystem_id);
-				@pci = (@pci,[@temp]);
-				$device = '';
-				#print "$busid $device_id r:$rev p: $port\n$type\n$device\n";
-			}
-			elsif ($_ =~ /^Subsystem.*\[([a-f0-9]{4}:[a-f0-9]{4})\]/){
-				$subsystem_id = $1;
-				$subsystem = (split /^Subsystem:\s*/,$_)[1];
-				$subsystem =~ s/(\s?\[[^\]]+\])+$//g;
-				$subsystem = cleaner($subsystem);
-				$subsystem = pci_cleaner($subsystem,'pci');
-				$subsystem = pci_cleaner_subsystem($subsystem);
-				#print "ss:$subsystem\n";
-			}
-			elsif ($_ =~ /^I\/O\sports/){
-				$port = (split /\s+/,$_)[3];
-				#print "p:$port\n";
-			}
-			elsif ($_ =~ /^Kernel\sdriver\sin\suse/){
-				$driver = (split /:\s*/,$_)[1];
-			}
-			elsif ($_ =~ /^Kernel\smodules/i){
-				$modules = (split /:\s*/,$_)[1];
-			}
-		}
-		# note: arm servers can have more complicated patterns
-		# 0002:01:02.0 Ethernet controller [0200]: Cavium, Inc. THUNDERX Network Interface Controller virtual function [177d:a034] (rev 08)
-		elsif ($_ =~ /^(([0-9a-f]{2,4}:)?[0-9a-f]{2}:[0-9a-f]{2})[.:]([0-9a-f]+)\s(.*)\s\[([0-9a-f]{4}):([0-9a-f]{4})\](\s\(rev\s([^\)]+)\))?/){
-			$busid = $1;
-			$busid_nu = hex($3);
-			@working = split /:\s+/, $4;
-			$device = $working[1];
-			$type = $working[0];
-			$vendor_id = $5;
-			$chip_id = $6;
-			$rev = ($8)? $8 : '';
-			$device = cleaner($device);
-			$working[0] =~ /\[([^\]]+)\]$/;
-			$type_id = $1;
-			$b_hardware_raid = 1 if $type_id eq '0104';
-			$type = lc($type);
-			$type = pci_cleaner($type,'pci');
-			$type =~ s/\s+$//;
-			$port = '';
-			$driver = '';
-			$modules = '';
-			$subsystem = '';
-			$subsystem_id = '';
-		}
-	}
-	if ($device && $busid){
-		@temp = ($type,$type_id,$busid,$busid_nu,$device,$vendor_id,$chip_id,
-		$rev,$port,$driver,$modules,$subsystem,$subsystem_id);
-		@pci = (@pci,[@temp]);
-		$device = '';
-	}
-	print Dumper \@pci if $test[4];
-	main::log_data('dump','@pci',\@pci) if $b_log;
-	eval $end if $b_log;
-}
-
-# em0@pci0:6:0:0:	class=0x020000 card=0x10d315d9 chip=0x10d38086 rev=0x00 hdr=0x00
-#     vendor     = 'Intel Corporation'
-#     device     = 'Intel 82574L Gigabit Ethernet Controller (82574L)'
-#     class      = network
-#     subclass   = ethernet
-sub set_pciconf_data {
-	eval $start if $b_log;
-	my ($busid,$busid_nu,$content,$port,$driver,$driver_nu,$modules,$device,$vendor,
-	$vendor_id,$chip_id,$rev,$type,$type_id,@data,@temp,@working);
-# 	my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/pciconf/pci-freebsd-8.2-2";
-# 	open my $fh, '<', $file or die "can't open $file: $!";
-# 	chomp(@data = <$fh>);
-	my $path = check_program('pciconf');
-	$content = qx($path -lv 2>/dev/null) if $path;
-	@data = split /\n/, $content if $content;
-	$b_pci_tool = 1 if @data && scalar @data > 10;
-	foreach (@data){
-		if ($_ =~ /^[^@]+\@pci/){
-			push @working, '';
-		}
-		$_ =~ s/^\s+//;
-		push @working, $_;
-	}
-	foreach (@working){
-		if ($driver){
-			if ($_ =~ /^\s*$/) {
-				$vendor = cleaner($vendor);
-				$device = cleaner($device);
-				if ($vendor && $device){
-					if ($vendor !~ /$device/i){
-						$device = "$vendor $device";
-					}
-				}
-				elsif (!$device){
-					$device = $vendor;
-				}
-				@temp = ($type,$type_id,$busid,$busid_nu,$device,$vendor_id,$chip_id,
-				$rev,$port,$driver,$modules,$driver_nu);
-				@pci = (@pci,[@temp]);
-				$driver = '';
-				#print "$busid $device_id r:$rev p: $port\n$type\n$device\n";
-			}
-			elsif ($_ =~ /^vendor/){
-				$vendor = (split /\s+=\s+/,$_)[1];
-				#print "p:$port\n";
-			}
-			elsif ($_ =~ /^device/){
-				$device = (split /\s+=\s+/,$_)[1];
-			}
-			elsif ($_ =~ /^class/i){
-				$type = (split /\s+=\s+/,$_)[1];
-			}
-		}
-		elsif (/^([^@]+)\@pci([0-9]{1,3}:[0-9]{1,3}:[0-9]{1,3}):([0-9]{1,3}).*class=([^\s]+)\scard=([^\s]+)\schip=([^\s]+)\srev=([^\s]+)/){
-			$driver = $1;
-			$busid = $2;
-			$busid_nu = $3;
-			$type_id = $4;
-			#$vendor_id = $5;
-			$vendor_id = substr($6,6,4);
-			$chip_id = substr($6,2,4);
-			$rev = $7;
-			$vendor = '';
-			$device = '';
-			$type = '';
-			$driver =~ /(^[a-z]+)([0-9]+$)/;
-			$driver = $1;
-			$driver_nu = $2;
-		}
-	}
-	if ($driver && $busid){
-		$vendor = cleaner($vendor);
-		$device = cleaner($device);
-		$device = ( $vendor && $device !~ /$vendor/) ? "$vendor $device" : $device;
-		@temp = ($type,$type_id,$busid,$busid_nu,$device,$vendor_id,$chip_id,$rev,$port,$driver,$modules,$driver_nu);
-		@pci = (@pci,[@temp]);
-		$device = '';
-	}
-	print Dumper \@pci if $test[4];
-	main::log_data('dump','@pci',\@pci) if $b_log;
-	eval $end if $b_log;
-}
-
-## 1
-# /soc/1c30000.ethernet/uevent:["DRIVER=dwmac-sun8i", "OF_NAME=ethernet", 
-# "OF_FULLNAME=/soc/ethernet@1c30000", "OF_COMPATIBLE_0=allwinner,sun8i-h3-emac", 
-# "OF_COMPATIBLE_N=1", "OF_ALIAS_0=ethernet0", # "MODALIAS=of:NethernetT<NULL>Callwinner,sun8i-h3-emac"]
-## 2
-# /soc:audio/uevent:["DRIVER=bcm2835_audio", "OF_NAME=audio", "OF_FULLNAME=/soc/audio", 
-# "OF_COMPATIBLE_0=brcm,bcm2835-audio", "OF_COMPATIBLE_N=1", "MODALIAS=of:NaudioT<NULL>Cbrcm,bcm2835-audio"]
-## 3
-# /soc:fb/uevent:["DRIVER=bcm2708_fb", "OF_NAME=fb", "OF_FULLNAME=/soc/fb", 
-# "OF_COMPATIBLE_0=brcm,bcm2708-fb", "OF_COMPATIBLE_N=1", "MODALIAS=of:NfbT<NULL>Cbrcm,bcm2708-fb"]
-## 4
-# /soc/1c40000.gpu/uevent:["OF_NAME=gpu", "OF_FULLNAME=/soc/gpu@1c40000", 
-# "OF_COMPATIBLE_0=allwinner,sun8i-h3-mali", "OF_COMPATIBLE_1=allwinner,sun7i-a20-mali", 
-# "OF_COMPATIBLE_2=arm,mali-400", "OF_COMPATIBLE_N=3", 
-# "MODALIAS=of:NgpuT<NULL>Callwinner,sun8i-h3-maliCallwinner,sun7i-a20-maliCarm,mali-400"]
-## 5
-# /sys/devices/platform/soc/soc:internal-regs/d0018180.gpio/uevent
-## 6
-# /sys/devices/soc.0/1180000001800.mdio/8001180000001800:05/uevent
-#  ["DRIVER=AR8035", "OF_NAME=ethernet-phy"
-## 7
-# /sys/devices/soc.0/1c30000.eth/uevent
-## 8
-# /sys/devices/wlan.26/uevent [from pine64]
-## 9
-# sys/devices/platform/audio/uevent:["DRIVER=bcm2835_AUD0", "OF_NAME=audio"
-## 10
-# /sys/devices/vio/71000002/uevent:["DRIVER=ibmveth", "OF_NAME=l-lan"
-sub set_soc_data {
-	eval $start if $b_log;
-	my ($content,@files,@temp2,@temp3,@working);
-	if (-d '/sys/devices/platform/'){
-		@files = globber('/sys/devices/platform/soc*/*/uevent');
-		@temp2 = globber('/sys/devices/platform/soc*/*/*/uevent');
-		@files = (@files,@temp2) if @temp2;
-		@temp2 = globber('/sys/devices/platform/*/uevent');
-		@files = (@files,@temp2) if @temp2;
-	}
-	if (globber('/sys/devices/soc*')){
-		@temp2 = globber('/sys/devices/soc*/*/uevent');
-		@files = (@files,@temp2) if @temp2;
-		@temp2 = globber('/sys/devices/soc*/*/*/uevent');
-		@files = (@files,@temp2) if @temp2;
-	}
-	@temp2 = globber('/sys/devices/*/uevent'); # see case 8
-	@files = (@files,@temp2) if @temp2;
-	@temp2 = globber('/sys/devices/*/*/uevent'); # see case 10
-	@files = (@files,@temp2) if @temp2;
-	@temp2 = undef;
-	# not sure why, but even as root/sudo, /subsystem|driver/uevent are unreadable with -r test true
-	@files = grep {!/\/(subsystem|driver)\//} @files if @files;
-	@files = uniq(@files);
-	foreach my $file (@files){
-		next if -z $file;
-		my ($busid,$busid_nu,$chip_id,$device,$driver,$modules,$port,$rev,
-		$temp,$type,$type_id,$vendor_id,@working);
-		$chip_id = $file;
-		# variants: /soc/20100000.ethernet /soc/soc:audio /soc:/ /soc@0/
-		# mips: /sys/devices/soc.0/1180000001800.mdio/8001180000001800:07/
-		# ppc: /sys/devices/vio/71000002/
-		$chip_id =~ /\/sys\/devices\/(platform\/)?(soc[^\/]*\/)?([^\/]+\/)?([^\/]+\/)?([^\/\.:]+)([\.:])?([^\/]+)?\/uevent$/;
-		$chip_id = $5;
-		$temp = $7;
-		@working = reader($file, 'strip') if -r $file;
-		foreach my $data (@working){
-			@temp2 = split /=/, $data;
-			if ($temp2[0] eq 'DRIVER'){
-				$driver = $temp2[1];
-				$driver =~ s/-/_/g if $driver; # kernel uses _, not - in module names
-			}
-			elsif ($temp2[0] eq 'OF_NAME'){
-				$type = $temp2[1];
-			}
-			elsif ($temp2[0] eq 'OF_COMPATIBLE_0'){
-				@temp3 = split /,/, $temp2[1];
-				$device = $temp3[-1];
-				$vendor_id = $temp3[0];
-			}
-		}
-		# it's worthless, we can't use it
-		next if ! defined $type;
-		$chip_id = '' if ! defined $chip_id;
-		$vendor_id = '' if ! defined $vendor_id;
-		$driver = '' if ! defined $driver;
-		$busid = (defined $temp && is_int($temp)) ? $temp: 0;
-		$busid_nu =  0;
-		$type_id =  '';
-		$port = '';
-		$rev = '';
-		$modules = '';
-		# note: use these for main Card match for -AGN
-		$b_soc_audio = 1 if $type =~ /^(audio|daudio|hdmi|hdmi-audio|multimedia)$/;
-		$b_soc_gfx = 1 if $type =~ /^(vga|disp|display|display-port-controller|3d|fb|gpu|hdmi|mali)$/;
-		$b_soc_net = 1 if $type =~ /^(eth|ethernet|ethernet-phy|lan|l-lan|network|wifi|wlan)$/;
-		@temp3 = ($type,$type_id,$busid,$busid_nu,$device,$vendor_id,$chip_id,$rev,$port,$driver,$modules);
-		@pci = (@pci,[@temp3]);
-	}
-	print Dumper \@pci if $test[4];
-	main::log_data('dump','@pci',\@pci) if $b_log;
-	eval $end if $b_log;
-}
 sub set_ps_aux {
 	eval $start if $b_log;
-	@ps_aux = grabber("ps aux",'','strip');
-	my $header = shift @ps_aux; # get rid of header row
-	# handle busy box, which has 3 columns, regular ps aux has 11
-	# avoid deprecated implicit split error in older Perls
-	my @temp = split(/\s+/, $header);
+	my ($header,@temp);
+	@ps_aux = grabber("ps aux 2>/dev/null",'','strip');
+	if (@ps_aux){
+		$header = shift @ps_aux; # get rid of header row
+		# handle busy box, which has 3 columns, regular ps aux has 11
+		# avoid deprecated implicit split error in older Perls
+		@temp = split(/\s+/, $header);
+	}
 	$ps_cols = $#temp;
 	if ($ps_cols < 10){
 		my $version = qx(ps --version 2>&1);
 		$b_bb_ps = 1 if $version =~/busybox/i;
 	}
+	return if !@ps_aux; # note: mips/openwrt ps has no 'a'
 	$_=lc for @ps_aux; # this is a super fast way to set to lower
 	# note: regular perl /.../inxi but sudo /.../inxi is added for sudo start
 	# for pinxi, we want to see the useage data for cpu/ram
@@ -17833,8 +18279,8 @@ sub set_ps_gui {
 		@temp=qw(3dwm 9wm afterstep amiwm awesome blackbox bspwm 
 		dwm fluxbox flwm flwm_topside fvwm.*-crystal fvwm2 fvwm i3 ion jwm lwm
 		matchbox-window-manager mwm nawm openbox notion orbital pekwm perceptia 
-		qtile ratpoison sawfish scrotwm spectrwm tvtwm twm 
-		windowlab WindowMaker wm2 wmii2 wmii wmx xmonad);
+		qtile ratpoison sawfish scrotwm spectrwm sway tvtwm twm 
+		waycooler way-cooler windowlab WindowMaker wm2 wmii2 wmii wmx xmonad);
 		@match = (@match,@temp);
 	}
 	# wm:
@@ -17853,8 +18299,9 @@ sub set_ps_gui {
 		kdocker kicker latte latte-dock lemonbar ltpanel lxpanel lxqt-panel 
 		matchbox-panel mate-panel ourico
 		perlpanel plank plasma-desktop plasma-netbook polybar pypanel
-		razor-panel razorqt-panel stalonetray taskbar tint2 trayer vala-panel
-		wbar wharf wingpanel witray xfce4-panel xfce5-panel xmobar yabar);
+		razor-panel razorqt-panel stalonetray swaybar taskbar tint2 trayer
+		vala-panel wbar wharf wingpanel witray xfce4-panel xfce5-panel xmobar 
+		yabar);
 		@match = (@match,@temp);
 	}
 	# compositors (for wayland these are also the server, note 
@@ -17862,8 +18309,9 @@ sub set_ps_gui {
 		@temp=qw(3dwm asc budgie-wm compiz compton deepin-wm dwc dcompmgr 
 		enlightenment fireplace gnome-shell grefson kmscon kwin_wayland kwin_x11
 		liri marco metisse mir moblin motorcar muffin mutter
-		orbital papyros perceptia rustland sommelier sway swc unagi 
-		wavy way-cooler wayhouse westford weston xcompmgr);
+		orbital papyros perceptia rustland sommelier sway swc
+		unagi unity-system-compositor
+		wavy waycooler way-cooler wayhouse westford weston xcompmgr);
 		@match = (@match,@temp);
 	}
 	@match = uniq(@match);
@@ -17940,36 +18388,36 @@ sub set_sysctl_data {
 # 14 - type string
 # 15 - driver
 # 16 - serial
-# 17 - configuration
-sub set_usb_data {
+# 17 - speed
+# 18 - configuration - not used
+## USBData
+{
+package USBData;
+my (@working);
+my ($b_hub,$addr_id,$bus_id,$bus_id_alpha,$chip_id,$class_id,
+$device_id,$driver,$ids,$interfaces,$name,$path,$path_id,$product,
+$protocol_id,$serial,$speed,$subclass_id,$type,$version,$vendor,$vendor_id,);
+my $b_live = 1; # debugger file data
+sub set {
 	eval $start if $b_log;
 	$b_usb_check = 1;
 	# if user config sets USB_SYS you can override with --usb-tool
 	if ((!$b_usb_sys || $b_usb_tool) && $alerts{'lsusb'}{'action'} eq 'use' ){
-		set_lsusb_data();
+		lsusb_data();
 	}
 	elsif (-d '/sys/bus/usb/devices'){
-		UsbSysData::set('main');
+		sys_data('main');
 	}
 	elsif ( $alerts{'usbdevs'}{'action'} eq 'use'){
-		set_usbdevs_data();
+		usbdevs_data();
 	}
 	eval $end if $b_log;
 }
 
-sub set_lsusb_data {
+sub lsusb_data {
 	eval $start if $b_log;
-	my (@data,@temp,@working);
-	my ($addr_id,$bus_id,$chip_id,$name,$path_id);
-	my $b_live = 1;
-	if ($b_live){
-		my $path = check_program('lsusb');
-		@data = grabber("$path 2>/dev/null") if $path;
-	}
-	else {
-		open my $fh, '<', "$ENV{'HOME'}/bin/scripts/inxi/data/lsusb/mdmarmer-lsusb.txt" or die $!;
-		chomp(@data = <$fh>);
-	}
+	my (@temp);
+	my @data = data_grabber('lsusb');
 	foreach (@data){
 		next if /^\s*$|^Couldn't/; # expensive second call: || /UNAVAIL/
 		@working = split /\s+/, $_;
@@ -17999,13 +18447,14 @@ sub set_lsusb_data {
 		$working[14] = '';
 		$working[15] = '';
 		$working[16] = '';
-		@
-		usb = (@usb,[@working]);
+		$working[17] = '';
+		$working[18] = '';
+		@usb = (@usb,[@working]);
 		#print join ("\n",@working),"\n\n=====\n";
 	}
-	print Dumper \@usb if $test[6];
-	UsbSysData::set('lsusb') if @usb;
-	print Dumper \@usb if $test[6];
+	print Data::Dumper::Dumper \@usb if $test[6];
+	sys_data('lsusb') if @usb;
+	print Data::Dumper::Dumper \@usb if $test[6];
 	main::log_data('dump','@usb: plain',\@usb) if $b_log;
 	eval $end if $b_log;
 }
@@ -18014,19 +18463,11 @@ sub set_lsusb_data {
 # addr 1: full speed, self powered, config 1, UHCI root hub(0x0000), Intel(0x8086), rev 1.00
 #  port 1 addr 2: full speed, power 98 mA, config 1, USB Receiver(0xc52b), Logitech(0x046d), rev 12.01
 #  port 2 powered
-sub set_usbdevs_data {
+sub usbdevs_data {
 	eval $start if $b_log;
-	my (@data,@working,$addr_id,$class,$bus_id,$chip_id,$hub_id,
-	$path_id,$port,$port_value,$name,$speed);
+	my ($class,$hub_id,$port,$port_value);
 	my ($ports,$j,$k) = (0,0,0);
-	if (!$b_fake_usbdevs){
-		my $program = check_program('usbdevs');
-		@data = grabber("$program -v 2>/dev/null");
-	}
-	else {
-		open my $fh, '<', "$ENV{'HOME'}/bin/scripts/inxi/data/lsusb/bsd-usbdevs-v-1.txt" or die $!;
-		chomp(@data = <$fh>);
-	}
+	my @data = data_grabber('usbdevs');
 	foreach (@data){
 		if (/^Controller\s\/dev\/usb([0-9]+)/){
 			# $j = scalar @usb;
@@ -18061,6 +18502,8 @@ sub set_usbdevs_data {
 			$working[14] = 'Hub';
 			$working[15] = '';
 			$working[16] = '';
+			$working[17] = '';
+			$working[18] = '';
 			$usb[$j] = ([@working],);
 			@working = ();
 		}
@@ -18091,6 +18534,8 @@ sub set_usbdevs_data {
 			$working[14] = '';
 			$working[15] = '';
 			$working[16] = '';
+			$working[17] = '';
+			$working[18] = '';
 			$usb[$j] = ([@working],);
 			${$usb[$k]}[10] = $ports;
 			@working = ();
@@ -18107,22 +18552,39 @@ sub set_usbdevs_data {
 		);
 	}
 	main::log_data('dump','@usb: usbdevs',\@usb) if $b_log;
-	print Dumper \@usb if $test[6];
+	print Data::Dumper::Dumper \@usb if $test[6];
 	eval $end if $b_log;
 }
 
-## UsbSysData
-{
-package UsbSysData;
-
-my ($b_hub,$class_id,$protocol_id,$source,$subclass_id,$type);
-
-sub set {
+sub data_grabber {
 	eval $start if $b_log;
-	($source) = @_;
-	my (@drivers,@uevent,@usb_sys,@working);
-	my ($bus_id,$bus_id_alpha,$chip_id,$configuration,$device_id,$driver,$ids,$interfaces,
-	$name,$path,$path_id,$ports,$product,$serial,$usb_version,$vendor,$vendor_id,);
+	my ($program) = @_;
+	my %args = ('lsusb' => '', 'usbdevs' => '-v');
+	my (@data);
+	if ($b_live && !$b_fake_usbdevs){
+		my $path = main::check_program($program);
+		@data = main::grabber("$path $args{$program} 2>/dev/null") if $path;
+	}
+	else {
+		my $file;
+		if ($b_fake_usbdevs){
+			$file = "$ENV{'HOME'}/bin/scripts/inxi/data/lsusb/bsd-usbdevs-v-1.txt";
+		}
+		else {
+			$file = "$ENV{'HOME'}/bin/scripts/inxi/data/lsusb/mdmarmer-lsusb.txt";
+		}
+		@data = main::reader($file);
+	}
+	#print Data::Dumper::Dumper \@data;
+	eval $end if $b_log;
+	return @data;
+}
+
+sub sys_data {
+	eval $start if $b_log;
+	my ($source) = @_;
+	my ($configuration,$ports,$usb_version);
+	my (@drivers,@uevent);
 	my $i = 0;
 	my @files = main::globber('/sys/bus/usb/devices/*');
 	# we want to get rid of the hubs with x-0: syntax, those are hubs found in /usbx
@@ -18134,8 +18596,8 @@ sub set {
 		if ( $ids){
 			@drivers = ();
 			($b_hub,$class_id,$protocol_id,$subclass_id) = (0,0,0,0);
-			($driver,$interfaces,$name,$ports,$product,$serial,$type,
-			$usb_version,$vendor) = ('','','','','','','','','');
+			($configuration,$driver,$interfaces,$name,$ports,$product,$serial,$speed,
+			$type,$usb_version,$vendor) = ('','','','','','','','','','','');
 			#print Cwd::abs_path($_),"\n";
 			#print "f1: $_\n";
 			$path_id = $_;
@@ -18157,6 +18619,8 @@ sub set {
 			$interfaces = sys_item("$_/bNumInterfaces");
 			$serial = sys_item("$_/serial");
 			$usb_version = sys_item("$_/version");
+			$speed = sys_item("$_/speed");
+			$configuration = sys_item("$_/configuration");
 			if ($source eq 'lsusb'){
 				for ($i = 0; $i < scalar @usb; $i++){
 					if (${$usb[$i]}[0] eq $bus_id && ${$usb[$i]}[1] == $device_id){
@@ -18176,6 +18640,8 @@ sub set {
 						${$usb[$i]}[14] = $type if ($type && !$b_hub);
 						${$usb[$i]}[15] = $driver if $driver;
 						${$usb[$i]}[16] = $serial if $serial;
+						${$usb[$i]}[17] = $speed if $speed;
+						${$usb[$i]}[18] = $configuration;
 						#print join("\n",@{$usb[$i]}),"\n\n";# if !$b_hub; 
 						last;
 					}
@@ -18186,7 +18652,6 @@ sub set {
 				$vendor_id = sys_item("$_/idVendor");
 				# we don't want the device, it's probably a bad path in /sys/bus/usb/devices
 				next if !$vendor_id && !$chip_id;
-				$configuration = sys_item("$_/configuration");
 				$product = sys_item("$_/product");
 				$product = main::cleaner($product) if $product;
 				$vendor = sys_item("$_/manufacturer");
@@ -18227,7 +18692,8 @@ sub set {
 				${$usb[$i]}[14] = $type;
 				${$usb[$i]}[15] = $driver;
 				${$usb[$i]}[16] = $serial;
-				${$usb[$i]}[17] = $configuration;
+				${$usb[$i]}[17] = $speed;
+				${$usb[$i]}[18] = $configuration;
 				$i++;
 			}
 			#print "$path_id ids: $bus_id:$device_id driver: $driver ports: $ports\n==========\n"; # if $test[6];;
@@ -18241,7 +18707,7 @@ sub set {
 # get driver, interface [type:] data
 sub uevent_data {
 	my ($path) = @_;
-	my ($driver,$interface,$temp,@interfaces,@drivers,@working);
+	my ($interface,$interfaces,$temp,@interfaces,@drivers);
 	my @files = main::globber($path);
 	@files = grep {!/\/(subsystem|driver|ep_[^\/]+)\/uevent$/} @files if @files;
 	foreach (@files){
@@ -18289,7 +18755,7 @@ sub uevent_data {
 }
 sub sys_item {
 	my ($path) = @_;
-	my ($item,@working);
+	my ($item);
 	$item = (main::reader($path))[0] if -r $path;
 	$item = '' if ! defined $item;
 	$item = main::trimmer($item) if $item;
@@ -18424,7 +18890,7 @@ sub generate_lines {
 			assign_data(%row);
 		}
 		if ( $show{'cpu'} || $show{'cpu-basic'} ){
-			set_pci_data($b_pci_check) if $b_arm && !$b_pci_check;
+			DeviceData::set($b_pci_check) if $b_arm && !$b_pci_check;
 			set_dmi_data($b_dmi_check) if $b_dmi && !$b_dmi_check; 
 			set_dmesg_boot_data() if ($bsd_type && !$b_dmesg_boot_check);
 			my $arg = ($show{'cpu-basic'}) ? 'basic' : 'full' ;
@@ -18432,19 +18898,18 @@ sub generate_lines {
 			assign_data(%row);
 		}
 		if ( $show{'graphic'} ){
-			set_pci_data($b_pci_check) if !$b_pci_check; 
+			DeviceData::set($b_pci_check) if !$b_pci_check; 
 			%row = line_handler('Graphics','graphic');
 			assign_data(%row);
 		}
 		if ( $show{'audio'} ){
-			set_pci_data($b_pci_check) if !$b_pci_check; 
-			$b_pci_check = 1;
+			DeviceData::set($b_pci_check) if !$b_pci_check; 
 			%row = line_handler('Audio','audio');
 			assign_data(%row);
 		}
 		if ( $show{'network'} ){
-			set_usb_data() if !$b_usb_check;
-			set_pci_data($b_pci_check) if !$b_pci_check; 
+			USBData::set() if !$b_usb_check;
+			DeviceData::set($b_pci_check) if !$b_pci_check; 
 			set_ip_data() if ($show{'ip'} || ($bsd_type && $show{'network-advanced'}));
 			%row = line_handler('Network','network');
 			assign_data(%row);
@@ -18455,7 +18920,7 @@ sub generate_lines {
 			assign_data(%row);
 		}
 		if ( $show{'raid'} ){
-			set_pci_data() if !$b_pci_check; 
+			DeviceData::set() if !$b_pci_check; 
 			%row = line_handler('RAID','raid');
 			assign_data(%row);
 		}
@@ -18468,7 +18933,7 @@ sub generate_lines {
 			assign_data(%row);
 		}
 		if ( $show{'usb'} ){
-			set_usb_data() if !$b_usb_check;
+			USBData::set() if !$b_usb_check;
 			%row = line_handler('USB','usb');
 			assign_data(%row);
 		}
@@ -18636,7 +19101,7 @@ sub generate_info_data {
 	my $gcc_alt = '';
 	my $running_in = '';
 	my $data_name = main::key($prefix++,'Info');
-	my ($b_gcc,%row,$gcc,$index,$ref);
+	my ($b_gcc,$gcc,$index,$ref,%row);
 	my ($gpu_ram,$parent,$percent,$total,$used) = (0,'','','','');
 	my $client_shell = ($b_irc) ? 'Client' : 'Shell';
 	my $client = $client{'name-print'};
@@ -18668,30 +19133,32 @@ sub generate_info_data {
 			$running_in .= ' (SSH)';
 		}
 	}
-	my $memory = get_memory_data('splits');
-	if ($memory){
-		my @temp = split /:/, $memory;
-		my @temp2 = get_size($temp[0]);
-		$gpu_ram = $temp[3] if $temp[3];
-		$total = ($temp2[1]) ? $temp2[0] . ' ' . $temp2[1] : $temp2[0];
-		@temp2 = get_size($temp[1]);
-		$used = ($temp2[1]) ? $temp2[0] . ' ' . $temp2[1] : $temp2[0];
-		$used .= " ($temp[2]%)" if $temp[2];
-		if ($gpu_ram){
-			@temp2 = get_size($gpu_ram);
-			$gpu_ram = $temp2[0] . ' ' . $temp2[1] if $temp2[1];
-		}
-	}
-	$memory ||= 'N/A';
 	my %data = (
 	$data_name => [{
 		main::key($num++,'Processes') => scalar @ps_aux, 
 		main::key($num++,'Uptime') => &get_uptime(),
-		main::key($num++,'Memory') => $total,
+		
 		},],
 	);
 	$index = scalar(@{ $data{$data_name} } ) - 1;
-	$data{$data_name}[$index]{main::key($num++,'used')} = $used;
+	if (!$b_mem){
+		my $memory = get_memory_data('splits');
+		if ($memory){
+			my @temp = split /:/, $memory;
+			my @temp2 = get_size($temp[0]);
+			$gpu_ram = $temp[3] if $temp[3];
+			$total = ($temp2[1]) ? $temp2[0] . ' ' . $temp2[1] : $temp2[0];
+			@temp2 = get_size($temp[1]);
+			$used = ($temp2[1]) ? $temp2[0] . ' ' . $temp2[1] : $temp2[0];
+			$used .= " ($temp[2]%)" if $temp[2];
+			if ($gpu_ram){
+				@temp2 = get_size($gpu_ram);
+				$gpu_ram = $temp2[0] . ' ' . $temp2[1] if $temp2[1];
+			}
+		}
+		$data{$data_name}[$index]{main::key($num++,'Memory')} = $total;
+		$data{$data_name}[$index]{main::key($num++,'used')} = $used;
+	}
 	if ($gpu_ram){
 		$data{$data_name}[$index]{main::key($num++,'gpu')} = $gpu_ram;
 	}
