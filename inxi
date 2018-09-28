@@ -31,8 +31,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.0.25';
-my $self_date='2018-09-24';
+my $self_version='3.0.26';
+my $self_date='2018-09-28';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -52,7 +52,7 @@ if (eval {require Time::HiRes}){
 }
 @t0 = eval 'Time::HiRes::gettimeofday()' if $b_hires; # let's start it right away
 ## Hashes
-my ( %alerts,%client,%colors,%dl,%files,%rows,%system_files,%use );
+my ( %alerts,%client,%colors,%debugger,%dl,%files,%rows,%system_files,%use );
 
 ## Arrays
 # ps_aux is full output, ps_cmd is only the last 10 columns to last
@@ -67,19 +67,18 @@ my @test = (0,0,0,0,0);
 
 ## Booleans
 my ($b_admin,$b_arm,$b_bb_ps,$b_block_tool,$b_console_irc,
-$b_debug_gz,$b_debug_timers,$b_debug_z,$b_display,$b_dmesg_boot_check,
-$b_dmi,$b_dmidecode_force,$b_fake_bsd,$b_fake_dboot,$b_fake_dmidecode,
-$b_fake_pciconf,$b_fake_sysctl,$b_fake_usbdevs,
-$b_force_display,$b_force_sys_debug,$b_gpudata,$b_irc,
+$b_display,$b_dmesg_boot_check,$b_dmi,$b_dmidecode_force,
+$b_fake_bsd,$b_fake_dboot,$b_fake_dmidecode,$b_fake_pciconf,$b_fake_sysctl,
+$b_fake_usbdevs,$b_force_display,$b_gpudata,$b_irc,
 $b_log,$b_log_colors,$b_log_full,$b_man,$b_mem,$b_mips,
-$b_pci,$b_pci_tool,$b_ppc,$b_proc_debug,$b_proc_partitions,$b_ps_gui,
+$b_pci,$b_pci_tool,$b_ppc,$b_proc_partitions,$b_ps_gui,
 $b_root,$b_running_in_display,
 $b_slot_tool,$b_soc_audio,$b_soc_gfx,$b_soc_net,$b_soc_timer,$b_sparc,
 $b_sudo,$b_sysctl,$b_usb,$b_usb_check,$b_usb_sys,$b_usb_tool,$b_wmctrl);
 ## Disk checks
 my ($b_dm_boot_disk,$b_dm_boot_optical,$b_glabel,$b_hardware_raid,
 $b_label_uuid,$b_lsblk,$b_partitions,$b_raid);
-my ($b_sys_debug,$b_sysctl_disk,$b_update,$b_weather) = (1,1,1,1);
+my ($b_sysctl_disk,$b_update,$b_weather) = (1,1,1);
 
 ## System
 my ($bsd_type,$language,$os,$pci_tool,$device_vm) = ('','','','','');
@@ -127,7 +126,8 @@ my %size = (
 'term-lines' => 100,
 );
 
-## debug temp tools
+## debug / temp tools
+$debugger{'sys'} = 1;
 $client{'test-konvi'} = 0;
 
 ########################################################################
@@ -1132,7 +1132,7 @@ sub begin_logging {
 	$t3 = eval 'Time::HiRes::tv_interval (\@t0, [Time::HiRes::gettimeofday()]);' if $b_hires;
 	#print Dumper $@;
 	my $now = strftime "%Y-%m-%d %H:%M:%S", localtime;
-	return if $b_debug_timers;
+	return if $debugger{'timers'};
 	# do the rotation if logfile exists
 	if ( -f $log_file ){
 		# copy if present second to third
@@ -1186,7 +1186,7 @@ sub log_data {
 		#print Dumper $@;
 		$data = "Start: Function: $two$args\n${spacer}Elapsed: $t3\n";
 		$spacer='';
-		$timer = $data if $b_debug_timers;
+		$timer = $data if $debugger{'timers'};
 	}
 	elsif ( $one eq 'fe') {
 		# print 'timer:', Time::HiRes::tv_interval(\@t0, [Time::HiRes::gettimeofday()]),"\n";
@@ -1195,7 +1195,7 @@ sub log_data {
 		#print Dumper $t3;
 		$data = "${spacer}Elapsed: $t3\nEnd: Function: $two\n";
 		$spacer='';
-		$timer = $data if $b_debug_timers;
+		$timer = $data if $debugger{'timers'};
 	}
 	elsif ( $one eq 'cat') {
 		if ( $b_log_full ){
@@ -1237,7 +1237,7 @@ sub log_data {
 	else {
 		$data = "$two\n";
 	}
-	if ($b_debug_timers){
+	if ($debugger{'timers'}){
 		print $timer if $timer;
 	}
 	#print "d: $data";
@@ -1247,10 +1247,11 @@ sub log_data {
 }
 
 sub set_debugger {
+	user_debug_test_1() if $debugger{'test-1'};
 	if ( $debug >= 20){
 		error_handler('not-in-irc', 'debug data generator') if $b_irc;
 		my $option = ( $debug > 22 ) ? 'main-full' : 'main';
-		$b_debug_gz = 1 if ($debug == 22 || $debug == 24);
+		$debugger{'gz'} = 1 if ($debug == 22 || $debug == 24);
 		my $ob_sys = SystemDebugger->new($option);
 		$ob_sys->run_debugger();
 		$ob_sys->upload_file($ftp_alt) if $debug > 20;
@@ -1269,7 +1270,7 @@ sub set_debugger {
 	elsif ($debug <= 3){
 		if ($debug == 3){
 			$b_log = 1;
-			$b_debug_timers = 1;
+			$debugger{'timers'} = 1;
 			begin_logging();
 		}
 		else {
@@ -1331,7 +1332,7 @@ sub run_debugger {
 		if ( -d '/sys' && main::count_dir_files('/sys') ){
 			build_tree('sys');
 			# kernel crash, not sure what creates it, for ppc, as root
-			sys_traverse_data() if ($b_sys_debug && ($b_force_sys_debug || !$b_root || !$b_ppc )) ; 
+			sys_traverse_data() if ($debugger{'sys'} && ($debugger{'sys-force'} || !$b_root || !$b_ppc )) ; 
 		}
 		else {
 			print "Skipping /sys data collection. /sys not present, or empty.\n";
@@ -1339,7 +1340,7 @@ sub run_debugger {
 		print $line3;
 		# note: proc has some files that are apparently kernel processes, I've tried 
 		# filtering them out but more keep appearing, so only run proc debugger if not root
-		if ( (!$b_root || $b_proc_debug ) && -d '/proc' && main::count_dir_files('/proc') ){
+		if ( (!$b_root || $debugger{'proc'} ) && -d '/proc' && main::count_dir_files('/proc') ){
 			build_tree('proc');
 			proc_traverse_data();
 		}
@@ -1466,7 +1467,11 @@ sub disk_data {
 	['df', '-k'],
 	['df', '-k -T'],
 	['df', '-k -T -P'],
+	['df', '-k -T -P -a'],
 	['df', '-P'],
+	['findmnt', ''],
+	['findmnt', '--df --no-truncate'],
+	['findmnt', '--list --no-truncate'],
 	['lsblk', '-fs'],
 	['lsblk', '-fsr'],
 	['lsblk', '-fsP'],
@@ -1801,7 +1806,7 @@ sub run_self {
 	print "Creating $self_name output file now. This can take a few seconds...\n";
 	print "Starting $self_name from: $self_path\n";
 	my $i = ($option eq 'main-full')? ' -i' : '';
-	my $z = ($b_debug_z) ? ' -z' : '';
+	my $z = ($debugger{'z'}) ? ' -z' : '';
 	my $iz = "$i$z";
 	$iz =~ s/[\s\-]//g;
 	my $cmd = "$self_path/$self_name -FRfrploudmaxxx$i$z --usb --slots --debug 10 -y 120 > $data_dir/$self_name-FRfrploudmaxxx$iz-usb-slots-y120.txt 2>&1";
@@ -1828,6 +1833,7 @@ sub copy_files {
 		$unreadable = $name . '-unreadable';
 		# proc have already been tested for readable/exists
 		if ($type eq 'proc' || -e $_ ) {
+			print "F:$_\n" if $type eq 'proc' && $debugger{'proc-print'};
 			if ($type eq 'proc' || -r $_){
 				copy($_,"$good") or main::toucher($error);
 			}
@@ -2020,6 +2026,7 @@ sub sys_traverse_processsor {
 		$data='';
 		$sep='';
 		my $b_fh = 1;
+		print "F:$_\n" if $debugger{'sys-print'};
 		open($fh, '<', $_) or $b_fh = 0;
 		# needed for removing -T test and root
 		if ($b_fh){
@@ -2053,6 +2060,8 @@ sub wanted {
 		# not use it. Also do not need . files or __ starting files
 		# print $File::Find::name . "\n";
 		# block maybe: cfgroup\/
+		# picdec\/|, wait_for_fb_sleep/wake is an odroid thing caused hang
+		return if $File::Find::name =~ /(^\/sys\/power\/wait_for_fb)/;
 		return if $File::Find::name =~ /\/(\.[a-z]|kernel\/|trace\/|parameters\/|debug\/)/;
 		# comment this one out if you experience hangs or if 
 		# we discover syntax of foreign language characters
@@ -2109,7 +2118,7 @@ sub upload_file {
 		$ftp->quit;
 		print "Uploaded file successfully!\n";
 		print $ftp->message;
-		if ($b_debug_gz){
+		if ($debugger{'gz'}){
 			print "Removing debugger gz file:\n$file_path\n";
 			unlink $file_path or main::error_handler('remove',"$file_path", "$!");
 			print "File removed.\n";
@@ -2120,6 +2129,20 @@ sub upload_file {
 		main::error_handler('ftp-bad-path', "$file_path");
 	}
 }
+}
+# random tests for various issues
+sub user_debug_test_1 {
+# 	open(my $duped, '>&', STDOUT);
+# 	local *STDOUT = $duped;
+# 	my $item = POSIX::strftime("%c", localtime);
+# 	print "Testing character encoding handling. Perl IO data:\n";
+# 	print(join(', ', PerlIO::get_layers(STDOUT)), "\n");
+# 	print "Without binmode: ", $item,"\n";
+# 	binmode STDOUT,":utf8";
+# 	print "With binmode: ", $item,"\n";
+# 	print "Perl IO data:\n";
+# 	print(join(', ', PerlIO::get_layers(STDOUT)), "\n");
+# 	close($duped);
 }
 
 #### -------------------------------------------------------------------
@@ -4123,8 +4146,18 @@ sub get_options{
 		else {
 			error_handler('bad-arg', $opt, $arg);
 		} },
+	'debug-no-sys' => sub {
+		$debugger{'sys'} = 0; },
+	'debug-proc' => sub {
+		$debugger{'proc'} = 1; },
+	'debug-proc-print' => sub {
+		$debugger{'proc-print'} = 1;},
+	'debug-sys-print' => sub {
+		$debugger{'sys-print'} = 1; },
+	'debug-test-1' => sub {
+		$debugger{'test-1'} = 1; },
 	'debug-z' => sub {
-		$b_debug_z = 1 },
+		$debugger{'z'} = 1 },
 	'display:s' => sub { 
 		my ($opt,$arg) = @_;
 		if ($arg =~ /^:?([0-9]+)?$/){
@@ -4209,8 +4242,6 @@ sub get_options{
 		$b_no_man_force = 0; },
 	'no-ssl' => sub {
 		$dl{'no-ssl-opt'}=1 },
-	'no-sys-debug' => sub {
-		$b_sys_debug = 0; },
 	'output-file:s' => sub {
 		my ($opt,$arg) = @_;
 		if ($arg){
@@ -4226,14 +4257,13 @@ sub get_options{
 		}},
 	'ppc' => sub {
 		$b_ppc = 1 },
-	'proc-debug' => sub {
-		$b_proc_debug = 1; },
+	
 	'recommends' => sub {
 		$b_recommends = 1; },
 	'sparc' => sub {
 		$b_sparc = 1; },
 	'sys-debug' => sub {
-		$b_force_sys_debug = 1; },
+		$debugger{'sys-force'} = 1; },
 	'U|update:s' => sub { # 1,2,3 OR http://myserver/path/inxi
 		my ($opt,$arg) = @_;
 		$b_downloader = 1;
@@ -4463,7 +4493,7 @@ sub show_options {
 	optical drive (-d), USB (--usb), full RAID; triggers -xx." ],
 	['2', '7', '', "Network IP data (-i); triggers -xxx."],
 	['2', '8', '', "Everything available, including repos (-r), processes 
-	(-tcm), PCI slots (--slots), extra admin data (--admin)."],
+	(-tcm), PCI slots (--slots)."],
 	);
 	push @data, @rows;
 	# if distro maintainers don't want the weather feature disable it
@@ -4655,7 +4685,6 @@ sub show_options {
 	['1', '', '--output-file', "[Full filepath|print] Output file to be used for --output." ],
 	['1', '', '--partition-sort', "[dev-base|fs|id|label|percent-used|size|uuid|used] 
 	Change sort order of partition output. See man page for specifics." ],
-	['1', '', '--proc', "Force debugger parsing of /proc as sudo/root." ],
 	['1', '', '--sleep', "[0-x.x] Change CPU sleep time, in seconds, for -C 
 	(default:^$cpu_sleep). Allows system to catch up and show a more accurate CPU 
 	use. Example:^$self_name^-Cxxx^--sleep^0.15" ],
@@ -4678,6 +4707,11 @@ sub show_options {
 	automatically, removes debugger data directory, leaves tar.gz debugger file." ],
 	['2', '22', '', "Upload debugger dataset to $self_name debugger server 
 	automatically, removes debugger data directory and debugger tar.gz file." ],
+	['1', '', '--debug-proc', "Force debugger parsing of /proc as sudo/root." ],
+	['1', '', '--debug-proc-print', "To locate file that /proc debugger hangs on." ],
+	['1', '', '--debug-no-sys', "Skip /sys debugging in case of a hang." ],
+	['1', '', '--debug-sys', "Force PowerPC debugger parsing of /sys as sudo/root." ],
+	['1', '', '--debug-sys-print', "To locate file that /sys debugger hangs on." ],
 	['1', '', '--ftp', "Use with --debugger 21 to trigger an alternate FTP server for upload. 
 	Format:^[ftp.xx.xx/yy]. Must include a remote directory to upload to. 
 	Example:^$self_name^--debug^21^--ftp^ftp.myserver.com/incoming" ],
@@ -5314,6 +5348,7 @@ sub row_defaults {
 	'optical-data-bsd' => "No floppy or optical data found for this BSD system.",
 	'output-limit' => "Output throttled. IPs: $id; Limit: $limit; Override: --limit [1-x;-1 all]",
 	'partition-data' => "No Partition data was found.",
+	'partition-hidden' => "N/A (hidden?)",
 	'pci-advanced-data' => 'bus/chip ids unavailable',
 	'pci-card-data' => "No Device data found.",
 	'pci-card-data-root' => "Device data requires root.",
@@ -8006,11 +8041,9 @@ sub create_output {
 			$rows[$j]{main::key($num++,'model')} = $model;
 			$rows[$j]{main::key($num++,'size')} = $size;
 			if ($b_admin && $row{'block-physical'}){
-				# this is the same size, no point in showing it
-				# $rows[$j]{main::key($num++,'raw size')} = join ' ', main::get_size($row{'raw-size'});
 				$rows[$j]{main::key($num++,'block size')} = '';
 				$rows[$j]{main::key($num++,'physical')} = $row{'block-physical'} . ' B';
-				$rows[$j]{main::key($num++,'logical')} = ($row{'block-logical'})?$row{'block-logical'} . ' B':'N/A';
+				$rows[$j]{main::key($num++,'logical')} = ($row{'block-logical'}) ? $row{'block-logical'} . ' B' : 'N/A';
 			}
 			if ($extra > 1 && $row{'speed'}){
 				$rows[$j]{main::key($num++,'speed')} = $row{'speed'};
@@ -8204,10 +8237,9 @@ sub proc_data_advanced {
 		}
 		main::log_data('data',"working path: $working_path") if $b_log;
 		if ($b_admin && -e "/sys/block/"){
-				my @working = main::get_raw_disk_data('disk','',$drives[$i]{'id'},0);
-				$drives[$i]{'raw-size'} = $working[0];
-				$drives[$i]{'block-logical'} = $working[2];
-				$drives[$i]{'block-physical'} = $working[3];
+				my @working = admin_data($drives[$i]{'id'});
+				$drives[$i]{'block-logical'} = $working[0];
+				$drives[$i]{'block-physical'} = $working[1];
 			}
 		if ($block_type && @scsi && @by_id && ! -e "${working_path}model" && ! -e "${working_path}name"){
 			## ok, ok, it's incomprehensible, search /dev/disk/by-id for a line that contains the
@@ -8574,7 +8606,7 @@ sub device_vendor {
 	['^STEC\b','^STEC\b','STEC',''], # ssd drive, must come before seagate ST test
 	# real, SSEAGATE Backup+; XP1600HE30002
 	['(^ST[^T]|[S]?SEAGATE|^X[AFP]|^BUP|Expansion Desk|GoFlex|Backup(\+|\s?Plus)\s?Hub)','[S]?SEAGATE','Seagate',''], 
-	['^(WD|Western Digital|My (Book|Passport)|\d*LPCX|Elements|M000|EARX|EFRX|\d*EAVS)','(^WDC|Western Digital)','Western Digital',''],
+	['^(WD|Western Digital|My (Book|Passport)|\d*LPCX|Elements|M000|EARX|EFRX|\d*EAVS|0JD)','(^WDC|Western Digital)','Western Digital',''],
 	## Then better known ones ##
 	['^(A-DATA|ADATA|AXN)','^(A-DATA|ADATA)','A-Data',''],
 	['^ADTRON','^(ADTRON)','Adtron',''],
@@ -8655,6 +8687,7 @@ sub device_vendor {
 	['^RENICE','^RENICE','Renice',''],
 	['^RIM[\s]','^RIM','RIM',''],
 	['^SigmaTel','^SigmaTel','SigmaTel',''],
+	['Smartbuy','\s?Smartbuy','Smartbuy',''], # SSD Smartbuy 60GB
 	['^SPPC','','Silicon Power',''],
 	['^(SK\s?HYNIX|HFS)','^SK\s?HYNIX','SK Hynix',''], # HFS128G39TND-N210A
 	['hynix','hynix','Hynix',''],# nvme middle of string, must be after sk hynix
@@ -8670,6 +8703,7 @@ sub device_vendor {
 	# ['^(SUPERSPEED)','^SUPERSPEED','SuperSpeed',''], # superspeed is a generic term
 	['^TANDBERG','^TANDBERG','Tanberg',''],
 	['^TCSUNBOW','^TCSUNBOW','TCSunBow',''],
+	['^(TDK|TF[1-9][0-9])','^TDK','TDK',''],
 	['^TEAC','^TEAC','TEAC',''],
 	['^TEAM','^TEAM( Group)?','Team',''],
 	['^TopSunligt','^TopSunligt','TopSunligt',''], # is this a typo? hard to know
@@ -8740,6 +8774,30 @@ sub hdd_temp {
 	}
 	eval $end if $b_log;
 	return $hdd_temp;
+}
+# args: 1: block id
+sub admin_data {
+	eval $start if $b_log;
+	my ($id) = @_;
+	# 0: logical block size 1: disk physical block size/partition block size;
+	my @blocks = (0,0); 
+	my ($block_log,$block_size) = (0,0);
+	#my $path_size = "/sys/block/$id/size";
+	my $path_log_block = "/sys/block/$id/queue/logical_block_size";
+	my $path_phy_block = "/sys/block/$id/queue/physical_block_size";
+	# legacy system path
+	if (! -e $path_phy_block && -r "/sys/block/$id/queue/hw_sector_size" ){
+		$path_phy_block = "/sys/block/$id/queue/hw_sector_size";
+	}
+	if ( -r $path_log_block || -r $path_phy_block ){
+		$block_log = (main::reader($path_log_block))[0] if  -r $path_log_block;
+		$block_size = (main::reader($path_phy_block))[0] if -r $path_phy_block;
+	}
+	# print "l-b: $block_log p-b: $block_size raw: $size_raw\n";
+	@blocks = ($block_log,$block_size); 
+	main::log_data('dump','@blocks',\@blocks) if $b_log;
+	eval $end if $b_log;
+	return @blocks;
 }
 sub device_speed {
 	eval $start if $b_log;
@@ -11026,11 +11084,17 @@ sub create_output {
 		my %row = %$ref;
 		$num = 1;
 		next if $row{'type'} eq 'secondary' && $show{'partition'};
-		@data2 = main::get_size($row{'size'}) if (defined $row{'size'});
-		$size = (@data2) ? $data2[0] . ' ' . $data2[1]: 'N/A';
-		@data2 = main::get_size($row{'used'}) if (defined $row{'used'});
-		$used = (@data2) ? $data2[0] . ' ' . $data2[1]: 'N/A';
-		$percent = (defined $row{'percent-used'}) ? ' (' . $row{'percent-used'} . '%)' : '';
+		if (!$row{'hidden'}){
+			@data2 = main::get_size($row{'size'}) if (defined $row{'size'});
+			$size = (@data2) ? $data2[0] . ' ' . $data2[1]: 'N/A';
+			@data2 = main::get_size($row{'used'}) if (defined $row{'used'});
+			$used = (@data2) ? $data2[0] . ' ' . $data2[1]: 'N/A';
+			$percent = (defined $row{'percent-used'}) ? ' (' . $row{'percent-used'} . '%)' : '';
+		}
+		else {
+			$percent = '';
+			$used = $size = (!$b_root) ? main::row_defaults('root-required') : main::row_defaults('partition-hidden');
+		}
 		%part = ();
 		if (defined $row{'dev-base'}){
 			if ($row{'dev-base'} =~ /^non-dev-/){
@@ -11063,7 +11127,7 @@ sub create_output {
 		main::key($num++,'ID') => $row{'id'},
 		});
 		@rows = (@rows,@data);
-		if ($b_admin && $row{'raw-size'} ){
+		if (($b_admin || $row{'hidden'}) && $row{'raw-size'} ){
 			# It's an error! permissions or missing tool
 			if (!main::is_numeric($row{'raw-size'})){
 				$raw_size = $row{'raw-size'};
@@ -11109,7 +11173,7 @@ sub partition_data {
 	my (@data,@rows,@mapper,@mount,@partitions_working,%part,@working);
 	my ($b_fake_map,$b_fs,$b_load,$cols,$roots) = (0,1,0,6,0);
 	my ($back_size,$back_used) = (4,3);
-	my ($block_log,$block_size,$blockdev,$dev_base,$fs,$id,$label,$percent_used,$raw_size,
+	my ($block_size,$blockdev,$dev_base,$fs,$id,$label,$percent_used,$raw_size,
 	$size_available,$size,$type,$uuid,$used);
 	$b_partitions = 1;
 	if ($b_admin){
@@ -11175,8 +11239,8 @@ sub partition_data {
 			next;
 		}
 		($dev_base,$fs,$id,$label,$type,$uuid) = ('','','','','');
-		($b_load,$block_log,$block_size,$percent_used,$raw_size,
-		$size_available,$size,$used) = (0,0,0,0,0,0,0,0);
+		($b_load,$block_size,$percent_used,$raw_size,$size_available,
+		$size,$used) = (0,0,0,0,0,0,0,0);
 		%part = ();
 		# NOTE: using -P for linux fixes line wraps, and for bsds, assuming they don't use such long file names
 		if ($row[0] =~ /^\/dev\/|:\/|\/\//){
@@ -11252,16 +11316,14 @@ sub partition_data {
 			$id =~ s/\/home\/[^\/]+\/(.*)/\/home\/$filter_string\/$1/ if $show{'filter'};
 			$size = $row[$cols - $back_size];
 			if ($b_admin && -e "/sys/block/"){
-				@working = main::get_raw_disk_data('part',$blockdev,$dev_base,$size);
+				@working = admin_data($blockdev,$dev_base,$size);
 				$raw_size = $working[0];
 				$size_available = $working[1];
-				$block_log = $working[2];
-				$block_size = $working[3];
+				$block_size = $working[2];
 			}
 			$used = $row[$cols - $back_used];
 			$percent_used = sprintf( "%.1f", ( $used/$size )*100 ) if ($size);
 			@data = ({
-			'block-logical' => $block_log,
 			'block-size' => $block_size,
 			'id' => $id,
 			'dev-base' => $dev_base,
@@ -11280,6 +11342,10 @@ sub partition_data {
 	}
 	@data = swap_data();
 	@partitions = (@partitions,@data);
+	if (!$bsd_type && @lsblk){
+		@data = check_partition_data();
+		@partitions = (@partitions,@data) if @data;
+	}
 	main::log_data('dump','@partitions',\@partitions) if $b_log;
 	# print Data::Dumper::Dumper \@partitions;
 	eval $end if $b_log;
@@ -11457,7 +11523,7 @@ sub set_lsblk {
 			if (/NAME="([^"]*)"\s+TYPE="([^"]*)"\s+RM="([^"]*)"\s+FSTYPE="([^"]*)"\s+SIZE="([^"]*)"\s+LABEL="([^"]*)"\s+UUID="([^"]*)"\s+SERIAL="([^"]*)"\s+MOUNTPOINT="([^"]*)"\s+PHY-SEC="([^"]*)"\s+LOG-SEC="([^"]*)"/){
 				my $size = ($5) ? $5/1024: 0;
 				# some versions of lsblk do not return serial, fs, uuid, or label
-				my @temp = ({
+				@temp = ({
 				'name' => $1, 
 				'type' => $2,
 				'rm' => $3, 
@@ -11494,6 +11560,78 @@ sub check_lsblk {
 	main::log_data('dump','%part',\%part) if $b_log;
 	eval $end if $b_log;
 	return %part;
+}
+# handle cases of hidden file systems
+sub check_partition_data {
+	eval $start if $b_log;
+	my ($b_found,@data,@temp);
+	foreach my $ref (@lsblk){
+		my %row = %$ref;
+		$b_found = 0;
+		if (!$row{'name'} || !$row{'mount'} ||
+		 (!$row{'type'} || $row{'type'} eq 'disk' || $row{'type'} eq 'rom' ) || 
+		 ($row{'fs'} && $row{'fs'} eq 'swap') ){
+			next;
+		}
+		#print "$row{'name'} $row{'mount'}\n";
+		foreach my $ref2 (@partitions){
+			my %row2 = %$ref2;
+			#print "m:$row{'mount'} id:$row2{'id'}\n";
+			next if !$row2{'id'};
+			if ($row{'mount'} eq $row2{'id'}){
+				$b_found = 1;
+				last;
+			}
+		}
+		if (!$b_found){
+			#print "found: $row{'name'} $row{'mount'}\n";
+			@temp = ({
+			'dev-base' => $row{'name'},
+			'fs' => $row{'fs'},
+			'id' => $row{'mount'},
+			'hidden' => 1,
+			'label' => $row{'label'},
+			'raw-size' => $row{'size'},
+			'size' => 0,
+			'type' => 'secondary',
+			'used' => 0,
+			'uuid' => $row{'uuid'},
+			'percent-used' => 0,
+			});
+			@partitions = (@partitions,@temp);
+			main::log_data('dump','lsblk check: @temp',\@temp) if $b_log;
+		}
+	}
+	eval $end if $b_log;
+	return @data;
+}
+# args: 1: blockdev full path (part only); 2: block id; 3: size (part only)
+sub admin_data {
+	eval $start if $b_log;
+	my ($blockdev,$id,$size) = @_;
+	# 0: calc block 1: available percent 2: disk physical block size/partition block size;
+	my @sizes = (0,0,0); 
+	my ($block_size,$percent,$size_raw) = (0,0,0);
+	foreach (@proc_partitions){
+		my @row = split /\s+/, $_;
+		if ($row[-1] eq $id){
+			$size_raw = $row[2];
+			last;
+		}
+	}
+	# get the fs block size
+	$block_size = (main::grabber("$blockdev --getbsz /dev/$id 2>/dev/null"))[0] if $blockdev;
+	if (!$size_raw){
+		$size_raw = 'N/A';
+	}
+	else {
+		$percent = sprintf("%.2f", ($size/$size_raw ) * 100) if $size && $size_raw;
+	}
+	# print "$id size: $size %: $percent p-b: $block_size raw: $size_raw\n";
+	@sizes = ($size_raw,$percent,$block_size); 
+	main::log_data('dump','@sizes',\@sizes) if $b_log;
+	eval $end if $b_log;
+	return @sizes;
 }
 sub get_label {
 	eval $start if $b_log;
@@ -15370,7 +15508,7 @@ sub get_weather {
 		$tz = $2;
 		# very clever trick, just make the system think it's in the 
 		# remote timezone for this local block only
-		local $ENV{'TZ'} = $tz;
+		local $ENV{'TZ'} = $tz; 
 		$date_time = POSIX::strftime "%c", localtime;
 		$weather{'date-time'} = $date_time;
 	}
@@ -17088,59 +17226,6 @@ sub get_pci_vendor {
 	eval $end if $b_log;
 	return $vendor;
 }
-# args: 1: type disk/part; 2: blockdev full path (part only); 
-# 3: block id; 4: size (part only)
-sub get_raw_disk_data {
-	eval $start if $b_log;
-	my ($type,$blockdev,$id,$size) = @_;
-	# 0: calc block 1: available percent 2: logical block size 
-	# 3: disk physical block size/partition block size;
-	my @sizes = (0,0,0,0); 
-	my ($block_log,$block_size,$percent,$size_raw) = (0,0,0,0);
-	if ($type eq 'part'){
-		foreach (@proc_partitions){
-			my @row = split /\s+/, $_;
-			if ($row[-1] eq $id){
-				$size_raw = $row[2];
-				last;
-			}
-		}
-		# fallback, old systems don't have lsblk
-		if ($blockdev){
-			# this is the actual logical block size
-			$block_size = (main::grabber("$blockdev --getbsz /dev/$id 2>/dev/null"))[0];
-		}
-		if (!$size_raw){
-			$size_raw = 'N/A';
-		}
-		else {
-			$percent = sprintf("%.2f", ($size/$size_raw ) * 100) if $size && $size_raw;
-		}
-	}
-	else {
-		#my $path_size = "/sys/block/$id/size";
-		my $path_log_block = "/sys/block/$id/queue/logical_block_size";
-		my $path_phy_block = "/sys/block/$id/queue/physical_block_size";
-		# legacy system path
-		if (! -e $path_phy_block && -r "/sys/block/$id/queue/hw_sector_size" ){
-			$path_phy_block = "/sys/block/$id/queue/hw_sector_size";
-		}
-		if ( -r $path_log_block || -r $path_phy_block ){
-			# not used
-			# $size_raw = (main::reader($path_size))[0] if -r $path_size;
-			$block_log = (main::reader($path_log_block))[0] if  -r $path_log_block;
-			$block_size = (main::reader($path_phy_block))[0] if -r $path_phy_block;
-			#if ($size_raw && $block_log){
-			#	$size_raw = sprintf("%.1f", $block_log * ($size_raw/1024 ) );
-			#}
-		}
-	}
-	# print "$id size: $size %: $percent l-b: $block_log p-b: $block_size raw: $size_raw\n";
-	@sizes = ($size_raw,$percent,$block_log,$block_size); 
-	main::log_data('dump','@sizes',\@sizes) if $b_log;
-	eval $end if $b_log;
-	return @sizes;
-}
 
 # # check? /var/run/nologin for bsds?
 sub get_runlevel_data {
@@ -17770,12 +17855,12 @@ sub soc_devices {
 		# it's worthless, we can't use it
 		next if ! defined $type;
 		$type_id = $type;
-		$type = soc_type($type);
 		$chip_id = '' if ! defined $chip_id;
 		$vendor_id = '' if ! defined $vendor_id;
 		$driver = '' if ! defined $driver;
 		$handle = '' if ! defined $handle;
 		$busid = (defined $temp && main::is_int($temp)) ? $temp: 0;
+		$type = soc_type($type,$vendor_id,$driver);
 		($busid_nu,$modules,$port,$rev) = (0,'','','');
 		@temp3 = ($type,$type_id,$busid,$busid_nu,$device,$vendor_id,$chip_id,$rev,
 		$port,$driver,$modules,'','','',$handle);
@@ -17798,7 +17883,6 @@ sub soc_devicetree {
 				next if !$type || !$content;
 				$handle = $2 if $2;
 				$type_id = $type;
-				$type = soc_type($type);
 				if ($content){
 					@temp3 = split /,/, $content;
 					$vendor_id = $temp3[0];
@@ -17806,6 +17890,7 @@ sub soc_devicetree {
 					# strip off those weird device tree special characters
 					$device =~ s/\x01|\x02|\x03|\x00//g;
 				}
+				$type = soc_type($type,$vendor_id,'');
 				@temp3 = ($type,$type_id,0,0,$device,$vendor_id,'soc','','','','','','','',$handle);
 				assign_data('soc',@temp3);
 				main::log_data('dump','@devices @temp3',\@temp3) if $b_log;
@@ -17879,11 +17964,13 @@ sub check_vm {
 }
 
 sub soc_type {
-	my ($type) = @_;
-	if ($type =~ /^(daudio|.*hifi.*|.*sound[\-_]card)$/){
+	my ($type,$info,$driver) = @_;
+	# I2S or i2s. I2C is i2 controller |[iI]2[Ss]. note: odroid hdmi item is sound only
+	if ($type =~ /^(daudio|.*hifi.*|.*sound[\-_]card|.*dac[0-9]?)$/ ||
+	 ($info && $info =~ /(sound|audio)/) || ($driver && $driver =~ /(audio|snd|sound)/) ){
 		$type = 'audio';
 	}
-	elsif ($type =~ /^((meson)?fb|disp|display(-[^\s]+)?|gpu|mali)$/){
+	elsif ($type =~ /^((meson-?)?fb|disp|display(-[^\s]+)?|gpu|mali)$/){
 		$type = 'display';
 	}
 	# includes ethernet-phy, meson-eth
