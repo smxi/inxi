@@ -13119,52 +13119,55 @@ sub get_repos_linux {
 		@files = main::globber('/etc/apt/sources.list.d/*.sources');
 		main::log_data('data',"apt deb822 repo files:\n" . main::joiner(\@files, "\n", 'unset') ) if $b_log;
 		foreach $file (@files){
-			@data2 = main::reader($file,'strip');
-			my $count = scalar @data2;
+			# critical: whitespace is the separator, no logical ordering of 
+			# field names exists within each entry.
+			@data2 = main::reader($file);
+			#print Data::Dumper::Dumper \@data2;
+			if (@data2){
+				@data2 = map {s/^\s*$/~/;$_} @data2;
+				push @data2, '~';
+			}
 			push @dbg_files, $file if $debugger_dir;
 			#print "$file\n";
 			@apt_urls = ();
 			@apt_working = ();
-			$counter = 0;
 			$b_apt_enabled = 1;
 			foreach my $row (@data2){
-				$counter++;
-				next if $row =~ /^\s*$|^\s*#/;
+				next if $row =~ /^\s+/; # deb822 supports line folding which starts with space
+				#print "$row\n";
+				if ($row eq '~' && @apt_working){
+					if ($b_apt_enabled){
+						#print "1: url builder\n";
+						foreach $repo (@apt_working){
+							$string = $apt_types;
+							$string .= ' [arch=' . $apt_arch . ']' if $apt_arch;
+							$string .= ' ' . $repo;
+							$string .= ' ' . $apt_suites if $apt_suites ;
+							$string .= ' ' . $apt_comp if $apt_comp;
+							#print "s1:$string\n";
+							push @data3, $string;
+						}
+					}
+					#print join "\n",@data3,"\n";
+					@apt_urls = (@apt_urls,@data3);
+					@data3 = ();
+					@apt_working = ();
+					$apt_arch = '';
+					$apt_comp = '';
+					$apt_suites = '';
+					$apt_types = '';
+					$b_apt_enabled = 1;
+				}
 				#print "row:$row\n";
 				if ($row =~ /^Types:\s*(.*)/){
-					my $type_holder= $1;
 					#print "ath:$type_holder\n";
-					if ($apt_types && @apt_working){
-						if ($b_apt_enabled){
-							#print "1: url builder\n";
-							foreach $repo (@apt_working){
-								$string = $apt_types;
-								$string .= ' [arch=' . $apt_arch . ']' if $apt_arch;
-								$string .= ' ' . $repo;
-								$string .= ' ' . $apt_suites if $apt_suites ;
-								$string .= ' ' . $apt_comp if $apt_comp;
-								
-								#print "s1:$string\n";
-								push @data3, $string;
-							}
-						}
-						#print join "\n",@data3,"\n";
-						@apt_urls = (@apt_urls,@data3);
-						@data3 = ();
-						@apt_working = ();
-						$apt_arch = '';
-						$apt_comp = '';
-						$apt_suites = '';
-						$apt_types = '';
-					}
-					$apt_types = $type_holder;
-					$b_apt_enabled = 1;
+					$apt_types = $1;
 				}
 				if ($row =~ /^Enabled:\s*(.*)/){
 					my $status = $1;
 					$b_apt_enabled = ($status =~ /\b(disable|false|off|no|without)\b/i) ? 0: 1;
 				}
-				if ($row =~ /:\//){
+				if ($row =~ /^[^#]+:\//){
 					my $url = $row;
 					$url =~ s/^URIs:\s*//;
 					push @apt_working, $url if $url;
@@ -13177,29 +13180,6 @@ sub get_repos_linux {
 				}
 				if ($row =~ /^Architectures:\s*(.*)/){
 					$apt_arch = $1;
-				}
-				# we've hit the last line!!
-				if ($counter == $count && @apt_working){
-					#print "2: url builder\n";
-					if ($b_apt_enabled){
-						foreach $repo (@apt_working){
-							my $string = $apt_types;
-							$string .= ' [arch=' . $apt_arch . ']' if $apt_arch;
-							$string .= ' ' . $repo;
-							$string .= ' ' . $apt_suites if $apt_suites ;
-							$string .= ' ' . $apt_comp if $apt_comp;
-							#print "s2:$string\n";
-							push @data3, $string;
-						}
-					}
-					#print join "\n",@data3,"\n";
-					@apt_urls = (@apt_urls,@data3);
-					@data3 = ();
-					@apt_working = ();
-					$apt_arch = '';
-					$apt_comp = '';
-					$apt_suites = '';
-					$apt_types = '';
 				}
 			}
 			if (@apt_urls){
