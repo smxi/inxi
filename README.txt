@@ -186,6 +186,14 @@ will support the options listed. The man and options page also link to a
 legacy version, pre 2.9.
 
 -------------------------------------------------------------------------------
+IRC
+-------------------------------------------------------------------------------
+
+You can go to: irc.oftc.net channel #smxi 
+but be prepared to wait around for a while to get a response. Generally it's 
+better to use github issues.
+
+-------------------------------------------------------------------------------
 ISSUES
 -------------------------------------------------------------------------------
 
