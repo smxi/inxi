@@ -17,7 +17,8 @@ DEVELOPMENT AND ISSUES
 Make inxi better! Expand supported hardware and OS data, fix broken items!
 
 -------------------------------------------------------------------------------
-Help inxi development! Submit a user debugger dataset. 
+HELP PROJECT DEVELOPMENT! SUBMIT A DEBUGGER DATASET
+-------------------------------------------------------------------------------
 
 This is easy to do, and only takes a few seconds. These datasets really help 
 the project add and debug features. You will generally also be asked to provide 
@@ -38,11 +39,12 @@ You can run these as regular user, or root/sudo, which will gather a bit more
 data, like from dmidecode, and other tools that need superuser permissions
 to run.
 
-ARM and BSD datasets are particularly appreciated because we simply do not 
-have enough of those.
+ARM (plus MIPS, SPARC, PowerPC) and BSD datasets are particularly appreciated 
+because we simply do not have enough of those.
 
 -------------------------------------------------------------------------------
-File an issue if you find something not working, or about an enhancment
+FILE AN ISSUE IF YOU FIND SOMETHING MISSING, BROKEN, OR FOR AN ENHANCEMENT
+-------------------------------------------------------------------------------
 
 inxi strives to support the widest range of operating systems and hardware,
 from the most simple consumer desktops, to the most advanced professional
@@ -54,122 +56,11 @@ supporting the latest (or not so latest) hardware and operating systems.
 
 See INXI VERSION/SUPPORT/ISSUES/BUGS INFORMATION for more about issues/support.
 
-See BSD SUPPORT below for qualifications re BSDs, and OSX in particular. 
+See BSD/UNIX below for qualifications re BSDs, and OSX in particular. 
 
 ===============================================================================
-BRANCHES
+SOURCE VERSION CONTROL
 -------------------------------------------------------------------------------
-
-MASTER BRANCH:
-
-This is the only supported branch, and the current latest commit/version is
-the only supported 'release'. There are no 'releases' of inxi beyond the 
-current commit/version in master. All past versions are not supported. 
-
-git clone https://github.com/smxi/inxi --branch master --single-branch
-
-OR direct fast and easy install:
-wget -O inxi https://github.com/smxi/inxi/raw/master/inxi
-
-OR easy to remember shortcut (which redirects to github):
-wget -O inxi https://smxi.org/inxi
-wget -O inxi smxi.org/inxi
-
-NOTE: Just because github calls tagged commits 'Releases' does not mean they 
-are releases! I can't change the words on the tag page. They are tagged 
-commmits, period. A tag is a pointer to a commit, and has no further meaning. 
-
-If your distribution has blocked -U self updater and you want a newer version:
-
-Open /etc/inxi.conf and change false to true: B_ALLOW_UPDATE=true
-
--------------------------------------------------------------------------------
-DEVELOPMENT BRANCH:
-
-All active development is now done on the inxi-perl branch (pinxi):
-
-git clone https://github.com/smxi/inxi --branch inxi-perl --single-branch
-
-OR direct fast and easy install:
-wget -O pinxi https://github.com/smxi/inxi/raw/inxi-perl/pinxi
-
-OR easy to remember shortcut (which redirects to github):
-wget -O pinxi https://smxi.org/pinxi
-wget -O pinxi smxi.org/pinxi
-
-Once new features have been debugged, tested, and are reasonably stable, pinxi 
-is copied to inxi in the master branch.
-
-It's a good idea to check with pinxi if you want to make sure your issue has 
-not been corrected, since pinxi is always equal to or ahead of inxi.
-
--------------------------------------------------------------------------------
-LEGACY BRANCH:
-
-If you'd like to look at or check out the Gawk/Bash version of inxi, you can
-find it here, at the inxi-legacy branch (binxi):
-
-git clone https://github.com/smxi/inxi --branch inxi-legacy --single-branch
-
-OR direct fast and easy install:
-wget -O binxi https://github.com/smxi/inxi/raw/inxi-legacy/binxi
-
-OR easy to remember shortcut (which redirects to github):
-wget -O binxi https://smxi.org/binxi
-
-This version will not be maintained, and it's unlikely that any time will be
-spent on it in the future, but it is there in case it's of use or interest to
-anyone.
-
-===============================================================================
-SUPPORT INFO:
--------------------------------------------------------------------------------
-
-Do not ask for basic help that reading the inxi -h / --help menus, or man page
-would show you, and do not ask for features to be added that inxi already has. 
-Also do not ask for support if your distro won't update its inxi version, some
-are bad about that.
-
--------------------------------------------------------------------------------
-DOCUMENTATION: 
-https://smxi.org/docs/inxi.htm 
-(smxi.org/docs/ is easier to remember, and is one click away from inxi.htm).
-The one page wiki on github is only a pointer to the real resources.
-
-https://github.com/smxi/inxi/tree/inxi-perl/docs
-Contains specific Perl inxi documentation, of interest mostly to developers.
-Includes internal inxi tools, values, configuration items. Also has useful
-information about Perl version support, including the list of Core modules that
-_should_ be included in a distribution's core modules, but which are 
-unfortunately sometimes removed. 
-
-HTML MAN PAGE: https://smxi.org/docs/inxi-man.htm 
-
-INXI OPTIONS PAGE: http://smxi.org/docs/inxi-options.htm 
-NOTE: These may not always be up to date, but generally track the most recent
-inxi commits.
-
--------------------------------------------------------------------------------
-ISSUES: 
-
-https://github.com/smxi/inxi/issues
-No issues accepted for non current inxi versions. See below for more on that.
-Unfortunately as of 2.9, no support or issues can be accepted for older inxi's
-because inxi 2.9 (Perl) and newer is a full rewrite, and legacy inxi is not
-being supported since our time here on earth is finite (plus of course, one
-reason for the rewrite was to never have to work with Gawk->Bash again!).
-
--------------------------------------------------------------------------------
-SUPPORT FORUMS: 
-
-https://techpatterns.com/forums/forum-33.html
-This is the best place to place support issues that may be complicated.
-
-If you are developer, use:
-DEVELOPER FORUMS: https://techpatterns.com/forums/forum-32.html
-
--------------------------------------------------------------------------------
-SOURCE VERSION CONTROL: 
 
 https://github.com/smxi/inxi
 MAIN BRANCH: master
@@ -197,8 +88,134 @@ PACKAGERS: inxi has one and only one 'release', and that is the current
 commit/version in the master branch (plus pinxi inxi-perl branch, of course,
 but those should never be packaged). 
 
+-------------------------------------------------------------------------------
+MASTER BRANCH
+-------------------------------------------------------------------------------
+
+This is the only supported branch, and the current latest commit/version is
+the only supported 'release'. There are no 'releases' of inxi beyond the 
+current commit/version in master. All past versions are not supported. 
+
+git clone https://github.com/smxi/inxi --branch master --single-branch
+
+OR direct fast and easy install:
+wget -O inxi https://github.com/smxi/inxi/raw/master/inxi
+
+OR easy to remember shortcut (which redirects to github):
+wget -O inxi https://smxi.org/inxi
+wget -O inxi smxi.org/inxi
+
+NOTE: Just because github calls tagged commits 'Releases' does not mean they 
+are releases! I can't change the words on the tag page. They are tagged 
+commmits, period. A tag is a pointer to a commit, and has no further meaning. 
+
+If your distribution has blocked -U self updater and you want a newer version:
+
+Open /etc/inxi.conf and change false to true: B_ALLOW_UPDATE=true
+
+-------------------------------------------------------------------------------
+DEVELOPMENT BRANCH
+-------------------------------------------------------------------------------
+
+All active development is now done on the inxi-perl branch (pinxi):
+
+git clone https://github.com/smxi/inxi --branch inxi-perl --single-branch
+
+OR direct fast and easy install:
+wget -O pinxi https://github.com/smxi/inxi/raw/inxi-perl/pinxi
+
+OR easy to remember shortcut (which redirects to github):
+wget -O pinxi https://smxi.org/pinxi
+wget -O pinxi smxi.org/pinxi
+
+Once new features have been debugged, tested, and are reasonably stable, pinxi 
+is copied to inxi in the master branch.
+
+It's a good idea to check with pinxi if you want to make sure your issue has 
+not been corrected, since pinxi is always equal to or ahead of inxi.
+
+-------------------------------------------------------------------------------
+LEGACY BRANCH
+-------------------------------------------------------------------------------
+
+If you'd like to look at or check out the Gawk/Bash version of inxi, you can
+find it here, at the inxi-legacy branch (binxi):
+
+git clone https://github.com/smxi/inxi --branch inxi-legacy --single-branch
+
+OR direct fast and easy install:
+wget -O binxi https://github.com/smxi/inxi/raw/inxi-legacy/binxi
+
+OR easy to remember shortcut (which redirects to github):
+wget -O binxi https://smxi.org/binxi
+
+This version will not be maintained, and it's unlikely that any time will be
+spent on it in the future, but it is there in case it's of use or interest to
+anyone.
+
 ===============================================================================
-ABOUT INXI - CORE COMMITMENT TO LONG TERM STABILITY
+SUPPORT INFO
+-------------------------------------------------------------------------------
+
+Do not ask for basic help that reading the inxi -h / --help menus, or man page
+would show you, and do not ask for features to be added that inxi already has. 
+Also do not ask for support if your distro won't update its inxi version, some
+are bad about that.
+
+-------------------------------------------------------------------------------
+DOCUMENTATION
+-------------------------------------------------------------------------------
+
+https://smxi.org/docs/inxi.htm 
+(smxi.org/docs/ is easier to remember, and is one click away from inxi.htm).
+The one page wiki on github is only a pointer to the real resources.
+
+https://github.com/smxi/inxi/tree/inxi-perl/docs
+Contains specific Perl inxi documentation, of interest mostly to developers.
+Includes internal inxi tools, values, configuration items. Also has useful
+information about Perl version support, including the list of Core modules that
+_should_ be included in a distribution's core modules, but which are 
+unfortunately sometimes removed. 
+
+INXI CONFIGURATION: https://smxi.org/docs/inxi-configuration.htm 
+HTML MAN PAGE: https://smxi.org/docs/inxi-man.htm 
+INXI OPTIONS PAGE: http://smxi.org/docs/inxi-options.htm 
+
+NOTE: Check the inxi version number on each doc page to see which version 
+will support the options listed. The man and options page also link to a 
+legacy version, pre 2.9.
+
+-------------------------------------------------------------------------------
+ISSUES
+-------------------------------------------------------------------------------
+
+https://github.com/smxi/inxi/issues
+No issues accepted for non current inxi versions. See below for more on that.
+Unfortunately as of 2.9, no support or issues can be accepted for older inxi's
+because inxi 2.9 (Perl) and newer is a full rewrite, and legacy inxi is not
+being supported since our time here on earth is finite (plus of course, one
+reason for the rewrite was to never have to work with Gawk->Bash again!).
+
+Sys Admin type inxi users always get the first level of support. ie, convince 
+us you run real systems and networks, and your issue shoots to the top of the 
+line. As do any real bugs. 
+
+Failure to supply requested debugger data will lead To a distinct lack of 
+interest on our part to help you with a bug. ie, saying, oh, it doesn't work, 
+doesn't cut it, unless it's obvious why. 
+
+-------------------------------------------------------------------------------
+SUPPORT FORUMS
+-------------------------------------------------------------------------------
+
+https://techpatterns.com/forums/forum-33.html
+This is the best place to place support issues that may be complicated.
+
+If you are developer, use:
+DEVELOPER FORUMS: https://techpatterns.com/forums/forum-32.html
+
+===============================================================================
+ABOUT INXI
 -------------------------------------------------------------------------------
 
 inxi is a command line system information tool. It was forked from the ancient
@@ -232,6 +249,10 @@ correctly, which doesn't often happen, so in those cases, you want to confirm
 things like ram capacity with a reputable hardware source, like crucial.com, 
 which has the best ram hardware tool I know of.
 
+-------------------------------------------------------------------------------
+CORE COMMITMENT TO LONG TERM STABILITY
+-------------------------------------------------------------------------------
+
 The core mission of inxi is to always work on all systems all the time. Well, 
 all systems with the core tools inxi requires to operate installed. Ie, not 
 Android, yet. What this means is this: you can have a 10 year old box, or 
@@ -245,65 +266,8 @@ inxi is being written, and tested, on Perl as old as 5.08, and will work on any
 system that runs Perl 5.08 or later. Pre 2.9.0 Gawk/Bash inxi will also run on 
 any system no matter how old, within reason, so there should be no difference.
 
-===============================================================================
-BSD SUPPORT
 -------------------------------------------------------------------------------
-
--------------------------------------------------------------------------------
-Real BSDs:
-
-BSD support is not as complete as GNU/Linux support due to the fact some of the 
-data simply is not available, or is structured in a way that makes it unique to 
-each BSD. This fragmentation makes supporting BSDs far more difficult than it 
-should be in the 21st century. The BSD support in inxi is an ongoing process, 
-with more features being added as new data sources and types are discovered.
-
-All BSD issue reports unless trivial and obvious will require 1 of two things:
-
-1. a full --debug 21 data dump so I don't have to spend days trying to get the 
-information I need to resolve the issue file by painful file from the issue 
-poster. This is only the start of the process, and realistically requires 2. to 
-complete it.
-
-2. direct SSH access to at least a comparable live BSD version/system, that is, 
-if the issue is on a laptop, access has to be granted to the laptop, or a 
-similar one. 
-
-Option 2 is far preferred because in terms of my finite time on this planet of 
-ours, the fact is, if I don't have direct (or SSH) access, I can't get much 
-done, and the little I can get done will take 10 to 1000x longer than it 
-should. That's my time spent (and sadly, with BSDs, largely lost), not yours. 
-
-I decided I have to adopt this much more strict policy with BSDs after wasting 
-untold hours on trying to get good BSD support, only to see that support break 
-a few years down the road as the data inxi relied in changed structure or 
-syntax, or the tools changed, or whatever else makes the BSDs such a challenge 
-to support. In the end, I realized, the only BSDs that are well supported are 
-ones that I have had direct access to for debugging and testing. 
-
-I will always accept patches that are well done, if they do not break 
-GNU/Linux, and extend BSD support, or add new BSD features, and follow the 
-internal inxi logic, and aren't too long. inxi sets initial internal flags to 
-identify that it is a BSD system vs a GNU/Linux system, and preloads some data 
-structures for BSD use, so make sure you understand what inxi is doing before 
-you get into it.
-
--------------------------------------------------------------------------------
-OSX:
-
-Do not insult real BSDs by calling OSX a BSD. OSX is the least Unix-like 
-operating system I've ever seen that claims to be a Unix, its tools are 
-mutated, its data randomly and non-standardly organized, and it totally fails 
-to respect the 'spirit' of Unix, even though it might pass some random tests 
-that certify a system as a 'Unix'. 
-
-If you want me to use my time on OSX features or issues, you have to pay me, 
-because Apple is all about money, not freedom (that's what the 'free' in 'free 
-software' is referring to, not cost), and I'm not donating my finite time in 
-support of non-free operating systems. 
-
-===============================================================================
-INXI FEATURES AND FUNCTIONALITY
+FEATURES AND FUNCTIONALITY
 -------------------------------------------------------------------------------
 
 inxi's functionality continues to grow over time, but it's also important to 
@@ -317,8 +281,8 @@ get somewhat reliable for about 98% or so of inxi users. So if your patch is
 rejected, it's likely because you have not thought it through adequately, have 
 not done adequate testing cross system and platform, etc.
 
-===============================================================================
-INXI VERSION/SUPPORT/ISSUES/BUGS INFORMATION:
+-------------------------------------------------------------------------------
+SUPPORTED VERSIONS / DISTRO VERSIONS
 -------------------------------------------------------------------------------
 
 Important: the only version of inxi that is supported is the latest current 
@@ -328,12 +292,6 @@ code from old versions, will be considered or accepted. If you are not updated
 to the latest inxi, do not file a bug report since it's probably been fixed 
 ages ago. If your distro isn't packaging a current inxi, then file a bug report 
 with your packager, not here. 
-
-Sys Admin type inxi users always get the first level of support. ie, convince 
-us you run real systems and networks, and your issue shoots to the top of the 
-line. As do any real bugs. Failure to supply requested debugger data will lead 
-to a distinct lack of interest on our part to help you with a bug. ie, saying, 
-oh, it doesn't work, doesn't cut it, unless it's obvious why. 
 
 inxi is 'rolling release' software, just like Debian Sid, Gentoo, or Arch Linux 
 are rolling release GNU/Linux distributions, with no 'release points'.
@@ -356,8 +314,8 @@ update inxi in a package pool of any distro in the world (with one single known
 exception, the Slackware based Puppy Linux release, which ships without the 
 full Perl language. The Debian based one works fine).
 
-===============================================================================
-INXI VERSION NUMBERING:
+-------------------------------------------------------------------------------
+SEMANTIC VERSION NUMBERING
 -------------------------------------------------------------------------------
 
 inxi uses 'semantic' version numbering, where the version numbers actually mean 
@@ -407,5 +365,69 @@ most little glitches are fixed, a move to 3.0.0. These almost never happen. I
 do not expect for example version 4.0 to ever happen after 3.0 (early 2018), 
 unless so many new features are added that it actually hits 3.9, then it would 
 roll over to 4.
+
+===============================================================================
+BSD / UNIX
+-------------------------------------------------------------------------------
+
+BSD support is not as complete as GNU/Linux support due to the fact some of the 
+data simply is not available, or is structured in a way that makes it unique to 
+each BSD. This fragmentation makes supporting BSDs far more difficult than it 
+should be in the 21st century. The BSD support in inxi is an ongoing process, 
+with more features being added as new data sources and types are discovered.
+
+Note that due to time/practicality constraints, in general, only the original
+BSD branches will be actively supported: FreeBSD+derived; OpenBSD+derived;
+NetBSD+derived. Other UNIX variants will generally only get the work required 
+to make internal BSD flags get set and to remove visible output errors.
+
+-------------------------------------------------------------------------------
+TRUE BSDs 
+-------------------------------------------------------------------------------
+
+All BSD issue reports unless trivial and obvious will require 1 of two things:
+
+1. a full --debug 21 data dump so I don't have to spend days trying to get the 
+information I need to resolve the issue file by painful file from the issue 
+poster. This is only the start of the process, and realistically requires 2. to 
+complete it.
+
+2. direct SSH access to at least a comparable live BSD version/system, that is, 
+if the issue is on a laptop, access has to be granted to the laptop, or a 
+similar one. 
+
+Option 2 is far preferred because in terms of my finite time on this planet of 
+ours, the fact is, if I don't have direct (or SSH) access, I can't get much 
+done, and the little I can get done will take 10 to 1000x longer than it 
+should. That's my time spent (and sadly, with BSDs, largely lost), not yours. 
+
+I decided I have to adopt this much more strict policy with BSDs after wasting 
+untold hours on trying to get good BSD support, only to see that support break 
+a few years down the road as the data inxi relied in changed structure or 
+syntax, or the tools changed, or whatever else makes the BSDs such a challenge 
+to support. In the end, I realized, the only BSDs that are well supported are 
+ones that I have had direct access to for debugging and testing. 
+
+I will always accept patches that are well done, if they do not break 
+GNU/Linux, and extend BSD support, or add new BSD features, and follow the 
+internal inxi logic, and aren't too long. inxi sets initial internal flags to 
+identify that it is a BSD system vs a GNU/Linux system, and preloads some data 
+structures for BSD use, so make sure you understand what inxi is doing before 
+you get into it.
+
+-------------------------------------------------------------------------------
+APPLE CORPORATION OSX
+-------------------------------------------------------------------------------
+
+Non-free/libre OSX is in my view a BSD in name only. It is the least Unix-like 
+operating system I've ever seen that claims to be a Unix, its tools are 
+mutated, its data randomly and non-standardly organized, and it totally fails 
+to respect the 'spirit' of Unix, even though it might pass some random tests 
+that certify a system as a 'Unix'. 
+
+If you want me to use my time on OSX features or issues, you have to pay me, 
+because Apple is all about money, not freedom (that's what the 'free' in 'free 
+software' is referring to, not cost), and I'm not donating my finite time in 
+support of non-free operating systems. 
 
 ### EOF ###
