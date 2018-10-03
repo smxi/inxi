@@ -250,7 +250,7 @@ things like ram capacity with a reputable hardware source, like crucial.com,
 which has the best ram hardware tool I know of.
 
 -------------------------------------------------------------------------------
-CORE COMMITMENT TO LONG TERM STABILITY
+COMMITMENT TO LONG TERM STABILITY
 -------------------------------------------------------------------------------
 
 The core mission of inxi is to always work on all systems all the time. Well, 
