@@ -247,15 +247,11 @@ If you are piping output to paste or post (or writing to file), inxi now
 automatically turns off color codes, so the old suggestion to use -c 0 to turn 
 off colors is no longer required.
 
-inxi should always show you your current system state, as far as possible, and
-should be more reliable than your own beliefs about what is in your system,
-ideally. In other words, the goal in inxi is to have it be right more than it 
-is wrong about any system that it runs on. And not to rely on non current 
-system state data if at all possible. Some things, like memory/ram data, rely 
-on radically unreliable system self reporting based on OEM filling out data
-correctly, which doesn't often happen, so in those cases, you want to confirm 
-things like ram capacity with a reputable hardware source, like crucial.com, 
-which has the best ram hardware tool I know of.
+inxi strives to be as accurate as possible, but some things, like memory/ram 
+data, rely on radically unreliable system self reporting based on OEM filling 
+out data correctly, which doesn't often happen, so in those cases, you want 
+to confirm things like ram capacity with a reputable hardware source, like 
+crucial.com, which has the best ram hardware tool I know of.
 
 -------------------------------------------------------------------------------
 COMMITMENT TO LONG TERM STABILITY
