@@ -248,10 +248,10 @@ automatically turns off color codes, so the old suggestion to use -c 0 to turn
 off colors is no longer required.
 
 inxi strives to be as accurate as possible, but some things, like memory/ram 
-data, rely on radically unreliable system self reporting based on OEM filling 
-out data correctly, which doesn't often happen, so in those cases, you want 
-to confirm things like ram capacity with a reputable hardware source, like 
-crucial.com, which has the best ram hardware tool I know of.
+data, depend on radically unreliable system self reporting based on OEM 
+filling out data correctly, which doesn't often happen, so in those cases, 
+you want to confirm things like ram capacity with a reputable hardware source, 
+like crucial.com, which has the best ram hardware tool I know of.
 
 -------------------------------------------------------------------------------
 COMMITMENT TO LONG TERM STABILITY
