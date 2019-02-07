@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 ## infobash: Copyright (C) 2005-2007  Michiel de Boer aka locsmif
-## inxi: Copyright (C) 2008-2018 Harald Hope
+## inxi: Copyright (C) 2008-2019 Harald Hope
 ##       Additional features (C) Scott Rogers - kde, cpu info
 ## Further fixes (listed as known): Horst Tritremmel <hjt at sidux.com>
 ## Steven Barrett (aka: damentz) - usb audio patch; swap percent used patch
@@ -31,8 +31,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.0.30';
-my $self_date='2018-12-31';
+my $self_version='3.0.31';
+my $self_date='2019-02-06';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -72,7 +72,7 @@ $b_fake_bsd,$b_fake_dboot,$b_fake_dmidecode,$b_fake_pciconf,$b_fake_sysctl,
 $b_fake_usbdevs,$b_force_display,$b_gpudata,$b_irc,
 $b_log,$b_log_colors,$b_log_full,$b_man,$b_mem,$b_mips,
 $b_pci,$b_pci_tool,$b_ppc,$b_proc_partitions,$b_ps_gui,
-$b_root,$b_running_in_display,
+$b_root,$b_running_in_display,$b_skip_dig,
 $b_slot_tool,$b_soc_audio,$b_soc_gfx,$b_soc_net,$b_soc_timer,$b_sparc,
 $b_sudo,$b_sysctl,$b_usb,$b_usb_check,$b_usb_sys,$b_usb_tool,$b_wmctrl);
 ## Disk checks
@@ -81,11 +81,11 @@ $b_label_uuid,$b_lsblk,$b_partitions,$b_raid);
 my ($b_sysctl_disk,$b_update,$b_weather) = (1,1,1);
 
 ## System
-my ($bsd_type,$language,$os,$pci_tool,$device_vm) = ('','','','','');
+my ($bsd_type,$device_vm,$language,$os,$pci_tool,$wan_url) = ('','','','','','');
 my ($bits_sys,$cpu_arch);
 my ($cpu_sleep,$dl_timeout,$limit,$ps_cols,$ps_count) = (0.35,4,10,0,5);
 my $sensors_cpu_nu = 0;
-my $weather_unit='mi';
+my ($dl_ua,$weather_source,$weather_unit) = ('s-tools/' . $self_name  . '-',100,'mi');
 
 ## Tools
 my ($display,$ftp_alt,$tty_session);
@@ -218,7 +218,7 @@ sub check_tools {
 		'dmidecode' => {
 		'action' => $action,
 		'missing' => 'Required program dmidecode not available',
-		'permissions' => 'Unable to run dmidecode. Are you root?',
+		'permissions' => 'Unable to run dmidecode. Root privileges required.',
 		'smbios' => 'No SMBIOS data for dmidecode to process',
 		'no-data' => 'dmidecode is not allowed to read /dev/mem',
 		'unknown-error' => 'dmidecode was unable to generate data',
@@ -328,7 +328,6 @@ sub check_tools {
 	}
 	set_fake_tools() if $b_fake_bsd;
 }
-
 # args: 1 - desktop/app command for --version; 2 - search string; 
 # 3 - space print number; 4 - [optional] version arg: -v, version, etc
 # 5 - [optional] exit first find 0/1; 6 - [optional] 0/1 stderr output
@@ -343,7 +342,7 @@ sub set_basics {
 	$b_irc = ( check_program('tty') && system('tty >/dev/null') ) ? 1 : 0;
 	# print "birc: $b_irc\n";
 	$b_display = ( $ENV{'DISPLAY'} ) ? 1 : 0;
-	$b_root = ( $ENV{'HOME'} eq '/root' ) ? 1 : 0;
+	$b_root = $< == 0; # root UID 0, all others > 0
 	$dl{'dl'} = 'curl';
 	$dl{'curl'} = 1;
 	$dl{'tiny'} = 1; # note: two modules needed, tested for in set_downloader
@@ -1084,6 +1083,13 @@ sub get_config_item {
 	elsif ($key eq 'SENSORS_CPU_NO') {$sensors_cpu_nu = $val if is_int($val)}
 	elsif ($key eq 'SHOW_HOST' || $key eq 'B_SHOW_HOST') { $show{'host'} = $val if is_int($val)}
 	elsif ($key eq 'USB_SYS') {$b_usb_sys = $val if is_int($val)}
+	elsif ($key eq 'WAN_IP_URL') {
+		if ($val =~ /^(ht|f)tp[s]?:\//i){
+			$wan_url = $val;
+			$b_skip_dig = 1;
+		}
+	}
+	elsif ($key eq 'WEATHER_SOURCE') {$weather_source = $val if is_int($val)}
 	elsif ($key eq 'WEATHER_UNIT') { 
 		$val = lc($val) if $val;
 		if ($val && $val =~ /^(c|f|cf|fc|i|m|im|mi)$/){
@@ -2152,10 +2158,11 @@ sub user_debug_test_1 {
 #### -------------------------------------------------------------------
 
 sub download_file {
-	my ($type, $url, $file) = @_;
+	my ($type, $url, $file,$ua) = @_;
 	my ($cmd,$args,$timeout) = ('','','');
 	my $debug_data = '';
 	my $result = 1;
+	$ua = ($ua && $dl{'ua'}) ? $dl{'ua'} . $ua : '';
 	$dl{'no-ssl-opt'} ||= '';
 	$dl{'spider'} ||= '';
 	$file ||= 'N/A'; # to avoid debug error
@@ -2176,22 +2183,23 @@ sub download_file {
 	}
 	# But: 0 is success, and 1 is false for these
 	# when strings are returned, they will be taken as true
+	# urls must be " quoted in case special characters present
 	else {
 		if ($type eq 'stdout'){
 			$args = $dl{'stdout'};
-			$cmd = "$dl{'dl'} $dl{'no-ssl-opt'} $timeout $args $url $dl{'null'}";
+			$cmd = "$dl{'dl'} $dl{'no-ssl-opt'} $ua $timeout $args \"$url\" $dl{'null'}";
 			$result = qx($cmd);
 			$debug_data = ($result) ? 'Success: stdout data not null.' : 'Download resulted in null data!';
 		}
 		elsif ($type eq 'file') {
 			$args = $dl{'file'};
-			$cmd = "$dl{'dl'} $dl{'no-ssl-opt'} $timeout $args $file $url $dl{'null'}";
+			$cmd = "$dl{'dl'} $dl{'no-ssl-opt'} $ua $timeout $args $file \"$url\" $dl{'null'}";
 			system($cmd);
 			$result = ($?) ? 0 : 1; # reverse these into Perl t/f
 			$debug_data = $result;
 		}
 		elsif ( $dl{'dl'} eq 'wget' && $type eq 'spider'){
-			$cmd = "$dl{'dl'} $dl{'no-ssl-opt'} $timeout $dl{'spider'} $url";
+			$cmd = "$dl{'dl'} $dl{'no-ssl-opt'} $ua $timeout $dl{'spider'} \"$url\"";
 			system($cmd);
 			$result = ($?) ? 0 : 1; # reverse these into Perl t/f
 			$debug_data = $result;
@@ -2247,6 +2255,7 @@ sub get_file {
 
 sub set_downloader {
 	eval $start if $b_log;
+	my $quiet = '';
 	$dl{'no-ssl'} = '';
 	$dl{'null'} = '';
 	$dl{'spider'} = '';
@@ -2271,25 +2280,30 @@ sub set_downloader {
 		$dl{'timeout'} = '';
 	}
 	elsif ( $dl{'curl'} && check_program('curl')  ){
+		$quiet = '-s ' if !$test[1];
 		$dl{'dl'} = 'curl';
-		$dl{'file'} = '  -L -s -o ';
+		$dl{'file'} = "  -L ${quiet}-o ";
 		$dl{'no-ssl'} = ' --insecure';
-		$dl{'stdout'} = ' -L -s ';
+		$dl{'stdout'} = " -L ${quiet}";
 		$dl{'timeout'} = ' -y ';
+		$dl{'ua'} = ' -A ' . $dl_ua;
 	}
 	elsif ($dl{'wget'} && check_program('wget') ){
+		$quiet = '-q ' if !$test[1];
 		$dl{'dl'} = 'wget';
-		$dl{'file'} = ' -q -O ';
+		$dl{'file'} = " ${quiet}-O ";
 		$dl{'no-ssl'} = ' --no-check-certificate';
-		$dl{'spider'} = ' -q --spider';
-		$dl{'stdout'} = '  -q -O -';
+		$dl{'spider'} = " ${quiet}--spider";
+		$dl{'stdout'} = " $quiet -O -";
 		$dl{'timeout'} = ' -T ';
+		$dl{'ua'} = ' -U ' . $dl_ua;
 	}
 	elsif ($dl{'fetch'} && check_program('fetch')){
+		$quiet = '-q ' if !$test[1];
 		$dl{'dl'} = 'fetch';
-		$dl{'file'} = ' -q -o ';
+		$dl{'file'} = " ${quiet}-o ";
 		$dl{'no-ssl'} = ' --no-verify-peer';
-		$dl{'stdout'} = ' -q -o -';
+		$dl{'stdout'} = " ${quiet}-o -";
 		$dl{'timeout'} = ' -T ';
 	}
 	elsif ( $bsd_type eq 'openbsd' && check_program('ftp') ){
@@ -3683,7 +3697,7 @@ sub update_man {
 		return 0;
 	}
 	if ( ! -w $man_file_location ){
-		print "Cannot write to $man_file_location! Are you root?\n";
+		print "Cannot write to $man_file_location! Root privileges required.\n";
 		print "Unable to continue: $man_file_location\n";
 		return 0;
 	}
@@ -4056,6 +4070,16 @@ sub get_options{
 		else {
 			error_handler('distro-block', $opt);
 		} },
+	'ws|weather-source:s' => sub {
+		my ($opt,$arg) = @_;
+		# let api processor handle checks if valid, this
+		# future proofs this
+		if ($arg =~ /^[0-9]$/){
+			$weather_source = $arg;
+		}
+		else {
+			error_handler('bad-arg',$opt,$arg);
+		} },
 	'weather-unit:s' => sub {
 		my ($opt,$arg) = @_;
 		$arg ||= '';
@@ -4325,6 +4349,15 @@ sub get_options{
 		$b_usb_tool = 1 },
 	'V|version' => sub { 
 		$b_version = 1 },
+	'wan-ip-url:s' => sub {
+		my ($opt,$arg) = @_;
+		if ($arg && $arg =~ /^(f|ht)tp[s]?:\/\//){
+			$wan_url = $arg;
+			$b_skip_dig = 1
+		}
+		else {
+			error_handler('bad-arg', $opt, $arg);
+		}},
 	'wm' => sub { 
 		$b_wmctrl = 1 },
 	'<>' => sub {
@@ -4334,7 +4367,7 @@ sub get_options{
 	## run all these after so that we can change widths, downloaders, etc
 	eval $end if $b_log;
 	CheckRecommends::run() if $b_recommends;
-	set_downloader() if $b_downloader;
+	set_downloader() if $b_downloader || $wan_url; # sets for either config or arg here
 	show_version() if $b_version;
 	show_options() if $b_help;
 	$b_man = 0 if (!$b_use_man || $b_no_man_force);
@@ -4519,10 +4552,13 @@ sub show_options {
 		['1', '-w', '--weather', "Local weather data/time. To check an alternate
 		location, see -W."],
 		['1', '-W', '--weather-location', "[location] Supported options for 
-		[location]: postal code; city, state/country; latitude, longitude. 
+		[location]: postal code[,country]; city, state/country; latitude, longitude. 
 		Only use if you want the weather somewhere other than the machine running
 		$self_name. Use only ASCII characters, replace spaces in city/state/country 
 		names with '+'. Example:^$self_name^-W^new+york,ny"],
+		['1', '', '--weather-source', "[0-9] Change weather data source. 0 uses
+		a legacy source internally. 1-3 use remote smxi sources. 4-9 may be added
+		in the future. See man."],
 		['1', '', '--weather-unit', "Set weather units to metric (m), imperial (i), 
 		metric/imperial (mi), or imperial/metric (im)."],
 		);
@@ -4567,7 +4603,7 @@ sub show_options {
 	push @data, @rows;
 	if ( $b_weather ){
 		@rows = (['2', '-w -W', '', "Wind speed and direction, humidity, pressure, 
-		and (-w only) time zone." ]);
+		and time zone, if available." ]);
 		push @data, @rows;
 	}
 	@rows = (
@@ -4598,7 +4634,8 @@ sub show_options {
 	);
 	push @data, @rows;
 	if ( $b_weather ){
-		@rows = (['2', '-w -W', '', "Wind chill, dew point, heat index, if available." ]);
+		@rows = (['2', '-w -W', '', "Snow, rain (last observed hour), cloud cover, 
+		wind chill, dew point, heat index, if available." ]);
 		push @data, @rows;
 	}
 	@rows = (
@@ -4627,7 +4664,7 @@ sub show_options {
 	push @data, @rows;
 	if ( $b_weather ){
 		@rows = (['2', '-w -W', '', "Location (uses -z/irc filter), weather observation 
-		time, altitude (shows extra lines for data where relevant)." ] );
+		time, altitude, if available." ] );
 		push @data, @rows;
 	}
 	@rows = (
@@ -4714,9 +4751,14 @@ sub show_options {
 	you want a specific output width. Always put this option first in an option list."],
 	['1', '', '--usb-sys', "Force USB data to use /sys as data source (Linux only)." ],
 	['1', '', '--usb-tool', "Force USB data to use lsusb as data source (Linux only)." ],
+	['1', '', '--wan-ip-url', "[URL] Skips dig, uses supplied URL for WAN IP (-i). 
+	URL output must end in the IP address. See man. 
+	Example:^$self_name^-i^--wan-ip-url^https://yoursite.com/ip.php" ],
 	['1', '', '--wm', "Force wm: to use wmctrl as data source. Default uses ps." ],
 	['0', '', '', $line ],
 	['0', '', '', "Debugging Options:" ],
+	['1', '', '--dbg', "Specific debuggers, change often. Only 1 is constant:" ],
+	['2', '1', '', "Show downloader output. Turns off quiet mode." ],
 	['1', '', '--debug', "Triggers debugging modes." ],
 	['2', '1-3', '', "On screen debugger output." ],
 	['2', '10', '', "Basic logging." ],
@@ -5404,7 +5446,7 @@ sub row_defaults {
 	'root-required' => "<root required>",
 	'sensors-data-ipmi' => "No ipmi sensors data was found.",
 	'sensors-data-linux' => "No sensors data was found. Is sensors configured?",
-	'sensors-ipmi-root' => "Unable to run ipmi sensors. Are you root?",
+	'sensors-ipmi-root' => "Unable to run ipmi sensors.  Root privileges required.",
 	'tool-missing' => "<missing $id>",
 	'unmounted-data' => "No unmounted partitions found.",
 	'unmounted-data-bsd' => "No unmounted partition data found for this BSD system.",
@@ -5413,6 +5455,7 @@ sub row_defaults {
 	'unknown-desktop-version' => "ERR-101",
 	'unknown-dev' => "ERR-102",
 	'unknown-shell' => "ERR-100",
+	'weather-error' => "Error in weather data: $id",
 	'weather-null' => "No $id found. Internet connection working?",
 	'xdpyinfo-missing' => '<xdpyinfo missing>',
 	);
@@ -7883,7 +7926,11 @@ sub cpu_arch {
 			elsif ( $model =~ /^(3A|3E)$/ ) {$arch = 'Ivy Bridge'}
 			elsif ( $model =~ /^(3C|3F|45|46)$/ ) {$arch = 'Haswell'}
 			elsif ( $model =~ /^(3D|47|4F|56)$/ ) {$arch = 'Broadwell'}
-			elsif ( $model =~ /^(4E|55)$/ ) {$arch = 'Skylake'} # had 9E
+			elsif ( $model =~ /^(4E)$/ ) {$arch = 'Skylake'} # had 9E, cascade lake also 55
+			# need to find stepping for cl, guessing stepping 4 is last for sl
+			elsif ( $model =~ /^(55)$/ ) {
+				if ($stepping > 4){$arch = 'Cascade Lake'}
+				else {$arch = 'Skylake'} }
 			elsif ( $model =~ /^(5C|5F)$/ ) {$arch = 'Goldmont'}
 			elsif ( $model =~ /^(5E)$/ ) {$arch = 'Skylake-S'}
 			elsif ( $model =~ /^(4C)$/ ) {$arch = 'Airmont'}
@@ -7896,9 +7943,9 @@ sub cpu_arch {
 			elsif ( $model =~ /^(57)$/ ) {$arch = 'Knights Landing'}
 			elsif ( $model =~ /^(66)$/ ) {$arch = 'Cannon Lake'}
 			elsif ( $model =~ /^(85)$/ ) {$arch = 'Knights Mill'}
-			elsif ( $model =~ /^(865)$/ ) {$arch = 'Tremont'}
+			elsif ( $model =~ /^(86)$/ ) {$arch = 'Tremont'}
 			# coming: alder lake; amber lake; cannonlake; cascade lake; coffee lake;  
-			# granite rapids; icelake; meteor lake; saphire rapids; tigerlake, 
+			# cooper lake; granite rapids; icelake; meteor lake; saphire rapids; tigerlake, 
 		}
 		# itanium 1 family 7 all recalled
 		elsif ($family eq 'B'){
@@ -8678,7 +8725,7 @@ sub device_vendor {
 	## These go first because they are the most likely and common ##
 	['(Crucial|^(FC)?CT|-CT|^M4\b)','Crucial','Crucial',''],
 	['^(INTEL|SSD(PAM|SA2))','^INTEL','Intel',''],
-	['(KINGSTON|DataTraveler|^SMS|^SHS|^SUV|^Ultimate CF)','KINGSTON','Kingston',''], # maybe SHS: SHSS37A SKC SUV
+	['(KINGSTON|DataTraveler|DT\s?(DUO|Microduo|101)|^SMS|^SHS|^SUV|^Ultimate CF)','KINGSTON','Kingston',''], # maybe SHS: SHSS37A SKC SUV
 	# must come before samsung MU. NOTE: toshiba can have: TOSHIBA_MK6475GSX: mush: MKNSSDCR120GB_
 	['(^MKN|Mushkin)','Mushkin','Mushkin',''], # MKNS
 	# MU = Multiple_Flash_Reader too risky: |M[UZ][^L] HD103SI HD start risky
@@ -8697,14 +8744,14 @@ sub device_vendor {
 	['^ATP','^ATP[\s\-]','ATP',''],
 	# Force MP500
 	['^(Corsair|Force\s|Voyager)','^Corsair','Corsair',''],
-	['^(FUJITSU|MHV|MP)','^FUJITSU','Fujitsu',''],
+	['^(FUJITSU|MH[VY]|MP)','^FUJITSU','Fujitsu',''],
 	# note: 2012:  wdc bought hgst
-	['^(HGST|Touro)','^HGST','HGST (Hitachi)',''], # HGST HUA
+	['^(HGST|Touro|5450)','^HGST','HGST (Hitachi)',''], # HGST HUA
 	['^(Hitachi|HD[ST]|DK[0-9]|IC|HT|HU)','^Hitachi','Hitachi',''], 
 	['^Hoodisk','^Hoodisk','Hoodisk',''],
 	# vb: VB0250EAVER but clashes with vbox; HP_SSD_S700_120G ;GB0500EAFYL GB starter too generic?
 	['^(HP\b|MB0|G[BJ]0|v[0-9]{3}[ow])','^HP','HP',''], 
-	['^(LSD|Lexar|JumpDrive)','^Lexar','Lexar',''], # mmc-LEXAR_0xb016546c
+	['^(LSD|Lexar|JumpDrive|JD\s?Firefly)','^Lexar','Lexar',''], # mmc-LEXAR_0xb016546c; JD Firefly;
 	# OCZSSD2-2VTXE120G is OCZ-VERTEX2_3.5
 	['^(OCZ|APOC|D2|DEN|DEN|DRSAK|EC188|FTNC|GFGC|MANG|MMOC|NIMC|NIMR|PSIR|TALOS2|TMSC|TRSAK)','^OCZ[\s\-]','OCZ',''],
 	['^OWC','^OWC[\s\-]','OWC',''],
@@ -8729,6 +8776,9 @@ sub device_vendor {
 	['^CHN\b','','Zheino',''],
 	['^Colorful\b','^Colorful','Colorful',''],
 	['^CSD','^CSD','CSD',''],
+	['^(Dane-?Elec|Z Mate)','^Dane-?Elec','DaneElec',''],
+	# Daplink vfs is an ARM software thing
+	['^DeLOCK','^Delock(\s?products)?','Delock',''],
 	['^DGM','^DGM\b','DGM',''],
 	['^DIGITAL\s?FILM','DIGITAL\s?FILM','Digital Film',''],
 	['^DREVO\b','^DREVO','Drevo',''],
@@ -8746,7 +8796,7 @@ sub device_vendor {
 	['^Gigabyte','^Gigabyte','Gigabyte',''], # SSD
 	['^Gigastone','^Gigastone','Gigastone',''],
 	['^Gloway','^Gloway','Gloway',''],
-	['^GOODRAM','^GOODRAM','GOODRAM',''],
+	['^(GOODRAM|IR SSD)','^GOODRAM','GOODRAM',''],
 	# supertalent also has FM: |FM
 	['^(G[\.]?SKILL)','^G[\.]?SKILL','G.SKILL',''],
 	['^HUAWEI','^HUAWEI','Huawei',''],
@@ -8818,6 +8868,7 @@ sub device_vendor {
 	['^(TDK|TF[1-9][0-9])','^TDK','TDK',''],
 	['^TEAC','^TEAC','TEAC',''],
 	['^TEAM','^TEAM( Group)?','Team',''],
+	['^Tigo','^Tigo','Tigo',''],
 	['^TopSunligt','^TopSunligt','TopSunligt',''], # is this a typo? hard to know
 	['^TopSunlight','^TopSunlight','TopSunlight',''],
 	['^(TS|Transcend|JetFlash)','^Transcend','Transcend',''],
@@ -9944,7 +9995,7 @@ sub machine_data_soc {
 				$temp[1] = main::dmi_cleaner($temp[1]);
 				$soc_machine{'device'} = main::cleaner($temp[1]);
 			}
-			elsif (/^(system type)\s*:/i){
+			elsif (/^(system type|model)\s*:/i){
 				@temp = split /\s*:\s*/, $_;
 				$temp[1] = main::dmi_cleaner($temp[1]);
 				$soc_machine{'model'} = main::cleaner($temp[1]);
@@ -10743,19 +10794,22 @@ sub if_ip {
 # dig +short +time=1 +tries=1 myip.opendns.com. A @208.67.222.222
 sub wan_ip {
 	eval $start if $b_log;
-	my (@data,$ip);
+	my (@data,$ip,$ua);
 	my $num = 0;
 	# time: 0.06 - 0.07 seconds
-	if (my $program = main::check_program('dig')){
+	if (!$b_skip_dig && (my $program = main::check_program('dig') )){
 		$ip = (main::grabber("$program +short +time=1 +tries=1 myip.opendns.com \@resolver1.opendns.com 2>/dev/null"))[0];
 	}
 	else {
 		# note: tests: akamai: 0.055 - 0.065 icanhazip.com: 0.177 0.164
 		# smxi: 0.525, so almost 10x slower. Dig is fast too
 		# leaving smxi as last test because I know it will always be up.
-		my @urls = qw( http://whatismyip.akamai.com/ http://icanhazip.com/ https://smxi.org/opt/ip.php);
+		# --wan-ip-url replaces values with user supplied arg
+		my @urls = (!$wan_url) ? qw( http://whatismyip.akamai.com/ 
+		 http://icanhazip.com/ https://smxi.org/opt/ip.php) : ($wan_url);
 		foreach (@urls){
-			$ip = main::download_file('stdout',$_);
+			$ua = 'ip' if $_ =~ /smxi/;
+			$ip = main::download_file('stdout',$_,'',$ua);
 			if ($ip){
 				# print "$_\n";
 				chomp $ip;
@@ -15302,7 +15356,7 @@ sub get {
 sub create_output {
 	eval $start if $b_log;
 	my $num = 0;
-	my (@data,@location,@rows,%weather,);
+	my (@data,@location,@rows,$value,%weather,);
 	my ($conditions) = ('NA');
 	if ($show{'weather-location'}){
 		my $location_string;
@@ -15331,6 +15385,11 @@ sub create_output {
 		}
 	}
 	%weather = get_weather(@location);
+	if ($weather{'error'}) {
+		return @rows = ({
+		main::key($num++,'Message') => main::row_defaults('weather-error',$weather{'error'}),
+		});
+	}
 	if (!$weather{'weather'}) {
 		return @rows = ({
 		main::key($num++,'Message') => main::row_defaults('weather-null','weather data'),
@@ -15348,32 +15407,53 @@ sub create_output {
 		my $wind = wind_output($weather{'wind'},$weather{'wind-direction'},$weather{'wind-mph'},$weather{'wind-ms'},
 		$weather{'wind-gust-mph'},$weather{'wind-gust-ms'});
 		$rows[0]{main::key($num++,'Wind')} = $wind;
-		$rows[0]{main::key($num++,'Humidity')} = $weather{'humidity'};
+		if ($extra > 1){
+			if (defined $weather{'cloud-cover'}){
+				$rows[0]{main::key($num++,'Cloud Cover')} = $weather{'cloud-cover'} . '%';
+			}
+			if ($weather{'rain-1h-mm'} && defined $weather{'rain-1h-in'} ){
+				$value = unit_output('',$weather{'rain-1h-mm'},'mm',$weather{'rain-1h-in'},'in');
+				$rows[0]{main::key($num++,'Rain')} = $value;
+			}
+			if ($weather{'snow-1h-mm'} && defined $weather{'snow-1h-in'} ){
+				$value = unit_output('',$weather{'snow-1h-mm'},'mm',$weather{'snow-1h-in'},'in');
+				$rows[0]{main::key($num++,'Snow')} = $value;
+			}
+		}
+		$rows[0]{main::key($num++,'Humidity')} = $weather{'humidity'} . '%';
+		if ($extra > 1){
+			if ($weather{'dewpoint'} || (defined $weather{'dewpoint-c'} && defined $weather{'dewpoint-f'})){
+				$value = unit_output($weather{'dewpoint'},$weather{'dewpoint-c'},'C',$weather{'dewpoint-f'},'F');
+				$rows[0]{main::key($num++,'Dew Point')} = $value;
+			}
+		}
 		$rows[0]{main::key($num++,'Pressure')} = $pressure;
 	}
 	if ($extra > 1){
-		if ($weather{'heat-index'}){
-			my $heat = unit_output($weather{'heat-index'},$weather{'heat-index-c'},'C',$weather{'heat-index-f'},'F');
-			$rows[0]{main::key($num++,'Heat Index')} = $heat;
+		if ($weather{'heat-index'} || (defined $weather{'heat-index-c'} && defined $weather{'heat-index-f'})){
+			$value = unit_output($weather{'heat-index'},$weather{'heat-index-c'},'C',$weather{'heat-index-f'},'F');
+			$rows[0]{main::key($num++,'Heat Index')} = $value;
 		}
-		if ($weather{'windchill'}){
-			my $chill = unit_output($weather{'windchill'},$weather{'windchill-c'},'C',$weather{'windchill-f'},'F');
-			$rows[0]{main::key($num++,'Wind Chill')} = $chill ;
-		}
-		if ($weather{'dewpoint'}){
-			my $dew = unit_output($weather{'dewpoint'},$weather{'dewpoint-c'},'C',$weather{'dewpoint-f'},'F');
-			$rows[0]{main::key($num++,'Dew Point')} = $dew;
+		if ($weather{'windchill'} || (defined $weather{'windchill-c'} && defined $weather{'windchill-f'})){
+			$value = unit_output($weather{'windchill'},$weather{'windchill-c'},'C',$weather{'windchill-f'},'F');
+			$rows[0]{main::key($num++,'Wind Chill')} = $value;
 		}
 	}
 	if ($extra > 2){
 		if (!$show{'filter'}){
-			$rows[0]{main::key($num++,'Location')} = $location[1];
-			$rows[0]{main::key($num++,'altitude')} = elevation_output($weather{'elevation-m'},$weather{'elevation-ft'});
+			$rows[0]{main::key($num++,'Location')} = complete_location($location[1],$weather{'city'},$weather{'state'},$weather{'country'});
+			if ($weather{'elevation-m'} || $weather{'elevation-ft'}){
+				$rows[0]{main::key($num++,'altitude')} = elevation_output($weather{'elevation-m'},$weather{'elevation-ft'});
+			}
 		}
 	}
 	$rows[0]{main::key($num++,'Current Time')} = $weather{'date-time'};
 	if ($extra > 2){
+		$weather{'observation-time-local'} = 'N/A' if !$weather{'observation-time-local'};
 		$rows[0]{main::key($num++,'Observation Time')} = $weather{'observation-time-local'};
+	}
+	if ($weather{'api-source'}){
+		$rows[0]{main::key($num++,'Source')} = $weather{'api-source'};
 	}
 	eval $end if $b_log;
 	return @rows;
@@ -15407,16 +15487,16 @@ sub unit_output {
 	eval $start if $b_log;
 	my ($primary,$metric,$m_unit,$imperial,$i_unit) = @_;
 	my $result = '';
-	if ($metric && $imperial && $weather_unit eq 'mi' ){
+	if (defined $metric && defined $imperial && $weather_unit eq 'mi' ){
 		$result = "$metric $m_unit ($imperial $i_unit)";
 	}
-	elsif ($metric && $imperial && $weather_unit eq 'im' ){
+	elsif (defined $metric && defined $imperial && $weather_unit eq 'im' ){
 		$result = "$imperial $i_unit ($metric $m_unit)";
 	}
-	elsif ($metric && $weather_unit eq 'm' ){
+	elsif (defined $metric && $weather_unit eq 'm' ){
 		$result = "$metric $m_unit";
 	}
-	elsif ($imperial && $weather_unit eq 'i' ){
+	elsif (defined $imperial && $weather_unit eq 'i' ){
 		$result = "$imperial $i_unit";
 	}
 	elsif ($primary){
@@ -15495,48 +15575,33 @@ sub get_weather {
 	my $loc_name = lc($location[0]);
 	$loc_name =~ s/-\/|\s|,/-/g;
 	$loc_name =~ s/--/-/g;
-	my $file_cached = "$user_data_dir/weather-$loc_name.txt";
+	my $file_cached = "$user_data_dir/weather-$loc_name-$weather_source.txt";
 	if (-f $file_cached){
 		@weather_data = main::reader($file_cached);
 		$freshness = (split /\^\^/, $weather_data[0])[1];
 		#print "$now:$freshness\n";
 	}
 	if (!$freshness || $freshness < ($now - 90) ) {
-		@weather_data = (); # reset so we don't write the previous data to file!!
-		my $url = "http://api.wunderground.com/auto/wui/geo/WXCurrentObXML/index.xml?query=$location[0]";
- 		my $temp;
-# 		{
-# 			#my $file2 = "$ENV{'HOME'}/bin/scripts/inxi/data/weather/weather-1.xml";
-# 			# my $file2 = "$ENV{'HOME'}/bin/scripts/inxi/data/weather/feed-oslo-1.xml";
-# 			local $/;
-# 			my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/weather/weather-1.xml";
-# 			open my $fh, '<', $file or die "can't open $file: $!";
-# 			$temp = <$fh>;
-# 		}
- 		$temp = main::download_file('stdout',$url);
-		$temp =~ s/\r|\n\n/\n/g;
-		my @weather_temp = split /\n/, $temp;
-		foreach (@weather_temp){
-			chomp $_;
-			$_ =~ s/<\/[^>]+>//;
-			$_ =~ s/.*icon.*|\r//g;
-			$_ =~ s/\s\s/ /g;
-			$_ =~ s/^\s+|\s+$//g;
-			$_ =~ s/>/^^/;
-			$_ =~ s/^<|NA$//g;
-			$_ =~ s/^(current|credit|terms|image|title|link|.*_url).*//;
-			push @weather_data, $_ if $_ !~ /^\s*$/;
-		}
-		unshift (@weather_data,("timestamp^^$now"));
-		main::writer($file_cached,\@weather_data);
-		#print "$file_cached: download/cleaned\n";
+		@weather_data = download_weather($now,$file_cached,@location);
 	}
 	#print join "\n", @weather_data, "\n";
 	# NOTE: because temps can be 0, we can't do if value tests
 	foreach (@weather_data){
 		my @working = split /\s*\^\^\s*/,$_;
 		next if ! defined $working[1] || $working[1] eq '';
-		if ( $working[0] eq 'dewpoint_string' ){
+		if ( $working[0] eq 'api_source' ){
+			$weather{'api-source'} = $working[1];
+		}
+		elsif ( $working[0] eq 'city' ){
+			$weather{'city'} = $working[1];
+		}
+		elsif ( $working[0] eq 'cloud_cover' ){
+			$weather{'cloud-cover'} = $working[1];
+		}
+		elsif ( $working[0] eq 'country' ){
+			$weather{'country'} = $working[1];
+		}
+		elsif ( $working[0] eq 'dewpoint_string' ){
 			$weather{'dewpoint'} = $working[1];
 			$working[1] =~ /^([0-9\.]+)\sF\s\(([0-9\.]+)\sC\)/;
 			$weather{'dewpoint-c'} = $2;;
@@ -15548,11 +15613,14 @@ sub get_weather {
 		elsif ( $working[0] eq 'dewpoint_f' ){
 			$weather{'dewpoint-f'} = $working[1];
 		}
-		# there are two elevations, we want the first one
+		# WU: there are two elevations, we want the first one
 		elsif (!$weather{'elevation-m'} && $working[0] eq 'elevation'){
 			# note: bug in source data uses ft for meters, not 100% of time, but usually
 			$weather{'elevation-m'} = $working[1];
 			$weather{'elevation-m'} =~ s/\s*(ft|m).*$//;
+		}
+		elsif ( $working[0] eq 'error' ){
+			$weather{'error'} = $working[1];
 		}
 		elsif ( $working[0] eq 'heat_index_string' ){
 			$weather{'heat-index'} = $working[1];
@@ -15567,6 +15635,7 @@ sub get_weather {
 			$weather{'heat-index-f'} = $working[1];
 		}
 		elsif ( $working[0] eq 'relative_humidity' ){
+			$working[1] =~ s/%$//;
 			$weather{'humidity'} = $working[1];
 		}
 		elsif ( $working[0] eq 'local_time' ){
@@ -15576,7 +15645,7 @@ sub get_weather {
 			$weather{'local-epoch'} = $working[1];
 		}
 		elsif ( $working[0] eq 'observation_time_rfc822' ){
-			$weather{'observation-time-gmt'} = $working[1];
+			$weather{'observation-time-rfc822'} = $working[1];
 		}
 		elsif ( $working[0] eq 'observation_epoch' ){
 			$weather{'observation-epoch'} = $working[1];
@@ -15594,6 +15663,21 @@ sub get_weather {
 		elsif ( $working[0] eq 'pressure_in' ){
 			$weather{'pressure-in'} = $working[1];
 		}
+		elsif ( $working[0] eq 'rain_1h_mm' ){
+			$weather{'rain-1h-mm'} = $working[1];
+		}
+		elsif ( $working[0] eq 'rain_1h_in' ){
+			$weather{'rain-1h-in'} = $working[1];
+		}
+		elsif ( $working[0] eq 'snow_1h_mm' ){
+			$weather{'snow-1h-mm'} = $working[1];
+		}
+		elsif ( $working[0] eq 'snow_1h_in' ){
+			$weather{'snow-1h-in'} = $working[1];
+		}
+		elsif ( $working[0] eq 'state_name' ){
+			$weather{'state'} = $working[1];
+		}
 		elsif ( $working[0] eq 'temperature_string' ){
 			$weather{'temp'} = $working[1];
 			$working[1] =~ /^([0-9\.]+)\sF\s\(([0-9\.]+)\sC\)/;
@@ -15608,6 +15692,9 @@ sub get_weather {
 		}
 		elsif ( $working[0] eq 'temp_c' ){
 			$weather{'temp-c'} = $working[1];
+		}
+		elsif ( $working[0] eq 'timezone' ){
+			$weather{'timezone'} = $working[1];
 		}
 		elsif ( $working[0] eq 'visibility' ){
 			$weather{'visibility'} = $working[1];
@@ -15656,14 +15743,26 @@ sub get_weather {
 		}
 	}
 	if ($show{'weather-location'}){
-		$weather{'observation-time-local'} =~ /^(.*)\s([\S]+)$/;
-		$tz = $2;
+		if ($weather{'observation-time-local'} && 
+		 $weather{'observation-time-local'} =~ /^(.*)\s([a-z_]+\/[a-z_]+)$/i){
+			$tz = $2;
+		}
+		if (!$tz && $weather{'timezone'}){
+			$tz = $weather{'timezone'};
+			$weather{'observation-time-local'} .= ' (' . $weather{'timezone'} . ')' if $weather{'observation-time-local'};
+		}
 		# very clever trick, just make the system think it's in the 
 		# remote timezone for this local block only
-		local $ENV{'TZ'} = $tz; 
+		local $ENV{'TZ'} = $tz if $tz; 
 		$date_time = POSIX::strftime "%c", localtime();
 		$date_time = test_local_date($date_time,'','');
 		$weather{'date-time'} = $date_time;
+		# only wu has rfc822 value, and we want the original observation time then
+		if ($weather{'observation-epoch'} && $tz){
+			$date_time = POSIX::strftime "%Y-%m-%d %T ($tz %z)", localtime($weather{'observation-epoch'});
+			$date_time = test_local_date($date_time,$show{'weather-location'},$weather{'observation-epoch'});
+			$weather{'observation-time-local'} = $date_time;
+		}
 	}
 	else {
 		$date_time = POSIX::strftime "%c", localtime();
@@ -15680,6 +15779,50 @@ sub get_weather {
 	return %weather;
 	eval $end if $b_log;
 }
+sub download_weather {
+	eval $start if $b_log;
+	my ($now,$file_cached,@location) = @_;
+	my (@weather,@weather_temp,$temp,$ua,$url);
+	if ($weather_source == 0){
+		$url = "http://api.wunderground.com/auto/wui/geo/WXCurrentObXML/index.xml?query=$location[0]";
+	}
+	else {
+		$url = "https://smxi.org/opt/xr2.php?loc=$location[0]&src=$weather_source";
+	}
+	$ua = 'weather' if $url =~ /smxi/;
+# 		{
+# 			#my $file2 = "$ENV{'HOME'}/bin/scripts/inxi/data/weather/weather-1.xml";
+# 			# my $file2 = "$ENV{'HOME'}/bin/scripts/inxi/data/weather/feed-oslo-1.xml";
+# 			local $/;
+# 			my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/weather/weather-1.xml";
+# 			open my $fh, '<', $file or die "can't open $file: $!";
+# 			$temp = <$fh>;
+# 		}
+	$temp = main::download_file('stdout',$url,'',$ua);
+	$temp =~ s/\r|\n\n/\n/g if $weather_source == 0;
+	@weather_temp = split /\n/, $temp;
+	if ($weather_source == 0){
+		foreach (@weather_temp){
+			chomp $_;
+			$_ =~ s/<\/[^>]+>//;
+			$_ =~ s/.*icon.*|\r//g;
+			$_ =~ s/\s\s/ /g;
+			$_ =~ s/^\s+|\s+$//g;
+			$_ =~ s/>/^^/;
+			$_ =~ s/^<|NA$//g;
+			$_ =~ s/^(current|credit|terms|image|title|link|.*_url).*//;
+			push @weather, $_ if $_ !~ /^\s*$/;
+		}
+	}
+	else {
+		@weather = @weather_temp;
+	}
+	unshift (@weather,("timestamp^^$now"));
+	main::writer($file_cached,\@weather);
+	#print "$file_cached: download/cleaned\n";
+	eval $end if $b_log;
+	return @weather;
+}
 # resolve wide character issue, if detected, switch to iso 
 # date format, we won't try to be too clever here.
 sub test_local_date {
@@ -15694,6 +15837,7 @@ sub test_local_date {
 			$date_time = POSIX::strftime "%Y-%m-%d %H:%M:%S", localtime();
 		}
 	}
+	$date_time =~ s/\s+$//;
 	#print "2: $date_time\n";
 	return $date_time;
 }
@@ -15785,6 +15929,17 @@ sub get_location {
 	#print ($loc_arg,"\n", join "\n", @loc_data, "\n",scalar @loc_data, "\n");
 	eval $end if $b_log;
 	return @location;
+}
+sub complete_location {
+	eval $start if $b_log;
+	my ($location,$city,$state,$country) = @_;
+	if ($location && $location =~ /[\+\-0-9]/ && $city){
+		$location = $country . ', ' . $location if $country && $location !~ m|$country|i;
+		$location = $state . ', ' . $location if $state && $location !~ m|$state|i;
+		$location = $city . ', ' . $location;
+	}
+	eval $end if $b_log;
+	return $location;
 }
 }
 
@@ -16710,7 +16865,7 @@ sub get_linux_distro {
 	}
 	if ($extra > 0){
 		my $base_debian_version_distro = 'sidux';
-		my $base_debian_version_osr = '\belive|lmde|neptune|parrot|pureos|sparky|tails';
+		my $base_debian_version_osr = '\belive|lmde|neptune|parrot|pureos|septor|sparky|tails';
 		my $base_default = 'antix-version|mx-version'; # osr has base ids
 		my $base_issue = 'bunsen'; # base only found in issue
 		my $base_manual = 'blankon|deepin|kali'; # synthesize, no direct data available
@@ -17410,12 +17565,15 @@ sub get_pci_vendor {
 	eval $start if $b_log;
 	my ($device, $subsystem) = @_;
 	return if !$subsystem;
-	my ($vendor,$sep) = ('','');
+	my ($vendor,$sep,$temp) = ('','','');
 	# get rid of any [({ type characters that will make regex fail
 	$subsystem = regex_cleaner($subsystem);
 	my @data = split /\s+/, $subsystem;
+	# when using strings in patterns for regex have to escape them
 	foreach (@data){
-		if ($device !~ /\b$_\b/){
+		$temp = $_;
+		$temp =~ s/(\+|\$|\?|\^|\*)/\\$1/g;
+		if ($device !~ m|\b$temp\b|){
 			$vendor .= $sep . $_;
 			$sep = ' ';
 		}
