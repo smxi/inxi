@@ -31,8 +31,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.0.31';
-my $self_date='2019-02-06';
+my $self_version='3.0.32';
+my $self_date='2019-02-07';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -4557,8 +4557,7 @@ sub show_options {
 		$self_name. Use only ASCII characters, replace spaces in city/state/country 
 		names with '+'. Example:^$self_name^-W^new+york,ny"],
 		['1', '', '--weather-source', "[0-9] Change weather data source. 0 uses
-		a legacy source internally. 1-3 use remote smxi sources. 4-9 may be added
-		in the future. See man."],
+		a legacy source internally. 1-3 generally active, 4-9 check. See man."],
 		['1', '', '--weather-unit', "Set weather units to metric (m), imperial (i), 
 		metric/imperial (mi), or imperial/metric (im)."],
 		);
@@ -4634,8 +4633,8 @@ sub show_options {
 	);
 	push @data, @rows;
 	if ( $b_weather ){
-		@rows = (['2', '-w -W', '', "Snow, rain (last observed hour), cloud cover, 
-		wind chill, dew point, heat index, if available." ]);
+		@rows = (['2', '-w -W', '', "Snow, rain, precipitation, (last observed hour), 
+		cloud cover, wind chill, dew point, heat index, if available." ]);
 		push @data, @rows;
 	}
 	@rows = (
@@ -4664,7 +4663,7 @@ sub show_options {
 	push @data, @rows;
 	if ( $b_weather ){
 		@rows = (['2', '-w -W', '', "Location (uses -z/irc filter), weather observation 
-		time, altitude, if available." ] );
+		time, altitude, sunrise/sunset, if available." ] );
 		push @data, @rows;
 	}
 	@rows = (
@@ -15411,6 +15410,10 @@ sub create_output {
 			if (defined $weather{'cloud-cover'}){
 				$rows[0]{main::key($num++,'Cloud Cover')} = $weather{'cloud-cover'} . '%';
 			}
+			if ($weather{'precip-1h-mm'} && defined $weather{'precip-1h-in'} ){
+				$value = unit_output('',$weather{'precip-1h-mm'},'mm',$weather{'precip-1h-in'},'in');
+				$rows[0]{main::key($num++,'Precipitation')} = $value;
+			}
 			if ($weather{'rain-1h-mm'} && defined $weather{'rain-1h-in'} ){
 				$value = unit_output('',$weather{'rain-1h-mm'},'mm',$weather{'rain-1h-in'},'in');
 				$rows[0]{main::key($num++,'Rain')} = $value;
@@ -15451,6 +15454,12 @@ sub create_output {
 	if ($extra > 2){
 		$weather{'observation-time-local'} = 'N/A' if !$weather{'observation-time-local'};
 		$rows[0]{main::key($num++,'Observation Time')} = $weather{'observation-time-local'};
+		if ($weather{'sunrise'}){
+			$rows[0]{main::key($num++,'Sunrise')} = $weather{'sunrise'};
+		}
+		if ($weather{'sunset'}){
+			$rows[0]{main::key($num++,'Sunset')} = $weather{'sunset'};
+		}
 	}
 	if ($weather{'api-source'}){
 		$rows[0]{main::key($num++,'Source')} = $weather{'api-source'};
@@ -15516,21 +15525,21 @@ sub wind_output {
 	$gust_mph = undef if $gust_mph && $mph && $mph eq $gust_mph;
 	$gust_ms = undef if $gust_ms && $ms && $ms eq $gust_ms;
 	# calculate and round, order matters so that rounding only happens after math done
-	$ms = 0.44704 * $mph if $mph && !$ms;
-	$mph = $ms * 2.23694 if $ms && !$mph;
-	$kmh = sprintf("%.0f",  18 * $ms / 5) if $ms;
-	$ms = sprintf("%.1f", $ms ) if  $ms; # very low mph speeds yield 0, which is wrong
-	$mph = sprintf("%.0f", $mph) if $mph;
+	$ms = 0.44704 * $mph if defined $mph && !defined $ms;
+	$mph = $ms * 2.23694 if defined $ms && !defined $mph;
+	$kmh = sprintf("%.0f",  18 * $ms / 5) if defined $ms;
+	$ms = sprintf("%.1f", $ms ) if defined $ms; # very low mph speeds yield 0, which is wrong
+	$mph = sprintf("%.0f", $mph) if defined $mph;
 	$gust_ms = 0.44704 * $gust_mph if $gust_mph && !$gust_ms;
 	$gust_kmh = 18 * $gust_ms / 5 if $gust_ms;
 	$gust_mph = $gust_ms * 2.23694 if $gust_ms && !$gust_mph;
 	$gust_mph = sprintf("%.0f", $gust_mph) if $gust_mph;
 	$gust_kmh = sprintf("%.0f", $gust_kmh) if $gust_kmh;
 	$gust_ms = sprintf("%.0f", $gust_ms ) if  $gust_ms;
-	if (!$mph && $primary){
+	if (!defined $mph && $primary){
 		$result = $primary;
 	}
-	elsif ($mph && $direction ){
+	elsif (defined $mph && defined $direction ){
 		if ( $weather_unit eq 'mi' ){
 			$result = "from $direction at $ms $m_unit ($kmh $km_unit, $mph $i_unit)";
 		}
@@ -15654,6 +15663,12 @@ sub get_weather {
 			$weather{'observation-time-local'} = $working[1];
 			$weather{'observation-time-local'} =~ s/Last Updated on //;
 		}
+		elsif ( $working[0] eq 'precip_mm' ){
+			$weather{'precip-1h-mm'} = $working[1];
+		}
+		elsif ( $working[0] eq 'precip_in' ){
+			$weather{'precip-1h-in'} = $working[1];
+		}
 		elsif ( $working[0] eq 'pressure_string' ){
 			$weather{'pressure'} = $working[1];
 		}
@@ -15677,6 +15692,28 @@ sub get_weather {
 		}
 		elsif ( $working[0] eq 'state_name' ){
 			$weather{'state'} = $working[1];
+		}
+		elsif ( $working[0] eq 'sunrise' ){
+			if ($working[1]){
+				if ($working[1] !~ /^[0-9]+$/){
+					$weather{'sunrise'} = $working[1];
+				}
+				# trying to figure out remote time from UTC is too hard
+				elsif (!$show{'weather-location'}){
+					$weather{'sunrise'} = POSIX::strftime "%T", localtime($working[1]);
+				}
+			}
+		}
+		elsif ( $working[0] eq 'sunset' ){
+			if ($working[1]){
+				if ($working[1] !~ /^[0-9]+$/){
+					$weather{'sunset'} = $working[1];
+				}
+				# trying to figure out remote time from UTC is too hard
+				elsif (!$show{'weather-location'}){
+					$weather{'sunset'} = POSIX::strftime "%T", localtime($working[1]);
+				}
+			}
 		}
 		elsif ( $working[0] eq 'temperature_string' ){
 			$weather{'temp'} = $working[1];
