@@ -31,8 +31,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.0.33';
-my $self_date='2019-03-29';
+my $self_version='3.0.34';
+my $self_date='2019-04-30';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -549,6 +549,7 @@ sub system_files {
 		'asound-cards' => '/proc/asound/cards',
 		'asound-modules' => '/proc/asound/modules',
 		'asound-version' => '/proc/asound/version',
+		'cmdline' => '/proc/cmdline',
 		'cpuinfo' => '/proc/cpuinfo',
 		'dmesg-boot' => '/var/run/dmesg.boot',
 		'lsb-release' => '/etc/lsb-release',
@@ -1786,6 +1787,7 @@ sub system_files {
 	copy_files(\@files,'system-distro');
 	@files = (
 	'/proc/1/comm',
+	'/proc/cmdline',
 	'/proc/cpuinfo',
 	'/proc/meminfo',
 	'/proc/modules',
@@ -2437,7 +2439,7 @@ sub run {
 	my (@data,@rows);
 	my $line = make_line();
 	my $pm = get_pm();
-	@data = basic_data($line);
+	@data = basic_data($line,$pm);
 	push @rows,@data;
 	if (!$bsd_type){
 		@data = check_items('required system directories',$line,$pm);
@@ -2467,9 +2469,10 @@ sub run {
 }
 
 sub basic_data {
-	my ($line) = @_;
+	my ($line,$pm_local) = @_;
 	my (@data,@rows);
 	my $client = $client{'name-print'};
+	$pm_local ||= 'N/A';
 	$client .= ' ' . $client{'version'} if $client{'version'};
 	my $default_shell = 'N/A';
 	if ($ENV{'SHELL'}){
@@ -2491,6 +2494,7 @@ sub basic_data {
 	['0', '', '', "Current shell: " . $client ],
 	['0', '', '', "Default shell: " . $default_shell ],
 	['0', '', '', "sh links to: $sh_real" ],
+	['0', '', '', "Package manager: $pm_local" ],
 	);
 	return @rows;
 }
@@ -2612,7 +2616,10 @@ sub check_items {
 		}
 		else {
 			$result = 'Missing';
-			$install = " ~ Install package: $info{$pm}" if (($b_program || $b_module) && $pm);
+			if (($b_program || $b_module) && $pm){
+				$info{$pm} ||= 'N/A';
+				$install = " ~ Install package: $info{$pm}";
+			}
 			push @missing, "$_$install";
 		}
 		$row = make_row($_,$about,$result);
@@ -2640,7 +2647,7 @@ sub check_items {
 sub item_data {
 	my ($type) = @_;
 	my %data = (
-	# directory data
+	# Directory Data
 	'/sys/class/dmi/id' => ({
 	'info' => '-M system, motherboard, bios',
 	}),
@@ -2665,7 +2672,7 @@ sub item_data {
 	'/sys' => ({
 	'info' => '',
 	}),
-	# file data
+	# File Data
 	'/etc/lsb-release' => ({
 	'info' => '-S distro version data (older version)',
 	}),
@@ -2702,8 +2709,9 @@ sub item_data {
 	'/var/run/dmesg.boot' => ({
 	'info' => '-D,-d disk data',
 	}),
-	# system tools
-	# apt-dpkg,apt-get; pm-arch,pacman; rpm-redhat,suse
+	## START PACKAGE MANAGER BLOCK ##
+	# Note: see inxi-perl branch for details: docs/recommends-package-manager.txt
+	# System Tools
 	'blockdev' => ({
 	'info' => '--admin -p/-P (filesystem blocksize)',
 	'info-bsd' => '',
@@ -2921,7 +2929,7 @@ sub item_data {
 	'pacman' => 'wget',
 	'rpm' => 'wget',
 	}),
-	# display tools
+	# Display Tools
 	'glxinfo' => ({
 	'info' => '-G glx info',
 	'info-bsd' => '-G glx info',
@@ -2957,7 +2965,7 @@ sub item_data {
 	'pacman' => 'xrandr',
 	'rpm' => 'x11-server-utils',
 	}),
-	# Perl modules
+	# Perl Modules
 	'Cpanel::JSON::XS' => ({
 	'info' => '--output json - required for export.',
 	'info-bsd' => '--output json - required for export.',
@@ -3007,6 +3015,7 @@ sub item_data {
 	'pacman' => 'perl-xml-dumper',
 	'rpm' => 'perl-XML-Dumper',
 	}),
+	## END PACKAGE MANAGER BLOCK ##
 	);
 	my $ref = $data{$type};
 	my %values = %$ref;
@@ -3014,6 +3023,7 @@ sub item_data {
 }
 sub get_pm {
 	my ($pm) = ('');
+	# support maintainers of other pm types using custom lists
 	if (main::check_program('dpkg')){
 		$pm = 'apt';
 	}
@@ -4451,6 +4461,7 @@ sub show_options {
 	['2', '-p,-P', '', "If available: raw size of partition, percent available for user, 
 	block size of file system (root required); for swap, shows swapiness and vfs cache 
 	pressure, and if values are default or not." ],
+	['2', '-S', '', "If available: kernel boot parameters." ],
 	['1', '-A', '--audio', "Audio/sound card(s), driver, sound server." ],
 	['1', '-b', '--basic', "Basic output, short form. Same as $self_name^-v^2." ],
 	['1', '-B', '--battery', "System battery info, including charge and condition, plus 
@@ -6662,8 +6673,8 @@ sub create_output_full {
 		$flag_key = ($b_arm || $bsd_type) ? 'features': 'flags';
 		my $flag = 'N/A';
 		if (@flags){
-			# failure to read dmesg.boot: dmesg.boot permissions
-			@flags = grep {/^(dmesg.boot|lm|nx|pae|permissions|pni|svm|vmx|(sss|ss)e([2-9])?([a-z])?(_[0-9])?)$/} @flags;
+			# failure to read dmesg.boot: dmesg.boot permissions; then short -Cx list flags
+			@flags = grep {/^(dmesg.boot|permissions|avx[2-9]?|lm|nx|pae|pni|(sss|ss)e([2-9])?([a-z])?(_[0-9])?|svm|vmx)$/} @flags;
 			@flags = map {s/pni/sse3/; $_} @flags;
 			@flags = sort(@flags);
 			$flag = join ' ', @flags if @flags;
@@ -8722,6 +8733,7 @@ sub device_vendor {
 	# 0 - match pattern; 1 - replace pattern; 2 - vendor print; 3 - serial pattern
 	# Data URLs: inxi-resources.txt Section: DiskData device_vendor()
 	# $model = 'MEDIAMAX ';
+	# $model = 'Patriot Memory';
 	my @vendors = (
 	## These go first because they are the most likely and common ##
 	['(Crucial|^(FC)?CT|-CT|^M4\b)','Crucial','Crucial',''],
@@ -8765,24 +8777,29 @@ sub device_vendor {
 	# unknown: AL25744_12345678; ADP may be usb 2.5" adapter; udisk unknown: Z1E6FTKJ 00AAKS
 	# SSD2SC240G726A10 MRS020A128GTS25C EHSAJM0016GB
 	['^5ACE','^5ACE','5ACE',''], # could be seagate: ST316021 5ACE
+	['^Addlink','^Addlink','Addlink',''],
 	['^Aireye','^Aireye','Aireye',''],
+	['^Alfawise','^Alfawise','Alfawise',''],
 	['^Android','^Android','Android',''],
 	['^Apotop','^Apotop','Apotop',''],
 	# must come before AP|Apacer
-	['^APPLE','^APPLE','Apple',''],
+	['^(APPLE|iPod)','^APPLE','Apple',''],
 	['^(AP|Apacer)','^Apacer','Apacer',''],
+	['^(A-?RAM|ARSSD)','^A-?RAM','A-RAM',''],
 	['^(ASM|2115)','^ASM','ASMedia',''],#asm1153e
 	['^Bell\b','^Bell','Packard Bell',''],
 	['^BHT','^BHT','BHT',''],
 	['^BIOSTAR','^BIOSTAR','Biostar',''],
 	['^BIWIN','^BIWIN','BIWIN',''],
 	['^BUFFALO','^BUFFALO','Buffalo',''],
+	['^Centerm','^Centerm','Centerm',''],
 	['^CHN\b','','Zheino',''],
 	['^Clover','^Clover','Clover',''],
 	['^Colorful\b','^Colorful','Colorful',''],
 	['^CSD','^CSD','CSD',''],
 	['^(Dane-?Elec|Z Mate)','^Dane-?Elec','DaneElec',''],
 	# Daplink vfs is an ARM software thing
+	['^Dell\b','^Dell','Dell',''],
 	['^DeLOCK','^Delock(\s?products)?','Delock',''],
 	['^DGM','^DGM\b','DGM',''],
 	['^DIGITAL\s?FILM','DIGITAL\s?FILM','Digital Film',''],
@@ -8807,6 +8824,7 @@ sub device_vendor {
 	['^(GOODRAM|IR SSD)','^GOODRAM','GOODRAM',''],
 	# supertalent also has FM: |FM
 	['^(G[\.]?SKILL)','^G[\.]?SKILL','G.SKILL',''],
+	['^HDC','^HDC\b','HDC',''],
 	['^Hectron','^Hectron','Hectron',''],
 	['^Hoodisk','^Hoodisk','Hoodisk',''],
 	['^HUAWEI','^HUAWEI','Huawei',''],
@@ -8835,18 +8853,21 @@ sub device_vendor {
 	['^(LITE[\-\s]?ON[\s\-]?IT)','^LITE[\-]?ON[\s\-]?IT','LITE-ON IT',''], # LITEONIT_LSS-24L6G
 	['^(LITE[\-\s]?ON|PH[1-9])','^LITE[\-]?ON','LITE-ON',''], # PH6-CE240-L
 	['^M-Systems','^M-Systems','M-Systems',''],
-	['^(MAXTOR|Atlas)','^MAXTOR','Maxtor',''], # note M3 is usually maxtor, but can be samsung
+	['^(MAXTOR|Atlas)','^MAXTOR','Maxtor',''], # note M2 M3 is usually maxtor, but can be samsung
 	['^Memorex','^Memorex','Memorex',''],
 	# note: C300/400 can be either micron or crucial, but C400 is M4 from crucial
 	['(^MT|^M5|^Micron|00-MT|C[34]00)','^Micron','Micron',''],# C400-MTFDDAK128MAM
+	['^MARSHAL\b','^MARSHAL','Marshal',''],
 	['^MARVELL','^MARVELL','Marvell',''],
 	['^MDT\b','^MDT','MDT (rebuilt WD/Seagate)',''], # mdt rebuilds wd/seagate hdd
 	['^Medion','^Medion','Medion',''],
 	['^(MEDIAMAX|WL[0-9]{2})','^MEDIAMAX','MediaMax',''],
+	['^Morebeck','^Morebeck','Morebeck',''],
 	['^Motorola','^Motorola','Motorola',''],
 	['^MTRON','^MTRON','MTRON',''],
 	['^Netac','^Netac','Netac',''],
 	['^OOS[1-9]','','Utania',''],
+	['^OWC','^OWC\b','OWC',''],
 	['^PALIT','PALIT','Palit',''], # ssd 
 	['^PERC\b','','Dell PowerEdge RAID Card',''], # ssd 
 	['^(PS[8F]|Patriot)','^Patriot([-\s]?Memory)?','Patriot',''],
@@ -8867,7 +8888,7 @@ sub device_vendor {
 	# DIAMOND_040_GB
 	['^(SILICON\s?MOTION|SM[0-9])','^SILICON\s?MOTION','Silicon Motion',''],
 	['^(Silicon\s?Power|SP[CP]C|Silicon|Diamond|Haspeed)','Silicon\s?Power','Silicon Power',''],
-	['Smartbuy','\s?Smartbuy','Smartbuy',''], # SSD Smartbuy 60GB
+	['Smartbuy','\s?Smartbuy','Smartbuy',''], # SSD Smartbuy 60GB; mSata Smartbuy 3
 	# HFS128G39TND-N210A; seen nvme with name in middle
 	['(SK\s?HYNIX|^HFS)','\s?SK\s?HYNIX','SK Hynix',''], 
 	['hynix','hynix','Hynix',''],# nvme middle of string, must be after sk hynix
@@ -8877,6 +8898,7 @@ sub device_vendor {
 	['^(S[FR]-|Sony)','^Sony','Sony',''],
 	['^STE[CK]','^STE[CK]','sTec',''], # wd bought this one
 	['^STORFLY','^STORFLY','StorFly',''],
+	['^SUNEAST','^SUNEAST','SunEast',''],
 	# NOTE: F[MNETU] not reliable, g.skill starts with FM too: 
 	# Seagate ST skips STT. 
 	['^(STT)','','Super Talent',''], 
@@ -8896,6 +8918,7 @@ sub device_vendor {
 	# Twister Line but if we slice out Twister it would just say Line
 	['^(TrekStor|DS maxi)','^TrekStor','TrekStor',''],
 	['^UDinfo','^UDinfo','UDinfo',''],
+	['^USBTech','^USBTech','USBTech',''],
 	['^(UG|Unigen)','^Unigen','Unigen',''],
 	['^VBOX','','VirtualBox',''],
 	['^(Verbatim|STORE N GO)','^Verbatim','Verbatim',''],
@@ -17411,6 +17434,32 @@ sub get_kernel_bits {
 	return $bits;
 }
 
+sub get_kernel_parameters {
+	eval $start if $b_log;
+	my ($parameters);
+	if (my $file = system_files('cmdline') ) {
+		$parameters = get_kernel_parameters_linux($file);
+	}
+	elsif ($bsd_type) {
+		$parameters = get_kernel_parameters_bsd();
+	}
+	eval $end if $b_log;
+	return $parameters;
+}
+sub get_kernel_parameters_linux {
+	eval $start if $b_log;
+	my ($file) = @_;
+	my $line = (reader($file))[0];
+	eval $end if $b_log;
+	return $line;
+}
+sub get_kernel_parameters_bsd {
+	eval $start if $b_log;
+	my ($parameters);
+	eval $end if $b_log;
+	return $parameters;
+}
+
 sub get_memory_data_full {
 	eval $start if $b_log;
 	my ($source) = @_;
@@ -18071,8 +18120,10 @@ sub pciconf_data {
 			if ($_ =~ /^~$/) {
 				$vendor = main::cleaner($vendor);
 				$device = main::cleaner($device);
+				# handle possible regex in device name, like [ConnectX-3] 
+				my $device_temp = main::regex_cleaner($device);
 				if ($vendor && $device){
-					if ($vendor !~ /$device/i){
+					if (main::regex_cleaner($vendor) !~ /$device_temp/i){
 						$device = "$vendor $device";
 					}
 				}
@@ -19761,6 +19812,7 @@ sub generate_system_data {
 		$data{$data_name}[$index]{main::key($num++,'Host')} = &get_hostname();
 	}
 	$data{$data_name}[$index]{main::key($num++,'Kernel')} = &get_kernel_data();
+	
 	$data{$data_name}[$index]{main::key($num++,'bits')} = &get_kernel_bits;
 	if ($extra > 0){
 		my @compiler = get_compiler_version(); # get compiler data
@@ -19773,6 +19825,11 @@ sub generate_system_data {
 			$compiler[1] ||= 'N/A';
 			$data{$data_name}[$index]{main::key($num++,'v')} = $compiler[1];
 		}
+	}
+	if ($b_admin && (my $params = get_kernel_parameters())){
+		$index = scalar(@{ $data{$data_name} } );
+		$data{$data_name}[$index]{main::key($num++,'parameters')} = $params;
+		$index = scalar(@{ $data{$data_name} } );
 	}
 	# note: tty can have the value of 0 but the two tools 
 	# return '' if undefined, so we test for explicit ''
