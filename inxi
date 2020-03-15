@@ -31,8 +31,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.0.37';
-my $self_date='2019-11-19';
+my $self_version='3.0.38';
+my $self_date='2020-03-14';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -52,7 +52,7 @@ if (eval {require Time::HiRes}){
 }
 @t0 = eval 'Time::HiRes::gettimeofday()' if $b_hires; # let's start it right away
 ## Hashes
-my ( %alerts,%client,%colors,%debugger,%dl,%files,%rows,%system_files,%use );
+my (%alerts,%client,%colors,%debugger,%dl,%files,%rows,%system_files);
 
 ## Arrays
 # ps_aux is full output, ps_cmd is only the last 10 columns to last
@@ -77,9 +77,13 @@ $b_slot_tool,$b_soc_audio,$b_soc_gfx,$b_soc_net,$b_soc_timer,$b_sparc,
 $b_sudo,$b_sysctl,$b_usb,$b_usb_check,$b_usb_sys,$b_usb_tool,$b_wmctrl);
 ## Disk checks
 my ($b_dm_boot_disk,$b_dm_boot_optical,$b_glabel,$b_hardware_raid,
-$b_label_uuid,$b_lsblk,$b_partitions,$b_raid);
-my ($b_sysctl_disk,$b_update,$b_weather) = (1,1,1);
-
+$b_label_uuid,$b_lsblk,$b_partitions,$b_raid,$b_smartctl);
+# initialize basic use features
+my %use = (
+'sysctl_disk' => 1, # unused currently
+'update' => 1, # switched off/on with maintainer config ALLOW_UPDATE
+'weather' => 1, # switched off/on with maintainer config ALLOW_WEATHER
+);
 ## System
 my ($bsd_type,$device_vm,$language,$os,$pci_tool,$wan_url) = ('','','','','','');
 my ($bits_sys,$cpu_arch);
@@ -109,9 +113,8 @@ my %sep = (
 's2-irc' => '',
 's2-console' => ':',
 );
-
-my %show = ('host' => 1);
-
+my %show;
+#$show{'host'} = 1;
 my %size = (
 'console' => 115,
 # Default indentation level. NOTE: actual indent is 1 greater to allow for 
@@ -287,11 +290,17 @@ sub check_tools {
 		);
 		%commands = (%commands,%hash);
 	}
-	# can't check permissions since we need to know the partition
+	# can't check permissions since we need to know the partition/disc
 	if ($b_block_tool){
 		%hash = (
 		'blockdev' => 'linux',
 		'lsblk' => 'linux',
+		);
+		%commands = (%commands,%hash);
+	}
+	if ($b_smartctl){
+		%hash = (
+		'smartctl' => 'all',
 		);
 		%commands = (%commands,%hash);
 	}
@@ -1065,8 +1074,8 @@ sub get_configs {
 # args: 0: key; 1: value
 sub get_config_item {
 	my ($key,$val) = @_;
-	if ($key eq 'ALLOW_UPDATE' || $key eq 'B_ALLOW_UPDATE') {$b_update = $val if is_int($val)}
-	elsif ($key eq 'ALLOW_WEATHER' || $key eq 'B_ALLOW_WEATHER') {$b_weather = $val if is_int($val)}
+	if ($key eq 'ALLOW_UPDATE' || $key eq 'B_ALLOW_UPDATE') {$use{'update'} = $val if is_int($val)}
+	elsif ($key eq 'ALLOW_WEATHER' || $key eq 'B_ALLOW_WEATHER') {$use{'weather'} = $val if is_int($val)}
 	elsif ($key eq 'CPU_SLEEP') {$cpu_sleep = $val if is_numeric($val)}
 	elsif ($key eq 'DL_TIMEOUT') {$dl_timeout = $val if is_int($val)}
 	elsif ($key eq 'DOWNLOADER') {
@@ -1084,7 +1093,12 @@ sub get_config_item {
 	elsif ($key eq 'PARTITION_SORT') {$show{'partition-sort'} = $val if ($val =~ /^(dev-base|fs|id|label|percent-used|size|uuid|used)$/) }
 	elsif ($key eq 'PS_COUNT') {$ps_count = $val if is_int($val) }
 	elsif ($key eq 'SENSORS_CPU_NO') {$sensors_cpu_nu = $val if is_int($val)}
-	elsif ($key eq 'SHOW_HOST' || $key eq 'B_SHOW_HOST') { $show{'host'} = $val if is_int($val)}
+	elsif ($key eq 'SHOW_HOST' || $key eq 'B_SHOW_HOST') {
+		if (is_int($val)){
+			$show{'host'} = $val;
+			$show{'no-host'} = 1 if !$show{'host'};
+		}
+	}
 	elsif ($key eq 'USB_SYS') {$b_usb_sys = $val if is_int($val)}
 	elsif ($key eq 'WAN_IP_URL') {
 		if ($val =~ /^(ht|f)tp[s]?:\//i){
@@ -1435,7 +1449,6 @@ sub audio_data {
 	else {
 		$data{'proc-asound-codecs'} = undef;
 	}
-	
 	write_data(\%data,'audio');
 	@files = (
 	'/proc/asound/cards',
@@ -1721,6 +1734,8 @@ sub system_data {
 	# fdisk <disk>
 	@cmds = (
 	['clang','--version'],
+	# only for prospective ram feature data collection: requires i2c-tools and module eeprom loaded
+	['decode-dimms',''], 
 	['dmidecode',''],
 	['dmesg',''],
 	['gcc','--version'],
@@ -1820,7 +1835,7 @@ sub run_self {
 	my $i = ($option eq 'main-full')? ' -i' : '';
 	my $z = ($debugger{'z'}) ? ' -z' : '';
 	my $iz = "$i$z";
-	$iz =~ s/[\s\-]//g;
+	$iz =~ s/[\s-]//g;
 	my $cmd = "$self_path/$self_name -FRfrploudmaxxx$i$z --usb --slots --debug 10 -y 120 > $data_dir/$self_name-FRfrploudmaxxx$iz-usb-slots-y120.txt 2>&1";
 	system($cmd);
 	copy($log_file, "$data_dir") or main::error_handler('copy-failed', "$log_file", "$!");
@@ -2869,11 +2884,11 @@ sub item_data {
 	'rpm' => 'lm-sensors',
 	}),
 	'smartctl' => ({
-	'info' => '-Dxx rotation (alt), type, smart',
-	'info-bsd' => '-Dx rotation (alt), type, smart',
-	'apt' => '',
-	'pacman' => '',
-	'rpm' => '',
+	'info' => '-Da advanced data',
+	'info-bsd' => '-Da advanced data',
+	'apt' => 'smartmontools',
+	'pacman' => 'smartmontools',
+	'rpm' => 'smartmontools',
 	}),
 	'strings' => ({
 	'info' => '-I sysvinit version',
@@ -3124,8 +3139,8 @@ sub compare_versions {
 	elsif ($two && !$one){return $two;}
 	elsif (!$one && !$two){return}
 	my ($pad1,$pad2) = ('','');
-	my (@temp1) = split /[\.\-_]/, $one;
-	my (@temp2) = split /[\.\-_]/, $two;
+	my (@temp1) = split /[._-]/, $one;
+	my (@temp2) = split /[._-]/, $two;
 	@temp1 = map {$_ = sprintf("%04s", $_);$_ } @temp1;
 	@temp2 = map {$_ = sprintf("%04s", $_);$_ } @temp2;
 	$pad1 = join '', @temp1;
@@ -3354,6 +3369,7 @@ sub program_values {
 	'papyros' => ['^papyros',0,'0','papyros',0,1,0],
 	'pekwm' => ['^pekwm',3,'--version','PekWM',0,1,0],
 	'perceptia' => ['^perceptia',0,'0','perceptia',0,1,0],
+	'picom' => ['^\d',1,'--version','Picom',0,1,0],
 	'plasmashell' => ['^plasmashell',2,'--version','KDE Plasma',0,1,0],
 	'qtdiag' => ['^qt',2,'--version','Qt',0,1,0],
 	'qtile' => ['^qtile',0,'0','Qtile',0,0,1],
@@ -3818,8 +3834,8 @@ sub get_options{
 	eval $start if $b_log;
 	my (@args) = @_;
 	$show{'short'} = 1;
-	my ($b_downloader,$b_help,$b_no_man,$b_no_man_force,$b_recommends,$b_updater,$b_version,
-	$b_use_man,$self_download, $download_id);
+	my ($b_downloader,$b_help,$b_no_man,$b_no_man_force,$b_recommends,$b_updater,
+	$b_version,$b_use_man,$self_download, $download_id);
 	GetOptions (
 	'a|admin' => sub {
 		$b_admin = 1;},
@@ -4067,7 +4083,7 @@ sub get_options{
 		my ($opt) = @_;
 		$show{'short'} = 0;
 		$b_downloader = 1;
-		if ( $b_weather ){
+		if ( $use{'weather'} ){
 			$show{'weather'} = 1;
 		}
 		else {
@@ -4079,7 +4095,7 @@ sub get_options{
 		$arg =~ s/\s//g;
 		$show{'short'} = 0;
 		$b_downloader = 1;
-		if ( $b_weather ){
+		if ( $use{'weather'} ){
 			if ($arg){
 				$show{'weather'} = 1;
 				$show{'weather-location'} = $arg;
@@ -4132,9 +4148,9 @@ sub get_options{
 			error_handler('bad-arg', $opt, $arg);
 		} },
 	'z|filter' => sub {
-		$show{'filter'} = 1; },
+		$use{'filter'} = 1; },
 	'Z|filter-override' => sub {
-		$show{'filter-override'} = 1; },
+		$use{'filter-override'} = 1; },
 	## Start non data options
 	'alt:i' => sub { 
 		my ($opt,$arg) = @_;
@@ -4269,7 +4285,8 @@ sub get_options{
 	'h|help|?' => sub {
 		$b_help = 1; },
 	'host|hostname' => sub {
-		$show{'host'} = 1 },
+		$show{'host'} = 1;
+		$show{'no-host'} = 0},
 	'indent-min:i' => sub {
 		my ($opt,$arg) = @_;
 		if ($arg =~ /^\d+$/){
@@ -4298,7 +4315,8 @@ sub get_options{
 			error_handler('bad-arg', $opt, $arg);
 		}},
 	'no-host|no-hostname' => sub {
-		$show{'host'} = 0 },
+		$show{'host'} = 0 ;
+		$show{'no-host'} = 1},
 	'no-man' => sub {
 		$b_no_man_force = 0; },
 	'no-ssl' => sub {
@@ -4331,7 +4349,7 @@ sub get_options{
 	'U|update:s' => sub { # 1,2,3 OR http://myserver/path/inxi
 		my ($opt,$arg) = @_;
 		$b_downloader = 1;
-		if ( $b_update ){
+		if ( $use{'update'} ){
 			$b_updater = 1;
 			if (!$arg && $self_name eq 'pinxi'){
 				$b_man = 1;
@@ -4402,10 +4420,14 @@ sub get_options{
 	}
 	$b_block_tool = 1 if ( $b_admin && ($show{'partition'} || $show{'partition-full'} ));
 	$b_sudo = 1 if ( $show{'unmounted'} || ($extra > 0 && $show{'disk'}) );
+	$extra = 3 if $b_admin;
+	$use{'filter'} = 0 if $use{'filter-override'};
 	# override for things like -b or -v2 to -v3
 	$show{'cpu-basic'} = 0 if $show{'cpu'};
 	$show{'optical-basic'} = 0 if $show{'optical'};
 	$show{'partition'} = 0 if $show{'partition-full'};
+	$show{'host'} = 0 if $show{'no-host'};
+	$show{'host'} = 1 if ($show{'host'} || (!$use{'filter'} && !$show{'no-host'}));
 	if ($show{'disk'} || $show{'optical'} ){
 		$show{'disk-basic'} = 0;
 		$show{'disk-total'} = 0;
@@ -4424,15 +4446,16 @@ sub get_options{
 	   $show{'info'} || $show{'machine'} || $show{'process'} || $show{'ram'}  || $show{'sensor'} ) ){
 		$b_sysctl = 1;
 	}
-	if ($show{'filter-override'}){
-		$show{'filter'} = 0;
-	}
 	if ($bsd_type && ($show{'short'} || $show{'disk-basic'} || $show{'disk-total'} || $show{'disk'})){
 		$b_dm_boot_disk = 1;
 	}
 	if ($bsd_type && ($show{'optical-basic'} || $show{'optical'})){
 		$b_dm_boot_optical = 1
 	}
+	if ($b_admin && $show{'disk'}){
+		$b_smartctl = 1;
+	}
+	
 } 
 
 sub show_options {
@@ -4466,10 +4489,11 @@ sub show_options {
 	['0', '', '', $line ],
 	['0', '', '', "Output Control Options:" ],
 	['1', '-a', '--admin', "Adds advanced sys admin data (only works with 
-	verbose or line output, not short form):" ],
+	verbose or line output, not short form), sets --extra=3:" ],
 	['2', '-C', '', "If available: CPU vulnerabilities (bugs); family, model-id, stepping - format:
 	hex (decimal) if greater than 9, otherwise hex; microcode - format: hex." ],
-	['2', '-d,-D', '', "If available: logical and physical block sizes." ],
+	['2', '-d,-D', '', "If available: logical and physical block sizes; drive family;
+	USB drive specifics; SMART report." ],
 	['2', '-p,-P', '', "If available: raw size of partition, percent available for user, 
 	block size of file system (root required); for swap, shows swapiness and vfs cache 
 	pressure, and if values are default or not." ],
@@ -4574,7 +4598,7 @@ sub show_options {
 	);
 	push @data, @rows;
 	# if distro maintainers don't want the weather feature disable it
-	if ( $b_weather ){
+	if ( $use{'weather'} ){
 		@rows = (
 		['1', '-w', '--weather', "Local weather data/time. To check an alternate
 		location, see -W. NO AUTOMATED QUERIES ALLOWED!"],
@@ -4628,7 +4652,7 @@ sub show_options {
 	['2', '--usb', '', "For Device: driver." ],
 	);
 	push @data, @rows;
-	if ( $b_weather ){
+	if ( $use{'weather'} ){
 		@rows = (['2', '-w -W', '', "Wind speed and direction, humidity, pressure, 
 		and time zone, if available." ]);
 		push @data, @rows;
@@ -4660,7 +4684,7 @@ sub show_options {
 	['2', '--usb', '', "Vendor:chip ID." ],
 	);
 	push @data, @rows;
-	if ( $b_weather ){
+	if ( $use{'weather'} ){
 		@rows = (['2', '-w -W', '', "Snow, rain, precipitation, (last observed hour), 
 		cloud cover, wind chill, dew point, heat index, if available." ]);
 		push @data, @rows;
@@ -4689,7 +4713,7 @@ sub show_options {
 	['2', '--usb', '', "For Device: serial number (if present), interface count; USB speed." ],
 	);
 	push @data, @rows;
-	if ( $b_weather ){
+	if ( $use{'weather'} ){
 		@rows = (['2', '-w -W', '', "Location (uses -z/irc filter), weather observation 
 		time, altitude, sunrise/sunset, if available." ] );
 		push @data, @rows;
@@ -4698,8 +4722,8 @@ sub show_options {
 	['1', '-y', '--width', "Output line width max (integer >= 80). Overrides IRC/Terminal 
 	settings or actual widths. Example:^inxi^-y^130" ],
 	['1', '-z', '--filter', "Adds security filters for IP/MAC addresses, serial numbers, 
-	location (-w), user home directory name. Default on for IRC clients." ],
-	['1', '-Z', '--filter-override', "Absolute override for output filters. Useful for 
+	location (-w), user home directory name, host item. Default on for IRC clients." ],
+	['1', '-Z', '--filter-override', "Override for output filters. Useful for 
 	debugging networking issues in IRC, for example." ],
 	[0, '', '', "$line" ],
 	[0, '', '', "Additional Options:" ],
@@ -4709,7 +4733,7 @@ sub show_options {
  	for that feature." ]
 	);
 	push @data, @rows;
-	if ( $b_update ){
+	if ( $use{'update'} ){
 		@rows = (
 		['1', '-U', '--update', "Auto-update $self_name. Will also install/update man 
 		page. Note: if you installed as root, you must be root to update, otherwise 
@@ -4745,7 +4769,7 @@ sub show_options {
 	(default 10; -1 removes limit)." ],
 	);
 	push @data, @rows;
-	if ( $b_update ){
+	if ( $use{'update'} ){
 		@rows = (
 		['1', '', '--man', "Install correct man version for dev branch (-U 3) or pinxi using -U." ],
 		);
@@ -4755,7 +4779,7 @@ sub show_options {
 	['1', '', '--no-host', "Turn off hostname for -S. Useful if showing output from servers etc." ],
 	);
 	push @data, @rows;
-	if ( $b_update ){
+	if ( $use{'update'} ){
 		@rows = (
 		['1', '', '--no-man', "Disable man install for all -U update actions." ],
 		);
@@ -4913,7 +4937,7 @@ sub get_client_data {
 		main::get_shell_data($ppid);
 	}
 	else {
-		$show{'filter'} = 1; 
+		$use{'filter'} = 1; 
 		get_client_name();
 		if ($client{'konvi'} == 1 || $client{'konvi'} == 3){
 			set_konvi_data();
@@ -5258,7 +5282,7 @@ sub set_konvi_data {
 sub apply_filter {
 	my ($string) = @_;
 	if ($string){
-		$string = ( $show{'filter'} ) ? $filter_string : $string;
+		$string = ( $use{'filter'} ) ? $filter_string : $string;
 	}
 	else {
 		$string = 'N/A';
@@ -5475,10 +5499,15 @@ sub row_defaults {
 	'ps-data-null' => "No Process data available.",
 	'raid-data' => "No RAID data was found.",
 	'ram-data' => "No RAM data was found.",
-	'root-required' => "<root required>",
+	'root-required' => "<superuser/root required>",
 	'sensors-data-ipmi' => "No ipmi sensors data was found.",
 	'sensors-data-linux' => "No sensors data was found. Is sensors configured?",
 	'sensors-ipmi-root' => "Unable to run ipmi sensors.  Root privileges required.",
+	'smartctl-command-failed' => "A mandatory SMART command failed. Various possible causes.",
+	'smartctl-root' => "Unable to run smartctl. Root privileges required.",
+	'smartctl-udma-crc' => "Bad cable/connection?",
+	'smartctl-usb' => "Unknown USB bridge. Flash drive/Unsupported enclosure?",
+	'smartctl-unknown' => "Unknown smartctl error. Unable to get data.",
 	'tool-missing' => "<missing $id>",
 	'unmounted-data' => "No unmounted partitions found.",
 	'unmounted-data-bsd' => "No unmounted partition data found for this BSD system.",
@@ -7188,18 +7217,18 @@ sub data_sysctl {
 			# freebsd 10: hw.model: AMD Athlon(tm) II X2 245 Processor
 			$line[1] = main::cleaner($line[1]);
 			$line[1] = cpu_cleaner($line[1]);
-			if ( $line[1] =~ /([0-9]+)[\-[:space:]]*([KM]B)\s+L2 cache/) {
+			if ( $line[1] =~ /([0-9]+)[-[:space:]]*([KM]B)\s+L2 cache/) {
 				my $multiplier = ($2 eq 'MB') ? 1024: 1;
 				$cpu{'l2-cache'} = $1 * $multiplier;
 			}
-			if ( $line[1] =~ /([^0-9\.][0-9\.]+)[\-[:space:]]*[MG]Hz/) {
+			if ( $line[1] =~ /([^0-9\.][0-9\.]+)[-[:space:]]*[MG]Hz/) {
 				$cpu{'max-freq'} = $1;
 				if ($cpu{'max-freq'} =~ /MHz/i) {
-					$cpu{'max-freq'} =~ s/[\-[:space:]]*MHz//;
+					$cpu{'max-freq'} =~ s/[-[:space:]]*MHz//;
 					$cpu{'max-freq'} = speed_cleaner($cpu{'max-freq'},'mhz');
 				}
 				elsif ($cpu{'max-freq'} =~ /GHz/) {
-					$cpu{'max-freq'} =~ s/[\-[:space:]]*GHz//i;
+					$cpu{'max-freq'} =~ s/[-[:space:]]*GHz//i;
 					$cpu{'max-freq'} = $cpu{'max-freq'} / 1000;
 					$cpu{'max-freq'} = speed_cleaner($cpu{'max-freq'},'mhz');
 				}
@@ -8015,7 +8044,7 @@ sub cpu_arch {
 				else {$arch = 'Elbrus-8C';}
 			} # note: stepping > 1 may be 8C1
 			elsif ( $model eq '8' ) {$arch = 'Elbrus-1C+'}
-			elsif ( $model eq '9' ) {$arch = 'Elbrus-8CB'}
+			elsif ( $model eq '9' ) {$arch = 'Elbrus-8CV'}
 			elsif ( $model eq '10' ) {$arch = 'Elbrus-12C'}
 			elsif ( $model eq '11' ) {$arch = 'Elbrus-16C'}
 			elsif ( $model eq '12' ) {$arch = 'Elbrus-2C3'}
@@ -8172,10 +8201,11 @@ sub hex_and_decimal {
 ## DiskData
 {
 package DiskData;
-my ($b_hddtemp,$b_nvme);
+my ($b_hddtemp,$b_nvme,$smartctl_missing);
 my ($hddtemp,$nvme) = ('','');
 my (@by_id,@by_path);
-
+my ($debugger_dir);
+# main::writer("$debugger_dir/system-repo-data-urpmq.txt",@data2) if $debugger_dir;
 sub get {
 	eval $start if $b_log;
 	my (@data,@rows,$key1,$val1);
@@ -8234,9 +8264,84 @@ sub create_output {
 	eval $start if $b_log;
 	my (@disks) = @_;
 	#print Data::Dumper::Dumper \@disks;
-	my (@data,@rows);
+	my ($b_oldage,$b_prefail,$b_smart_permissions,@data,@rows);
 	my ($num,$j) = (0,0);
-	my ($id,$model,$size,$used,$percent,$size_holder,$used_holder) = ('','','','','','','');
+	my ($id,$model,$size,$used,$percent,$size_holder,
+	$used_holder) = ('','','','','','','','','');
+	my @smart_basic =(
+	['smart','SMART'],
+	['smart-error','SMART Message'],
+	['smart-support','state'],
+	['smart-status','health'],
+	['smart-power-on-hours','on'],
+	['smart-cycles','cycles'],
+	['smart-units-read','read-units'],
+	['smart-units-written','written-units'],
+	['smart-read','read'],
+	['smart-written','written'],
+	);
+	my @smart_age =(
+	['smart-gsense-error-rate-r','g-sense error rate'],
+	['smart-media-wearout-v','media wearout'],
+	['smart-media-wearout-t','threshold'],
+	['smart-media-wearout-f','alert'],
+	['smart-multizone-errors-v','write error rate'],
+	['smart-multizone-errors-t','threshold'],
+	['smart-udma-crc-errors-r','UDMA CRC errors'],
+	['smart-udma-crc-errors-f','alert'],
+	);
+	my @smart_fail =(
+	['smart-end-to-end-v','end-to-end'],
+	['smart-end-to-end-t','threshold'],
+	['smart-end-to-end-f','alert'],
+	['smart-raw-read-error-rate-v','read error rate'],
+	['smart-raw-read-error-rate-t','threshold'],
+	['smart-raw-read-error-rate-f','alert'],
+	['smart-reallocated-sectors-v','reallocated sector'],
+	['smart-reallocated-sectors-t','threshold'],
+	['smart-reallocated-sectors-f','alert'],
+	['smart-retired-blocks-v','retired block'],
+	['smart-retired-blocks-t','threshold'],
+	['smart-retired-blocks-f','alert'],
+	['smart-runtime-bad-block-v','runtime bad block'],
+	['smart-runtime-bad-block-t','threshold'],
+	['smart-runtime-bad-block-f','alert'],
+	['smart-seek-error-rate-v', 'seek error rate'],
+	['smart-seek-error-rate-t', 'threshold'],
+	['smart-seek-error-rate-f', 'alert'],
+	['smart-spinup-time-v','spin-up time'],
+	['smart-spinup-time-t','threshold'],
+	['smart-spinup-time-f','alert'],
+	['smart-ssd-life-left-v','life left'],
+	['smart-ssd-life-left-t','threshold'],
+	['smart-ssd-life-left-f','alert'],
+	['smart-unused-reserve-block-v','unused reserve block'],
+	['smart-unused-reserve-block-t','threshold'],
+	['smart-unused-reserve-blockf','alert'],
+	['smart-used-reserve-block-v','used reserve block'],
+	['smart-used-reserve-block-t','threshold'],
+	['smart-used-reserve-block-f','alert'],
+	['smart-unknown-1-a','attribute'],
+	['smart-unknown-1-v','value'],
+	['smart-unknown-1-w','worst'],
+	['smart-unknown-1-t','threshold'],
+	['smart-unknown-1-f','alert'],
+	['smart-unknown-2-a','attribute'],
+	['smart-unknown-2-v','value'],
+	['smart-unknown-2-w','worst'],
+	['smart-unknown-2-t','threshold'],
+	['smart-unknown-2-f','alert'],
+	['smart-unknown-3-a','attribute'],
+	['smart-unknown-3-v','value'],
+	['smart-unknown-3-w','worst'],
+	['smart-unknown-3-t','threshold'],
+	['smart-unknown-4-f','alert'],
+	['smart-unknown-4-a','attribute'],
+	['smart-unknown-4-v','value'],
+	['smart-unknown-4-w','worst'],
+	['smart-unknown-4-t','threshold'],
+	['smart-unknown-4-f','alert'],
+	);
 	my @sizing = main::get_size($disks[0]{'size'}) if $disks[0]{'size'};
 	#print Data::Dumper::Dumper \@disks;
 	if (@sizing){
@@ -8267,10 +8372,14 @@ sub create_output {
 	});
 	@rows = (@rows,@data);
 	shift @disks;
+	if ($smartctl_missing){
+		$j = scalar @rows;
+		$rows[$j]{main::key($num++,'SMART Message')} = $smartctl_missing;
+	}
 	if ( $show{'disk'} && @disks){
 		@disks = sort { $a->{'id'} cmp $b->{'id'} } @disks;
 		foreach my $ref (@disks){
-			($id,$model,$size) = ('','','');
+			($b_oldage,$b_prefail,$id,$model,$size) = (0,0,'','','');
 			my %row = %$ref;
 			$num = 1;
 			$model = ($row{'model'}) ? $row{'model'}: 'N/A';
@@ -8290,17 +8399,31 @@ sub create_output {
 				$size = 'N/A';
 			}
 			$j = scalar @rows;
+			if (!$b_smart_permissions && $row{'smart-permissions'}){
+				$b_smart_permissions = 1;
+				$rows[$j]{main::key($num++,'SMART Message')} = $row{'smart-permissions'};
+				$j = scalar @rows;
+			}
 			@data = ({
 			main::key($num++,'ID') => $id,
 			});
 			@rows = (@rows,@data);
 			if ($row{'type'}){
-				$rows[$j]{main::key($num++,'type')} = $row{'type'},
+				$rows[$j]{main::key($num++,'type')} = $row{'type'};
 			}
 			if ($row{'vendor'}){
-				$rows[$j]{main::key($num++,'vendor')} = $row{'vendor'},
+				$rows[$j]{main::key($num++,'vendor')} = $row{'vendor'};
 			}
 			$rows[$j]{main::key($num++,'model')} = $model;
+			if ($row{'drive-vendor'}){
+				$rows[$j]{main::key($num++,'drive vendor')} = $row{'drive-vendor'};
+			}
+			if ($row{'drive-model'}){
+				$rows[$j]{main::key($num++,'drive model')} = $row{'drive-model'};
+			}
+			if ($row{'family'}){
+				$rows[$j]{main::key($num++,'family')} = $row{'family'};
+			}
 			$rows[$j]{main::key($num++,'size')} = $size;
 			if ($b_admin && $row{'block-physical'}){
 				$rows[$j]{main::key($num++,'block size')} = '';
@@ -8308,6 +8431,9 @@ sub create_output {
 				$rows[$j]{main::key($num++,'logical')} = ($row{'block-logical'}) ? $row{'block-logical'} . ' B' : 'N/A';
 			}
 			if ($extra > 1 && $row{'speed'}){
+				if ($row{'sata'}){
+					$rows[$j]{main::key($num++,'sata')} = $row{'sata'};
+				}
 				$rows[$j]{main::key($num++,'speed')} = $row{'speed'};
 				$rows[$j]{main::key($num++,'lanes')} = $row{'lanes'} if $row{'lanes'};
 			}
@@ -8317,8 +8443,14 @@ sub create_output {
 			if ($extra > 1){
 				my $serial = main::apply_filter($row{'serial'});
 				$rows[$j]{main::key($num++,'serial')} = $serial;
+				if ($row{'drive-serial'}){
+					$rows[$j]{main::key($num++,'drive serial')} = main::apply_filter($row{'drive-serial'});
+				}
 				if ($row{'firmware'}){
 					$rows[$j]{main::key($num++,'rev')} = $row{'firmware'};
+				}
+				if ($row{'drive-firmware'}){
+					$rows[$j]{main::key($num++,'drive rev')} = $row{'drive-firmware'};
 				}
 			}
 			if ($extra > 0 && $row{'temp'}){
@@ -8328,9 +8460,37 @@ sub create_output {
 			if (defined $row{'partition-table'}){
 				$rows[$j]{main::key($num++,'scheme')} = $row{'partition-table'};
 			}
+			if ($row{'smart'} || $row{'smart-error'}){
+				$j = scalar @rows;
+				## Basic SMART and drive info ##
+				for (my $i = 0; $i < scalar @smart_basic;$i++){
+					if ($row{$smart_basic[$i][0]}){
+						$rows[$j]{main::key($num++,$smart_basic[$i][1])} = $row{$smart_basic[$i][0]};
+					}
+				}
+				## Old-Age errors ##
+				for (my $i = 0; $i < scalar @smart_age;$i++){
+					if ($row{$smart_age[$i][0]}){
+						if (!$b_oldage){
+							$rows[$j]{main::key($num++,'Old-Age')} = '';
+							$b_oldage = 1;
+						}
+						$rows[$j]{main::key($num++,$smart_age[$i][1])} = $row{$smart_age[$i][0]};
+					}
+				}
+				## Pre-Fail errors ##
+				for (my $i = 0; $i < scalar @smart_fail;$i++){
+					if ($row{$smart_fail[$i][0]}){
+						if (!$b_prefail){
+							$rows[$j]{main::key($num++,'Pre-Fail')} = '';
+							$b_prefail = 1;
+						}
+						$rows[$j]{main::key($num++,$smart_fail[$i][1])} = $row{$smart_fail[$i][0]};
+					}
+				}
+			}
 		}
 	}
-
 	eval $end if $b_log;
 	return @rows;
 }
@@ -8363,7 +8523,16 @@ sub disk_data {
 	else {
 		@data = dmesg_boot_data($used);
 	}
-	#print Data::Dumper::Dumper \@data;
+	if ($b_admin){
+		my $ref = $alerts{'smartctl'};
+		if ( $ref && $$ref{'action'} eq 'use'){
+			@data = smartctl_data(@data);
+		}
+		else {
+			$smartctl_missing = $$ref{'missing'};
+		}
+	}
+	print Data::Dumper::Dumper \@data if $test[13];;
 	main::log_data('data',"used: $used") if $b_log;
 	eval $end if $b_log;
 	return @data;
@@ -8499,10 +8668,10 @@ sub proc_data_advanced {
 		}
 		main::log_data('data',"working path: $working_path") if $b_log;
 		if ($b_admin && -e "/sys/block/"){
-				my @working = admin_data($drives[$i]{'id'});
-				$drives[$i]{'block-logical'} = $working[0];
-				$drives[$i]{'block-physical'} = $working[1];
-			}
+			my @working = block_data($drives[$i]{'id'});
+			$drives[$i]{'block-logical'} = $working[0];
+			$drives[$i]{'block-physical'} = $working[1];
+		}
 		if ($block_type && @scsi && @by_id && ! -e "${working_path}model" && ! -e "${working_path}name"){
 			## ok, ok, it's incomprehensible, search /dev/disk/by-id for a line that contains the
 			# discovered disk name AND ends with the correct identifier, sdx
@@ -8689,6 +8858,372 @@ sub dmesg_boot_data {
 	return @data;
 }
 
+sub smartctl_data {
+	eval $start if $b_log;
+	my (@data) = @_;
+	my ($b_attributes,$b_intel,$b_kingston,$cmd,%holder,$id,@working,@result,@split);
+	my ($splitter,$num,$a,$f,$r,$t,$v,$w,$y) = (':\s*',0,0,8,1,5,3,4,6); # $y is type, $t threashold, etc
+	my $smartctl = main::check_program('smartctl');
+	for (my $i = 0; $i < scalar @data; $i++){
+		next if !$data[$i]{'id'};
+		($b_attributes,$b_intel,$b_kingston,$splitter,$num,$a,$r) = (0,0,0,':\s*',0,0,1);
+		%holder = ();
+		#print $data[$i]{'id'},"\n";
+		# m2 nvme failed on nvme0n1 drive id:
+		$id = $data[$i]{'id'};
+		$id =~ s/n[0-9]+$// if $id =~ /^nvme/;
+		$cmd = "$smartctl -AHi /dev/" . $id . ' 2>/dev/null';
+		@result = main::grabber("$cmd", '', 'strip');
+		main::log_data('dump','@result', \@result) if $b_log; # log before cleanup
+		@result = grep {!/^(smartctl|Copyright|==)/} @result;
+		print 'Drive:/dev/' . $id . ":\n", Data::Dumper::Dumper\@result if $test[12];
+		if (scalar @result < 4 ){
+			if (grep {/failed: permission denied/i} @result){
+				$data[$i]{'smart-permissions'} = main::row_defaults('smartctl-root');
+			}
+			elsif (grep {/unknown usb bridge/i} @result){
+				$data[$i]{'smart-error'} = main::row_defaults('smartctl-usb');
+			}
+			elsif (grep {/A mandatory SMART command failed/i} @result){
+				$data[$i]{'smart-error'} = main::row_defaults('smartctl-command-failed');
+			}
+			else {
+				$data[$i]{'smart-error'} = main::row_defaults('smartctl-unknown');
+			}
+			next;
+		}
+		else {
+			foreach my $row (@result){
+				if ($row =~ /^ID#/){
+					$splitter = '\s+';
+					$b_attributes = 1;
+					$a = 1;
+					$r = 9;
+					next;
+				}
+				@split = split /$splitter/, $row;
+				next if !$b_attributes && ! defined $split[$r];
+				# some cases where drive not in db threshhold will be: ---
+				# value is usually 0 padded which confuses perl. However this will
+				# make subsequent tests easier, and will strip off leading 0s
+				if ($b_attributes){
+					$split[$t] = (main::is_numeric($split[$t])) ? int($split[$t]) : 0;
+					$split[$v] = (main::is_numeric($split[$v])) ? int($split[$v]) : 0;
+				}
+				## DEVICE INFO ##
+				if ($split[$a] eq 'Device Model'){
+					$b_intel = 1 if $split[$r] =~/\bintel\b/i;
+					$b_kingston = 1 if $split[$r] =~/kingston/i;
+					# usb/firewire/thunderbolt
+					if ($data[$i]{'type'}){
+						@working = device_vendor("$split[$r]");
+						$data[$i]{'drive-model'} = $working[1] if $data[$i]{'model'} && $data[$i]{'model'} ne $working[1];
+						$data[$i]{'drive-vendor'} = $working[0] if $data[$i]{'vendor'} && $data[$i]{'vendor'} ne $working[0];
+					}
+				}
+				elsif ($split[$a] eq 'Model Family'){
+					@working = device_vendor("$split[$r]");
+					$data[$i]{'family'} = $working[1];
+					# $data[$i]{'family'} =~ s/$data[$i]{'vendor'}\s*// if $data[$i]{'vendor'};
+				}
+				elsif ($split[$a] eq 'Firmware Version'){
+					# 01.01A01 vs 1A01
+					if ($data[$i]{'firmware'} && $split[$r] !~ /$data[$i]{'firmware'}/){
+						$data[$i]{'drive-firmware'} = $split[$r];
+					}
+					elsif (!$data[$i]{'firmware'}){
+						$data[$i]{'firmware'} = $split[$r];
+					}
+				}
+				elsif ($split[$a] eq 'Rotation Rate'){
+					$data[$i]{'rotation'} = $split[$r] if $split[$r] !~ /^Solid/;
+				}
+				elsif ($split[$a] eq 'Serial Number'){
+					if ( !$data[$i]{'serial'}){
+						$data[$i]{'serial'} = $split[$r];
+					}
+					elsif ($data[$i]{'type'} && $split[$r] ne $data[$i]{'serial'}){
+						$data[$i]{'drive-serial'} = $split[$r];
+					}
+				}
+				elsif ($split[$a] eq 'SATA Version is'){
+					if ( $split[$r] =~ /SATA ([0-9.]+), ([0-9.]+ [^\s]+)( \(current: ([1-9.]+ [^\s]+)\))?/){
+						$data[$i]{'sata'} = $1;
+						$data[$i]{'speed'} = $2 if !$data[$i]{'speed'};
+					}
+				}
+				elsif ($split[$a] eq 'Sector Sizes'){
+					if( $data[$i]{'type'} || !$data[$i]{'block-logical'} || !$data[$i]{'block-physical'} ){
+						if ($split[$r] =~ m|^([0-9]+) bytes logical/physical| ){
+							$data[$i]{'block-logical'} = $1;
+							$data[$i]{'block-physical'} = $1;
+						}
+						# 512 bytes logical, 4096 bytes physical
+						elsif ($split[$r] =~ m|^([0-9]+) bytes logical, ([0-9]+) bytes physical|){
+							$data[$i]{'block-logical'} = $1;
+							$data[$i]{'block-physical'} = $2;
+						}
+					}
+				}
+				
+				## SMART STATUS/HEALTH ##
+				elsif ($split[$a] eq 'SMART support is'){
+					if ($split[$r] =~ /^(Available|Unavailable) /){
+						$data[$i]{'smart'} = $1;
+						$data[$i]{'smart'} = ($data[$i]{'smart'} eq 'Unavailable') ? 'no' : 'yes';
+					}
+					elsif ($split[$r] =~ /^(Enabled|Disabled)/ ){
+						$data[$i]{'smart-support'} = lc($1);
+					}
+				}
+				elsif ($split[$a] eq 'SMART overall-health self-assessment test result' ){
+					$data[$i]{'smart-status'} = $split[$r];
+					# seen nvme that only report smart health, not smart support
+					$data[$i]{'smart'} = 'yes' if !$data[$i]{'smart'};
+				}
+				
+				## DEVICE CONDITION: temp/read/write/power on/cycles ##
+				# Attributes data fields, sometimes are same syntax as info block:...
+				elsif ( $split[$a] eq 'Power_Cycle_Count' || $split[$a] eq 'Power Cycles' ){
+					$data[$i]{'smart-cycles'} = $split[$r] if $split[$r];
+				}
+				elsif ($split[$a] eq 'Power_On_Hours' || $split[$a] eq 'Power On Hours' ||
+				 $split[$a] eq 'Power_On_Hours_and_Msec'){
+					if ($split[$r]){
+						$split[$r] =~ s/,//;
+						# trim off: h+0m+00.000s which is useless and at times empty anyway
+						$split[$r] =~ s/h\+.*$// if $split[$a] eq 'Power_On_Hours_and_Msec';
+						# $split[$r] = 43;
+						if ($split[$r] =~ /^([0-9]+)$/){
+							if ($1 > 9000){
+								$data[$i]{'smart-power-on-hours'} = int($1/(24*365)) . 'y ' . int($1/24)%365 . 'd ' . $1%24 . 'h';
+							}
+							elsif ($1 > 100){
+								$data[$i]{'smart-power-on-hours'} = int($1/24) . 'd ' . $1%24 . 'h';
+							}
+							else {
+								$data[$i]{'smart-power-on-hours'} = $split[$r] . ' hrs';
+							}
+						}
+						else {
+							$data[$i]{'smart-power-on-hours'} = $split[$r];
+						}
+					}
+				}
+				# 'Airflow_Temperature_Cel' like: 29 (Min/Max 14/43) so can't use -1 index
+				# Temperature like 29 Celsisu
+				elsif ( $split[$a] eq 'Temperature_Celsius' || $split[$a] eq 'Temperature' ||
+				  $split[$a] eq 'Airflow_Temperature_Cel' ) {
+					if (!$data[$i]{'temp'} && $split[$r]){
+						$data[$i]{'temp'} = $split[$r];
+					}
+				}
+				
+				## DEVICE USE: Reads/Writes ##
+				elsif ($split[$a] eq 'Data Units Read'){
+					$data[$i]{'smart-units-read'} = $split[$r];
+				}
+				elsif ($split[$a] eq 'Data Units Written'){
+					$data[$i]{'smart-units-written'} = $split[$r];
+				}
+				elsif ($split[$a] eq 'Host_Reads_32MiB'){
+					$split[$r] = $split[$r] * 32 * 1024;
+					$data[$i]{'smart-read'} = join ' ', main::get_size($split[$r]);
+				}
+				elsif ($split[$a] eq 'Host_Writes_32MiB'){
+					$split[$r] = $split[$r] * 32 * 1024;
+					$data[$i]{'smart-written'} = join ' ', main::get_size($split[$r]);
+				}
+				elsif ($split[$a] eq 'Lifetime_Reads_GiB'){
+					$data[$i]{'smart-read'} = $split[$r] . ' GiB';
+				}
+				elsif ($split[$a] eq 'Lifetime_Writes_GiB'){
+					$data[$i]{'smart-written'} = $split[$r] . ' GiB';
+				}
+				elsif ($split[$a] eq 'Total_LBAs_Read'){
+					if (main::is_numeric($split[$r])){
+						# blocks in bytes, so convert to KiB, the internal unit here
+						# reports in 32MiB units, sigh
+						if ($b_intel){
+							$split[$r] = $split[$r] * 32 * 1024;
+						}
+						# reports in 1 GiB units, sigh
+						elsif ($b_kingston){
+							$split[$r] = $split[$r] * 1024 * 1024;
+						}
+						# this is what it's supposed to refer to
+						else {
+							$split[$r] = int($data[$i]{'block-logical'} * $split[$r] / 1024);
+						}
+						$data[$i]{'smart-read'} = join ' ', main::get_size($split[$r]);
+					}
+				}
+				elsif ($split[$a] eq 'Total_LBAs_Written'){
+					if (main::is_numeric($split[$r])){
+						# blocks in bytes, so convert to KiB, the internal unit here
+						# reports in 32MoB units, sigh
+						if ($b_intel){
+							$split[$r] = $split[$r] * 32 * 1024;
+						}
+						# reports in 1 GiB units, sigh
+						elsif ($b_kingston){
+							$split[$r] = $split[$r] * 1024 * 1024;
+						}
+						# this is what it's supposed to refer to, in byte blocks
+						else {
+							$split[$r] = int($data[$i]{'block-logical'} * $split[$r] / 1024);
+						}
+						$data[$i]{'smart-written'} = join ' ', main::get_size($split[$r]);
+					}
+				}
+				
+				## DEVICE OLD AGE ##
+				# 191 G-Sense_Error_Rate 0x0032 001 001 000 Old_age Always - 291
+				elsif ($split[$a] eq 'G-Sense_Error_Rate'){
+					# $data[$i]{'smart-media-wearout'} = $split[$r];
+					if ($b_attributes && $split[$r] > 100){
+						$data[$i]{'smart-gsense-error-rate-r'} = $split[$r];
+					}
+				}
+				elsif ($split[$a] eq 'Media_Wearout_Indicator'){
+					# $data[$i]{'smart-media-wearout'} = $split[$r];
+					if ($b_attributes && $split[$r] > 0){
+						$data[$i]{'smart-media-wearout-v'} = $split[$v];
+						$data[$i]{'smart-media-wearout-t'} = $split[$t];
+						$data[$i]{'smart-media-wearout-f'} = $split[$f] if $split[$f] ne '-';
+					}
+				}
+				elsif ($split[$a] eq 'Multi_Zone_Error_Rate'){
+					# note: all t values are 0 that I have seen
+					if ( ($split[$v] - $split[$t]) < 50){
+						$data[$i]{'smart-multizone-errors-v'} = $split[$v];
+						$data[$i]{'smart-multizone-errors-t'} = $split[$v];
+					}
+					
+				}
+				elsif ($split[$a] eq 'UDMA_CRC_Error_Count'){
+					if (main::is_numeric($split[$r]) && $split[$r] > 50){
+						$data[$i]{'smart-udma-crc-errors-r'} = $split[$r];
+						$data[$i]{'smart-udma-crc-errors-f'} = main::row_defaults('smartctl-udma-crc') if $split[$r] > 500;
+					}
+				}
+				
+				## DEVICE PRE-FAIL ##
+				elsif ($split[$a] eq 'Available_Reservd_Space'){
+					# $data[$i]{'smart-available-reserved-space'} = $split[$r];
+					if ($b_attributes && $split[$v] && $split[$t] && $split[$t]/$split[$v] > 0.92){
+						$data[$i]{'smart-available-reserved-space-v'} = $split[$v];
+						$data[$i]{'smart-available-reserved-space-t'} = $split[$t];
+						$data[$i]{'smart-available-reserved-space-f'} = $split[$f] if $split[$f] ne '-';
+					}
+				}
+				## nvme splits these into two field/value sets
+				elsif ($split[$a] eq 'Available Spare'){
+					$split[$r] =~ s/%$//;
+					$holder{'spare'} = int($split[$r]) if main::is_numeric($split[$r]);
+				}
+				elsif ($split[$a] eq 'Available Spare Threshold'){
+					$split[$r] =~ s/%$//;
+					if ($holder{'spare'} && main::is_numeric($split[$r]) && $split[$r]/$holder{'spare'} > 0.92 ){
+						$data[$i]{'smart-available-reserved-space-v'} = $holder{'spare'};
+						$data[$i]{'smart-available-reserved-space-t'} = int($split[$r]);
+					}
+				}
+				elsif ($split[$a] eq 'End-to-End_Error'){
+					if ($b_attributes && int($split[$r]) > 0 && $split[$t]){
+						$data[$i]{'smart-end-to-end-v'} = $split[$v];
+						$data[$i]{'smart-end-to-end-t'} = $split[$t];
+						$data[$i]{'smart-end-to-end-f'} = $split[$f] if $split[$f] ne '-';
+					}
+				}
+				# seen raw value: 0/8415644
+				elsif ($split[$a] eq 'Raw_Read_Error_Rate'){
+					if ($b_attributes && $split[$v] && $split[$t] && $split[$t]/$split[$v] > 0.92){
+						$data[$i]{'smart-raw-read-error-rate-v'} = $split[$v];
+						$data[$i]{'smart-raw-read-error-rate-t'} = $split[$t];
+						$data[$i]{'smart-raw-read-error-rate-f'} = $split[$f] if $split[$f] ne '-';
+					}
+				}
+				elsif ($split[$a] eq 'Reallocated_Sector_Ct'){
+					if ($b_attributes && int($split[$r]) > 0 && $split[$t]){
+						$data[$i]{'smart-reallocated-sectors-v'} = $split[$v];
+						$data[$i]{'smart-reallocated-sectors-t'} = $split[$t];
+						$data[$i]{'smart-reallocated-sectors-f'} = $split[$f] if $split[$f] ne '-';
+					}
+				}
+				elsif ($split[$a] eq 'Retired_Block_Count'){
+					if ($b_attributes && int($split[$r]) > 0 && $split[$t]){
+						$data[$i]{'smart-retired-blocks-v'} = $split[$v];
+						$data[$i]{'smart-retired-blocks-t'} = $split[$t];
+						$data[$i]{'smart-retired-blocks-f'} = $split[$f] if $split[$f] ne '-';
+					}
+				}
+				elsif ($split[$a] eq 'Runtime_Bad_Block'){
+					if ($b_attributes && $split[$v] && $split[$t] && $split[$t]/$split[$v] > 0.92 ){
+						$data[$i]{'smart-runtime-bad-block-v'} = $split[$v];
+						$data[$i]{'smart-runtime-bad-block-t'} = $split[$t];
+						$data[$i]{'smart-runtime-bad-block-f'} = $split[$f] if $split[$f] ne '-';
+					}
+				}
+				elsif ($split[$a] eq 'Seek_Error_Rate'){
+					# value 72; threshold either 000 or 30
+					if ($b_attributes && $split[$v] && $split[$t] && $split[$t]/$split[$v] > 0.92 ){
+						$data[$i]{'smart-seek-error-rate-v'} = $split[$v];
+						$data[$i]{'smart-seek-error-rate-t'} = $split[$t];
+						$data[$i]{'smart-seek-error-rate-f'} = $split[$f] if $split[$f] ne '-';
+					}
+				}
+				elsif ($split[$a] eq 'Spin_Up_Time'){
+					# raw will always be > 0 on spinning disks
+					if ($b_attributes && $split[$v] && $split[$t] && $split[$t]/$split[$v] > 0.92 ){
+						$data[$i]{'smart-spinup-time-v'} = $split[$v];
+						$data[$i]{'smart-spinup-time-t'} = $split[$t];
+						$data[$i]{'smart-spinup-time-f'} = $split[$f] if $split[$f] ne '-';
+					}
+				}
+				elsif ($split[$a] eq 'SSD_Life_Left'){
+					# raw will always be > 0 on spinning disks
+					if ($b_attributes && $split[$v] && $split[$t] && $split[$t]/$split[$v] > 0.92 ){
+						$data[$i]{'smart-ssd-life-left-v'} = $split[$v];
+						$data[$i]{'smart-ssd-life-left-t'} = $split[$t];
+						$data[$i]{'smart-ssd-life-left-f'} = $split[$f] if $split[$f] ne '-';
+					}
+				}
+				elsif ($split[$a] eq 'Unused_Rsvd_Blk_Cnt_Tot'){
+					# raw will always be > 0 on spinning disks
+					if ($b_attributes && $split[$v] && $split[$t] && $split[$t]/$split[$v] > 0.92 ){
+						$data[$i]{'smart-unused-reserve-block-v'} = $split[$v];
+						$data[$i]{'smart-unused-reserve-block-t'} = $split[$t];
+						$data[$i]{'smart-unused-reserve-block-f'} = $split[$f] if $split[$f] ne '-';
+					}
+				}
+				elsif ($split[$a] eq 'Used_Rsvd_Blk_Cnt_Tot'){
+					# raw will always be > 0 on spinning disks
+					if ($b_attributes && $split[$v] && $split[$t] && $split[$t]/$split[$v] > 0.92 ){
+						$data[$i]{'smart-used-reserve-block-v'} = $split[$v];
+						$data[$i]{'smart-used-reserve-block-t'} = $split[$t];
+						$data[$i]{'smart-used-reserve-block-f'} = $split[$f] if $split[$f] ne '-';
+					}
+				}
+				elsif ($b_attributes ){
+					if ( $split[$y] eq 'Pre-fail' && ($split[$f] ne '-' ||
+					 ($split[$t] && $split[$v] && $split[$t]/$split[$v] > 0.92 ))) {
+						$num++;
+						$data[$i]{'smart-unknown-' . $num . '-a'} = $split[$a];
+						$data[$i]{'smart-unknown-' . $num . '-v'} = $split[$v];
+						$data[$i]{'smart-unknown-' . $num . '-w'} = $split[$v];
+						$data[$i]{'smart-unknown-' . $num . '-t'} = $split[$t];
+						$data[$i]{'smart-unknown-' . $num . '-f'} = $split[$f] if $split[$f] ne '-';
+					}
+				}
+			}
+		}
+	}
+	#print Data::Dumper::Dumper\@data;
+	eval $end if $b_log;
+	return @data;
+}
+
 # check for usb/firewire/[and thunderwire when data found]
 sub peripheral_data {
 	eval $start if $b_log;
@@ -8702,7 +9237,7 @@ sub peripheral_data {
 				if (/usb-/i){
 					$type = 'USB';
 				}
-				elsif (/ieee1394--/i){
+				elsif (/ieee1394-/i){
 					$type = 'FireWire';
 				}
 				last;
@@ -8866,32 +9401,32 @@ sub device_vendor {
 	['(^MKN|Mushkin)','Mushkin','Mushkin',''], # MKNS
 	# MU = Multiple_Flash_Reader too risky: |M[UZ][^L] HD103SI HD start risky
 	# HM320II HM320II
-	['(SAMSUNG|^MCG[0-9]+GC|^MCC|^MCB0E|^[GS]2 Portable|^DUO\b|^P3|^(HM|SP)[0-9]{2}|^MZMPC|^HD[0-9]{3}[A-Z]{2}$)','SAMSUNG','Samsung',''], # maybe ^SM, ^HM
+	['(SAMSUNG|^MCG[0-9]+GC|^MCC|^MCBOE|^[GS]2 Portable|^D3 Station|^DUO\b|^P3|^(HM|SP)[0-9]{2}|^MZMPC|^HD[0-9]{3}[A-Z]{2}$)','SAMSUNG','Samsung',''], # maybe ^SM, ^HM
 	# Android UMS Composite?
 	['(SanDisk|^SDS[S]?[DQ]|^SL([0-9]+)G|^AFGCE|^U3\b|ULTRA\sFIT|Clip Sport|Cruzer|^Extreme)','SanDisk','SanDisk',''],
 	['^STEC\b','^STEC\b','STEC',''], # ssd drive, must come before seagate ST test
 	# real, SSEAGATE Backup+; XP1600HE30002 | 024 HN (spinpoint)
-	['(^ST[^T]|[S]?SEAGATE|^X[AFP]|^5AS|^BUP|Expansion Desk|FreeAgent|GoFlex|Backup(\+|\s?Plus)\s?(Hub)?|OneTouch)','[S]?SEAGATE','Seagate',''], 
+	['(^ST[^T]|[S]?SEAGATE|^X[AFP]|^5AS|^BUP|Expansion Desk|^Expansion|FreeAgent|GoFlex|Backup(\+|\s?Plus)\s?(Hub)?|OneTouch)','[S]?SEAGATE','Seagate',''], 
 	['^(WD|WL[0]9]|Western Digital|My (Book|Passport)|\d*LPCX|Elements|easystore|MD0|M000|EARX|EFRX|\d*EAVS|0JD|JPVX|[0-9]+(BEV|(00)?AAK|AAV|AZL|EA[CD]S))','(^WDC|Western\s?Digital)','Western Digital',''],
 	## Then better known ones ##
 	['^(A-DATA|ADATA|AXN|CH11|HV[1-9]|IM2)','^(A-DATA|ADATA)','A-Data',''],
 	['^ADTRON','^(ADTRON)','Adtron',''],
 	['^ASUS','^ASUS','ASUS',''],
 	# ATCS05 can be hitachi travelstar but not sure
-	['^ATP','^ATP[\s\-]','ATP',''],
+	['^ATP','^ATP[\s-]','ATP',''],
 	# Force MP500
-	['^(Corsair|Force\s|(Flash\s*)?Voyager)','^Corsair','Corsair',''],
+	['^(Corsair|Force\s|(Flash\s*)?(Survivor|Voyager))','^Corsair','Corsair',''],
 	['^(FUJITSU|MJA|MH[TVWYZ][0-9]|MP|MAP[0-9])','^FUJITSU','Fujitsu',''],
 	# note: 2012:  wdc bought hgst
 	['^(HGST|Touro|5450)','^HGST','HGST (Hitachi)',''], # HGST HUA
-	['^(Hitachi|HD[PST]|DK[0-9]|IC|HT|HU)','^Hitachi','Hitachi',''], 
+	['^(Hitachi|HCS|HD[PST]|DK[0-9]|IC|HT|HU)','^Hitachi','Hitachi',''], 
 	# vb: VB0250EAVER but clashes with vbox; HP_SSD_S700_120G ;GB0500EAFYL GB starter too generic?
 	# DX110064A5xnNMRI ids as HP and Sandisc, same ID, made by sandisc for hp? not sure
-	['^(HP\b|MB[0-6]|G[BJ][01]|v[0-9]{3}[bgorw]$|x[0-9]{3}[w]$)','^HP','HP',''], 
+	['^(HP\b|[MV]B[0-6]|G[BJ][01]|DF[012]|v[0-9]{3}[bgorw]$|x[0-9]{3}[w]$)','^HP','HP',''], 
 	['^(LSD|Lexar|JumpDrive|JD\s?Firefly)','^Lexar','Lexar',''], # mmc-LEXAR_0xb016546c; JD Firefly;
 	# OCZSSD2-2VTXE120G is OCZ-VERTEX2_3.5
-	['^(OCZ|APOC|D2|DEN|DEN|DRSAK|EC188|FTNC|GFGC|MANG|MMOC|NIMC|NIMR|PSIR|RALLY2|TALOS2|TMSC|TRSAK)','^OCZ[\s\-]','OCZ',''],
-	['^OWC','^OWC[\s\-]','OWC',''],
+	['^(OCZ|APOC|D2|DEN|DEN|DRSAK|EC188|FTNC|GFGC|MANG|MMOC|NIMC|NIMR|PSIR|RALLY2|TALOS2|TMSC|TRSAK)','^OCZ[\s-]','OCZ',''],
+	['^OWC','^OWC[\s-]','OWC',''],
 	['^Philips','^Philips','Philips',''],
 	['^PIONEER','^PIONEER','Pioneer',''],
 	['^PNY','^PNY\s','PNY','','^PNY'],
@@ -8918,6 +9453,7 @@ sub device_vendor {
 	['^BHT','^BHT','BHT',''],
 	['^BIOSTAR','^BIOSTAR','Biostar',''],
 	['^BIWIN','^BIWIN','BIWIN',''],
+	['^Braveeagle','^Braveeagle','BraveEagle',''],
 	['^(BUFFALO|BSC)','^BUFFALO','Buffalo',''], # usb: BSCR05TU2
 	['^Bulldozer','^Bulldozer','Bulldozer',''],
 	['^Centerm','^Centerm','Centerm',''],
@@ -8939,6 +9475,7 @@ sub device_vendor {
 	['^(Eaget|V8$)','^Eaget','Eaget',''],
 	['^EDGE','^EDGE','EDGE',''],
 	['^Elecom','^Elecom','Elecom',''],
+	['^Emtec','^Emtec','Emtec',''],
 	['^EXCELSTOR','^EXCELSTOR( TECHNO(LOGY)?)?','ExcelStor',''],
 	['^EZLINK','^EZLINK','EZLINK',''],
 	['^Fantom','^Fantom( Drive[s]?)?','Fantom Drives',''],
@@ -8975,6 +9512,7 @@ sub device_vendor {
 	['^(Intenso|(Alu|Basic|Business|Micro|Mobile|Rainbow|Speed|Twister) Line|Rainbow)','^Intenso','Intenso',''],
 	['^(Iomega|ZIP\b)','^Iomega','Iomega',''], 
 	['^JingX','^JingX','JingX',''], #JingX 120G SSD - not confirmed, but guessing
+	['^Jingyi','^Jingyi','Jingyi',''],
 	# NOTE: ITY2 120GB hard to find
 	['^JMicron','^JMicron(\s?Tech(nology)?)?','JMicron Tech',''], #JMicron H/W raid
 	['^KingDian','^KingDian','KingDian',''],
@@ -8991,8 +9529,8 @@ sub device_vendor {
 	['^LEN','^Lenovo','Lenovo',''],
 	['^RPFT','','Lenovo O.E.M.',''],
 	['^LG\b','^LG','LG',''],
-	['^(LITE[\-\s]?ON[\s\-]?IT)','^LITE[\-]?ON[\s\-]?IT','LITE-ON IT',''], # LITEONIT_LSS-24L6G
-	['^(LITE[\-\s]?ON|PH[1-9])','^LITE[\-]?ON','LITE-ON',''], # PH6-CE240-L
+	['^(LITE[-\s]?ON[\s-]?IT)','^LITE[-]?ON[\s-]?IT','LITE-ON IT',''], # LITEONIT_LSS-24L6G
+	['^(LITE[-\s]?ON|PH[1-9])','^LITE[-]?ON','LITE-ON',''], # PH6-CE240-L
 	['^LONDISK','^LONDISK','LONDISK',''],
 	['^M-Systems','^M-Systems','M-Systems',''],
 	['^(Mach\s*Xtreme|MXSSD)','^Mach\s*Xtreme','Mach Xtreme',''],
@@ -9007,13 +9545,19 @@ sub device_vendor {
 	['^MD[1-9]','^Max\s*Digital','MaxDigital',''],
 	['^Medion','^Medion','Medion',''],
 	['^(MEDIAMAX|WL[0-9]{2})','^MEDIAMAX','MediaMax',''],
+	['^Mengmi','^Mengmi','Mengmi',''],
+	['^Miracle','^Miracle','Miracle',''],
 	['^Monster\s?Digital','^Monster\s?Digital','Monster Digital',''],
 	['^Morebeck','^Morebeck','Morebeck',''],
 	['^Motorola','^Motorola','Motorola',''],
+	['^Moweek','^Moweek','Moweek',''],
+	#MRMAD4B128GC9M2C
+	['^(MRMA|Memoright)','^Memoright','Memoright',''],
 	['^MTRON','^MTRON','MTRON',''],
 	['^Netac','^Netac','Netac',''],
 	['^OOS[1-9]','','Utania',''],
 	['^OWC','^OWC\b','OWC',''],
+	['^oyunkey','^oyunkey','Oyunkey',''],
 	['^PALIT','PALIT','Palit',''], # ssd 
 	['^PERC\b','','Dell PowerEdge RAID Card',''], # ssd 
 	['^(PS[8F]|Patriot)','^Patriot([-\s]?Memory)?','Patriot',''],
@@ -9028,8 +9572,12 @@ sub device_vendor {
 	['^RENICE','^RENICE','Renice',''],
 	['^(Ricoh|R5)','^Ricoh','Ricoh',''],
 	['^RIM[\s]','^RIM','RIM',''],
+	 #RTDMA008RAV2BWL comes with lenovo but don't know brand
 	['^Runcore','^Runcore','Runcore',''],
+	['^Sabrent','^Sabrent','Sabrent',''],
 	['^Sage','^Sage(\s?Micro)?','Sage Micro',''],
+	['^SandForce','^SandForce','SandForce',''],
+	['^Sannobel','^Sannobel','Sannobel',''],
 	['^SigmaTel','^SigmaTel','SigmaTel',''],
 	# DIAMOND_040_GB
 	['^(SILICON\s?MOTION|SM[0-9])','^SILICON\s?MOTION','Silicon Motion',''],
@@ -9058,6 +9606,7 @@ sub device_vendor {
 	['^TEAM','^TEAM( Group)?','Team',''],
 	['^Teclast','^Teclast','Teclast',''],
 	['^Teleplan','^Teleplan','Teleplan',''],
+	['^TEUTONS','^TEUTONS','TEUTONS',''],
 	['^Tigo','^Tigo','Tigo',''],
 	['^TopSunligt','^TopSunligt','TopSunligt',''], # is this a typo? hard to know
 	['^TopSunlight','^TopSunlight','TopSunlight',''],
@@ -9073,6 +9622,7 @@ sub device_vendor {
 	['^VMware','^VMware','VMware',''],
 	['^(Vseky|Vaseky)','^Vaseky','Vaseky',''], # ata-Vseky_V880_350G_
 	['^(YUCUN|R880)','^YUCUN','YUCUN',''],
+	['^ZEUSLAP','^ZEUSLAP','ZEUSLAP',''],
 	['^(Zheino|CHN[0-9])','^Zheino','Zheino',''],
 	['^ZSPEED','^ZSPEED','ZSpeed',''],
 	['^ZTC','^ZTC','ZTC',''],
@@ -9090,7 +9640,7 @@ sub device_vendor {
 					$model = 'N/A';
 				}
 			}
-			$model =~ s/^[\s\-_]+|[\s\-_]+$//g;
+			$model =~ s/^[\[\s_-]+|[\s\-_-]+$//g;
 			$model =~ s/\s\s/ /g;
 			@data = ($vendor,$model);
 			last;
@@ -9119,6 +9669,7 @@ sub hdd_temp {
 			@data = main::grabber("$sudo$nvme smart-log $device 2>/dev/null");
 			foreach (@data){
 				my @row = split /\s*:\s*/, $_;
+				next if !$row[0];
 				# other rows may have: Temperature sensor 1 :
 				if ( $row[0] eq 'temperature') {
 					$row[1] =~ s/\s*C//;
@@ -9143,7 +9694,7 @@ sub hdd_temp {
 	return $hdd_temp;
 }
 # args: 1: block id
-sub admin_data {
+sub block_data {
 	eval $start if $b_log;
 	my ($id) = @_;
 	# 0: logical block size 1: disk physical block size/partition block size;
@@ -9730,6 +10281,7 @@ sub x_drivers {
 		# $log = "$ENV{HOME}/bin/scripts/inxi/data/xorg-logs/loading-unload-failed-all41-mint.txt";
 		# $log = "$ENV{HOME}/bin/scripts/inxi/data/xorg-logs/loading-unload-failed-phd21-mint.txt";
 		# $log = "$ENV{HOME}/bin/scripts/inxi/data/xorg-logs/Xorg.0-gm10.log";
+		# $log = "$ENV{HOME}/bin/scripts/inxi/data/xorg-logs/xorg-multi-driver-1.log";
 		my @xorg = main::reader($log);
 		# list is from sgfxi plus non-free drivers, plus ARM drivers
 		my $list = join '|',qw(amdgpu apm ark armsoc atimisc ati 
@@ -9897,6 +10449,7 @@ sub display_compositor {
 		['orbital','orbital','','orbital'],
 		['papyros','papyros','','papyros'],
 		['perceptia','perceptia','','perceptia'],
+		['picom','picom','','picom'],
 		['rustland','rustland','','rustland'],
 		['sommelier','sommelier','','sommelier'],
 		['sway','sway','','sway'],
@@ -11050,7 +11603,7 @@ sub wan_ip {
 			}
 		}
 	}
-	if ($ip && $show{'filter'}){
+	if ($ip && $use{'filter'}){
 		$ip = $filter_string;
 	}
 	$ip ||= main::row_defaults('IP', 'WAN IP');
@@ -11717,7 +12270,7 @@ sub partition_data {
 				}
 			}
 			$id = join ' ', @row[$cols .. $#row];
-			$id =~ s/\/home\/[^\/]+\/(.*)/\/home\/$filter_string\/$1/ if $show{'filter'};
+			$id =~ s/\/home\/[^\/]+\/(.*)/\/home\/$filter_string\/$1/ if $use{'filter'};
 			$size = $row[$cols - $back_size];
 			if ($b_admin && -e "/sys/block/"){
 				@working = admin_data($blockdev,$dev_base,$size);
@@ -15717,7 +16270,7 @@ sub create_output {
 		}
 	}
 	if ($extra > 2){
-		if (!$show{'filter'}){
+		if (!$use{'filter'}){
 			$rows[0]{main::key($num++,'Location')} = complete_location($location[1],$weather{'city'},$weather{'state'},$weather{'country'});
 			if ($weather{'elevation-m'} || $weather{'elevation-ft'}){
 				$rows[0]{main::key($num++,'altitude')} = elevation_output($weather{'elevation-m'},$weather{'elevation-ft'});
@@ -16240,7 +16793,7 @@ sub get_location {
 sub complete_location {
 	eval $start if $b_log;
 	my ($location,$city,$state,$country) = @_;
-	if ($location && $location =~ /[\+\-0-9]/ && $city){
+	if ($location && $location =~ /[0-9+-]/ && $city){
 		$location = $country . ', ' . $location if $country && $location !~ m|$country|i;
 		$location = $state . ', ' . $location if $state && $location !~ m|$state|i;
 		$location = $city . ', ' . $location if $city && $location !~ m|$city|i;
@@ -16449,7 +17002,7 @@ sub get_env_de_data {
 	if (!$desktop[0]){
 		# 1 equals 1/0; 2 env var search; 3 values; 4 version; 5 - gtk tk; 6 - qt tk
 		my @desktops =(
-		[1,'unity','unity','cinnamon',0,0],
+		[1,'unity','unity','unity',0,0],
 		[0,'budgie','budgie','budgie-desktop',0,0],
 		# debian package: lxde-core. 
 		# NOTE: some distros fail to set XDG data for root
@@ -18672,7 +19225,7 @@ sub soc_type {
 	my ($type,$info,$driver) = @_;
 	# I2S or i2s. I2C is i2 controller |[iI]2[Ss]. note: odroid hdmi item is sound only
 	# snd_soc_dummy. simple-audio-amplifier driver: speaker_amp
-	if ($type =~ /^(daudio|.*hifi.*|.*sound[\-_]card|.*dac[0-9]?)$/ ||
+	if ($type =~ /^(daudio|.*hifi.*|.*sound[_-]card|.*dac[0-9]?)$/ ||
 	 ($info && $info !~ /amp|codec|dummy/ && $info =~ /(sound|audio)/) || 
 	 ($driver && $driver !~ /(codec|dummy)/ && $driver =~ /(audio|snd|sound)/) ){
 		$type = 'audio';
@@ -19116,7 +19669,7 @@ sub set_ps_gui {
 		@temp=qw(3dwm asc budgie-wm compiz compton deepin-wm dwc dcompmgr 
 		enlightenment fireplace gnome-shell grefson kmscon kwin_wayland kwin_x11
 		liri marco metisse mir moblin motorcar muffin mutter
-		orbital papyros perceptia rustland sommelier sway swc
+		orbital papyros perceptia picom rustland sommelier sway swc
 		ukwm unagi unity-system-compositor
 		wavy waycooler way-cooler wayhouse westford weston xcompmgr);
 		@match = (@match,@temp);
@@ -20080,7 +20633,7 @@ sub generate_system_data {
 		}
 		# don't print the desktop if it's a wm and the same
 		if ($extra > 1 && $desktop_data[5] && 
-		    (!$desktop_data[0] || $desktop_data[5] =~ /^(deepin.+|gnome[\s\-_]shell|budgie.+)$/i || 
+		    (!$desktop_data[0] || $desktop_data[5] =~ /^(deepin.+|gnome[\s_-]shell|budgie.+)$/i || 
 		    index(lc($desktop_data[5]),lc($desktop_data[0])) == -1 )){
 			$wm = $desktop_data[5];
 			$wm .= ' ' . $desktop_data[6] if $extra > 2 && $desktop_data[6];
