@@ -22,6 +22,7 @@ use 5.008;
 use Cwd qw(abs_path); # qw(abs_path);#abs_path realpath getcwd
 use Data::Dumper qw(Dumper); # print_r
 use File::Find;
+use File::stat; # needed for Xorg.0.log file mtime comparisons
 use Getopt::Long qw(GetOptions);
 # Note: default auto_abbrev is enabled, that's fine
 Getopt::Long::Configure ('bundling', 'no_ignore_case', 
@@ -31,8 +32,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.0.38';
-my $self_date='2020-03-14';
+my $self_version='3.1.00';
+my $self_date='2020-04-22';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -62,7 +63,7 @@ my (@app,@dmesg_boot,@devices_audio,@devices_graphics,@devices_network,
 @sysctl,@sysctl_battery,@sysctl_sensors,@sysctl_machine,@uname,@usb);
 ## Disk arrays 
 my (@dm_boot_disk,@dm_boot_optical,@glabel,@gpart,@hardware_raid,@labels,
-@lsblk,@partitions,@raid,@sysctl_disks,@uuids);
+@lsblk,@partitions,@raid,@swaps,@sysctl_disks,@uuids);
 my @test = (0,0,0,0,0);
 
 ## Booleans
@@ -74,7 +75,8 @@ $b_log,$b_log_colors,$b_log_full,$b_man,$b_mem,$b_mips,$b_no_sudo,
 $b_pci,$b_pci_tool,$b_ppc,$b_proc_partitions,$b_ps_gui,
 $b_root,$b_running_in_display,$b_skip_dig,
 $b_slot_tool,$b_soc_audio,$b_soc_gfx,$b_soc_net,$b_soc_timer,$b_sparc,
-$b_sudo,$b_sysctl,$b_usb,$b_usb_check,$b_usb_sys,$b_usb_tool,$b_wmctrl);
+$b_sudo,$b_swaps,$b_sysctl,$b_usb,$b_usb_check,$b_usb_sys,$b_usb_tool,
+$b_wmctrl);
 ## Disk checks
 my ($b_dm_boot_disk,$b_dm_boot_optical,$b_glabel,$b_hardware_raid,
 $b_label_uuid,$b_lsblk,$b_partitions,$b_raid,$b_smartctl);
@@ -571,24 +573,62 @@ sub system_files {
 		'partitions' => '/proc/partitions',
 		'scsi' => '/proc/scsi/scsi',
 		'version' => '/proc/version',
-		'xorg-log' => '/var/log/Xorg.0.log'
+		# note: 'xorg-log' is set only if -G is triggered
 		);
 		foreach ( keys %files ){
 			$system_files{$_} = ( -e $files{$_} ) ? $files{$_} : '';
-		}
-		if ( ! $system_files{'xorg-log'} && check_program('xset') ){
-			my $data = qx(xset q 2>/dev/null);
-			foreach ( split /\n/, $data){
-				if ($_ =~ /Log file/i){
-					$system_files{'xorg-log'} = get_piece($_,3);
-					last;
-				}
-			}
 		}
 	}
 	else {
 		return $system_files{$file};
 	}
+}
+sub set_xorg_log {
+	eval $start if $b_log;
+	my (@temp,@x_logs);
+	my ($file_holder,$time_holder,$x_mtime) = ('',0,0);
+	# NOTE: other variations may be /var/run/gdm3/... but not confirmed
+	# we are just going to get all the Xorg logs we can find, and not worry about 
+	# which is 'right'.
+	@temp = globber('/var/log/Xorg.*.log');
+	push @x_logs, @temp if @temp;
+	@temp = globber('/var/lib/gdm/.local/share/xorg/Xorg.*.log');
+	push @x_logs, @temp if @temp;
+	@temp = globber($ENV{'HOME'} . '/.local/share/xorg/Xorg.*.log',);
+	push @x_logs, @temp if @temp;
+	# root will not have a /root/.local/share/xorg directory so need to use a 
+	# user one if we can find one.
+	if ($b_root){
+		@temp = globber('/home/*/.local/share/xorg/Xorg.*.log');
+		push @x_logs, @temp if @temp;
+	}
+	foreach (@x_logs){
+		if (-r $_){
+			my $src_info = File::stat::stat("$_");
+			#print "$_\n";
+			if ($src_info){
+				$x_mtime = $src_info->mtime;
+				# print $_ . ": $x_time" . "\n";
+				if ($x_mtime > $time_holder ){
+					$time_holder = $x_mtime;
+					$file_holder = $_;
+				}
+			}
+		}
+	}
+	if ( !$file_holder && check_program('xset') ){
+		my $data = qx(xset q 2>/dev/null);
+		foreach ( split /\n/, $data){
+			if ($_ =~ /Log file/i){
+				$file_holder = get_piece($_,3);
+				last;
+			}
+		}
+	}
+	print "Xorg log file: $file_holder\nLast modified: $time_holder\n" if $test[14];
+	log_data('data',"Xorg log file: $file_holder") if $b_log;
+	$system_files{'xorg-log'} = $file_holder;
+	eval $end if $b_log;
 }
 
 ########################################################################
@@ -1089,6 +1129,7 @@ sub get_config_item {
 	elsif ($key eq 'LANGUAGE') {$language = $val if $val =~ /^(en)$/}
 	elsif ($key eq 'LIMIT') {$limit = $val if is_int($val)}
 	elsif ($key eq 'OUTPUT_TYPE') {$output_type = $val if $val =~ /^(json|screen|xml)$/}
+	elsif ($key eq 'NO_DIG') {$b_skip_dig = $val if is_int($val)}
 	elsif ($key eq 'NO_SUDO') {$b_no_sudo = $val if is_int($val)}
 	elsif ($key eq 'PARTITION_SORT') {$show{'partition-sort'} = $val if ($val =~ /^(dev-base|fs|id|label|percent-used|size|uuid|used)$/) }
 	elsif ($key eq 'PS_COUNT') {$ps_count = $val if is_int($val) }
@@ -1568,7 +1609,13 @@ sub display_data {
 	else {
 		@files = ('/xorg-conf-d');
 	}
-	push (@files, $files{'xorg-log'});
+	# keep this updated to handle all possible locations we know about for Xorg.0.log
+	# not using $system_files{'xorg-log'} for now though it would be best to know what file is used
+	main::set_xorg_log();
+	push (@files, '/var/log/Xorg.0.log');
+	push (@files, '/var/lib/gdm/.local/share/xorg/Xorg.0.log');
+	push (@files, $ENV{'HOME'} . '/.local/share/xorg/Xorg.0.log');
+	push (@files, $system_files{'xorg-log'}) if $system_files{'xorg-log'};
 	push (@files, '/etc/X11/xorg.conf');
 	copy_files(\@files,'display-xorg');
 	print "Collecting X, xprop, glxinfo, xrandr, xdpyinfo data, wayland, weston...\n";
@@ -1836,7 +1883,7 @@ sub run_self {
 	my $z = ($debugger{'z'}) ? ' -z' : '';
 	my $iz = "$i$z";
 	$iz =~ s/[\s-]//g;
-	my $cmd = "$self_path/$self_name -FRfrploudmaxxx$i$z --usb --slots --debug 10 -y 120 > $data_dir/$self_name-FRfrploudmaxxx$iz-usb-slots-y120.txt 2>&1";
+	my $cmd = "$self_path/$self_name -FRfJrploudmaxxx$i$z --slots --debug 10 -y 120 > $data_dir/$self_name-FRfJrploudmaxxx$iz-slots-y120.txt 2>&1";
 	system($cmd);
 	copy($log_file, "$data_dir") or main::error_handler('copy-failed', "$log_file", "$!");
 	system("$self_path/$self_name --recommends -y 120 > $data_dir/$self_name-recommends-120.txt 2>&1");
@@ -2231,7 +2278,10 @@ sub download_file {
 
 sub get_file {
 	my ($type, $url, $file) = @_;
-	my $response = HTTP::Tiny->new->get($url);
+	my $tiny = HTTP::Tiny->new;
+	# note: default is no verify, so default here actually is to verify unless overridden
+	$tiny->verify_SSL => 1 if !$dl{'no-ssl-opt'};
+	my $response = $tiny->get($url);
 	my $return = 1;
 	my $debug = 0;
 	my $fh;
@@ -2856,8 +2906,8 @@ sub item_data {
 	'rpm' => 'util-linux-ng',
 	}),
 	'lsusb' => ({
-	'info' => '-A usb audio; -N usb networking; --usb (optional)',
-	'info-bsd' => '-A; -N; --usb. Alternate to usbdevs',
+	'info' => '-A usb audio; -J (optional); -N usb networking',
+	'info-bsd' => '-A; -J; -N. Alternate to usbdevs',
 	'apt' => 'usbutils',
 	'pacman' => 'usbutils',
 	'rpm' => 'usbutils',
@@ -2934,7 +2984,7 @@ sub item_data {
 	}),
 	'usbdevs' => ({
 	'info' => '',
-	'info-bsd' => '-A; -N; --usb;',
+	'info-bsd' => '-A; -J; -N;',
 	'apt' => 'usbutils',
 	'pacman' => 'usbutils',
 	'rpm' => 'usbutils',
@@ -3440,6 +3490,7 @@ sub program_values {
 	'mksh' => ['ksh',5,'-v','mksh',1,0,0], 
 	'pdksh' => ['ksh',5,'-v','pdksh',1,0,0], 
 	'tcsh' => ['^tcsh',2,'--version','tcsh',1,0,0],
+	'xonsh' => ['^xonsh',1,'--version','xonsh',1,0,0], 
 	'zsh' => ['^zsh',2,'--version','zsh',1,0,0],
 	## Tools
 	'clang' => ['clang',3,'--version','Clang',1,0,0],
@@ -3543,7 +3594,7 @@ sub program_version {
 				# breaks version detection. A quick fix attempt is to just add 1 to $num 
 				# to get the next value.
 				$version_nu = $data[$num+1] if $data[$num+1] && $version_nu =~ /version/i;
-				$version_nu =~ s/(\([^)]+\)|,|"|dwm-|wmii2-|wmii-|\||\(|\))//g if $version_nu;
+				$version_nu =~ s/(\([^)]+\)|,|"|dwm-|xonsh\/|wmii2-|wmii-|\||\(|\))//g if $version_nu;
 				# trim off leading v but only when followed by a number
 				$version_nu =~ s/^v([0-9])/$1/i if $version_nu; 
 				# print "$version_nu\n";
@@ -3849,6 +3900,7 @@ sub get_options{
 		$show{'raid-basic'} = 1;
 		$show{'disk-total'} = 1;
 		$show{'graphic'} = 1;
+		$show{'graphic-basic'} = 1;
 		$show{'info'} = 1;
 		$show{'machine'} = 1;
 		$show{'network'} = 1;
@@ -3889,6 +3941,7 @@ sub get_options{
 		$show{'cpu'} = 1;
 		$show{'disk'} = 1;
 		$show{'graphic'} = 1;
+		$show{'graphic-basic'} = 1;
 		$show{'info'} = 1;
 		$show{'machine'} = 1;
 		$show{'network'} = 1;
@@ -3896,10 +3949,14 @@ sub get_options{
 		$show{'partition'} = 1;
 		$show{'raid'} = 1;
 		$show{'sensor'} = 1;
+		$show{'swap'} = 1;
 		$show{'system'} = 1; },
 	'G|graphics|graphic' => sub {
 		$show{'short'} = 0;
-		$show{'graphic'} = 1; },
+		$show{'graphic'} = 1; 
+		$show{'graphic-basic'} = 1; },
+	'h|help|?' => sub {
+		$b_help = 1; },
 	'i|ip' => sub {
 		$show{'short'} = 0;
 		$show{'ip'} = 1;
@@ -3909,6 +3966,12 @@ sub get_options{
 	'I|info' => sub {
 		$show{'short'} = 0;
 		$show{'info'} = 1; },
+	'j|swap|swaps' => sub {
+		$show{'short'} = 0;
+		$show{'swap'} = 1; },
+	'J|usb' => sub {
+		$show{'short'} = 0;
+		$show{'usb'} = 1; },
 	'l|labels|label' => sub {
 		$show{'short'} = 0;
 		$show{'label'} = 1;
@@ -4004,9 +4067,6 @@ sub get_options{
 		else {
 			error_handler('bad-arg',$opt,$arg);
 		} },
-	'usb' => sub {
-		$show{'short'} = 0;
-		$show{'usb'} = 1; },
 	'u|uuid' => sub {
 		$show{'short'} = 0;
 		$show{'partition'} = 1;
@@ -4022,6 +4082,7 @@ sub get_options{
 				$show{'cpu-basic'} = 1;
 				$show{'disk-total'} = 1;
 				$show{'graphic'} = 1;
+				$show{'graphic-basic'} = 1;
 				$show{'info'} = 1;
 				$show{'system'} = 1;
 			}
@@ -4049,6 +4110,7 @@ sub get_options{
 				$show{'ram'} = 1;
 				$show{'raid'} = 1;
 				$show{'sensor'} = 1;
+				$show{'swap'} = 1;
 				$show{'uuid'} = 1;
 			}
 			if ($arg >= 6 ){
@@ -4079,6 +4141,8 @@ sub get_options{
 		else {
 			error_handler('bad-arg',$opt,$arg);
 		} },
+	'V|version' => sub { 
+		$b_version = 1 },
 	'w|weather' => sub {
 		my ($opt) = @_;
 		$show{'short'} = 0;
@@ -4149,8 +4213,12 @@ sub get_options{
 		} },
 	'z|filter' => sub {
 		$use{'filter'} = 1; },
+	'filter-label' => sub {
+		$use{'filter-label'} = 1; },
 	'Z|filter-override' => sub {
 		$use{'filter-override'} = 1; },
+	'filter-uuid' => sub {
+		$use{'filter-uuid'} = 1; },
 	## Start non data options
 	'alt:i' => sub { 
 		my ($opt,$arg) = @_;
@@ -4235,6 +4303,8 @@ sub get_options{
 		$debugger{'test-1'} = 1; },
 	'debug-z' => sub {
 		$debugger{'z'} = 1 },
+	'dig' => sub {
+		$b_skip_dig = 0; },
 	'display:s' => sub { 
 		my ($opt,$arg) = @_;
 		if ($arg =~ /^:?([0-9]+)?$/){
@@ -4282,8 +4352,6 @@ sub get_options{
 		else {
 			error_handler('bad-arg', $opt, $arg);
 		}},
-	'h|help|?' => sub {
-		$b_help = 1; },
 	'host|hostname' => sub {
 		$show{'host'} = 1;
 		$show{'no-host'} = 0},
@@ -4314,6 +4382,8 @@ sub get_options{
 		else {
 			error_handler('bad-arg', $opt, $arg);
 		}},
+	'no-dig' => sub {
+		$b_skip_dig = 1; },
 	'no-host|no-hostname' => sub {
 		$show{'host'} = 0 ;
 		$show{'no-host'} = 1},
@@ -4388,8 +4458,6 @@ sub get_options{
 		$b_usb_sys = 1 },
 	'usb-tool' => sub {
 		$b_usb_tool = 1 },
-	'V|version' => sub { 
-		$b_version = 1 },
 	'wan-ip-url:s' => sub {
 		my ($opt,$arg) = @_;
 		if ($arg && $arg =~ /^(f|ht)tp[s]?:\/\//){
@@ -4408,7 +4476,8 @@ sub get_options{
 	## run all these after so that we can change widths, downloaders, etc
 	eval $end if $b_log;
 	CheckRecommends::run() if $b_recommends;
-	set_downloader() if $b_downloader || $wan_url; # sets for either config or arg here
+	set_downloader() if $b_downloader || $wan_url || ($b_skip_dig && $show{'ip'}); # sets for either config or arg here
+	set_xorg_log() if $show{'graphic'};
 	show_version() if $b_version;
 	show_options() if $b_help;
 	$b_man = 0 if (!$b_use_man || $b_no_man_force);
@@ -4418,6 +4487,7 @@ sub get_options{
 			error_handler('bad-arg', '--output', '--output-file not provided');
 		}
 	}
+	$show{'graphic-basic'} = 0 if $b_admin;
 	$b_block_tool = 1 if ( $b_admin && ($show{'partition'} || $show{'partition-full'} ));
 	$b_sudo = 1 if ( $show{'unmounted'} || ($extra > 0 && $show{'disk'}) );
 	$extra = 3 if $b_admin;
@@ -4439,7 +4509,7 @@ sub get_options{
 	if ($show{'audio'} || $show{'graphic'} || $show{'network'} || $show{'raid'} || $show{'raid-forced'} ){
 		$b_pci = 1;
 	}
-	if ($show{'usb'} || $show{'audio'}  || $show{'network'} ){
+	if ($show{'usb'} || $show{'audio'} || $show{'graphic'} || $show{'network'} ){
 		$b_usb = 1;
 	}
 	if ($bsd_type && ($show{'short'} || $show{'system'} || $show{'battery'} || $show{'cpu'} || $show{'cpu-basic'} || 
@@ -4475,17 +4545,18 @@ sub show_options {
 		$line = $line . '- ';
 	}
 	@rows = (
-	['0', '', '', "$self_name supports the following options. You can combine
-	these or list them one by one. For more detailed information, see man^$self_name.
-	Examples:^$self_name^-v4^-c6 OR 
-	$self_name^-bDc^6. If you start $self_name with no arguments, it will display 
-	a short system summary." ],
+	['0', '', '', "$self_name supports the following options. For more detailed 
+	information, see man^$self_name. If you start $self_name with no arguments,
+	it will display a short system summary." ],
 	['0', '', '', '' ],
-	['0', '', '', "The following options, if used without -F, -b, or -v, will 
-	show option line(s): A, B, C, D, G, I, M, N, P, R, S, W, d, f, i, l, m, n, 
-	o, p, r, s, t, u, w, --slots, --usb - you can use these alone or together 
-	to show just the line(s) you want to see. If you use them with -v [level], 
-	-b or -F, $self_name will combine the outputs." ],
+	['0', '', '', "You can use these options alone or together, 
+	to show or add the item(s) you want to see: A, B, C, D, G, I, J, M, N, P, 
+	R, S, W, d, f, i, j, l, m, n, o, p, r, s, t, u, w, --slots. 
+	If you use them with -v [level], -b or -F, $self_name will add the requested
+	lines to the output." ],
+	['0', '', '', '' ],
+	['0', '', '', "Examples:^$self_name^-v4^-c6 OR $self_name^-bDc^6 OR
+	$self_name^-FzjJxy^80" ],
 	['0', '', '', $line ],
 	['0', '', '', "Output Control Options:" ],
 	['1', '-a', '--admin', "Adds advanced sys admin data (only works with 
@@ -4494,9 +4565,13 @@ sub show_options {
 	hex (decimal) if greater than 9, otherwise hex; microcode - format: hex." ],
 	['2', '-d,-D', '', "If available: logical and physical block sizes; drive family;
 	USB drive specifics; SMART report." ],
-	['2', '-p,-P', '', "If available: raw size of partition, percent available for user, 
-	block size of file system (root required); for swap, shows swapiness and vfs cache 
+	['2', '-G', '', "If available: Xorg Display ID, Screens total, default Screen,
+	current Screen; per X Screen: resolution, dpi, size, diagonal; per Monitor: 
+	resolution; hz; dpi; size; diagonal. See man for explanations." ],
+	['2', '-j,-p,-P', '', "For swap (if available): swappiness and vfs cache 
 	pressure, and if values are default or not." ],
+	['2', '-p,-P', '', "If available: raw size of partition, percent available for user, 
+	block size of file system (root required)." ],
 	['2', '-S', '', "If available: kernel boot parameters." ],
 	['1', '-A', '--audio', "Audio/sound card(s), driver, sound server." ],
 	['1', '-b', '--basic', "Basic output, short form. Same as $self_name^-v^2." ],
@@ -4522,15 +4597,18 @@ sub show_options {
 	['1', '-f', '--flags', "All CPU $flags. Triggers -C. Not shown with -F to 
 	avoid spamming." ],
 	['1', '-F', '--full', "Full output. Includes all Upper Case line letters 
-	except -W, plus -s and -n. Does not show extra verbose options such 
+	except -W, plus --swap, -s and -n. Does not show extra verbose options such 
 	as -d -f -i -l -m -o -p -r -t -u -x, unless specified." ],
 	['1', '-G', '--graphics', "Graphics info (card(s), driver, display protocol 
-	(if available), display server, resolution, renderer, OpenGL version)." ],
+	(if available), display server/Wayland compositor, resolution, renderer, 
+	OpenGL version)." ],
 	['1', '-i', '--ip', "WAN IP address and local interfaces (requires ifconfig 
 	or ip network tool). Triggers -n. Not shown with -F for user security reasons. 
 	You shouldn't paste your local/WAN IP." ],
 	['1', '-I', '--info', "General info, including processes, uptime, memory, 
 	IRC client or shell type, $self_name version." ],
+	['1', '-j', '--swap', "Swap in use. Includes partitions, zram, file." ],
+	['1', '-J', '--usb', "Show USB data: Hubs and Devices." ],
 	['1', '-l', '--label', "$partition_string_u labels. Triggers -P. 
 	For full -p output, use -pl." ],
 	['1', '-m', '--memory', "Memory (RAM) data. Requires root. Numbers of 
@@ -4555,8 +4633,8 @@ sub show_options {
 	['1', '-p', '--partitions-full', "Full $partition_string information (-P plus all other 
 	detected ${partition_string}s)." ],
 	['1', '-P', '--partitions', "Basic $partition_string info. Shows, if detected: 
-	/ /boot /home /opt /tmp /usr /usr/home /var /var/log /var/tmp. Use -p to see all 
-	mounted ${partition_string}s." ],
+	/ /boot /home /opt /tmp /usr /usr/home /var /var/log /var/tmp. Swap partitions
+	show if --swap is not used. Use -p to see all mounted ${partition_string}s." ],
 	['1', '-r', '--repos', "Distro repository data. Supported repo types: APK, 
 	APT, CARDS, EOPKG, PACMAN, PACMAN-G2, PISI, PORTAGE, PORTS (BSDs), SLACKPKG,
 	TCE, URPMQ, XBPS, YUM/ZYPP." ],
@@ -4573,7 +4651,6 @@ sub show_options {
 	of processes for each type (default: 5; if in IRC, max: 5). " ],
 	['1', '', '', "Make sure that there is no space between letters and 
 	numbers (e.g.^-t^cm10)." ],
-	['1', '', '--usb', "Show USB data: Hubs and Devices." ],
 	['1', '-u', '--uuid', "$partition_string_u UUIDs. Triggers -P. For full -p 
 	output, use -pu." ],
 	['1', '-v', '--verbosity', "Set $self_name verbosity level (0-8). 
@@ -4588,10 +4665,11 @@ sub show_options {
 	['2', '4', '', "$partition_string_u size/used data (-P) for 
 	(if present) /, /home, /var/, /boot. Shows full disk data (-D). " ],
 	['2', '5', '', "Audio card (-A), sensors (-s), memory/RAM (-m), 
-	$partition_string label^(-l), UUID^(-u), short form of optical drives, 
-	standard RAID data (-R). " ],
-	['2', '6', '', "Full $partition_string (-p), unmounted $partition_string (-o), 
-	optical drive (-d), USB (--usb), full RAID; triggers -xx." ],
+	$partition_string label^(-l), full swap (-j), UUID^(-u), short form 
+	of optical drives, standard RAID data (-R). " ],
+	['2', '6', '', "Full $partition_string (-p), 
+	unmounted $partition_string (-o), optical drive (-d), USB (-J),
+	full RAID; triggers -xx." ], 
 	['2', '7', '', "Network IP data (-i); triggers -xxx."],
 	['2', '8', '', "Everything available, including repos (-r), processes 
 	(-tcm), PCI slots (--slots)."],
@@ -4638,6 +4716,7 @@ sub show_options {
 	['2', '-I', '', "Default system GCC. With -xx, also shows other installed 
 	GCC versions. If running in shell, not in IRC client, shows shell version 
 	number, if detected. Init/RC type and runlevel (if available)." ],
+	['2', '-J', '', "For Device: driver." ],
 	['2', '-m,--memory-modules', '', "Max memory module size (if available), device type." ],
 	['2', '-N', '', "Specific vendor/product information (if relevant); 
 	PCI Bus ID/USB ID number of card; Version/port(s)/driver version (if available)." ],
@@ -4649,7 +4728,6 @@ sub show_options {
 	and detected)" ],
 	['2', '-t', '', "Adds memory use output to CPU (-xt c), and CPU use to 
 	memory (-xt m)." ],
-	['2', '--usb', '', "For Device: driver." ],
 	);
 	push @data, @rows;
 	if ( $use{'weather'} ){
@@ -4665,12 +4743,15 @@ sub show_options {
 	['2', '-C', '', "L1/L3 cache (if root and dmidecode installed)." ],
 	['2', '-D', '', "Disk transfer speed; NVMe lanes; Disk serial number." ],
 	['2', '-G', '', "Chip vendor:product ID for each video card; OpenGL 
-	compatibility version, if free drivers and available; compositor (experimental);
+	compatibility version, if free drivers and available; Xorg compositor;
 	alternate Xorg drivers (if available). Alternate means driver is on automatic 
-	driver check list of Xorg for the card vendor, but is not installed on system." ],
+	driver check list of Xorg for the card vendor, but is not installed on system;
+	Xorg dpi." ],
 	['2', '-I', '', "Other detected installed gcc versions (if present). System 
 	default runlevel. Adds parent program (or tty) for shell info if not in 
 	IRC. Adds Init version number, RC (if found)." ],
+	['2', '-j,-p,-P', '', "Swap priority." ],
+	['2', '-J', '', "Vendor:chip ID." ],
 	['2', '-m,--memory-modules', '', "Manufacturer, part number; single/double bank (if found)." ],
 	['2', '-M', '', "Chassis info, BIOS ROM size (dmidecode only), if available." ],
 	['2', '-N', '', "Chip vendor:product ID." ],
@@ -4681,7 +4762,6 @@ sub show_options {
 	gdm3, lightdm); active window manager if detected; desktop toolkit, 
 	if available (Xfce/KDE/Trinity only)." ],
 	['2', '--slots', '', "Slot length." ],
-	['2', '--usb', '', "Vendor:chip ID." ],
 	);
 	push @data, @rows;
 	if ( $use{'weather'} ){
@@ -4697,9 +4777,10 @@ sub show_options {
 	['2', '-C', '', "CPU boost (turbo) enabled/disabled, if present." ],
 	['2', '-D', '', "Firmware rev. if available; partition scheme, in some cases; disk 
 	rotation speed (if detected)." ],
-	['2', '-G', '', "Compositor version (if detectable)." ],
+	['2', '-G', '', "Xorg Compositor version (if detectable)." ],
 	['2', '-I', '', "For 'Shell:' adds ([su|sudo|login]) to shell name if present; 
 	for 'running in:' adds (SSH) if SSH session." ],
+	['2', '-J', '', "For Device: serial number (if present), interface count; USB speed." ],
 	['2', '-m,--memory-modules', '', "Width of memory bus, data and total (if present and greater 
 	than data); Detail for Type, if present; module voltage, if available; serial 
 	number." ],
@@ -4710,7 +4791,6 @@ sub show_options {
 	['2', '-S', '', "Panel/tray/bar/dock info in desktop output, if in X (like lxpanel, 
 	xfce4-panel, mate-panel); (if available) dm version number, window manager
 	version number." ],
-	['2', '--usb', '', "For Device: serial number (if present), interface count; USB speed." ],
 	);
 	push @data, @rows;
 	if ( $use{'weather'} ){
@@ -4723,8 +4803,10 @@ sub show_options {
 	settings or actual widths. Example:^inxi^-y^130" ],
 	['1', '-z', '--filter', "Adds security filters for IP/MAC addresses, serial numbers, 
 	location (-w), user home directory name, host item. Default on for IRC clients." ],
+	['1', '', '--filter-label', "Filters out partion labels in -j, -o, -p, -P, -Sa." ],
 	['1', '-Z', '--filter-override', "Override for output filters. Useful for 
 	debugging networking issues in IRC, for example." ],
+	['1', '', '--filter-uuid', "Filters out partion UUIDs in -j, -o, -p, -P, -Sa." ],
 	[0, '', '', "$line" ],
 	[0, '', '', "Additional Options:" ],
 	['1', '-h', '--help', "This help menu." ],
@@ -4759,6 +4841,7 @@ sub show_options {
 	['2', '43', '', "Bypass Wget as a downloader option." ],
 	['2', '44', '', "Bypass Curl, Fetch, and Wget as downloader options. Forces 
 	Perl if HTTP::Tiny present." ],
+	['1', '', '--dig', "Overrides configuration item NO_DIG (resets to default)." ],
 	['1', '', '--display', "[:[0-9]] Try to get display data out of X (default: display 0)." ],
 	['1', '', '--dmidecode', "Force use of dmidecode data instead of /sys where relevant 
 	(e.g. -M, -B)." ],
@@ -4776,6 +4859,7 @@ sub show_options {
 		push @data, @rows;
 	}
 	@rows = (
+	['1', '', '--no-dig', "Skip dig for WAN IP checks, use downloader program." ],
 	['1', '', '--no-host', "Turn off hostname for -S. Useful if showing output from servers etc." ],
 	);
 	push @data, @rows;
@@ -4787,7 +4871,7 @@ sub show_options {
 	}
 	@rows = (
 	['1', '', '--no-ssl', "Skip SSL certificate checks for all downloader actions 
-	(Wget/Fetch/Curl only)." ],
+	(Wget/Fetch/Curl/Perl-HTTP::Tiny)." ],
 	['1', '', '--no-sudo', "Skip internal program use of sudo features (not related 
 	to starting $self_name with sudo)." ],
 	['1', '', '--output', "[json|screen|xml] Change data output type. Requires --output-file 
@@ -5289,6 +5373,19 @@ sub apply_filter {
 	}
 	return $string;
 }
+# note, let the print logic handle N/A cases
+sub apply_partition_filter {
+	my ($source,$string,$type) = @_;
+	return $string if !$string || $string eq 'N/A';
+	if ($source eq 'system') {
+		my $test = ($type eq 'label') ? '=LABEL=': '=UUID=';
+		$string =~ s/$test[^\s]+/$test$filter_string/g;
+	}
+	else {
+		$string = $filter_string;
+	}
+	return $string;
+}
 sub arm_cleaner {
 	my ($item) = @_;
 	$item =~ s/(\([^\(]*Device Tree[^\)]*\))//gi;
@@ -5471,6 +5568,7 @@ sub row_defaults {
 	'disk-data' => "No Disk data was found.",
 	'disk-size-0' => "Total N/A",
 	'display-console' => 'No advanced graphics data found on this system in console.',
+	'display-driver-na' => "display driver n/a",
 	'display-null' => 'No advanced graphics data found on this system.',
 	'display-root' => 'Advanced graphics data unavailable in console for root.',
 	'display-root-x' => 'Advanced graphics data unavailable for root.',
@@ -5481,7 +5579,8 @@ sub row_defaults {
 	'dev' => 'Feature under development',
 	'dmesg-boot-permissions' => 'dmesg.boot permissions',
 	'dmesg-boot-missing' => 'dmesg.boot not found',
-	'IP' => "No $id data found. Connected to the web? SSL issues?",
+	'IP' => "No $id found. Connected to web? SSL issues?",
+	'IP-dig' => "No $id found. Connected to web? SSL issues? Try --no-dig",
 	'machine-data' => "No machine data: try newer kernel.",
 	'machine-data-bsd' => "No machine data: Is dmidecode installed? Try -M --dmidecode.",
 	'machine-data-dmidecode' => "No machine data: try newer kernel. Is dmidecode installed? Try -M --dmidecode.",
@@ -5500,6 +5599,7 @@ sub row_defaults {
 	'raid-data' => "No RAID data was found.",
 	'ram-data' => "No RAM data was found.",
 	'root-required' => "<superuser/root required>",
+	'root-suggested' => "try sudo/root",
 	'sensors-data-ipmi' => "No ipmi sensors data was found.",
 	'sensors-data-linux' => "No sensors data was found. Is sensors configured?",
 	'sensors-ipmi-root' => "Unable to run ipmi sensors.  Root privileges required.",
@@ -5508,6 +5608,8 @@ sub row_defaults {
 	'smartctl-udma-crc' => "Bad cable/connection?",
 	'smartctl-usb' => "Unknown USB bridge. Flash drive/Unsupported enclosure?",
 	'smartctl-unknown' => "Unknown smartctl error. Unable to get data.",
+	'swap-admin' => "No admin swap data available.",
+	'swap-data' => "No Swap data was found.",
 	'tool-missing' => "<missing $id>",
 	'unmounted-data' => "No unmounted partitions found.",
 	'unmounted-data-bsd' => "No unmounted partition data found for this BSD system.",
@@ -5749,6 +5851,7 @@ sub print_data {
 	my $hash = 0;
 	my $holder = '';
 	my $id_holder = 0;
+	my $screen_holder = 0;
 	my $start = '';
 	my $start2 = '';
 	my $length = 0;
@@ -5788,7 +5891,9 @@ sub print_data {
 			'Hardware' => 1, # hardware raid report
 			'ID' => 1,
 			'IF-ID' => 1,
+			'Monitor' => 1,
 			'Optical' => 1,
+			'Screen' => 1,
 			'variant' => 1, # arm > 1 cpu type
 			);
 			$array_holder = 1;
@@ -5812,6 +5917,11 @@ sub print_data {
 						if ($key eq 'Device' && $ids{'array'} > 1 && $id_holder != $ids{$key} ){
 							$id_holder = $ids{$key};
 							$ids{'array'} = 1 if ($ids{'array'} > 1);
+						}
+						# new Screen
+						if ($key eq 'Screen' && $screen_holder != $ids{$key} ){
+							$screen_holder = $ids{$key};
+							$ids{'Monitor'} = 1 if ($ids{'Monitor'} > 1);
 						}
 						if ($counter == 0 && defined $ids{$key}){
 							$key .= '-' . $ids{$key}++;
@@ -7997,7 +8107,11 @@ sub cpu_arch {
 		elsif ($family eq '17'){
 			if ( $model =~ /^(1|11)$/ ) {$arch = 'Zen'}
 			elsif ( $model =~ /^(8|18)$/ ) {$arch = 'Zen+'}
-			elsif ( $model =~ /^2[0123456789ABCDEF]$/ ) {$arch = 'Zen 2'}
+			# not positive about 2x, main resource shows only 31 and 71 hex 
+			elsif ( $model =~ /^(2[0123456789ABCDEF]|31|71)$/ ) {$arch = 'Zen 2'}
+			# no info on these yet, but they are coming and are scheduled
+			# elsif ( $model =~ /^()$/ ) {$arch = 'Zen 3'}
+			# elsif ( $model =~ /^()$/ ) {$arch = 'Zen 4'}
 			else {$arch = 'Zen'}
 		}
 		elsif ($family eq '18'){
@@ -8101,7 +8215,8 @@ sub cpu_arch {
 				elsif ($model eq '8E' && ($stepping == 11 || $stepping == 12)){$arch = 'Whiskey Lake'}
 				elsif ($model eq '8E' && $stepping == 9){$arch = 'Amber Lake'}
 				elsif ($stepping > 13){$arch = 'Comet Lake'} # guess, have not seen docs yet
-				elsif ($stepping > 9){$arch = 'Coffee Lake'}
+				# elsif ($stepping > 9 && $stepping < 14){$arch = 'Coffee Lake'}
+				# NOTE: kaby lake is 8E 9 but so is Amber Lake
 				else {$arch = 'Kaby Lake'} }
 			#elsif ( $model =~ /^(9E)$/ ) {$arch = 'Coffee Lake'}
 			elsif ( $model =~ /^(57)$/ ) {$arch = 'Knights Landing'}
@@ -8506,6 +8621,8 @@ sub disk_data {
 		# don't count remote used, also, some cases mount 
 		# panfs is parallel NAS volume manager, need more data
 		next if ($row{'fs'} && $row{'fs'} =~ /cifs|iso9660|nfs|panfs|sshfs|smbfs|unionfs/);
+		# don't count zfs or file type swap
+		next if ($row{'swap-type'} && $row{'swap-type'} ne 'partition');
 		# in some cases, like redhat, mounted cdrom/dvds show up in partition data
 		next if ($row{'dev-base'} && $row{'dev-base'} =~ /^sr[0-9]+$/);
 		# this is used for specific cases where bind, or incorrect multiple mounts 
@@ -9394,7 +9511,7 @@ sub device_vendor {
 	# $model = 'Patriot Memory';
 	my @vendors = (
 	## These go first because they are the most likely and common ##
-	['(Crucial|^(FC)?CT|-CT|^M4\b)','Crucial','Crucial',''],
+	['(Crucial|^(FC)?CT|-CT|^M4\b|Gizmo!)','Crucial','Crucial',''],
 	['^(INTEL|SSD(PAM|SA2))','^INTEL','Intel',''],
 	['(KINGSTON|DataTraveler|DT\s?(DUO|Microduo|101)|^SMS|^SHS|^SUV|^Ultimate CF|HyperX|^S[AV][34]00)','KINGSTON','Kingston',''], # maybe SHS: SHSS37A SKC SUV
 	# must come before samsung MU. NOTE: toshiba can have: TOSHIBA_MK6475GSX: mush: MKNSSDCR120GB_
@@ -9418,7 +9535,7 @@ sub device_vendor {
 	['^(Corsair|Force\s|(Flash\s*)?(Survivor|Voyager))','^Corsair','Corsair',''],
 	['^(FUJITSU|MJA|MH[TVWYZ][0-9]|MP|MAP[0-9])','^FUJITSU','Fujitsu',''],
 	# note: 2012:  wdc bought hgst
-	['^(HGST|Touro|5450)','^HGST','HGST (Hitachi)',''], # HGST HUA
+	['^(HGST|Touro|54[15]0|7250)','^HGST','HGST (Hitachi)',''], # HGST HUA
 	['^(Hitachi|HCS|HD[PST]|DK[0-9]|IC|HT|HU)','^Hitachi','Hitachi',''], 
 	# vb: VB0250EAVER but clashes with vbox; HP_SSD_S700_120G ;GB0500EAFYL GB starter too generic?
 	# DX110064A5xnNMRI ids as HP and Sandisc, same ID, made by sandisc for hp? not sure
@@ -9427,9 +9544,9 @@ sub device_vendor {
 	# OCZSSD2-2VTXE120G is OCZ-VERTEX2_3.5
 	['^(OCZ|APOC|D2|DEN|DEN|DRSAK|EC188|FTNC|GFGC|MANG|MMOC|NIMC|NIMR|PSIR|RALLY2|TALOS2|TMSC|TRSAK)','^OCZ[\s-]','OCZ',''],
 	['^OWC','^OWC[\s-]','OWC',''],
-	['^Philips','^Philips','Philips',''],
+	['^(Philips|GoGear)','^Philips','Philips',''],
 	['^PIONEER','^PIONEER','Pioneer',''],
-	['^PNY','^PNY\s','PNY','','^PNY'],
+	['^(PNY|Hook\s?Attache)','^PNY\s','PNY','','^PNY'],
 	# note: get rid of: M[DGK] becasue mushkin starts with MK
 	# note: seen: KXG50ZNV512G NVMe TOSHIBA 512GB | THNSN51T02DUK NVMe TOSHIBA 1024GB
 	['(^[S]?TOS|^THN|TOSHIBA|TransMemory|^M[KQ][0-9])','[S]?TOSHIBA','Toshiba',''], # scsi-STOSHIBA_STOR.E_EDITION_
@@ -9450,6 +9567,7 @@ sub device_vendor {
 	['^(ASM|2115)','^ASM','ASMedia',''],#asm1153e
 	['^(AVEXIR|AVSSD)','^AVEXIR','Avexir',''],
 	['^Bell\b','^Bell','Packard Bell',''],
+	['^(BelovedkaiAE|GhostPen)','^BelovedkaiAE','BelovedkaiAE',''],
 	['^BHT','^BHT','BHT',''],
 	['^BIOSTAR','^BIOSTAR','Biostar',''],
 	['^BIWIN','^BIWIN','BIWIN',''],
@@ -9461,6 +9579,7 @@ sub device_vendor {
 	['^CHN\b','','Zheino',''],
 	['^Clover','^Clover','Clover',''],
 	['^Colorful\b','^Colorful','Colorful',''],
+	['^CnMemory|Spaceloop','^CnMemory','CnMemory',''],
 	['^CSD','^CSD','CSD',''],
 	['^(Dane-?Elec|Z Mate)','^Dane-?Elec','DaneElec',''],
 	# Daplink vfs is an ARM software thing
@@ -9504,6 +9623,7 @@ sub device_vendor {
 	['^(IBM|DT)','^IBM','IBM',''], 
 	['^IEI Tech','^IEI Tech(\.|nology)?( Corp(\.|oration)?)?','IEI Technology',''],
 	['^(Imation|Nano\s?Pro|HQT)','^Imation(\sImation)?','Imation',''], # Imation_ImationFlashDrive; TF20 is imation/tdk
+	['^(Inca\b|Npenterprise)','^Inca','Inca',''],
 	['^(InnoDisk|Innolite)','^InnoDisk( Corp.)?','InnoDisk',''],
 	['^Innostor','^Innostor','Innostor',''],
 	['^Innovation','^Innovation','Innovation',''],
@@ -9523,7 +9643,8 @@ sub device_vendor {
 	# kingwin docking, not actual drive
 	['^(EZD|EZ-Dock)','','Kingwin Docking Station',''],
 	['^KLEVV','^KLEVV','KLEVV',''],
-	['^(Lacie|P92)','^Lacie','Lacie',''],
+	['^(Lacie|P92|itsaKey|iamaKey)','^Lacie','LaCie',''],
+	['^LANBO','^LANBO','LANBO',''],
 	['^LDLC','^LDLC','LDLC',''],
 	# LENSE30512GMSP34MEAT3TA
 	['^LEN','^Lenovo','Lenovo',''],
@@ -9533,7 +9654,7 @@ sub device_vendor {
 	['^(LITE[-\s]?ON|PH[1-9])','^LITE[-]?ON','LITE-ON',''], # PH6-CE240-L
 	['^LONDISK','^LONDISK','LONDISK',''],
 	['^M-Systems','^M-Systems','M-Systems',''],
-	['^(Mach\s*Xtreme|MXSSD)','^Mach\s*Xtreme','Mach Xtreme',''],
+	['^(Mach\s*Xtreme|MXSSD|MXU)','^Mach\s*Xtreme','Mach Xtreme',''],
 	['^(MAXTOR|Atlas|TM[0-9]{4})','^MAXTOR','Maxtor',''], # note M2 M3 is usually maxtor, but can be samsung
 	['^(Memorex|TravelDrive|TD\s?Classic)','^Memorex','Memorex',''],
 	# note: C300/400 can be either micron or crucial, but C400 is M4 from crucial
@@ -9604,7 +9725,7 @@ sub device_vendor {
 	['^(TDK|TF[1-9][0-9])','^TDK','TDK',''],
 	['^TEAC','^TEAC','TEAC',''],
 	['^TEAM','^TEAM( Group)?','Team',''],
-	['^Teclast','^Teclast','Teclast',''],
+	['^(Teclast|CoolFlash)','^Teclast','Teclast',''],
 	['^Teleplan','^Teleplan','Teleplan',''],
 	['^TEUTONS','^TEUTONS','TEUTONS',''],
 	['^Tigo','^Tigo','Tigo',''],
@@ -9817,7 +9938,8 @@ sub set_glabel {
 ## GraphicData 
 {
 package GraphicData;
-my $driver = ''; # we need this as a fallback in case no xorg.0.log
+my $driver = ''; # we need this as a fallback in case no xorg log found
+my %graphics;
 sub get {
 	eval $start if $b_log;
 	my (@data,@rows);
@@ -9845,6 +9967,9 @@ sub get {
 			@rows = (@rows,@data);
 		}
 	}
+	# note: not perfect, but we need usb gfx to show for all types, soc, pci, etc
+	@data = usb_data();
+	@rows = (@rows,@data);
 	@data = display_data();
 	@rows = (@rows,@data);
 	@data = gl_data();
@@ -9904,13 +10029,472 @@ sub card_data {
 	eval $end if $b_log;
 	return @rows;
 }
+sub usb_data {
+	eval $start if $b_log;
+	my (@rows,@data,@ids,$driver,$path_id,$product,@temp2);
+	my ($j,$num) = (0,1);
+	return if !@usb;
+	foreach my $ref (@usb){
+		my @row = @$ref;
+		# these tests only work for /sys based usb data for now
+		if ($row[14] && ($row[14] eq 'Audio-Video' || $row[14] eq 'Video' ) ){
+			$num = 1;
+			$j = scalar @rows;
+			# makre sure to reset, or second device trips last flag
+			($driver,$path_id,$product) = ('','','');
+			$product = main::cleaner($row[13]) if $row[13];
+			$driver = $row[15] if $row[15];
+			$path_id = $row[2] if $row[2];
+			$product ||= 'N/A';
+			# note: for real usb video out, no generic drivers? webcams may have one though
+			if (!$driver){
+				if ($row[14] eq 'Audio-Video'){
+					$driver = 'N/A';
+				}
+				else {
+					$driver = 'N/A';
+				}
+			}
+			@data = ({
+			main::key($num++,'Device') => $product,
+			main::key($num++,'type') => 'USB',
+			main::key($num++,'driver') => $driver,
+			},);
+			@rows = (@rows,@data);
+			if ($extra > 0){
+				$rows[$j]{main::key($num++,'bus ID')} = "$path_id:$row[1]";
+			}
+			if ($extra > 1){
+				$row[7] ||= 'N/A';
+				$rows[$j]{main::key($num++,'chip ID')} = $row[7];
+			}
+			if ($extra > 2 && $row[16]){
+				$rows[$j]{main::key($num++,'serial')} = main::apply_filter($row[16]);
+			}
+		}
+	}
+	eval $end if $b_log;
+	return @rows;
+}
 sub display_data(){
 	eval $start if $b_log;
-	my (%graphics,@row);
-	my @xdpyinfo;
-	my $num = 0;
-	my ($protocol,$server) = ('','');
+	my (@row);
+	my ($num,$protocol) = (0,'');
 	# note: these may not always be set, they won't be out of X, for example
+	$protocol = get_protocol();
+	# note, since the compositor is the server with wayland, always show it
+	if ($extra > 1 || $protocol eq 'wayland'){
+		set_compositor($protocol);
+	}
+	if ( $b_display){
+		x_display_data();
+		# currently a stub, wayland needs a lot more work
+		if ($protocol && $protocol eq 'wayland' && !$graphics{'screens'}){
+			wayland_display_data();
+			# it worked! we got screen data
+			$graphics{'no-xdpyinfo'} = undef if $graphics{'screens'};
+		}
+	}
+	else {
+		$graphics{'tty'} = tty_data();
+	}
+	# this gives better output than the failure last case, which would only show:
+	# for example: X.org: 1.9 instead of: X.org: 1.9.0
+	$graphics{'x-version'} = $graphics{'xorg-version'} if $graphics{'xorg-version'};;
+	$graphics{'x-version'} = x_version() if !$graphics{'x-version'};
+	$graphics{'x-version'} = $graphics{'x-version-id'} if !$graphics{'x-version'};
+	#print Data::Dumper::Dumper \%graphics;
+	if (%graphics){
+		my ($driver_missing,$resolution,$server_string) = ('','','');
+		# print "$graphics{'x-vendor'} $graphics{'x-version'} $graphics{'x-vendor-release'}","\n";
+		if ($graphics{'x-vendor'}){
+			my $version = ($graphics{'x-version'}) ? " $graphics{'x-version'}" : '';
+			#$version = (!$version && $graphics{'x-vendor-release'}) ? " $graphics{'x-vendor-release'}" : '';
+			$server_string = "$graphics{'x-vendor'}$version";
+			#print "$server_string\n";
+		}
+		elsif ($graphics{'x-version'}) {
+			if ($graphics{'x-version'} =~ /^Xvesa/){
+				$server_string = $graphics{'x-version'};
+			}
+			else {
+				$server_string = "X.org $graphics{'x-version'}";
+			}
+		}
+		my @drivers = x_drivers();
+		if (!$protocol && !$server_string && !$graphics{'x-vendor'} && !@drivers){
+			$server_string = main::row_defaults('display-server');
+			@row = ({
+			main::key($num++,'Display') => '',
+			main::key($num++,'server') => $server_string,
+			});
+		}
+		else {
+			$server_string ||= 'N/A';
+			@row = ({
+			main::key($num++,'Display') => $protocol,
+			main::key($num++,'server') => $server_string,
+			});
+			if ($graphics{'compositor'}){
+				$row[0]{main::key($num++,'compositor')} = $graphics{'compositor'};
+				if ($graphics{'compositor-version'}){
+					$row[0]{main::key($num++,'v')} = $graphics{'compositor-version'};
+				}
+			}
+			# note: if no xorg log, and if wayland, there will be no xorg drivers, 
+			# obviously, so we use the last driver found on the card section in that case.
+			# those come from lscpi kernel drivers so there should be no xorg/wayland issues.
+			if (!$drivers[0]){
+				# Fallback: specific case: in Arch/Manjaro gdm run systems, their Xorg.0.log is 
+				# located inside this directory, which is not readable unless you are root
+				# Normally Arch gdm log is here: ~/.local/share/xorg/Xorg.1.log
+				# $driver comes from the Device lines, and is just last fallback.
+				if ($driver){
+					if (-e '/var/lib/gdm' && !$b_root ){
+						$driver_missing = main::row_defaults('display-driver-na') . ' - ' . main::row_defaults('root-suggested');
+					}
+					else {
+						$driver_missing = main::row_defaults('display-driver-na');
+					}
+				}
+				else {
+					$driver_missing = main::row_defaults('root-suggested') if -e '/var/lib/gdm' && !$b_root;
+				}
+			}
+			else {
+				$driver = $drivers[0];
+			}
+			$driver ||= 'N/A';
+			$row[0]{main::key($num++,'driver')} = $driver;
+			if ($driver_missing){
+				$row[0]{main::key($num++,'note')} = $driver_missing;
+			}
+			if ($drivers[2]){
+				$row[0]{main::key($num++,'FAILED')} = $drivers[2];
+			}
+			if ($drivers[1]){
+				$row[0]{main::key($num++,'unloaded')} = $drivers[1];
+			}
+			if ($extra > 1 && $drivers[3]){
+				$row[0]{main::key($num++,'alternate')} = $drivers[3];
+			}
+		}
+		if ($b_admin ){
+			if ($graphics{'x-display-id'}){
+				$row[0]{main::key($num++,'display ID')} = $graphics{'x-display-id'};
+			}
+			if (defined $graphics{'x-screens'}){
+				$row[0]{main::key($num++,'screens')} = $graphics{'x-screens'};
+			}
+			if (defined $graphics{'x-default-screen'} && $graphics{'x-screens'} && $graphics{'x-screens'} > 1){
+				$row[0]{main::key($num++,'default screen')} = $graphics{'x-default-screen'};
+			}
+		}
+		if ($graphics{'no-xdpyinfo'}){
+			$row[0]{main::key($num++,'resolution')} = $graphics{'no-xdpyinfo'};
+		}
+		elsif ($graphics{'screens'}){
+			my ($diag,$dpi,$hz,$size);
+			my ($m_count,$basic_count,$row_key,$screen_count) = (0,0,0,0);
+			my $s_count = ($graphics{'screens'}) ? scalar @{$graphics{'screens'}}:  0;
+			foreach (@{$graphics{'screens'}}){
+				my %main = %$_;
+				$m_count = scalar @{$main{'monitors'}} if $main{'monitors'};
+				$screen_count++;
+				($diag,$dpi,$hz,$resolution,$size) = (undef);
+				$row_key++ if !$show{'graphic-basic'};
+				if ( !$show{'graphic-basic'} || $m_count == 0 ){
+					if ( !$show{'graphic-basic'} && defined $main{'screen'} ){
+						$row[$row_key]{main::key($num++,'Screen')} = $main{'screen'};
+					}
+					$resolution = $main{'res-x'} . 'x' . $main{'res-y'} if $main{'res-x'} && $main{'res-y'};
+					$resolution .= '~' . $main{'hz'} . 'Hz' if $show{'graphic-basic'} && $main{'hz'} && $resolution;
+					$resolution ||= 'N/A';
+					if ($s_count == 1 || !$show{'graphic-basic'}){
+						$row[$row_key]{main::key($num++,'s-res')} = $resolution;
+					}
+					elsif ($show{'graphic-basic'}) {
+						$row[$row_key]{main::key($num++,'s-res')} = '' if $screen_count == 1;
+						$row[$row_key]{main::key($num++,$screen_count)} = $resolution;
+					}
+					$resolution = '';
+					if ($main{'s-dpi'} && (!$show{'graphic-basic'} || $extra > 1)){
+						$row[$row_key]{main::key($num++,'s-dpi')} = $main{'s-dpi'};
+					}
+					if ( !$show{'graphic-basic'} ){
+						if ($main{'size-x'} && $main{'size-y'}){
+							$size = $main{'size-x'} . 'x' . $main{'size-y'} . 
+							'mm ('. $main{'size-x-i'} . 'x' . $main{'size-y-i'} . '")';
+						}
+						$size ||= '';
+						$row[$row_key]{main::key($num++,'s-size')} = $size if $size;
+						if ($main{'diagonal'}){
+							$diag = $main{'diagonal-m'} . 'mm ('. $main{'diagonal'} . '")';
+						}
+						$diag ||= '';
+						$row[$row_key]{main::key($num++,'s-diag')} = $diag if $diag;
+					}
+				}
+				if ($main{'monitors'}){
+					#print $basic_count . '::' . $m_count, "\n";
+					foreach my $ref2 (@{$main{'monitors'}}){
+						my %monitor = %$ref2;
+						($diag,$dpi,$hz,$resolution,$size) = (undef);
+						if ($show{'graphic-basic'}){
+							$basic_count++;
+							if ($monitor{'res-x'} && $monitor{'res-y'}){
+								$resolution = $monitor{'res-x'} . 'x' . $monitor{'res-y'};
+							}
+							# using main, noit monitor, dpi because we want xorg dpi, not physical screen dpi
+							$dpi = $main{'s-dpi'} if $resolution && $extra > 1 && $main{'s-dpi'};
+							$resolution .= '~' . $monitor{'hz'} . 'Hz' if $monitor{'hz'} && $resolution;
+							$resolution ||= 'N/A';
+							if ($basic_count == 1 && $m_count == 1){
+								$row[$row_key]{main::key($num++,'resolution')} = $resolution;
+							}
+							else {
+								$row[$row_key]{main::key($num++,'resolution')} = '' if $basic_count == 1;
+								$row[$row_key]{main::key($num++,$basic_count)} = $resolution;
+							}
+							if ($m_count == $basic_count){
+								$row[$row_key]{main::key($num++,'s-dpi')} = $dpi if $dpi;
+							}
+							next;
+						}
+						$row_key++;
+						$row[$row_key]{main::key($num++,'Monitor')} = $monitor{'monitor'};
+						if ($monitor{'res-x'} && $monitor{'res-y'}){
+							$resolution = $monitor{'res-x'} . 'x' . $monitor{'res-y'};
+						}
+						$resolution ||= 'N/A';
+						$row[$row_key]{main::key($num++,'res')} = $resolution;
+						$hz = ($monitor{'hz'}) ? $monitor{'hz'} : '';
+						$row[$row_key]{main::key($num++,'hz')} = $hz if $hz;
+						$dpi = ($monitor{'dpi'}) ? $monitor{'dpi'} : '';
+						$row[$row_key]{main::key($num++,'dpi')} = $dpi if $dpi;
+						#print "$dpi :: $main{'s-dpi'}\n";
+						if ($monitor{'size-x'} && $monitor{'size-y'}){
+							$size =  $monitor{'size-x'} . 'x' . $monitor{'size-y'} .
+							'mm ('. $monitor{'size-x-i'} . 'x' . $monitor{'size-y-i'} . '")';
+						}
+						$size ||= '';
+						$row[$row_key]{main::key($num++,'size')} = $size if $size;
+						if ($monitor{'diagonal'}){
+							$diag = $monitor{'diagonal-m'} . 'mm ('. $monitor{'diagonal'} . '")';
+						}
+						$diag ||= '';
+						$row[$row_key]{main::key($num++,'diag')} = $diag if $diag;
+					}
+				}
+			}
+		}
+		else {
+			$graphics{'tty'} ||= 'N/A';
+			$row[0]{main::key($num++,'tty')} = $graphics{'tty'};
+		}
+	}
+	eval $end if $b_log;
+	return @row;
+}
+
+sub x_display_data {
+	eval $start if $b_log;
+	# X vendor and version detection.
+	# new method added since radeon and X.org and the disappearance of 
+	# <X server name> version : ...etc. Later on, the normal textual version string 
+	# returned, e.g. like: X.Org version: 6.8.2 
+	# A failover mechanism is in place: if $version empty, release number parsed instead
+	if (my $program = main::check_program('xdpyinfo')){
+		my ($diagonal,$diagonal_m,$dpi) = ('','','');
+		my ($screen_id,$screen,@working);
+		my ($res_x,$res_x_i,$res_y,$res_y_i,$size_x,$size_x_i,$size_y,$size_y_i);
+		my @xdpyinfo = main::grabber("$program $display_opt 2>/dev/null","\n",'strip');
+		#@xdpyinfo = map {s/^\s+//;$_} @xdpyinfo if @xdpyinfo;
+		#print join "\n",@xdpyinfo, "\n";
+		foreach (@xdpyinfo){
+			@working = split /:\s+/, $_;
+			next if ( ($graphics{'screens'} && $working[0] !~ /^(dimensions$|screen\s#)/ ) || !$working[0] );
+			#print "$_\n";
+			if ($working[0] eq 'vendor string'){
+				$working[1] =~ s/The\s|\sFoundation//g;
+				# some distros, like fedora, report themselves as the xorg vendor, 
+				# so quick check here to make sure the vendor string includes Xorg in string
+				if ($working[1] !~ /x/i){
+					$working[1] .= ' X.org';
+				}
+				$graphics{'x-vendor'} = $working[1];
+			}
+			elsif ($working[0] eq 'name of display'){
+				$graphics{'x-display-id'} = $working[1];
+			}
+			elsif ($working[0] eq 'version number'){
+				$graphics{'x-version-id'} = $working[1];
+			}
+			# note used, fix that
+			elsif ($working[0] eq 'vendor release number'){
+				$graphics{'x-vendor-release'} = $working[1];
+			}
+			elsif ($working[0] eq 'X.Org version'){
+				$graphics{'xorg-version'} = $working[1];
+			}
+			elsif ($working[0] eq 'default screen number'){
+				$graphics{'x-default-screen'} = $working[1];
+			}
+			elsif ($working[0] eq 'number of screens'){
+				$graphics{'x-screens'} = $working[1];
+			}
+			elsif  ($working[0] =~ /^screen #([0-9]+):/){
+				$screen_id = $1;
+				$graphics{'screens'} = () if !$graphics{'screens'};
+			}
+			elsif ($working[0] eq 'resolution'){
+				$working[1] =~ s/^([0-9]+)x/$1/;
+				$graphics{'s-dpi'} = $working[1];
+			}
+			elsif ($working[0] eq 'dimensions'){
+				($dpi,$res_x,$res_y,$size_x,$size_y) = (undef,undef,undef,undef,undef);
+				if ($working[1] =~ /([0-9]+)\s*x\s*([0-9]+)\s+pixels\s+\(([0-9]+)\s*x\s*([0-9]+)\s*millimeters\)/){
+					$res_x = $1;
+					$res_y = $2;
+					$size_x = $3;
+					$size_y = $4;
+					$res_x_i = ($1) ? sprintf("%.1f", ($1/25.4)) : 0;
+					$res_y_i = ($2) ? sprintf("%.1f", ($2/25.4)) : 0;
+					$size_x_i = ($3) ? sprintf("%.1f", ($3/25.4)) : 0;
+					$size_y_i = ($4) ? sprintf("%.1f", ($4/25.4)) : 0;
+					$dpi = ($res_x && $size_x) ? sprintf("%.0f", ($res_x*25.4/$size_x)) : '';
+					$diagonal = ($res_x && $size_x) ? sprintf("%.1f", (sqrt($size_x**2 + $size_y**2)/25.4 )) : '';
+					$diagonal += 0 if $diagonal;# trick to get rid of decimal 0
+					$diagonal_m = ($res_x && $size_x) ? sprintf("%.0f", (sqrt($size_x**2 + $size_y**2))) : '';
+				}
+				$screen = {
+				'screen' => $screen_id,
+				'res-x' => $res_x,
+				'res-x-i' => $res_x_i,
+				'res-y' => $res_y,
+				'res-y-i' => $res_y_i,
+				'size-x' => $size_x,
+				'size-x-i' => $size_x_i,
+				'size-y' => $size_y,
+				'size-y-i' => $size_y_i,
+				's-dpi' => $dpi,
+				'diagonal' => $diagonal,
+				'diagonal-m' => $diagonal_m,
+				};
+				push @{$graphics{'screens'}}, $screen;
+			}
+		}
+		#print Data::Dumper::Dumper $graphics{'screens'};
+		if (my $program = main::check_program('xrandr')){
+			($diagonal,$diagonal_m,$dpi) = (undef);
+			($screen_id,$screen,@working) = (undef);
+			($res_x,$res_x_i,$res_y,$res_y_i,$size_x,$size_x_i,$size_y,$size_y_i) = (undef);
+			my ($monitor,@monitors,$monitor_id,$screen,$screen_id,@xrandr_screens);
+			my @xrandr = main::grabber("$program $display_opt 2>/dev/null",'','strip');
+			#$graphics{'dimensions'} = (\@dimensions);
+			# we get a bit more info from xrandr than xdpyinfo, but xrandr fails to handle
+			# multiple screens from different video cards
+			foreach (@xrandr){
+				if (/^Screen ([0-9]+):/){
+					$screen_id = $1;
+					push @xrandr_screens, \@monitors if @monitors;
+					@monitors = ();
+				}
+				if (/^([^\s]+)\s+connected\s(primary\s)?([0-9]+)\s*x\s*([0-9]+)\+[0-9+]+(\s\([^)]+\))?(\s([0-9]+)mm\sx\s([0-9]+)mm)?/){
+					$monitor_id = $1;
+					$res_x = $3;
+					$res_y = $4;
+					$size_x = $7;
+					$size_y = $8;
+					$res_x_i = ($3) ? sprintf("%.1f", ($3/25.4)) : 0;
+					$res_y_i = ($4) ? sprintf("%.1f", ($4/25.4)) : 0;
+					$size_x_i = ($7) ? sprintf("%.1f", ($7/25.4)) : 0;
+					$size_y_i = ($8) ? sprintf("%.1f", ($8/25.4)) : 0;
+					$dpi = ($res_x && $size_x) ? sprintf("%.0f", $res_x * 25.4 / $size_x) : '';
+					$diagonal = ($res_x && $size_x) ? sprintf("%.1f", (sqrt($size_x**2 + $size_y**2)/25.4 )) : '';
+					$diagonal += 0 if $diagonal; # trick to get rid of decimal 0
+					$diagonal_m = ($res_x && $size_x) ? sprintf("%.0f", (sqrt($size_x**2 + $size_y**2))) : '';
+					$monitor = {
+					'screen' => $screen_id,
+					'monitor' => $monitor_id,
+					'res-x' => $res_x,
+					'res-x-i' => $res_x_i,
+					'res-y' => $res_y,
+					'res-y-i' => $res_y_i,
+					'size-x' => $size_x,
+					'size-x-i' => $size_x_i,
+					'size-y' => $size_y,
+					'size-y-i' => $size_y_i,
+					'dpi' => $dpi,
+					'diagonal' => $diagonal,
+					'diagonal-m' => $diagonal_m,
+					};
+					push @monitors, $monitor;
+					# print "x:$size_x y:$size_y rx:$res_x ry:$res_y dpi:$dpi\n";
+					($res_x,$res_x_i,$res_y,$res_y_i,$size_x,$size_x_i,$size_y,$size_y_i) = (0,0,0,0,0,0,0,0);
+					
+				}
+				my @working = split /\s+/,$_;
+				# print join "$_\n";
+				if ($working[1] =~ /\*/){
+					$working[1] =~ s/\*|\+//g;
+					$working[1] = sprintf("%.0f",$working[1]);
+					$monitors[scalar @monitors - 1]{'hz'} = $working[1] if @monitors;
+					($diagonal,$dpi) = ('','');
+					# print Data::Dumper::Dumper \@monitors;
+				}
+			}
+			push @xrandr_screens, \@monitors if @monitors;
+			#print "xrand: " . Data::Dumper::Dumper \@xrandr_screens;
+			my ($i) = (0);
+			foreach (@{$graphics{'screens'}}){
+				my %main = %$_;
+				# print "h: " . Data::Dumper::Dumper \%main;
+				#print $main{'screen'}, "\n";
+				foreach my $ref2 (@xrandr_screens){
+					my @screens = @$ref2;
+					# print "d: " . Data::Dumper::Dumper \@screens;
+					if ($screens[0]{'screen'} eq $main{'screen'}){
+						${$graphics{'screens'}}[$i]{'monitors'} = \@screens;
+						last;
+					}
+				}
+				$i++;
+			}
+			if (!$graphics{'screens'}) {
+				$graphics{'tty'} = tty_data();
+			}
+		}
+	}
+	else {
+		$graphics{'no-xdpyinfo'} = main::row_defaults('xdpyinfo-missing');
+	}
+	print 'last: ', Data::Dumper::Dumper $graphics{'screens'} if $test[17];
+	main::log_data('dump','$graphics{screens}',$graphics{'screens'}) if $b_log;
+	eval $end if $b_log;
+}
+sub wayland_display_data {
+	eval $start if $b_log;
+	
+	#print 'last: ', Data::Dumper::Dumper $graphics{'screens'};
+	eval $end if $b_log;
+}
+sub set_compositor {
+	eval $start if $b_log;
+	my ($protocol) = @_;
+	# initial tests, if wayland, it is certainly a compositor
+	$protocol = lc($protocol) if $protocol;
+	$graphics{'compositor'} = display_compositor($protocol);
+	# gnome-shell is incredibly slow to return version
+	if (($extra > 2 || $protocol eq 'wayland') && $graphics{'compositor'} && 
+		( !$show{'system'} || $graphics{'compositor'} ne 'gnome-shell' ) ){
+		$graphics{'compositor-version'} = (main::program_data($graphics{'compositor'},$graphics{'compositor'},3))[1];
+	}
+	eval $end if $b_log;
+}
+sub get_protocol {
+	eval $start if $b_log;
+	my ($protocol) = ('');
 	$protocol = $ENV{'XDG_SESSION_TYPE'} if $ENV{'XDG_SESSION_TYPE'};
 	$protocol = $ENV{'WAYLAND_DISPLAY'} if (!$protocol && $ENV{'WAYLAND_DISPLAY'});
 	# yes, I've seen this in 2019 distros, sigh
@@ -9935,182 +10519,8 @@ sub display_data(){
 			}
 		}
 	}
-	if ($extra > 1){
-		# initial tests, if wayland, it is certainly a compositor
-		$protocol = lc($protocol) if $protocol;
-		$graphics{'compositor'} = display_compositor($protocol);
-		# gnome-shell is incredibly slow to return version
-		if ($extra > 2 && $graphics{'compositor'} && (!$show{'system'} || $graphics{'compositor'} ne 'gnome-shell' ) ){
-			$graphics{'compositor-version'} = (main::program_data($graphics{'compositor'},$graphics{'compositor'},3))[1];
-		}
-	}
-	if ( $b_display){
-		# X vendor and version detection.
-		# new method added since radeon and X.org and the disappearance of 
-		# <X server name> version : ...etc. Later on, the normal textual version string 
-		# returned, e.g. like: X.Org version: 6.8.2 
-		# A failover mechanism is in place: if $version empty, release number parsed instead
-		if (my $program = main::check_program('xdpyinfo')){
-			my @xdpyinfo = main::grabber("$program $display_opt 2>/dev/null","\n",'strip');
-			#@xdpyinfo = map {s/^\s+//;$_} @xdpyinfo if @xdpyinfo;
-			#print join "\n",@xdpyinfo, "\n";
-			foreach (@xdpyinfo){
-				my @working = split /:\s+/, $_;
-				next if ( ($graphics{'dimensions'} && $working[0] ne 'dimensions' ) || !$working[0] );
-				#print "$_\n";
-				if ($working[0] eq 'vendor string'){
-					$working[1] =~ s/The\s|\sFoundation//g;
-					# some distros, like fedora, report themselves as the xorg vendor, 
-					# so quick check here to make sure the vendor string includes Xorg in string
-					if ($working[1] !~ /x/i){
-						$working[1] .= ' X.org';
-					}
-					$graphics{'vendor'} = $working[1];
-				}
-				elsif ($working[0] eq 'version number'){
-					$graphics{'version-id'} = $working[1];
-				}
-				elsif ($working[0] eq 'vendor release number'){
-					$graphics{'vendor-release'} = $working[1];
-				}
-				elsif ($working[0] eq 'X.Org version'){
-					$graphics{'xorg-version'} = $working[1];
-				}
-				elsif ($working[0] eq 'dimensions'){
-					$working[1] =~ s/\spixels//;
-					$working[1] =~ s/\smillimeters/ mm/;
-					if ($graphics{'dimensions'}){
-						$graphics{'dimensions'} = ([@{$graphics{'dimensions'}},$working[1]]);
-					}
-					else {
-						$graphics{'dimensions'} = ([$working[1]]);
-					}
-				}
-			}
-			#$graphics{'dimensions'} = (\@dimensions);
-			# we get a bit more info from xrandr than xdpyinfo, but xrandr fails to handle
-			# multiple screens from different video cards
-			my $ref = $graphics{'dimensions'};
-			if (defined $ref){
-				my @screens = @$ref;
-				my $resolution;
-				if (scalar @screens == 1){
-					if (my $program = main::check_program('xrandr')){
-						my $counter = 0;
-						my @xrandr = main::grabber("$program $display_opt 2>/dev/null",'','strip');
-						foreach (@xrandr){
-							$counter++;
-							if (/^[^\s]+\sconnected\s(primary\s)?([0-9]+)\s*x\s*([0-9]+)\+/){
-								$resolution = $2 . 'x' . $3 if $2 && $3;
-							}
-							my @working = split /\s+/,$_;
-							# print join "$_\n";
-							if ($working[1] =~ /\*/){
-								$working[1] =~ s/\*|\+//g;
-								$working[1] = sprintf("%.0f",$working[1]);
-								$working[1] =  ($working[1]) ? "$working[1]Hz" : 'N/A';
-								# case where 0 is 'preferred, sigh.
-								$working[0] = ($working[0] !~ /[0-9]\s*x\s*[0-9]/ && $resolution) ? $resolution : $working[0];
-								my $screen = "$working[0]~$working[1]";
-								if ($graphics{'screens'}){
-									$graphics{'screens'} = ([@{$graphics{'screens'}},$screen]);
-								}
-								else {
-									$graphics{'screens'} = ([$screen]);
-								}
-							}
-						}
-					}
-				}
-			}
-			else {
-				$graphics{'tty'} = tty_data();
-			}
-		}
-		else {
-			$graphics{'screens'} = ([main::row_defaults('xdpyinfo-missing')]);
-		}
-	}
-	else {
-		$graphics{'tty'} = tty_data();
-	}
-	# this gives better output than the failure last case, which would only show:
-	# for example: X.org: 1.9 instead of: X.org: 1.9.0
-	$graphics{'version'} = $graphics{'xorg-version'} if $graphics{'xorg-version'};;
-	$graphics{'version'} = x_version() if !$graphics{'version'};
-	$graphics{'version'} = $graphics{'version-id'} if !$graphics{'version'};
-	
-	undef @xdpyinfo;
-	#print Data::Dumper::Dumper \%graphics;
-	if (%graphics){
-		my $resolution = '';
-		my $server_string = '';
-		if ($graphics{'vendor'}){
-			my $version = ($graphics{'version'}) ? " $graphics{'version'}" : '';
-			$server_string = "$graphics{'vendor'}$version";
-		}
-		elsif ($graphics{'version'}) {
-			if ($graphics{'version'} =~ /^Xvesa/){
-				$server_string = $graphics{'version'};
-			}
-			else {
-				$server_string = "X.org $graphics{'version'}";
-			}
-		}
-		if ($graphics{'screens'}){
-			my $ref = $graphics{'screens'};
-			my @screens = @$ref;
-			my $sep = '';
-			foreach (@screens){
-				$resolution .= $sep . $_;
-				$sep = ', ';
-			}
-		}
-		my @drivers = x_drivers();
-		if (!$protocol && !$server_string && !$graphics{'vendor'} && !@drivers){
-			$server_string = main::row_defaults('display-server');
-			@row = ({
-			main::key($num++,'Display') => '',
-			main::key($num++,'server') => $server_string,
-			});
-		}
-		else {
-			$server_string ||= 'N/A';
-			# note: if no xorg log, and if wayland, there will be no xorg drivers, 
-			# obviously, so we use the last driver found on the card section in that case.
-			# those come from lscpi kernel drivers so there should be no xorg/wayland issues.
-			$driver = ($drivers[0]) ? $drivers[0]: $driver;
-			@row = ({
-			main::key($num++,'Display') => $protocol,
-			main::key($num++,'server') => $server_string,
-			main::key($num++,'driver') => $driver,
-			});
-			if ($drivers[2]){
-				$row[0]{main::key($num++,'FAILED')} = $drivers[2];
-			}
-			if ($drivers[1]){
-				$row[0]{main::key($num++,'unloaded')} = $drivers[1];
-			}
-			if ($extra > 1 && $drivers[3]){
-				$row[0]{main::key($num++,'alternate')} = $drivers[3];
-			}
-			if ($graphics{'compositor'}){
-				$row[0]{main::key($num++,'compositor')} = $graphics{'compositor'};
-				if ($graphics{'compositor-version'}){
-					$row[0]{main::key($num++,'v')} = $graphics{'compositor-version'};
-				}
-			}
-		}
-		if ($resolution){
-			$row[0]{main::key($num++,'resolution')} = $resolution;
-		}
-		else {
-			$graphics{'tty'} ||= 'N/A';
-			$row[0]{main::key($num++,'tty')} = $graphics{'tty'};
-		}
-	}
 	eval $end if $b_log;
-	return @row;
+	return $protocol;
 }
 sub gl_data(){
 	eval $start if $b_log;
@@ -10362,7 +10772,6 @@ sub x_drivers {
 				$alternate .= $sep . $_;
 			}
 		}
-		$loaded ||= 'none';
 		@driver_data = ($loaded,$unloaded,$failed,$alternate);
 	}
 	eval $end if $b_log;
@@ -11579,11 +11988,12 @@ sub if_ip {
 # dig +short +time=1 +tries=1 myip.opendns.com. A @208.67.222.222
 sub wan_ip {
 	eval $start if $b_log;
-	my (@data,$ip,$ua);
+	my (@data,$b_dig,$ip,$ua);
 	my $num = 0;
 	# time: 0.06 - 0.07 seconds
 	if (!$b_skip_dig && (my $program = main::check_program('dig') )){
 		$ip = (main::grabber("$program +short +time=1 +tries=1 myip.opendns.com \@resolver1.opendns.com 2>/dev/null"))[0];
+		$b_dig = 1;
 	}
 	else {
 		# note: tests: akamai: 0.055 - 0.065 icanhazip.com: 0.177 0.164
@@ -11606,7 +12016,9 @@ sub wan_ip {
 	if ($ip && $use{'filter'}){
 		$ip = $filter_string;
 	}
-	$ip ||= main::row_defaults('IP', 'WAN IP');
+	if (!$ip){
+		$ip = ($b_dig) ? main::row_defaults('IP-dig', 'WAN IP') : main::row_defaults('IP', 'WAN IP');
+	}
 	@data = ({
 	main::key($num++,'WAN IP') => $ip,
 	},);
@@ -12049,6 +12461,8 @@ sub create_output {
 		my %row = %$ref;
 		$num = 1;
 		next if $row{'type'} eq 'secondary' && $show{'partition'};
+		next if $show{'swap'} && $row{'fs'} && $row{'fs'} eq 'swap';
+		next if $row{'swap-type'} && $row{'swap-type'} ne 'partition';
 		if (!$row{'hidden'}){
 			@data2 = main::get_size($row{'size'}) if (defined $row{'size'});
 			$size = (@data2) ? $data2[0] . ' ' . $data2[1]: 'N/A';
@@ -12065,6 +12479,7 @@ sub create_output {
 		$dev_type = ($row{'dev-type'}) ? $row{'dev-type'} : 'dev';
 		$row{'dev-base'} = '/dev/' . $row{'dev-base'} if $dev_type eq 'dev' && $row{'dev-base'};
 		$dev = ($row{'dev-base'}) ? $row{'dev-base'} : 'N/A';
+		$row{'id'} =~ s|/home/[^/]+/(.*)|/home/$filter_string/$1| if $use{'filter'};
 		$j = scalar @rows;
 		@data = ({
 		main::key($num++,'ID') => $row{'id'},
@@ -12087,11 +12502,14 @@ sub create_output {
 		$rows[$j]{main::key($num++,'size')} = $size;
 		$rows[$j]{main::key($num++,'used')} = $used . $percent;
 		$rows[$j]{main::key($num++,'fs')} = $fs;
-		if ($b_admin && $fs eq 'swap' && $row{'swappiness'}){
+		if ($b_admin && $fs eq 'swap' && defined $row{'swappiness'}){
 			$rows[$j]{main::key($num++,'swappiness')} = $row{'swappiness'};
 		}
-		if ($b_admin && $fs eq 'swap' && $row{'cache-pressure'}){
+		if ($b_admin && $fs eq 'swap' && defined $row{'cache-pressure'}){
 			$rows[$j]{main::key($num++,'cache pressure')} = $row{'cache-pressure'};
+		}
+		if ($extra > 1 && $fs eq 'swap' && defined $row{'priority'}){
+			$rows[$j]{main::key($num++,'priority')} = $row{'priority'};
 		}
 		if ($b_admin && $row{'block-size'}){
 			$rows[$j]{main::key($num++,'block size')} = $row{'block-size'} . ' B';;
@@ -12100,9 +12518,11 @@ sub create_output {
 		}
 		$rows[$j]{main::key($num++,$dev_type)} = $dev;
 		if ($show{'label'}){
+			$row{'label'} = main::apply_partition_filter('part', $row{'label'}, '') if $use{'filter-label'};
 			$rows[$j]{main::key($num++,'label')} = ($row{'label'}) ? $row{'label'}: 'N/A';
 		}
 		if ($show{'uuid'}){
+			$row{'uuid'} = main::apply_partition_filter('part', $row{'uuid'}, '') if $use{'filter-uuid'};
 			$rows[$j]{main::key($num++,'uuid')} = ($row{'uuid'}) ? $row{'uuid'}: 'N/A';
 		}
 	}
@@ -12270,7 +12690,6 @@ sub partition_data {
 				}
 			}
 			$id = join ' ', @row[$cols .. $#row];
-			$id =~ s/\/home\/[^\/]+\/(.*)/\/home\/$filter_string\/$1/ if $use{'filter'};
 			$size = $row[$cols - $back_size];
 			if ($b_admin && -e "/sys/block/"){
 				@working = admin_data($blockdev,$dev_base,$size);
@@ -12319,18 +12738,24 @@ sub partition_data {
 	}
 	@data = swap_data();
 	@partitions = (@partitions,@data);
+	# print Data::Dumper::Dumper \@partitions if $test[16];
 	if (!$bsd_type && @lsblk){
 		@data = check_partition_data();
 		@partitions = (@partitions,@data) if @data;
 	}
 	main::log_data('dump','@partitions',\@partitions) if $b_log;
-	# print Data::Dumper::Dumper \@partitions;
+	print Data::Dumper::Dumper \@partitions if $test[16];
 	eval $end if $b_log;
 }
 
 sub swap_data {
 	eval $start if $b_log;
-	my (@swap,@working,$cache_pressure,$path,$label,$swappiness,$uuid);
+	return @swaps if $b_swaps;
+	$b_swaps = 1;
+	my (@data,@working);
+	my ($cache_pressure,$dev_base,$dev_type,$label,$mount,$path,
+	$pattern1,$pattern2,$percent_used,$priority,$size,$swap_type,
+	$swappiness,$used,$uuid);
 	my ($s,$j,$size_id,$used_id) = (1,0,2,3);
 	if (!$bsd_type){
 		# faster, avoid subshell, same as swapon -s
@@ -12343,10 +12768,12 @@ sub swap_data {
 			@working = main::grabber("$path -s 2>/dev/null");
 		}
 		if ($b_admin){
-			my @data = swap_advanced_data();
+			@data = swap_advanced_data();
 			$swappiness = $data[0];
 			$cache_pressure = $data[1];
 		}
+		$pattern1 = 'partition|file|ram';
+		$pattern2 = '[^\s].*[^\s]';
 	}
 	else {
 		if ( $path = main::check_program('swapctl') ){
@@ -12354,32 +12781,57 @@ sub swap_data {
 			@working = main::grabber("$path -l -k 2>/dev/null");
 		}
 		($size_id,$used_id) = (1,2);
+		$pattern1 = '[0-9]+';
+		$pattern2 = '[^\s]+';
 	}
 	# now add the swap partition data, don't want to show swap files, just partitions,
 	# though this can include /dev/ramzswap0. Note: you can also use /proc/swaps for this
 	# data, it's the same exact output as swapon -s
 	foreach (@working){
-		next if ! /^\/dev/ || /^\/dev\/(ramzwap|zram)/;
-		my @data = split /\s+/, $_;
-		my $dev_base = $data[0];
-		$dev_base =~ s/^\/dev\///;
-		my $dev_type = 'dev';
-		my $size = $data[$size_id];
-		my $used = $data[$used_id];
-		my $percent_used = sprintf( "%.1f", ( $used/$size )*100 );
-		if ($show{'label'} && @labels){
-			$label = get_label($data[0]);
+		#next if ! /^\/dev/ || /^\/dev\/(ramzwap|zram)/;
+		next if /^(Device|Filename)/;
+		($dev_base,$dev_type,$label,$mount,$priority,
+		$swap_type,$uuid) = ('','','','',undef,'partition','');
+		@data = split /\s+/, $_;
+		if (/^\/dev\/(compcache|ramzwap|zram)/i){
+			$swap_type = 'zram';
+			$dev_type = 'dev';
 		}
-		if ($show{'uuid'} && @uuids){
-			$uuid = get_uuid($data[0]);
+		elsif ($data[1] && $data[1] eq 'ram'){
+			$swap_type = 'ram';
 		}
-		if ($bsd_type && @gpart && ($show{'label'} || $show{'uuid'} ) ){
-			my @extra = get_bsd_label_uuid("$dev_base");
-			if (@extra){
-				$label = $extra[0];
-				$uuid = $extra[1];
+		elsif (m|^/dev|){
+			$swap_type = 'partition';
+			$dev_base = $data[0];
+			$dev_base =~ s|^/dev/||;
+			if ($show{'label'} && @labels){
+				$label = get_label($data[0]);
 			}
+			if ($show{'uuid'} && @uuids){
+				$uuid = get_uuid($data[0]);
+			}
+			if ($bsd_type && @gpart && ($show{'label'} || $show{'uuid'} ) ){
+				my @extra = get_bsd_label_uuid("$dev_base");
+				if (@extra){
+					$label = $extra[0];
+					$uuid = $extra[1];
+				}
+			}
+			$dev_type = 'dev';
 		}
+		elsif ($data[1] && $data[1] eq 'file' || m|^/|){
+			$swap_type = 'file';
+		}
+		$priority = $data[-1] if !$bsd_type;
+		# swpaon -s: /dev/sdb1 partition 16383996 109608  -2
+		# swapctl -l -k: /dev/label/swap0.eli     524284     154092
+		# users could have space in swapfile name
+		if (/^($pattern2)\s+($pattern1)\s+/){
+			$mount = main::trimmer($1);
+		}
+		$size = $data[$size_id];
+		$used = $data[$used_id];
+		$percent_used = sprintf( "%.1f", ( $used/$size )*100 );
 		@data = ({
 		'cache-pressure' => $cache_pressure,
 		'dev-base' => $dev_base,
@@ -12387,22 +12839,27 @@ sub swap_data {
 		'fs' => 'swap',
 		'id' => "swap-$s",
 		'label' => $label,
+		'mount' => $mount,
+		'priority' => $priority,
 		'size' => $size,
 		'swappiness' => $swappiness,
 		'type' => 'main',
+		'swap-type' => $swap_type,
 		'used' => $used,
 		'uuid' => $uuid,
 		'percent-used' => $percent_used,
 		});
-		@swap = (@swap,@data);
+		@swaps = (@swaps,@data);
 		$s++;
 	}
+	main::log_data('dump','@swaps',\@swaps) if $b_log;
+	print Data::Dumper::Dumper \@swaps if $test[15];;
 	eval $end if $b_log;
-	return @swap;
+	return @swaps;
 }
 sub swap_advanced_data {
 	eval $start if $b_log;
-	my ($swappiness,$cache_pressure) = ('','');
+	my ($swappiness,$cache_pressure) = (undef,undef);
 	if (-r "/proc/sys/vm/swappiness"){
 		$swappiness = (main::reader("/proc/sys/vm/swappiness"))[0];
 		if (defined $swappiness){
@@ -15872,6 +16329,106 @@ sub slot_data {
 }
 }
 
+## SwapData 
+{
+package SwapData;
+
+sub get {
+	eval $start if $b_log;
+	my (@data,@rows,$key1,$val1);
+	my $num = 0;
+	@rows =create_output();
+	if (!@rows){
+		@data = (
+		{main::key($num++,'Alert') => main::row_defaults('swap-data')},
+		);
+		@rows = (@data);
+	}
+	eval $end if $b_log;
+	return @rows;
+}
+sub create_output {
+	eval $start if $b_log;
+	my $num = 0;
+	my $j = 0;
+	my (@data,@data2,%part,@rows,$dev,$percent,$raw_size,$size,$used);
+	my @swap_data = PartitionData::swap_data();
+	foreach my $ref (@swap_data){
+		my %row = %$ref;
+		$num = 1;
+		@data2 = main::get_size($row{'size'}) if (defined $row{'size'});
+		$size = (@data2) ? $data2[0] . ' ' . $data2[1]: 'N/A';
+		@data2 = main::get_size($row{'used'}) if (defined $row{'used'});
+		$used = (@data2) ? $data2[0] . ' ' . $data2[1]: 'N/A';
+		$percent = (defined $row{'percent-used'}) ? ' (' . $row{'percent-used'} . '%)' : '';
+		%part = ();
+		$dev = ($row{'swap-type'} eq 'file') ? 'file' : 'dev';
+		$row{'swap-type'} = ($row{'swap-type'}) ? $row{'swap-type'} : 'N/A';
+		if ($b_admin && !$bsd_type && $j == 0){
+			$j = scalar @rows;
+			if (defined $row{'swappiness'} || defined $row{'cache-pressure'}){
+				$rows[$j]{main::key($num++,'Kernel')} = '';
+				if (defined $row{'swappiness'}){
+					$rows[$j]{main::key($num++,'swappiness')} = $row{'swappiness'};
+				}
+				if (defined $row{'cache-pressure'}){
+					$rows[$j]{main::key($num++,'cache pressure')} = $row{'cache-pressure'};
+				}
+			}
+			else {
+				$rows[$j]{main::key($num++,'Message')} = main::row_defaults('swap-admin');
+			}
+		}
+		$j = scalar @rows;
+		@data = ({
+		main::key($num++,'ID') => $row{'id'},
+		main::key($num++,'type') => $row{'swap-type'},
+		});
+		@rows = (@rows,@data);
+		# not used for swap as far as I know
+		if ($b_admin && $row{'raw-size'} ){
+			# It's an error! permissions or missing tool
+			if (!main::is_numeric($row{'raw-size'})){
+				$raw_size = $row{'raw-size'};
+			}
+			else {
+				@data2 = main::get_size($row{'raw-size'});
+				$raw_size = (@data2) ? $data2[0] . ' ' . $data2[1]: 'N/A';
+			}
+			$rows[$j]{main::key($num++,'raw size')} = $raw_size;
+		}
+		# not used for swap as far as I know
+		if ($b_admin && $row{'raw-available'} && $size ne 'N/A'){
+			$size .=  ' (' . $row{'raw-available'} . '%)';
+		}
+		$rows[$j]{main::key($num++,'size')} = $size;
+		$rows[$j]{main::key($num++,'used')} = $used . $percent;
+		# not used for swap as far as I know
+		if ($b_admin && $row{'block-size'}){
+			$rows[$j]{main::key($num++,'block size')} = $row{'block-size'} . ' B';;
+			#$rows[$j]{main::key($num++,'physical')} = $row{'block-size'} . ' B';
+			#$rows[$j]{main::key($num++,'logical')} = $row{'block-logical'} . ' B';
+		}
+		if ($extra > 1 && defined $row{'priority'}){
+			$rows[$j]{main::key($num++,'priority')} = $row{'priority'};
+		}
+		$row{'mount'} =~ s|/home/[^/]+/(.*)|/home/$filter_string/$1| if $row{'mount'} && $use{'filter'};
+		$rows[$j]{main::key($num++,$dev)} = ($row{'mount'}) ? $row{'mount'} : 'N/A';
+		if ($show{'label'} && ($row{'label'} || $row{'swap-type'} eq 'partition') ){
+			$row{'label'} = main::apply_partition_filter('part', $row{'label'}, '') if $use{'filter-label'};
+			$rows[$j]{main::key($num++,'label')} = ($row{'label'}) ? $row{'label'}: 'N/A';
+		}
+		if ($show{'uuid'} && ($row{'uuid'} || $row{'swap-type'} eq 'partition' )){
+			$row{'uuid'} = main::apply_partition_filter('part', $row{'uuid'}, '') if $use{'filter-uuid'};
+			$rows[$j]{main::key($num++,'uuid')} = ($row{'uuid'}) ? $row{'uuid'}: 'N/A';
+		}
+	}
+	eval $end if $b_log;
+	return @rows;
+}
+
+}
+
 ## UnmountedData
 {
 package UnmountedData;
@@ -15928,12 +16485,14 @@ sub create_output {
 				$fs = 'requires file';
 			}
 		}
+		$row{'label'} = main::apply_partition_filter('part', $row{'label'}, '') if $use{'filter-label'};
+		$row{'uuid'} = main::apply_partition_filter('part', $row{'uuid'}, '') if $use{'filter-uuid'};
 		@data = ({
-		main::key($num++,'ID') => , "/dev/$row{'dev-base'}",
-		main::key($num++,'size') => , $size,
-		main::key($num++,'fs') => , $fs,
-		main::key($num++,'label') => , $row{'label'},
-		main::key($num++,'uuid') => , $row{'uuid'},
+		main::key($num++,'ID') => "/dev/$row{'dev-base'}",
+		main::key($num++,'size') => $size,
+		main::key($num++,'fs') => $fs,
+		main::key($num++,'label') => $row{'label'},
+		main::key($num++,'uuid') => $row{'uuid'},
 		});
 		@rows = (@rows,@data);
 	}
@@ -17393,7 +17952,7 @@ sub set_info_data {
 	my (@data,@info,$item);
 	my $pattern = 'alltray|awn|bar|bmpanel|bmpanel2|budgie-panel|cairo-dock|';
 	$pattern .= 'dde-dock|dmenu|dockbarx|docker|docky|dzen|dzen2|';
-	$pattern .= 'fancybar|fbpanel|fspanel|glx-dock|gnome-panel|hpanel|i3bar|icewmtray|';
+	$pattern .= 'fancybar|fbpanel|fspanel|glx-dock|gnome-panel|hpanel|i3bar|i3status|icewmtray|';
 	$pattern .= 'kdocker|kicker|';
 	$pattern .= 'latte|latte-dock|lemonbar|ltpanel|lxpanel|lxqt-panel|';
 	$pattern .= 'matchbox-panel|mate-panel|ourico|';
@@ -17990,6 +18549,7 @@ sub ubuntu_id {
 	$codename = lc($codename);
 	my ($id) = ('');
 	my %codenames = (
+	'focal' => '20.04 LTS',
 	'eoan' => '19.10',
 	'disco' => '19.04',
 	'cosmic' => '18.10',
@@ -18578,6 +19138,7 @@ sub get_shell_data {
 					$client{'version'} = row_defaults('unknown-shell');
 				}
 			}
+			$client{'version'} ||= '';
 			$client{'version'} =~ s/(\(.*|-release|-version)//;
 		}
 		$client{'name'} = lc($shell);
@@ -19193,8 +19754,9 @@ sub check_audio {
 	else {return 0}
 }
 sub check_graphics {
-	if ( ( $_[1] && length($_[1]) == 4 && $_[1] =~/^03/ ) ||
-	( $_[0] && $_[0] =~ /^(vga|display|hdmi|3d)$/)){
+	# note: multimedia class 04 is viddeo if 0400. 'tv' is risky I think
+	if ( ( $_[1] && length($_[1]) == 4 &&  ($_[1] =~/^03/ || $_[1] eq '0400' ) ) ||
+	( $_[0] && $_[0] =~ /^(vga|display|hdmi|3d|video|tv|television)$/)){
 		return 1;
 	}
 	else {return 0}
@@ -20258,11 +20820,13 @@ sub generate_lines {
 			assign_data(%row);
 		}
 		if ( $show{'graphic'} ){
+			USBData::set() if !$b_usb_check;
 			DeviceData::set($b_pci_check) if !$b_pci_check; 
 			%row = line_handler('Graphics','graphic');
 			assign_data(%row);
 		}
 		if ( $show{'audio'} ){
+			# Note: USBData is set internally in AudioData because it's only run in one case
 			DeviceData::set($b_pci_check) if !$b_pci_check; 
 			%row = line_handler('Audio','audio');
 			assign_data(%row);
@@ -20286,6 +20850,10 @@ sub generate_lines {
 		}
 		if ( $show{'partition'} || $show{'partition-full'}){
 			%row = line_handler('Partition','partition');
+			assign_data(%row);
+		}
+		if ( $show{'swap'} ){
+			%row = line_handler('Swap','swap');
 			assign_data(%row);
 		}
 		if ( $show{'unmounted'} ){
@@ -20342,6 +20910,7 @@ sub line_handler {
 	'process' => \&ProcessData::get,
 	'sensor' => \&SensorData::get,
 	'slot' => \&SlotData::get,
+	'swap' => \&SwapData::get,
 	'unmounted' => \&UnmountedData::get,
 	'usb' => \&UsbData::get,
 	'weather' => \&WeatherData::get,
@@ -20613,6 +21182,9 @@ sub generate_system_data {
 	}
 	if ($b_admin && (my $params = get_kernel_parameters())){
 		$index = scalar(@{ $data{$data_name} } );
+		#print "$params\n";
+		$params = apply_partition_filter('system', $params, 'label') if $use{'filter-label'};
+		$params = apply_partition_filter('system', $params, 'uuid') if $use{'filter-uuid'};
 		$data{$data_name}[$index]{main::key($num++,'parameters')} = $params;
 		$index = scalar(@{ $data{$data_name} } );
 	}
