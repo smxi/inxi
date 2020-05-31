@@ -32,8 +32,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.1.00';
-my $self_date='2020-04-22';
+my $self_version='3.1.01';
+my $self_date='2020-05-31';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -1668,6 +1668,7 @@ sub display_data {
 	['plasmashell','--version'],
 	['vainfo',''],
 	['vdpauinfo',''],
+	['vulkaninfo',''],
 	['weston-info',''], 
 	['wmctrl','-m'],
 	['weston','--version'],
@@ -4204,7 +4205,13 @@ sub get_options{
 		} },
 	'y|width:i' => sub {
 		my ($opt, $arg) = @_;
-		$arg = 2000 if defined $arg && $arg == -1;
+		if( defined $arg && $arg == -1){
+			$arg = 2000;
+		}
+		# note: :i creates 0 value if not supplied even though means optional
+		elsif (!$arg){
+			$arg = 80;
+		}
 		if ( $arg =~ /\d/ && $arg >= 80 ){
 			set_display_width($arg);
 		}
@@ -4561,7 +4568,8 @@ sub show_options {
 	['0', '', '', "Output Control Options:" ],
 	['1', '-a', '--admin', "Adds advanced sys admin data (only works with 
 	verbose or line output, not short form), sets --extra=3:" ],
-	['2', '-C', '', "If available: CPU vulnerabilities (bugs); family, model-id, stepping - format:
+	['2', '-C', '', "If available: CPU socket type (dmidecode+root/sudo required); 
+	CPU vulnerabilities (bugs); family, model-id, stepping - format: 
 	hex (decimal) if greater than 9, otherwise hex; microcode - format: hex." ],
 	['2', '-d,-D', '', "If available: logical and physical block sizes; drive family;
 	USB drive specifics; SMART report." ],
@@ -4776,7 +4784,8 @@ sub show_options {
 	with verbose or line output, not short form):" ],
 	['2', '-A', '', "Serial number." ],
 	['2', '-B', '', "Chemistry, cycles, location (if available)." ],
-	['2', '-C', '', "CPU boost (turbo) enabled/disabled, if present." ],
+	['2', '-C', '', "CPU boost (turbo) enabled/disabled, if present; 
+	CPU voltage, external clock speed (if root and dmidecode installed)." ],
 	['2', '-D', '', "Firmware rev. if available; partition scheme, in some cases; disk 
 	rotation speed (if detected)." ],
 	['2', '-G', '', "Xorg Compositor version (if detectable)." ],
@@ -4802,7 +4811,7 @@ sub show_options {
 	}
 	@rows = (
 	['1', '-y', '--width', "Output line width max (integer >= 80). Overrides IRC/Terminal 
-	settings or actual widths. Example:^inxi^-y^130" ],
+	settings or actual widths. If no integer give, defaults to 80. Example:^inxi^-y^130" ],
 	['1', '-z', '--filter', "Adds security filters for IP/MAC addresses, serial numbers, 
 	location (-w), user home directory name, host item. Default on for IRC clients." ],
 	['1', '', '--filter-label', "Filters out ${partition_string} labels in -j, 
@@ -5435,8 +5444,8 @@ sub dmi_cleaner {
 	my ($string) = @_;
 	my $cleaner = '^Base Board .*|^Chassis .*|empty|Undefined.*|.*O\.E\.M\..*|.*OEM.*|^Not .*';
 	$cleaner .= '|^System .*|.*unknow.*|.*N\/A.*|none|^To be filled.*|^0x[0]+$';
-	$cleaner .= '|\[Empty\]|<Bad Index>|Default string|^\.\.$|Manufacturer.*';
-	$cleaner .= '|AssetTagNum|Manufacturer| Or Motherboard|PartNum.*|SerNum';
+	$cleaner .= '|\[Empty\]|<Bad Index>|<OUT OF SPEC>|Default string|^\.\.$|Manufacturer.*';
+	$cleaner .= '|AssetTagNum|Manufacturer| Or Motherboard|PartNum.*|\bOther\b.*|SerNum';
 	$string =~ s/$cleaner//i;
 	$string =~ s/^\s+|\bbios\b|\bacpi\b|\s+$//gi;
 	$string =~ s/http:\/\/www.abit.com.tw\//Abit/i;
@@ -6801,6 +6810,15 @@ sub create_output_full {
 			$rows[$j]{main::key($num++,'variant'.$counter)} = $key;
 		}
 	}
+	if ($b_admin && $properties{'socket'}){
+		if ($properties{'upgrade'}){
+			$rows[$j]{main::key($num++,'socket')} = $properties{'socket'} . ' (' . $properties{'upgrade'} . ')';
+			$rows[$j]{main::key($num++,'note')} = 'check';
+		}
+		else {
+			$rows[$j]{main::key($num++,'socket')} = $properties{'socket'};
+		}
+	}
 	$properties{'bits-sys'} ||= 'N/A';
 	$rows[$j]{main::key($num++,'bits')} = $properties{'bits-sys'};
 	if ($type){
@@ -6830,6 +6848,7 @@ sub create_output_full {
 	if ($extra > 1 && $properties{'l3-cache'}){
 		$rows[$j]{main::key($num++,'L3 cache')} = $properties{'l3-cache'};
 	}
+	
 	if ($extra > 0 && !$show{'cpu-flag'}){
 		$j = scalar @rows;
 		@flags = split /\s+/, $cpu{'flags'} if $cpu{'flags'};
@@ -6880,9 +6899,18 @@ sub create_output_full {
 	main::key($num++,$min_max_key) => $min_max,
 	});
 	@rows = (@rows,@data);
+	if ($b_admin && $properties{'dmi-speed'} && $properties{'dmi-max-speed'}){
+		$rows[$j]{main::key($num++,'base/boost')} = $properties{'dmi-speed'} . '/' . $properties{'dmi-max-speed'};
+	}
 	if ($extra > 2){
 		my $boost = get_boost_status();
 		$rows[$j]{main::key($num++,'boost')} = $boost if $boost;
+		if ($properties{'volts'}){
+			$rows[$j]{main::key($num++,'volts')} = $properties{'volts'} . ' V';
+		}
+		if ($properties{'ext-clock'}){
+			$rows[$j]{main::key($num++,'ext-clock')} = $properties{'ext-clock'};
+		}
 	}
 	$rows[$j]{main::key($num++,$core_key)} = $core_speeds_value;
 	my $i = 1;
@@ -7495,6 +7523,7 @@ sub cpu_properties {
 	#print Data::Dumper::Dumper \@processors;
 	# $cpu_cores is per physical cpu
 	my ($cpu_layout,$cpu_type,$min_max,$min_max_key) = ('','','','');
+	my ($dmi_max_speed,$dmi_speed,$ext_clock,$socket,$upgrade,$volts) = (undef);
 	my ($l1_cache,$l2_cache,$l3_cache,$core_count,$cpu_cores,$die_count) = (0,0,0,0,0,0);
 	# note: elbrus supports turning off cores, so we need to add one for cases where rounds to 0 or 1 less
 	if ($b_elbrus && $processors_count){
@@ -7508,12 +7537,18 @@ sub cpu_properties {
 	if ($extra > 1){
 		# note: dmidecode has one entry per cpu per cache type, so this already 
 		# has done the arithmetic on > 1 cpus for L1 and L3. 
-		my %caches = cpu_cache_dmi();
-		$l1_cache = $caches{'L1'} if $caches{'L1'};
-		$l3_cache = $caches{'L3'} if $caches{'L3'};
+		my %cpu_dmi = cpu_dmi_data();
+		$l1_cache = $cpu_dmi{'L1'} if $cpu_dmi{'L1'};
+		$l3_cache = $cpu_dmi{'L3'} if $cpu_dmi{'L3'};
 		# bsd sysctl can have these values so let's check just in case
 		$l1_cache = $cpu{'l1-cache'} * $phyical_count if !$l1_cache && $cpu{'l1-cache'};
 		$l3_cache = $cpu{'l3-cache'} * $phyical_count if !$l3_cache && $cpu{'l3-cache'};
+		$dmi_max_speed = $cpu_dmi{'max-speed'} if $cpu_dmi{'max-speed'};
+		$socket = $cpu_dmi{'socket'} if $cpu_dmi{'socket'};
+		$upgrade = $cpu_dmi{'upgrade'} if $cpu_dmi{'upgrade'};
+		$dmi_speed = $cpu_dmi{'speed'} if $cpu_dmi{'speed'};
+		$ext_clock = $cpu_dmi{'ext-clock'} if $cpu_dmi{'ext-clock'};
+		$volts = $cpu_dmi{'volts'} if $cpu_dmi{'volts'};
 	}
 	foreach my $die_ref ( @phys ){
 		next if ! $die_ref;
@@ -7730,10 +7765,16 @@ sub cpu_properties {
 	'bits-sys' => $bits_sys,
 	'cpu-layout' => $cpu_layout,
 	'cpu-type' => $cpu_type,
+	'dmi-max-speed' => $dmi_max_speed,
+	'dmi-speed' => $dmi_speed,
+	'ext-clock' => $ext_clock,
 	'min-max-key' => $min_max_key,
 	'min-max' => $min_max,
+	'socket' => $socket,
 	'speed-key' => $speed_key,
 	'speed' => $speed,
+	'upgrade' => $upgrade,
+	'volts' => $volts,
 	'l1-cache' => $l1_cache,
 	'l2-cache' => $l2_cache,
 	'l3-cache' => $l3_cache,
@@ -7746,41 +7787,96 @@ sub cpu_properties {
 	eval $end if $b_log;
 	return %cpu_properties;
 }
-sub cpu_cache_dmi {
+sub cpu_dmi_data {
 	eval $start if $b_log;
 	return if !@dmi;
-	my %caches = ('L1' => 0, 'L2' => 0,'L3' => 0);
-	my ($id,$amount);
+	my %dmi_data = ('L1' => 0, 'L2' => 0,'L3' => 0, 'ext-clock' => undef, 'socket' => undef, 
+	'speed' => undef, 'max-speed' => undef, 'upgrade' => undef, 'volts' => undef);
+	my ($id,$amount,$socket,$upgrade);
 	foreach my $ref (@dmi){
 		next if ref $ref ne 'ARRAY';
 		my @item = @$ref;
-		next if $item[0] != 7;
+		next if ($item[0] < 4 || $item[0] == 5 || $item[0] == 6);
 		last if $item[0] > 7;
-		# skip first three row, we don't need that data
-		splice @item, 0, 3;
-		($id,$amount) = ('',0);
-		foreach my $value (@item){
-			# variants: L3 - Cache; L3 Cache; L3-cache; CPU Internal L1
-			if ($value =~ /^Socket Designation:.* (L[1-3])\b/){
-				$id = $1;
+		if ($item[0] == 7){
+			# skip first three row, we don't need that data
+			splice @item, 0, 3;
+			($id,$amount) = ('',0);
+			foreach my $value (@item){
+				next if $value =~ /~/;
+				# variants: L3 - Cache; L3 Cache; L3-cache; CPU Internal L1
+				if ($value =~ /^Socket Designation:.* (L[1-3])\b/){
+					$id = $1;
+				}
+				# some cpus only show Socket Designation: Internal cache
+				elsif (!$id && $value =~ /^Configuration:.* Level.*([1-3])\b/){
+					$id = "L$1";
+				}
+				elsif ($id && $value =~ /^Installed Size:\s+(.*B)$/){
+					$amount = main::translate_size($1);
+				}
+				if ($id && $amount){
+					$dmi_data{$id} += $amount;
+					last;
+				}
 			}
-			# some cpus only show Socket Designation: Internal cache
-			elsif (!$id && $value =~ /^Configuration:.* Level.*([1-3])\b/){
-				$id = "L$1";
-			}
-			elsif ($id && $value =~ /^Installed Size:\s+(.*B)$/){
-				$amount = main::translate_size($1);
-			}
-			if ($id && $amount){
-				$caches{$id} += $amount;
-				last;
+		}
+		# note: for multi cpu systems, we're hoping that these values are
+		# the same for each cpu, which in most pc situations they will be,
+		# and ARM etc won't be using dmi data here anyway.
+		# Older dmidecode appear to have unreliable Upgrade outputs
+		elsif ($item[0] == 4){
+			# skip first three row, we don't need that data
+			splice @item, 0, 3;
+			($socket,$upgrade) = (undef);
+			foreach my $value (@item){
+				next if $value =~ /~/;
+				# note: on single cpu systems, Socket Designation shows socket type,
+				# but on multi, shows like, CPU1; CPU Socket #2; Socket 0; so check values a bit.
+				# Socket Designation: Intel(R) Core(TM) i5-3470 CPU @ 3.20GHz
+				# Sometimes shows as CPU Socket...
+				if ($value =~ /^Socket Designation:\s*(CPU\s*Socket|Socket)?[\s-]*(.*)$/i){
+					$upgrade = main::dmi_cleaner($2) if $2 !~ /(cpu|[mg]hz|onboard|socket|@|^#?[0-9]$)/i;
+					#print "$socket_temp\n";
+				}
+				# normally we prefer this value, but sometimes it's garbage
+				# older systems often show: Upgrade: ZIF Socket which is a generic term, legacy
+				elsif ($value =~ /^Upgrade:\s*(CPU\s*Socket|Socket)?[\s-]*(.*)$/i){
+					#print "$2\n";
+					$socket = main::dmi_cleaner($2) if $2 !~ /(ZIF|\bslot\b)/i;
+				}
+				# seen: Voltage: 5.0 V 2.9 V
+				elsif ($value =~ /^Voltage:\s*([0-9\.]+)\s*(V|Volts)?\b/i){
+					$dmi_data{'volts'} = main::dmi_cleaner($1);
+				}
+				elsif ($value =~ /^Current Speed:\s*([0-9\.]+)\s*([MGK]Hz)?\b/i){
+					$dmi_data{'speed'} = main::dmi_cleaner($1);
+				}
+				elsif ($value =~ /^Max Speed:\s*([0-9\.]+)\s*([MGK]Hz)?\b/i){
+					$dmi_data{'max-speed'} = main::dmi_cleaner($1);
+				}
+				elsif ($value =~ /^External Clock:\s*([0-9\.]+\s*[MGK]Hz)\b/){
+					$dmi_data{'ext-clock'} = main::dmi_cleaner($1);
+				}
 			}
 		}
 	}
-	main::log_data('dump','%caches',\%caches) if $b_log;
-	#print Data::Dumper::Dumper \%caches;
+	# Seen older cases where Upgrade: Other value exists
+	if ($socket || $upgrade){
+		if ($socket && $upgrade){
+			$upgrade = undef if $socket eq $upgrade;
+		}
+		elsif ($upgrade){
+			$socket = $upgrade;
+			$upgrade = undef;
+		}
+		$dmi_data{'socket'} = $socket;
+		$dmi_data{'upgrade'} = $upgrade;
+	}
+	main::log_data('dump','%dmi_data',\%dmi_data) if $b_log;
+	# print Data::Dumper::Dumper \%dmi_data;
 	eval $end if $b_log;
-	return %caches;
+	return %dmi_data;
 }
 sub cpu_bugs_sys {
 	eval $start if $b_log;
@@ -9517,20 +9613,21 @@ sub device_vendor {
 	## These go first because they are the most likely and common ##
 	['(Crucial|^(FC)?CT|-CT|^M4\b|Gizmo!)','Crucial','Crucial',''],
 	['^(INTEL|SSD(PAM|SA2))','^INTEL','Intel',''],
-	['(KINGSTON|DataTraveler|DT\s?(DUO|Microduo|101)|^SMS|^SHS|^SUV|^Ultimate CF|HyperX|^S[AV][34]00)','KINGSTON','Kingston',''], # maybe SHS: SHSS37A SKC SUV
+	# note: S[AV][1-9][0-9] can trigger false positives
+	['(KINGSTON|DataTraveler|DT\s?(DUO|Microduo|101)|^SMS|^SHS|^SS0|^SUV|^Ultimate CF|HyperX|^S[AV][1234]00)','KINGSTON','Kingston',''], # maybe SHS: SHSS37A SKC SUV
 	# must come before samsung MU. NOTE: toshiba can have: TOSHIBA_MK6475GSX: mush: MKNSSDCR120GB_
 	['(^MKN|Mushkin)','Mushkin','Mushkin',''], # MKNS
 	# MU = Multiple_Flash_Reader too risky: |M[UZ][^L] HD103SI HD start risky
 	# HM320II HM320II
-	['(SAMSUNG|^MCG[0-9]+GC|^MCC|^MCBOE|^[GS]2 Portable|^D3 Station|^DUO\b|^P3|^(HM|SP)[0-9]{2}|^MZMPC|^HD[0-9]{3}[A-Z]{2}$)','SAMSUNG','Samsung',''], # maybe ^SM, ^HM
+	['(SAMSUNG|^MCG[0-9]+GC|^MCC|^MCBOE|^[GS]2 Portable|^[DG]3 Station|^DUO\b|^P3|^BGN|^(HM|SP)[0-9]{2}|^MZMPC|^HD[0-9]{3}[A-Z]{2}$)','SAMSUNG','Samsung',''], # maybe ^SM, ^HM
 	# Android UMS Composite?
 	['(SanDisk|^SDS[S]?[DQ]|^SL([0-9]+)G|^AFGCE|^U3\b|ULTRA\sFIT|Clip Sport|Cruzer|^Extreme)','SanDisk','SanDisk',''],
 	['^STEC\b','^STEC\b','STEC',''], # ssd drive, must come before seagate ST test
 	# real, SSEAGATE Backup+; XP1600HE30002 | 024 HN (spinpoint)
 	['(^ST[^T]|[S]?SEAGATE|^X[AFP]|^5AS|^BUP|Expansion Desk|^Expansion|FreeAgent|GoFlex|Backup(\+|\s?Plus)\s?(Hub)?|OneTouch)','[S]?SEAGATE','Seagate',''], 
-	['^(WD|WL[0]9]|Western Digital|My (Book|Passport)|\d*LPCX|Elements|easystore|MD0|M000|EARX|EFRX|\d*EAVS|0JD|JPVX|[0-9]+(BEV|(00)?AAK|AAV|AZL|EA[CD]S))','(^WDC|Western\s?Digital)','Western Digital',''],
+	['^(WD|WL[0]9]|Western Digital|My (Book|Passport)|\d*LPCX|Elements|easystore|MD0|M000|EARX|EFRX|\d*EAVS|0JD|JPVX|[0-9]+(BEV|(00)?AAK|AAV|AZL|EA[CD]S)|3200[AB]|2500[BJ]|5000[AB]|6400[AB]|7500[AB]|i HTS)','(^WDC|Western\s?Digital)','Western Digital',''],
 	## Then better known ones ##
-	['^(A-DATA|ADATA|AXN|CH11|HV[1-9]|IM2)','^(A-DATA|ADATA)','A-Data',''],
+	['^(A-DATA|ADATA|AX[MN]|CH11|HV[1-9]|IM2)','^(A-DATA|ADATA)','A-Data',''],
 	['^ADTRON','^(ADTRON)','Adtron',''],
 	['^ASUS','^ASUS','ASUS',''],
 	# ATCS05 can be hitachi travelstar but not sure
@@ -9544,7 +9641,7 @@ sub device_vendor {
 	# vb: VB0250EAVER but clashes with vbox; HP_SSD_S700_120G ;GB0500EAFYL GB starter too generic?
 	# DX110064A5xnNMRI ids as HP and Sandisc, same ID, made by sandisc for hp? not sure
 	['^(HP\b|[MV]B[0-6]|G[BJ][01]|DF[012]|v[0-9]{3}[bgorw]$|x[0-9]{3}[w]$)','^HP','HP',''], 
-	['^(LSD|Lexar|JumpDrive|JD\s?Firefly)','^Lexar','Lexar',''], # mmc-LEXAR_0xb016546c; JD Firefly;
+	['^(LSD|Lexar|JumpDrive|JD\s?Firefly|WorkFlow)','^Lexar','Lexar',''], # mmc-LEXAR_0xb016546c; JD Firefly;
 	# OCZSSD2-2VTXE120G is OCZ-VERTEX2_3.5
 	['^(OCZ|APOC|D2|DEN|DEN|DRSAK|EC188|FTNC|GFGC|MANG|MMOC|NIMC|NIMR|PSIR|RALLY2|TALOS2|TMSC|TRSAK)','^OCZ[\s-]','OCZ',''],
 	['^OWC','^OWC[\s-]','OWC',''],
@@ -9553,51 +9650,65 @@ sub device_vendor {
 	['^(PNY|Hook\s?Attache)','^PNY\s','PNY','','^PNY'],
 	# note: get rid of: M[DGK] becasue mushkin starts with MK
 	# note: seen: KXG50ZNV512G NVMe TOSHIBA 512GB | THNSN51T02DUK NVMe TOSHIBA 1024GB
-	['(^[S]?TOS|^THN|TOSHIBA|TransMemory|^M[KQ][0-9])','[S]?TOSHIBA','Toshiba',''], # scsi-STOSHIBA_STOR.E_EDITION_
+	['(^[S]?TOS|^THN|TOSHIBA|TransMemory|^M[GKQ][0-9])','[S]?TOSHIBA','Toshiba',''], # scsi-STOSHIBA_STOR.E_EDITION_
 	## These go last because they are short and could lead to false ID, or are unlikely ##
 	# unknown: AL25744_12345678; ADP may be usb 2.5" adapter; udisk unknown: Z1E6FTKJ 00AAKS
 	# SSD2SC240G726A10 MRS020A128GTS25C EHSAJM0016GB
 	['^5ACE','^5ACE','5ACE',''], # could be seagate: ST316021 5ACE
+	['^(AbonMax|ASU[0-9])','^AbonMax','AbonMax',''],
 	['^Addlink','^Addlink','Addlink',''],
 	['^Aireye','^Aireye','Aireye',''],
 	['^Alfawise','^Alfawise','Alfawise',''],
 	['^Android','^Android','Android',''],
+	['^ANACOMDA','^ANACOMDA','ANACOMDA',''],
 	['^Apotop','^Apotop','Apotop',''],
 	# must come before AP|Apacer
 	['^(APPLE|iPod)','^APPLE','Apple',''],
 	['^(AP|Apacer)','^Apacer','Apacer',''],
 	['^(A-?RAM|ARSSD)','^A-?RAM','A-RAM',''],
+	['^Arch','^Arch(\s*Memory)?','Arch Memory',''],
 	['^Asgard','^Asgard','Asgard',''],
 	['^(ASM|2115)','^ASM','ASMedia',''],#asm1153e
 	['^(AVEXIR|AVSSD)','^AVEXIR','Avexir',''],
+	['^Axiom','^Axiom','Axiom',''],
 	['^Bell\b','^Bell','Packard Bell',''],
 	['^(BelovedkaiAE|GhostPen)','^BelovedkaiAE','BelovedkaiAE',''],
 	['^BHT','^BHT','BHT',''],
 	['^BIOSTAR','^BIOSTAR','Biostar',''],
 	['^BIWIN','^BIWIN','BIWIN',''],
+	['^Blackpcs','^Blackpcs','Blackpcs',''],
 	['^Braveeagle','^Braveeagle','BraveEagle',''],
 	['^(BUFFALO|BSC)','^BUFFALO','Buffalo',''], # usb: BSCR05TU2
 	['^Bulldozer','^Bulldozer','Bulldozer',''],
+	['^BUSlink','^BUSlink','BUSlink',''],
 	['^Centerm','^Centerm','Centerm',''],
 	['^Centon','^Centon','Centon',''],
 	['^CHN\b','','Zheino',''],
 	['^Clover','^Clover','Clover',''],
 	['^Colorful\b','^Colorful','Colorful',''],
+	# note: www.cornbuy.com is both a brand and also sells other brands, like newegg
+	# addlink; colorful; goldenfir; kodkak; maxson; netac; teclast; vaseky
+	['^Corn','^Corn','Corn',''],
 	['^CnMemory|Spaceloop','^CnMemory','CnMemory',''],
 	['^CSD','^CSD','CSD',''],
 	['^(Dane-?Elec|Z Mate)','^Dane-?Elec','DaneElec',''],
 	# Daplink vfs is an ARM software thing
+	['^Dataram','^Dataram','Dataram',''],
 	['^Dell\b','^Dell','Dell',''],
 	['^DeLOCK','^Delock(\s?products)?','Delock',''],
+	['^Derler','^Derler','Derler',''],
 	['^DGM','^DGM\b','DGM',''],
+	['^Digifast','^Digifast','Digifast',''],
 	['^DIGITAL\s?FILM','DIGITAL\s?FILM','Digital Film',''],
-	['^Dogfish','^Dogfish','Dogfish',''],
+	['^(Dogfish|Shark)','^Dogfish(\s*Technology)?','Dogfish Technolgy',''],
 	['^DragonDiamond','^DragonDiamond','DragonDiamond',''],
 	['^DREVO\b','^DREVO','Drevo',''],
 	# DX1100 is probably sandisk, but could be HP, or it could be hp branded sandisk
 	['^(Eaget|V8$)','^Eaget','Eaget',''],
-	['^EDGE','^EDGE','EDGE',''],
+	['^EDGE','^EDGE','EDGE Tech',''],
 	['^Elecom','^Elecom','Elecom',''],
+	['^Eluktro','^Eluktronics','Eluktronics',''],
+	['^Emperor','^Emperor','Emperor',''],
 	['^Emtec','^Emtec','Emtec',''],
 	['^EXCELSTOR','^EXCELSTOR( TECHNO(LOGY)?)?','ExcelStor',''],
 	['^EZLINK','^EZLINK','EZLINK',''],
@@ -9609,25 +9720,31 @@ sub device_vendor {
 	['^FOXLINE','^FOXLINE','Foxline',''], # russian vendor?
 	['^(GALAX\b|Gamer\s?L)','^GALAX','GALAX',''],
 	['^Galaxy\b','^Galaxy','Galaxy',''],
-	['^(Garmin|Fenix)','^Garmin','Garmin',''],
+	['^(Garmin|Fenix|Nuvi|Zumo)','^Garmin','Garmin',''],
 	['^Geil','^Geil','Geil',''],
 	['^Generic','^Generic','Generic',''],
 	['^Gigabyte','^Gigabyte','Gigabyte',''], # SSD
 	['^Gigastone','^Gigastone','Gigastone',''],
 	['^Gloway','^Gloway','Gloway',''],
-	['^(GOODRAM|GOODDRIVE|IR SSD)','^GOODRAM','GOODRAM',''],
+	['^Goldendisk','^Goldendisk','Goldendisk',''],
+	['^Goldenfir','^Goldenfir','Goldenfir',''],
+	# Wilk Elektronik SA, poland
+	['^(Wilk\s*)?(GOODRAM|GOODDRIVE|IR SSD)','^GOODRAM','GOODRAM',''],
 	# supertalent also has FM: |FM
 	['^(G[\.]?SKILL)','^G[\.]?SKILL','G.SKILL',''],
+	['^G[\s-]*Tech','^G[\s-]*Technology','G-Technology',''],
 	['^HDC','^HDC\b','HDC',''],
 	['^Hectron','^Hectron','Hectron',''],
 	['^(Hikvision|HKVSN)','^Hikvision','Hikvision',''],
 	['^Hoodisk','^Hoodisk','Hoodisk',''],
 	['^HUAWEI','^HUAWEI','Huawei',''],
+	['^HyperX','^HyperX','HyperX',''],
 	['^Hyundai','^Hyundai','Hyundai',''],
 	['^(IBM|DT)','^IBM','IBM',''], 
 	['^IEI Tech','^IEI Tech(\.|nology)?( Corp(\.|oration)?)?','IEI Technology',''],
 	['^(Imation|Nano\s?Pro|HQT)','^Imation(\sImation)?','Imation',''], # Imation_ImationFlashDrive; TF20 is imation/tdk
 	['^(Inca\b|Npenterprise)','^Inca','Inca',''],
+	['^Inland','^Inland','Inland',''],
 	['^(InnoDisk|Innolite)','^InnoDisk( Corp.)?','InnoDisk',''],
 	['^Innostor','^Innostor','Innostor',''],
 	['^Innovation','^Innovation','Innovation',''],
@@ -9639,6 +9756,7 @@ sub device_vendor {
 	['^Jingyi','^Jingyi','Jingyi',''],
 	# NOTE: ITY2 120GB hard to find
 	['^JMicron','^JMicron(\s?Tech(nology)?)?','JMicron Tech',''], #JMicron H/W raid
+	['^KimMIDI','^KimMIDI','KimMIDI',''],
 	['^KingDian','^KingDian','KingDian',''],
 	['^Kingfast','^Kingfast','Kingfast',''],
 	['^KingMAX','^KingMAX','KingMAX',''],
@@ -9647,6 +9765,7 @@ sub device_vendor {
 	# kingwin docking, not actual drive
 	['^(EZD|EZ-Dock)','','Kingwin Docking Station',''],
 	['^KLEVV','^KLEVV','KLEVV',''],
+	['^Kodak','^Kodak','Kodak',''],
 	['^(Lacie|P92|itsaKey|iamaKey)','^Lacie','LaCie',''],
 	['^LANBO','^LANBO','LANBO',''],
 	['^LDLC','^LDLC','LDLC',''],
@@ -9663,14 +9782,16 @@ sub device_vendor {
 	['^(Memorex|TravelDrive|TD\s?Classic)','^Memorex','Memorex',''],
 	# note: C300/400 can be either micron or crucial, but C400 is M4 from crucial
 	['(^MT|^M5|^Micron|00-MT|C[34]00)','^Micron','Micron',''],# C400-MTFDDAK128MAM
-	['^MARSHAL\b','^MARSHAL','Marshal',''],
+	['^(MARSHAL\b|MAL[0-9])','^MARSHAL','Marshal',''],
 	['^MARVELL','^MARVELL','Marvell',''],
+	['^Maxsun','^Maxsun','Maxsun',''],
 	['^MDT\b','^MDT','MDT (rebuilt WD/Seagate)',''], # mdt rebuilds wd/seagate hdd
 	# MD1TBLSSHD, careful with this MD starter!!
 	['^MD[1-9]','^Max\s*Digital','MaxDigital',''],
 	['^Medion','^Medion','Medion',''],
 	['^(MEDIAMAX|WL[0-9]{2})','^MEDIAMAX','MediaMax',''],
 	['^Mengmi','^Mengmi','Mengmi',''],
+	['^MINIX','^MINIX','MINIX',''],
 	['^Miracle','^Miracle','Miracle',''],
 	['^Monster\s?Digital','^Monster\s?Digital','Monster Digital',''],
 	['^Morebeck','^Morebeck','Morebeck',''],
@@ -9678,9 +9799,12 @@ sub device_vendor {
 	['^Moweek','^Moweek','Moweek',''],
 	#MRMAD4B128GC9M2C
 	['^(MRMA|Memoright)','^Memoright','Memoright',''],
+	['^MTASE','^MTASE','MTASE',''],
 	['^MTRON','^MTRON','MTRON',''],
+	['^Neo\s*Forza','^Neo\s*Forza','Neo Forza',''],
 	['^Netac','^Netac','Netac',''],
-	['^OOS[1-9]','','Utania',''],
+	['^Nik','^Nikimi','Nikimi',''],
+	['^Orico','^Orico','Orico',''],
 	['^OWC','^OWC\b','OWC',''],
 	['^oyunkey','^oyunkey','Oyunkey',''],
 	['^PALIT','PALIT','Palit',''], # ssd 
@@ -9694,6 +9818,7 @@ sub device_vendor {
 	['(^Quantum|Fireball)','^Quantum','Quantum',''],
 	['^QUMO','^QUMO','Qumo',''],
 	['^(R3|AMD\s?(RADEON)?)','AMD\s?(RADEON)?','AMD Radeon',''], # ssd 
+	['^(Ramaxel|RT|RM|RPF)','^Ramaxel','Ramaxel',''],
 	['^RENICE','^RENICE','Renice',''],
 	['^(Ricoh|R5)','^Ricoh','Ricoh',''],
 	['^RIM[\s]','^RIM','RIM',''],
@@ -9706,49 +9831,58 @@ sub device_vendor {
 	['^SigmaTel','^SigmaTel','SigmaTel',''],
 	# DIAMOND_040_GB
 	['^(SILICON\s?MOTION|SM[0-9])','^SILICON\s?MOTION','Silicon Motion',''],
-	['^(Silicon\s?Power|SP[CP]C|Silicon|Diamond|Haspeed)','Silicon\s?Power','Silicon Power',''],
+	['(Silicon[\s-]?Power|^SP[CP]C|^Silicon|^Diamond|^Haspeed)','Silicon[\s-]?Power','Silicon Power',''],
 	['^SINTECHI?','^SINTECHI?','SinTech (adapter)',''],
 	['Smartbuy','\s?Smartbuy','Smartbuy',''], # SSD Smartbuy 60GB; mSata Smartbuy 3
 	# HFS128G39TND-N210A; seen nvme with name in middle
-	['(SK\s?HYNIX|^HF[MS])','\s?SK\s?HYNIX','SK Hynix',''], 
+	['(SK\s?HYNIX|^HF[MS]|^H[BC]G)','\s?SK\s?HYNIX','SK Hynix',''], 
 	['hynix','hynix','Hynix',''],# nvme middle of string, must be after sk hynix
 	['^SH','','Smart Modular Tech.',''],
 	['^Skill','^Skill','Skill',''],
 	['^(SMART( Storage Systems)?|TX)','^(SMART( Storage Systems)?)','Smart Storage Systems',''],
 	['^(S[FR]-|Sony)','^Sony','Sony',''],
 	['^STE[CK]','^STE[CK]','sTec',''], # wd bought this one
+	['^STmagic','^STmagic','STmagic',''],
 	['^STORFLY','^STORFLY','StorFly',''],
 	['^SUNEAST','^SUNEAST','SunEast',''],
 	# NOTE: F[MNETU] not reliable, g.skill starts with FM too: 
 	# Seagate ST skips STT. 
-	['^(STT|F[HT]M[0-9])','','Super Talent',''], 
+	['^(Super\s*Talent|STT|F[HT]M[0-9]|PicoDrive|Teranova)','','Super Talent',''], 
 	['^(SF|Swissbit)','^Swissbit','Swissbit',''],
 	# ['^(SUPERSPEED)','^SUPERSPEED','SuperSpeed',''], # superspeed is a generic term
+	['^(TakeMS|ColorLine)','^TakeMS','TakeMS',''],
+	['^Tammuz','^Tammuz','Tammuz',''],
 	['^TANDBERG','^TANDBERG','Tanberg',''],
-	['^TCSUNBOW','^TCSUNBOW','TCSunBow',''],
+	['^TC[\s-]*SUNBOW','^TC[\s-]*SUNBOW','TCSunBow',''],
 	['^(TDK|TF[1-9][0-9])','^TDK','TDK',''],
 	['^TEAC','^TEAC','TEAC',''],
-	['^TEAM','^TEAM( Group)?','Team',''],
+	['^TEAM','^TEAM(\s*Group)?','TeamGroup',''],
 	['^(Teclast|CoolFlash)','^Teclast','Teclast',''],
 	['^Teleplan','^Teleplan','Teleplan',''],
 	['^TEUTONS','^TEUTONS','TEUTONS',''],
 	['^Tigo','^Tigo','Tigo',''],
+	['^TKD','^TKD','TKD',''],
 	['^TopSunligt','^TopSunligt','TopSunligt',''], # is this a typo? hard to know
 	['^TopSunlight','^TopSunlight','TopSunlight',''],
-	['^(TS|Transcend|JetFlash)','^Transcend','Transcend',''],
+	['^([F]?TS|Transcend|JetDrive|JetFlash)','^Transcend','Transcend',''], 
 	['^(TrekStor|DS maxi)','^TrekStor','TrekStor',''],
 	['^UDinfo','^UDinfo','UDinfo',''],
 	['^USBTech','^USBTech','USBTech',''],
 	['^(UG|Unigen)','^Unigen','Unigen',''],
+	['^(OOS[1-9]|Utania)','Utania','Utania',''],
 	['^VBOX','','VirtualBox',''],
 	['^(Verbatim|STORE N GO)','^Verbatim','Verbatim',''],
 	['^(Victorinox|Swissflash)','^Victorinox','Victorinox',''],
+	['^(Visipro|SDVP)','^Visipro','Visipro',''],
 	['^VISIONTEK','^VISIONTEK','VisionTek',''],
 	['^VMware','^VMware','VMware',''],
 	['^(Vseky|Vaseky)','^Vaseky','Vaseky',''], # ata-Vseky_V880_350G_
+	['^Xintor','^Xintor','Xintor',''],
+	['^XPG','^XPG','XPG',''],
 	['^(YUCUN|R880)','^YUCUN','YUCUN',''],
 	['^ZEUSLAP','^ZEUSLAP','ZEUSLAP',''],
 	['^(Zheino|CHN[0-9])','^Zheino','Zheino',''],
+	['^(Zotac|ZTSSD)','^Zotac','Zotac',''],
 	['^ZSPEED','^ZSPEED','ZSpeed',''],
 	['^ZTC','^ZTC','ZTC',''],
 	['^(ASMT|2115)','^ASMT','ASMT (case)',''],
@@ -18553,6 +18687,7 @@ sub ubuntu_id {
 	$codename = lc($codename);
 	my ($id) = ('');
 	my %codenames = (
+	'groovy' => '20.10',
 	'focal' => '20.04 LTS',
 	'eoan' => '19.10',
 	'disco' => '19.04',
