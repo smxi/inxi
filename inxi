@@ -32,8 +32,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.1.01';
-my $self_date='2020-05-31';
+my $self_version='3.1.02';
+my $self_date='2020-06-12';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -332,11 +332,11 @@ sub check_tools {
 	# sudo will just error out which is the safest course here for now,
 	# otherwise that interactive sudo password thing is too annoying
 	# important: -n makes it non interactive, no prompt for password
-	if (!$b_root && $b_sudo && (my $path = main::check_program('sudo') )) {
+	if (!$b_root && $b_sudo && !$b_no_sudo && (my $path = main::check_program('sudo') )) {
 		my @data = program_values('sudo');
 		my $version = program_version($path,$data[0],$data[1],$data[2],$data[5]);
 		$version =~ s/^([0-9]+\.[0-9]+).*/$1/;
-		$sudo = "$path -n " if !$b_no_sudo && is_numeric($version) && $version >= 1.7;
+		$sudo = "$path -n " if is_numeric($version) && $version >= 1.7;
 	}
 	set_fake_tools() if $b_fake_bsd;
 }
@@ -4212,7 +4212,7 @@ sub get_options{
 		elsif (!$arg){
 			$arg = 80;
 		}
-		if ( $arg =~ /\d/ && $arg >= 80 ){
+		if ( $arg =~ /\d/ && ($arg == 1 || $arg >= 80) ){
 			set_display_width($arg);
 		}
 		else {
@@ -4789,7 +4789,6 @@ sub show_options {
 	CPU voltage, external clock speed (if root and dmidecode installed)." ],
 	['2', '-D', '', "Firmware rev. if available; partition scheme, in some cases; disk 
 	rotation speed (if detected)." ],
-	['2', '-G', '', "Xorg Compositor version (if detectable)." ],
 	['2', '-I', '', "For 'Shell:' adds ([su|sudo|login]) to shell name if present; 
 	for 'running in:' adds (SSH) if SSH session." ],
 	['2', '-J', '', "For Device: serial number (if present), interface count; USB speed." ],
@@ -4812,7 +4811,8 @@ sub show_options {
 	}
 	@rows = (
 	['1', '-y', '--width', "Output line width max (integer >= 80). Overrides IRC/Terminal 
-	settings or actual widths. If no integer give, defaults to 80. Example:^inxi^-y^130" ],
+	settings or actual widths. If no integer give, defaults to 80. -1 removes line lengths.
+	1 switches output to 1 key/value pair per line. Example:^inxi^-y^130" ],
 	['1', '-z', '--filter', "Adds security filters for IP/MAC addresses, serial numbers, 
 	location (-w), user home directory name, host item. Default on for IRC clients." ],
 	['1', '', '--filter-label', "Filters out ${partition_string} labels in -j, 
@@ -4940,6 +4940,7 @@ sub show_options {
 	print_basic(@data); 
 	exit 0; # shell true
 }
+
 sub show_version {
 	require Cwd;
 	import Cwd;
@@ -4952,6 +4953,7 @@ sub show_version {
 	elsif ( $working_path !~ /^\// ){
 		$working_path = getcwd() . "/$working_path";
 	}
+	$working_path =~ s%/$%%;
 	# handle if it's a symbolic link, rare, but can happen with directories 
 	# in irc clients which would only matter if user starts inxi with -! 30 override 
 	# in irc client
@@ -4962,33 +4964,31 @@ sub show_version {
 	}
 	# strange output /./ ending, but just trim it off, I don't know how it happens
 	$working_path =~ s%/\./%/%;
-	@row = ([ 0, '', '', "$self_name $self_version-$self_patch ($self_date)"],);
+	@row = (
+	[ 0, '', '', "$self_name $self_version-$self_patch ($self_date)"],
+	);
 	push @data, @row;
 	if ( ! $b_irc ){
-		@row = ([ 0, '', '', ""],);
+		@row = ([ 0, '', '', ''],);
 		push @data, @row;
 		my $year = (split/-/, $self_date)[0];
-		@row = [ 0, '', '', "Program Location: $working_path" ];
+		@row = (
+		[ 0, '', '', "Copyright^(C)^2008-$year^Harald^Hope^aka^h2"],
+		[ 0, '', '', "Forked from Infobash 3.02: Copyright^(C)^2005-2007^Michiel^de^Boer^aka^locsmif." ],
+		[ 0, '', '', "Using Perl version: $]"],
+		[ 0, '', '', "Program Location: $working_path" ],
+		);
 		push @data, @row;
 		if ( $link ){
 			@row = [ 0, '', '', "Started via symbolic link: $link" ];
 			push @data, @row;
 		}
 		@rows = (
+		[ 0, '', '', '' ],
 		[ 0, '', '', "Website:^https://github.com/smxi/inxi^or^https://smxi.org/" ],
 		[ 0, '', '', "IRC:^irc.oftc.net channel:^#smxi" ],
 		[ 0, '', '', "Forums:^https://techpatterns.com/forums/forum-33.html" ],
-		[ 0, '', '', " " ],
-		[ 0, '', '', "$self_name - the universal, portable, system information tool 
-		for console and irc." ],
-		[ 0, '', '', "Using Perl version: $]"],
-		[ 0, '', '', " " ],
-		[ 0, '', '', "This program started life as a fork of Infobash 3.02: 
-		Copyright^(C)^2005-2007^Michiel^de^Boer^aka^locsmif." ],
-		[ 0, '', '', "Subsequent changes and modifications (after Infobash 3.02): 
-		Copyright^(C)^2008-$year^Harald^Hope^aka^h2. 
-		CPU/Konversation^fixes:^Scott^Rogers^aka^trash80.
-		USB^audio^fixes:^Steven^Barrett^aka^damentz." ],
+		
 		[ 0, '', '', '' ],
 		[ 0, '', '', "This program is free software; you can redistribute it and/or modify 
 		it under the terms of the GNU General Public License as published by the Free Software 
@@ -5615,7 +5615,7 @@ sub row_defaults {
 	'root-suggested' => "try sudo/root",
 	'sensors-data-ipmi' => "No ipmi sensors data was found.",
 	'sensors-data-linux' => "No sensors data was found. Is sensors configured?",
-	'sensors-ipmi-root' => "Unable to run ipmi sensors.  Root privileges required.",
+	'sensors-ipmi-root' => "Unable to run ipmi sensors. Root privileges required.",
 	'smartctl-command-failed' => "A mandatory SMART command failed. Various possible causes.",
 	'smartctl-root' => "Unable to run smartctl. Root privileges required.",
 	'smartctl-udma-crc' => "Bad cable/connection?",
@@ -5857,31 +5857,66 @@ sub print_basic {
 # hash key to force sorts. 
 sub print_data {
 	my (%data) = @_;
-	my $array = 0;
-	my $array_holder = 1;
-	my $counter=0;
-	my $split_count = 0;
-	my $hash = 0;
-	my $holder = '';
-	my $id_holder = 0;
-	my $screen_holder = 0;
-	my $start = '';
-	my $start2 = '';
-	my $length = 0;
+	my ($array,$counter,$hash,$length,$split_count) = (0,0,0,0,0);
+	my ($holder,$start,$start2,$start_holder) = ('','','','');
 	my $indent = $size{'indent'};
-	my (@temp,@working,@values,%ids,$holder2,%row);
-	my ($key,$line,$val2,$val3);
+	my (@temp,@working,@values,%row);
+	my ($holder2,$key,$key_raw,$line,$val2,$val3);
+	# these 4 sets are single logic items
+	my $b_single = ($size{'max'} == 1) ? 1: 0;
+	my (%in2_pre,%in3_post,%in3a_pre,%in3b_pre,%in4_post);
+	my ($if_id,$raid_arrays);
+	my ($indent_use,$indent2,$indent3,$indent4) = (0,0,0,0);
 	# $size{'max'} = 88;
 	# NOTE: indent < 11 would break the output badly in some cases
 	if ($size{'max'} < $size{'indent-min'} || $size{'indent'} < 11 ){
 		$indent = 2;
 	}
+	# test cases for grep concatenated strings: [|T]~$key_holder
+	# Pseudobooleans test values as indicated above each array
+	if ($b_single){
+		# RAID: [!$raid_arrays]~Components; Network: T[$if_id]~IP;
+		%in2_pre = ('CPU' => '~(L[1-4] cache|Type)',
+		'Drives' => '~(Features|SMART)','Graphics' => '~(Screen|FAILED)',
+		'Memory' => '~(EC|Device)','Network' => '(~IF|T~IP v[46])',
+		'RAID' => '~((Array|Info|FAILED|Recovering)|Components)',
+		'USB' => '~Device');
+		%in3a_pre = ('Drives' => '~(Pre-Fail|Old-Age)',
+		'Graphics' => '~Monitor','Network' => '~IP v[46]');
+		# RAID: T[$raid_arrays]~Components
+		%in3b_pre = ('RAID' => 'T~Components');
+		# 'Network: T[$if_id]~IP
+		%in3_post = ('CPU' => '~Type','Drives' => '~(Features|SMART)',
+		'Graphics' => '~Screen','Processes' => '~[0-9]+',
+		'Network' => '(~IF|T~IP v[46])','RAID' => '~(Array|Info|Recovering)',
+		'USB' => '~Device');
+		# 'Network: [!$if_id]~IP
+		%in4_post = ('Drives' => '~(Pre-Fail|Old-Age)',
+		'Graphics' => '~Monitor','Memory' => '~Device',
+		'Network' => '~IP v[46]','RAID' => '~Components');
+	}
+	# Line starters that will be -x incremented always
+	my %ids = (
+	'Array' => 1, # RAM or RAID
+	'Battery' => 1,
+	'Card' => 1,
+	'Device' => 1,
+	'Floppy' => 1,
+	'Hardware' => 1, # hardware raid report
+	'ID' => 1,
+	'IF-ID' => 1,
+	'Monitor' => 1,
+	'Optical' => 1,
+	'Screen' => 1,
+	'variant' => 1, # arm > 1 cpu type
+	);
 	#foreach my $key1 (sort { (split/#/, $a)[0] <=> (split/#/, $b)[0] } keys %data) {
 	foreach my $key1 (sort { substr($a,0,3) <=> substr($b,0,3) } keys %data) {
 	#foreach my $key1 (sort { $a cmp $b } keys %data) {
 		$key = (split/#/, $key1)[1];
 		if ($key ne 'SHORT' ) {
 			$start = sprintf("$colors{'c1'}%-${indent}s$colors{'cn'}","$key$sep{'s1'}");
+			$start_holder = $key;
 			if ($indent < 10){
 				$line = "$start\n";
 				print_line($line);
@@ -5894,47 +5929,30 @@ sub print_data {
 		}
 		if (ref($data{$key1}) eq 'ARRAY'){
 			# @working = @{$data{$key1}};
-			%ids = (
-			'Array' => 1,
-			'array' => 1,
-			'Battery' => 1,
-			'Card' => 1,
-			'Device' => 1,
-			'Floppy' => 1,
-			'Hardware' => 1, # hardware raid report
-			'ID' => 1,
-			'IF-ID' => 1,
-			'Monitor' => 1,
-			'Optical' => 1,
-			'Screen' => 1,
-			'variant' => 1, # arm > 1 cpu type
-			);
-			$array_holder = 1;
+			for (keys %ids){$ids{$_} = 1}
+			($if_id,$raid_arrays) = ('','') if $b_single;
 			foreach my $val1 (@{$data{$key1}}){
-				$length = $indent;
+				$indent_use = $length = $indent;
 				if (ref($val1) eq 'HASH'){
 					#%row = %$val1;
-					$counter=0;
-					$split_count = 0;
+					($counter,$split_count) = (0,0);
+					($indent2,$indent3,$indent4) = (0,0,0) if $b_single;
 					$hash = scalar %$val1;
 					#foreach my $key2 (sort { (split/#/, $a)[0] <=> (split/#/, $b)[0] } keys %$val1){
 					foreach my $key2 (sort { substr($a,0,3) <=> substr($b,0,3) } keys %$val1){
 					#foreach my $key2 (sort { $a cmp $b } keys %$val1){
-						$key = (split/#/, $key2)[1];
-						# for ram with > 1 system array, we want to reset device count to 1 for each
-						# new array
-						if ($key eq 'Array' && $array_holder != $ids{$key} ){
-							$array_holder = $ids{$key};
-							$ids{'Device'} = 1 if ($ids{'Device'} > 1);
+						$key_raw = $key = (split/#/, $key2)[1];
+						if ($start_holder eq 'Graphics' && $key_raw eq 'Screen'){
+							$ids{'Monitor'} = 1;
 						}
-						if ($key eq 'Device' && $ids{'array'} > 1 && $id_holder != $ids{$key} ){
-							$id_holder = $ids{$key};
-							$ids{'array'} = 1 if ($ids{'array'} > 1);
+						elsif ($start_holder eq 'Memory' && $key_raw eq 'Array'){
+							$ids{'Device'} = 1;
 						}
-						# new Screen
-						if ($key eq 'Screen' && $screen_holder != $ids{$key} ){
-							$screen_holder = $ids{$key};
-							$ids{'Monitor'} = 1 if ($ids{'Monitor'} > 1);
+						elsif ($start_holder eq 'RAID' && $key_raw eq 'Device'){
+							$ids{'Array'} = 1;
+						}
+						elsif ($start_holder eq 'USB' && $key_raw eq 'Hub'){
+							$ids{'Device'} = 1;
 						}
 						if ($counter == 0 && defined $ids{$key}){
 							$key .= '-' . $ids{$key}++;
@@ -5948,16 +5966,17 @@ sub print_data {
 						# in Perl 5.08 oddly enough.
 						@temp = split/\s+/, $val2;
 						$split_count = scalar @temp;
-						if ( ( length( "$key$sep{'s2'} $val2" ) + $length ) < $size{'max'} ) {
+						if ( !$b_single && ( length( "$key$sep{'s2'} $val2" ) + $length ) < $size{'max'} ) {
+							#print "one\n";
 							$length += length("$key$sep{'s2'} $val2");
 							$holder .= "$colors{'c1'}$key$sep{'s2'}$colors{'c2'} $val2";
-							#print "one\n";
 						}
 						# handle case where the opening key/value pair is > max, and where 
 						# there are a lot of terms, like cpu flags, raid types supported. Raid
 						# can have the last row have a lot of devices, or many raid types
-						elsif ( ( length( "$key$sep{'s2'} $val2" ) + $indent ) > $size{'max'} && 
+						elsif ( !$b_single && ( length( "$key$sep{'s2'} $val2" ) + $indent ) > $size{'max'} && 
 								   !defined $ids{$key} && $split_count > 2 ) {
+							#print "two\n";
 							@values = split/\s+/, $val2;
 							$val3 = shift @values;
 							# $length += length("$key$sep{'s2'} $val3 ") + $indent;
@@ -5969,6 +5988,7 @@ sub print_data {
 								# my $l =  (length("$_ ") + $length);
 								#print "$l\n";
 								if ( (length("$_ ") + $length) < $size{'max'} ){
+									#print "three.1\n";
 									#print "a\n";
  									if ($start2){
 										$holder2 .= "$start2$_ ";
@@ -5982,7 +6002,7 @@ sub print_data {
 									$length += length("$_ ");
 								}
 								else {
-									#print "three\n";
+									#print "three.2\n";
 									if ($start2){
 										$holder2 = "$start2$holder2";
 									}
@@ -6015,29 +6035,65 @@ sub print_data {
 								#$length2 = 0;
 							}
 						}
+						# NOTE: only these and the last fallback are used for b_single output
 						else {
-							#print "H: $counter $hash\n";
+							#print "H: $counter $hash $indent3 $indent2\n";
 							if ($holder){
 								#print "five\n";
-								$line = sprintf("%-${indent}s%s$colors{'cn'}\n",$start,"$holder");
-								$holder = "$colors{'c1'}$key$sep{'s2'}$colors{'c2'} $val2";
-								$length = length("$key$sep{'s2'} $val2") + $indent;
+								$line = sprintf("%-${indent_use}s%s$colors{'cn'}\n",$start,"$holder");
+								$length = length("$key$sep{'s2'} $val2") + $indent_use;
 								print_line($line);
 								$start = '';
 							}
 							else {
 								#print "six\n";
-								$holder = "$colors{'c1'}$key$sep{'s2'}$colors{'c2'} $val2";
-								#$line = sprintf("%-${indent}s%s$colors{'cn'}\n",$start,"$holder");
-								$length = $indent;
+								$length = $indent_use;
 								#$holder = '';
 							}
+							$holder = "$colors{'c1'}$key$sep{'s2'}$colors{'c2'} $val2";
 						}
 						$counter++;
+						# see dev/code-snippets.pl for non grep version if needed
+						if ($b_single){
+							if ( $show{'short'} || ($start_holder eq 'Info' && $key_raw eq $self_name) ||
+							 ($start_holder eq 'CPU') && $show{'cpu-basic'} && $key_raw =~ /^.*[\s-]Core$/ ){
+								$indent2 = 0;
+							}
+							elsif ( $key_raw !~ /^([A-Z])/ || 
+							 ($in2_pre{$start_holder} && "$if_id$raid_arrays~$key_raw" =~ /^$in2_pre{$start_holder}$/) ){
+								$indent2 = 2;
+							}
+							elsif ($in3a_pre{$start_holder} && "$if_id~$key_raw" =~ /^$in3a_pre{$start_holder}$/){
+								$indent2 = 2;
+								$indent3 = 2;
+								$indent4 = 0;
+							}
+							# 3 in with raid with Device-y/Array-x; 2 in with no Arrays
+							elsif ($in3b_pre{$start_holder} && "$raid_arrays~$key_raw" =~ /^$in3b_pre{$start_holder}$/){
+								$indent3 = 2;
+							}
+							else {
+								$indent2 = 0;
+								$if_id = 'T' if ($start_holder eq 'Network' && $key_raw eq 'IF-ID');
+								if ($start_holder eq 'RAID'){
+									# Reset every device
+									if ($key_raw eq 'Device'){$raid_arrays = '';}
+									# Array will have tripped prior to Components for zfs
+									elsif ($key_raw eq 'Array'){$raid_arrays = 'T';}
+								}
+							}
+							$indent_use = $indent + $indent2 + $indent3 + $indent4;
+							if ($in3_post{$start_holder} && "$if_id~$key_raw" =~ /^$in3_post{$start_holder}$/){
+								$indent3 = 2;
+							}
+							elsif ($in4_post{$start_holder} && "~$key_raw" =~ /^$in4_post{$start_holder}$/){
+								$indent4 = 2;
+							}
+						}
 					}
 					if ($holder !~ /^\s*$/){
 						#print "seven\n";
-						$line = sprintf("%-${indent}s%s$colors{'cn'}\n",$start,"$start2$holder");
+						$line = sprintf("%-${indent_use}s%s$colors{'cn'}\n",$start,"$start2$holder");
 						print_line($line);
 						$holder = '';
 						$length = 0;
@@ -6050,15 +6106,15 @@ sub print_data {
 					$array=0;
 					foreach my $item (@$val1){
 						$array++;
+						$indent_use = ($b_single) ? $indent + 2: $indent;
 						$line = "$colors{'c1'}$array$sep{'s2'} $colors{'c2'}$item$colors{'cn'}";
-						$line = sprintf("%-${indent}s%s\n","","$line");
+						$line = sprintf("%-${indent_use}s%s\n","","$line");
 						print_line($line);
 					}
 				}
-				else {
-					
-				}
 			}
+			# we want a space between data blocks for single
+			print_line("\n") if $b_single;
 		}
 	}
 }
@@ -9619,7 +9675,7 @@ sub device_vendor {
 	['(^MKN|Mushkin)','Mushkin','Mushkin',''], # MKNS
 	# MU = Multiple_Flash_Reader too risky: |M[UZ][^L] HD103SI HD start risky
 	# HM320II HM320II
-	['(SAMSUNG|^MCG[0-9]+GC|^MCC|^MCBOE|^[GS]2 Portable|^[DG]3 Station|^DUO\b|^P3|^BGN|^(HM|SP)[0-9]{2}|^MZMPC|^HD[0-9]{3}[A-Z]{2}$)','SAMSUNG','Samsung',''], # maybe ^SM, ^HM
+	['(SAMSUNG|^MCG[0-9]+GC|^MCC|^MCBOE|^[GS]2 Portable|^[DG]3 Station|^DUO\b|^P3|^BGN|^BJ[NT]|^BWB|^(HM|SP)[0-9]{2}|^MZMPC|^HD[0-9]{3}[A-Z]{2}$)','SAMSUNG','Samsung',''], # maybe ^SM, ^HM
 	# Android UMS Composite?
 	['(SanDisk|^SDS[S]?[DQ]|^SL([0-9]+)G|^AFGCE|^U3\b|ULTRA\sFIT|Clip Sport|Cruzer|^Extreme)','SanDisk','SanDisk',''],
 	['^STEC\b','^STEC\b','STEC',''], # ssd drive, must come before seagate ST test
@@ -9637,10 +9693,10 @@ sub device_vendor {
 	['^(FUJITSU|MJA|MH[TVWYZ][0-9]|MP|MAP[0-9])','^FUJITSU','Fujitsu',''],
 	# note: 2012:  wdc bought hgst
 	['^(HGST|Touro|54[15]0|7250)','^HGST','HGST (Hitachi)',''], # HGST HUA
-	['^(Hitachi|HCS|HD[PST]|DK[0-9]|IC|HT|HU)','^Hitachi','Hitachi',''], 
+	['^(Hitachi|HCS|HD[PST]|DK[0-9]|IC|HT|HU|HMS)','^Hitachi','Hitachi',''], 
 	# vb: VB0250EAVER but clashes with vbox; HP_SSD_S700_120G ;GB0500EAFYL GB starter too generic?
 	# DX110064A5xnNMRI ids as HP and Sandisc, same ID, made by sandisc for hp? not sure
-	['^(HP\b|[MV]B[0-6]|G[BJ][01]|DF[012]|v[0-9]{3}[bgorw]$|x[0-9]{3}[w]$)','^HP','HP',''], 
+	['^(HP\b|[MV]B[0-6]|G[BJ][01]|DF[FK|012]|v[0-9]{3}[bgorw]$|x[0-9]{3}[w]$)','^HP','HP',''], 
 	['^(LSD|Lexar|JumpDrive|JD\s?Firefly|WorkFlow)','^Lexar','Lexar',''], # mmc-LEXAR_0xb016546c; JD Firefly;
 	# OCZSSD2-2VTXE120G is OCZ-VERTEX2_3.5
 	['^(OCZ|APOC|D2|DEN|DEN|DRSAK|EC188|FTNC|GFGC|MANG|MMOC|NIMC|NIMR|PSIR|RALLY2|TALOS2|TMSC|TRSAK)','^OCZ[\s-]','OCZ',''],
@@ -9692,8 +9748,10 @@ sub device_vendor {
 	['^CnMemory|Spaceloop','^CnMemory','CnMemory',''],
 	['^CSD','^CSD','CSD',''],
 	['^(Dane-?Elec|Z Mate)','^Dane-?Elec','DaneElec',''],
+	['^DATABAR','^DATABAR','DataBar',''],
 	# Daplink vfs is an ARM software thing
 	['^Dataram','^Dataram','Dataram',''],
+	# DataStation can be Trekstore or I/O gear
 	['^Dell\b','^Dell','Dell',''],
 	['^DeLOCK','^Delock(\s?products)?','Delock',''],
 	['^Derler','^Derler','Derler',''],
@@ -9729,7 +9787,7 @@ sub device_vendor {
 	['^Goldendisk','^Goldendisk','Goldendisk',''],
 	['^Goldenfir','^Goldenfir','Goldenfir',''],
 	# Wilk Elektronik SA, poland
-	['^(Wilk\s*)?(GOODRAM|GOODDRIVE|IR SSD)','^GOODRAM','GOODRAM',''],
+	['^(Wilk\s*)?(GOODRAM|GOODDRIVE|IR SSD|IRP|SSDPR)','^GOODRAM','GOODRAM',''],
 	# supertalent also has FM: |FM
 	['^(G[\.]?SKILL)','^G[\.]?SKILL','G.SKILL',''],
 	['^G[\s-]*Tech','^G[\s-]*Technology','G-Technology',''],
@@ -9744,11 +9802,13 @@ sub device_vendor {
 	['^IEI Tech','^IEI Tech(\.|nology)?( Corp(\.|oration)?)?','IEI Technology',''],
 	['^(Imation|Nano\s?Pro|HQT)','^Imation(\sImation)?','Imation',''], # Imation_ImationFlashDrive; TF20 is imation/tdk
 	['^(Inca\b|Npenterprise)','^Inca','Inca',''],
+	['^INDMEM','^INDMEM','INDMEM',''],
 	['^Inland','^Inland','Inland',''],
 	['^(InnoDisk|Innolite)','^InnoDisk( Corp.)?','InnoDisk',''],
 	['^Innostor','^Innostor','Innostor',''],
 	['^Innovation','^Innovation','Innovation',''],
 	['^Innovera','^Innovera','Innovera',''],
+	['^Intaiel','^Intaiel','Intaiel',''],
 	['^(INM|Integral|V\s?Series)','^Integral(\s?Memory)?','Integral Memory',''],
 	['^(Intenso|(Alu|Basic|Business|Micro|Mobile|Rainbow|Speed|Twister) Line|Rainbow)','^Intenso','Intenso',''],
 	['^(Iomega|ZIP\b)','^Iomega','Iomega',''], 
@@ -9793,7 +9853,8 @@ sub device_vendor {
 	['^Mengmi','^Mengmi','Mengmi',''],
 	['^MINIX','^MINIX','MINIX',''],
 	['^Miracle','^Miracle','Miracle',''],
-	['^Monster\s?Digital','^Monster\s?Digital','Monster Digital',''],
+	# Monster MONSTER DIGITAL
+	['^(Monster\s)+Digital','^(Monster\s)+Digital','Monster Digital',''],
 	['^Morebeck','^Morebeck','Morebeck',''],
 	['^Motorola','^Motorola','Motorola',''],
 	['^Moweek','^Moweek','Moweek',''],
@@ -9861,10 +9922,11 @@ sub device_vendor {
 	['^Teleplan','^Teleplan','Teleplan',''],
 	['^TEUTONS','^TEUTONS','TEUTONS',''],
 	['^Tigo','^Tigo','Tigo',''],
+	['^Timetec','^Timetec','Timetec',''],
 	['^TKD','^TKD','TKD',''],
 	['^TopSunligt','^TopSunligt','TopSunligt',''], # is this a typo? hard to know
 	['^TopSunlight','^TopSunlight','TopSunlight',''],
-	['^([F]?TS|Transcend|JetDrive|JetFlash)','^Transcend','Transcend',''], 
+	['^([F]?TS|Transcend|JetDrive|JetFlash|USDU)','^Transcend','Transcend',''], 
 	['^(TrekStor|DS maxi)','^TrekStor','TrekStor',''],
 	['^UDinfo','^UDinfo','UDinfo',''],
 	['^USBTech','^USBTech','USBTech',''],
@@ -13614,7 +13676,7 @@ sub create_output {
 				$raid = (defined $row2{'raid'}) ? $row2{'raid'}: 'no-raid';
 				$status = ($row2{'status'}) ? $row2{'status'}: 'N/A';
 				@data = ({
-				main::key($num++,'array') => $raid,
+				main::key($num++,'Array') => $raid,
 				main::key($num++,'status') => $status,
 				main::key($num++,'size') => $size,
 				main::key($num++,'free') => $available,
@@ -13786,7 +13848,7 @@ sub mdraid_data {
 	#$mdstat = "$ENV{'HOME'}/bin/scripts/inxi/data/raid/md-rebuild-1.txt";
 	#$mdstat = "$ENV{'HOME'}/bin/scripts/inxi/data/raid/md-2-mirror-fserver2-1.txt";
 	#$mdstat = "$ENV{'HOME'}/bin/scripts/inxi/data/raid/md-2-raid10-abucodonosor.txt";
-	# $mdstat = "$ENV{'HOME'}/bin/scripts/inxi/data/raid/md-2-raid10-ant.txt";
+	#$mdstat = "$ENV{'HOME'}/bin/scripts/inxi/data/raid/md-2-raid10-ant.txt";
 	my @working = main::reader($mdstat,'strip');
 	#print Data::Dumper::Dumper \@working;
 	my (@data,@mdraid,@temp,$b_found,$system,$unused);
@@ -15567,7 +15629,7 @@ sub create_output {
 	}
 	if (scalar @gpu > 1){
 		$j = scalar @rows;
-		$rows[$j]{main::key($num++,'GPU')} = '';
+		$rows[$j]{main::key($num++,'gpu')} = '';
 		my $gpu_unit = (defined $gpu[0]{'temp-unit'} ) ? " $gpu[0]{'temp-unit'}" : ' C';
 		foreach my $ref (@gpu){
 			my %info = %$ref;
@@ -16878,7 +16940,7 @@ sub get {
 }
 sub create_output {
 	eval $start if $b_log;
-	my $num = 0;
+	my ($j,$num) = (0,0);
 	my (@data,@location,@rows,$value,%weather,);
 	my ($conditions) = ('NA');
 	if ($show{'weather-location'}){
@@ -16920,82 +16982,93 @@ sub create_output {
 	}
 	$conditions = "$weather{'weather'}";
 	my $temp = unit_output($weather{'temp'},$weather{'temp-c'},'C',$weather{'temp-f'},'F');
+	$j = scalar @rows;
 	@data = ({
-	main::key($num++,'Temperature') => $temp,
-	main::key($num++,'Conditions') => $conditions,
+	main::key($num++,'Report') => '',
+	main::key($num++,'temperature') => $temp,
+	main::key($num++,'conditions') => $conditions,
 	},);
 	@rows = (@rows,@data);
 	if ($extra > 0){
 		my $pressure = unit_output($weather{'pressure'},$weather{'pressure-mb'},'mb',$weather{'pressure-in'},'in');
 		my $wind = wind_output($weather{'wind'},$weather{'wind-direction'},$weather{'wind-mph'},$weather{'wind-ms'},
 		$weather{'wind-gust-mph'},$weather{'wind-gust-ms'});
-		$rows[0]{main::key($num++,'Wind')} = $wind;
+		$rows[$j]{main::key($num++,'wind')} = $wind;
 		if ($extra > 1){
 			if (defined $weather{'cloud-cover'}){
-				$rows[0]{main::key($num++,'Cloud Cover')} = $weather{'cloud-cover'} . '%';
+				$rows[$j]{main::key($num++,'cloud cover')} = $weather{'cloud-cover'} . '%';
 			}
 			if ($weather{'precip-1h-mm'} && defined $weather{'precip-1h-in'} ){
 				$value = unit_output('',$weather{'precip-1h-mm'},'mm',$weather{'precip-1h-in'},'in');
-				$rows[0]{main::key($num++,'Precipitation')} = $value;
+				$rows[$j]{main::key($num++,'precipitation')} = $value;
 			}
 			if ($weather{'rain-1h-mm'} && defined $weather{'rain-1h-in'} ){
 				$value = unit_output('',$weather{'rain-1h-mm'},'mm',$weather{'rain-1h-in'},'in');
-				$rows[0]{main::key($num++,'Rain')} = $value;
+				$rows[$j]{main::key($num++,'rain')} = $value;
 			}
 			if ($weather{'snow-1h-mm'} && defined $weather{'snow-1h-in'} ){
 				$value = unit_output('',$weather{'snow-1h-mm'},'mm',$weather{'snow-1h-in'},'in');
-				$rows[0]{main::key($num++,'Snow')} = $value;
+				$rows[$j]{main::key($num++,'snow')} = $value;
 			}
 		}
-		$rows[0]{main::key($num++,'Humidity')} = $weather{'humidity'} . '%';
+		$rows[$j]{main::key($num++,'humidity')} = $weather{'humidity'} . '%';
 		if ($extra > 1){
 			if ($weather{'dewpoint'} || (defined $weather{'dewpoint-c'} && defined $weather{'dewpoint-f'})){
 				$value = unit_output($weather{'dewpoint'},$weather{'dewpoint-c'},'C',$weather{'dewpoint-f'},'F');
-				$rows[0]{main::key($num++,'Dew Point')} = $value;
+				$rows[$j]{main::key($num++,'dew point')} = $value;
 			}
 		}
-		$rows[0]{main::key($num++,'Pressure')} = $pressure;
+		$rows[$j]{main::key($num++,'pressure')} = $pressure;
 	}
 	if ($extra > 1){
 		if ($weather{'heat-index'} || (defined $weather{'heat-index-c'} && defined $weather{'heat-index-f'})){
 			$value = unit_output($weather{'heat-index'},$weather{'heat-index-c'},'C',$weather{'heat-index-f'},'F');
-			$rows[0]{main::key($num++,'Heat Index')} = $value;
+			$rows[$j]{main::key($num++,'heat index')} = $value;
 		}
 		if ($weather{'windchill'} || (defined $weather{'windchill-c'} && defined $weather{'windchill-f'})){
 			$value = unit_output($weather{'windchill'},$weather{'windchill-c'},'C',$weather{'windchill-f'},'F');
-			$rows[0]{main::key($num++,'Wind Chill')} = $value;
+			$rows[$j]{main::key($num++,'wind chill')} = $value;
 		}
-	}
-	if ($extra > 2){
-		if (!$use{'filter'}){
-			$rows[0]{main::key($num++,'Location')} = complete_location($location[1],$weather{'city'},$weather{'state'},$weather{'country'});
-			if ($weather{'elevation-m'} || $weather{'elevation-ft'}){
-				$rows[0]{main::key($num++,'altitude')} = elevation_output($weather{'elevation-m'},$weather{'elevation-ft'});
+		if ($extra > 2){
+			if ($weather{'forecast'}){
+				$j = scalar @rows;
+				@data = ({
+				main::key($num++,'Forecast') => $weather{'forecast'},
+				},);
+				@rows = (@rows,@data);
 			}
 		}
 	}
-	$rows[0]{main::key($num++,'Current Time')} = $weather{'date-time'};
+	$j = scalar @rows;
+	my $location = '';
+	if ($extra > 2 && !$use{'filter'}){
+		$location = complete_location($location[1],$weather{'city'},$weather{'state'},$weather{'country'});
+	}
+	@data = ({
+	main::key($num++,'Locale') => $location,
+	},);
+	@rows = (@rows,@data);
+	if ($extra > 2 && !$use{'filter'} && ($weather{'elevation-m'} || $weather{'elevation-ft'} )){
+		$rows[$j]{main::key($num++,'altitude')} = elevation_output($weather{'elevation-m'},$weather{'elevation-ft'});
+	}
+	$rows[$j]{main::key($num++,'current time')} = $weather{'date-time'},;
 	if ($extra > 2){
 		$weather{'observation-time-local'} = 'N/A' if !$weather{'observation-time-local'};
-		$rows[0]{main::key($num++,'Observation Time')} = $weather{'observation-time-local'};
+		$rows[$j]{main::key($num++,'observation time')} = $weather{'observation-time-local'};
 		if ($weather{'sunrise'}){
-			$rows[0]{main::key($num++,'Sunrise')} = $weather{'sunrise'};
+			$rows[$j]{main::key($num++,'sunrise')} = $weather{'sunrise'};
 		}
 		if ($weather{'sunset'}){
-			$rows[0]{main::key($num++,'Sunset')} = $weather{'sunset'};
+			$rows[$j]{main::key($num++,'sunset')} = $weather{'sunset'};
 		}
 		if ($weather{'moonphase'}){
 			$value = $weather{'moonphase'} . '%';
 			$value .= ($weather{'moonphase-graphic'}) ? ' ' . $weather{'moonphase-graphic'} :'';
-			$rows[0]{main::key($num++,'Moonphase')} = $value;
-		}
-		if ($weather{'forecast'}){
-			$rows[0]{main::key($num++,'Forecast')} = $weather{'forecast'};
+			$rows[$j]{main::key($num++,'moonphase')} = $value;
 		}
 	}
-	
 	if ($weather{'api-source'}){
-		$rows[0]{main::key($num++,'Source')} = $weather{'api-source'};
+		$rows[$j]{main::key($num++,'Source')} = $weather{'api-source'};
 	}
 	eval $end if $b_log;
 	return @rows;
@@ -21203,10 +21276,9 @@ sub generate_info_data {
 	}
 	my %data = (
 	$data_name => [{
-		main::key($num++,'Processes') => scalar @ps_aux, 
-		main::key($num++,'Uptime') => &get_uptime(),
-		
-		},],
+	main::key($num++,'Processes') => scalar @ps_aux, 
+	main::key($num++,'Uptime') => &get_uptime(),
+	},],
 	);
 	$index = scalar(@{ $data{$data_name} } ) - 1;
 	if (!$b_mem){
@@ -21295,7 +21367,7 @@ sub generate_system_data {
 	my $num = 0;
 	my (%row,$ref,$index,$val1);
 	my $data_name = main::key($prefix++,'System');
-	my ($desktop,$desktop_info,$desktop_key,$toolkit,$wm) = ('','','Desktop','','');
+	my ($desktop,$desktop_info,$desktop_key,$dm_key,$toolkit,$wm) = ('','','Desktop','dm','','');
 	my (@desktop_data,$desktop_version);
 	
 	my %data = (
@@ -21361,6 +21433,7 @@ sub generate_system_data {
 		}
 		$desktop = "tty $tty" if $tty ne '';
 		$desktop_key = 'Console';
+		$dm_key = 'DM';
 	}
 	$desktop ||= 'N/A';
 	$data{$data_name}[$index]{main::key($num++,$desktop_key)} = $desktop;
@@ -21375,8 +21448,10 @@ sub generate_system_data {
 	if ($extra > 1){
 		$data{$data_name}[$index]{main::key($num++,'wm')} = $wm if $wm;
 		my $dms = get_display_manager();
-		$dms ||= 'N/A';
-		$data{$data_name}[$index]{main::key($num++,'dm')} = $dms;
+		if ($dms || $desktop_key ne 'Console'){
+			$dms ||= 'N/A';
+			$data{$data_name}[$index]{main::key($num++,$dm_key)} = $dms;
+		}
 	}
 	#if ($extra > 2 && $desktop_key ne 'Console'){
 	#	my $tty = get_tty_number();
