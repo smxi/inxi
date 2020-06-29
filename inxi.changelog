@@ -1,4 +1,255 @@
 =====================================================================================
+Version: 3.1.04
+Patch: 00
+Date: 2020-06-28
+-----------------------------------
+Changes:
+-----------------------------------
+
+New version, new man, huge update, bug fixes, cleanups, updates!! 
+
+What started as a relatively minor issue report ended up with a refactor of big 
+chunks of some of the oldest code and logic in inxi.
+
+So many bugs and fixes, updates, and enhancements, that I will probably miss some 
+when I try to list them.
+
+Bugs:
+1. In the process of fixing an issue about sudo use triggering server admin
+emails on failure, when --sudo/--no-sudo and their respective configuration
+items were added, sudo was inadvertently disabled because the test ran before
+the options were processed, which meant the condition to set sudo data was 
+always false, so sudo for internal use was never set. The solution was to
+set a flag in the option handler and set sudo after options or configs run.
+
+2. Issue #219 reported gentoo and one other repo type would fail to show
+enabled repos, and would show an error as well, this was due to forgetting
+to make the match test case insensitive. If only all bugs were this easy 
+to fix!!
+
+3. I'd seen this bug before, and couldn't figure out why it existed.
+It turned out that the partition blacklist filters were running fine
+in the main partition data tool, but I had forgotten to add in corresponding
+lsblk partition data filters, lol, so when the logic went back and double
+checked for missing partitions [this feature had been if i remember right
+to be able to show hidden partitions, which the standard method didn't see,
+but lsblk did, anyway, when the double check and add missing partitions
+logic ran, inxi was putting back in the blacklisted partitions every time,
+despite the original blacklists working well and as intended.
+This was fixed by adding in all the required fs type blacklists, then
+adding in comments above each black list reminding coders that if they
+add or remove from one blacklist, they have to do the same on the other.
+
+4. Found while testing something unrelated on older vm, the fallback
+case for cpu bugs, which was supposed to show the basic /proc/cpuinfo
+cpu bugs, was failing inexplicably because the data was simply being
+put into the wrong variable name, sigh.
+
+Fixes:
+1. While not technically an inxi bug, it would certainly appear that way to 
+anyone who triggered it. We'd gotten issue reports before on this, but they 
+were never complete, so couldn't figure it out. Basically, if someone puts 
+inxi into a simple script that is $PATH [this was the missing fact needed to
+actually trigger this bug in order to fix it], the script [not inxi], will 
+then enter into an endless loop as inxi queries it for its version number using
+<script name> --version. This issue didn't happen if the script calling inxi
+was not in PATH, which is why I'd never been able to figure it out before.
+
+Only simple scripts with no argument handlers could trigger this scenario,
+and only if they were in PATH.
+
+Fixing this required refactoring the entire start get_shell_data logic, which
+ended up with a full refactor of the program_version logic as well. The fix
+was to expand the list of shells known by inxi so it would be able to recognize
+when it was in a shell running a script running inxi.
+
+This resulted in several real improvements, for instance, inxi will now almost
+always be able to determine the actual shell running inxi, even when started 
+by something else. It will also never use --version attempts on programs it does
+not know about in a whitelist.
+
+So we lose slightly the abilty to get version data on unknown shells, but we 
+gain inxi never being able to trigger such an infinite loop situation.
+
+2. As part of the program_version refactor, a long standing failure to get ksh,
+lksh, loksh, pdksh, and the related posh shells, all of which ID their version
+numbers only if they are running the command in themselves. The mistake had
+been having the default shell run that command. These all now correctly identify
+themselves.
+
+3. As part of the wm upgrades, many small failures to ID version numbers, or
+even wm's, in some cases, were discovered when testing, and corrected. Some
+I had not tested, like qtile, and the lisp variants, were not being detected
+correctly by the tests due to the way python or lisp items are listed in ps aux.
+
+4. As part of the wm update and program_version refactor, updated and simplified
+many desktop and wm detections and logic blocks. Ideally this makes them more
+preditable and easy to work on for the future.
+
+5. As some last tunings for the new -y1 key: value pair per line output option,
+fixed some small glitches in -b indentation. Also improved RAID indenting,
+and Weather, and made it all very clean and predictable in terms of indentations.
+
+6. Something I'd slightly noticed but never done anything about, while testing
+desktop fixes, I realized that for Desktop: item, dm: is a secondary data type,
+but if it's Console:, then DM: is a primary data type, not a secondary one. So
+now if Console: it becomes DM: whic makes sense, previously it implied a dm:
+was used to start the console, which was silly. Also, since often the reason
+it's Console: with no dm in the first place is that it's a server with no dm.
+So now if console, and no dm detected, rather than showing DM: N/A it just 
+doesn't show dm at all.
+
+7. As part of the overall core refactor, the print_data logic was also refactored
+and simplified, by making -y1 a first class citizen, it led to significantly 
+different way of being able to present inxi data on your screen, and now 
+print_data logic is cleaner and reflects these changes more natively, all the
+initial hacks to get this working were removed, and the logic was made to be
+core, not tacked on.
+
+8. A small thing also revealed in issue #219, battery data was not being
+trimmed, not sure how I missed that, but in some cases, space padding was in the
+values and was not removed, which leads to silly looking inxi output.
+
+9. Several massive internal optimizations, which were tested heavily, led to
+in one case, 8-900x faster execution the second time a data structure is used,
+previously in program_values the entire list was loaded each time program_values
+was called, now it's loaded into a variable on first load and the variable is
+used for the tests after that. This was also done for the vendor_version for
+disk vendors, which also features a very long data structure which can be 
+loaded > 1 times for instances where a system has > 1 disk. 
+
+I also tested while I was at it, to see if loading these tyeps of data structures,
+arrays of arrays, or hashes of arrays, by reference, or by dereferencing their 
+arrays, was faster, and it proved that it's about 20% faster to not
+dereference them, but to use them directly. So I've switched a number of the 
+fixed data structures internally do use that method.
+
+Another tiny optimization was hard resetting the print_data iterator hash,
+while this would never matter in the real world, it showed that resetting 
+the iterator hash manually was slightly more efficient than resetting it
+with a for loop.
+
+10. While  not seen inside inxi, I updated and improved a number of the vm's
+used to test inxi and various software detections, so now I have a good selection,
+going back to 2008 or so, up to current. This is helpful because things like
+shells and window managers and desktops come and go, so it is hard to test 
+old detections on new stuff when you can't install those anymore. You'll see
+these fixes in many of the less well known window managers, and in a few of 
+the better known ones, where in some cases the detections were damaged.
+
+11. As part of the program_version refactor, updated and fixed file based 
+version detections, those, ideally, will almost never be used. Hopefully 
+programmers of things like window managers, shells, and desktops, can
+learn how to handle --version requests, even though I realize that's a lot
+harder than copying someone's code and then rebranding as your own project, or
+whatever excuse people have for not including a --version item in their softaware.
+
+Enhancements:
+1. As a result of the shell, start shell, shell parent refactors, inxi was able
+to correctly in most cases deetermine also the user default shell and its verison, 
+so that was added as an -Ixxx option:
+Shell: ksh v: A_2020.0.0 default: Bash v: 5.0.16
+
+2. As part of the program_version refactor, a more robust version number 
+cleaner was made, which now allows for much more manipulation of the version
+number string, which sometimes contains, without spaces, non version number '
+info right before the actual version.
+
+3. Many more wm IDs were created and tested, and some old virtual machines 
+that were used years ago were used again to test old window managers and 
+their IDs, as well as new vms created to test newer ones. Many version
+IDs and WM ids were fixed in this process as well. All kinds of new ones
+added, though the list is basiclaly endless so ideally inxi would only use
+its internal data tables for window managers that have actual users, or did.
+
+4. First wayland datatype, now it may show Display ID: with -Ga, so far that's
+the only wayland screen/display data I can get reliably.
+
+5. As part of the shell parent/started in: updates and fixes, added every shell
+I could find, and installed and tested as many of them as possible to verify
+that either they have no version method, or that their version method works.
+This shell logic also is used to determine start parent. Obviously using
+whitelists of things that can change over time isn't ideal, but there was no
+way to actually do it otherwise. The best part of the fixes is that it's now 
+remarkably difficult to trick inxi into reporting the wrong shell, and it
+generally will also get the default shell right, though I found cases in
+testing where a shell when started replaces the value in $SHELL with itself.
+
+6. I found a much faster and reasonably reliable way to determine toolkits 
+used by gtk desktops, like cinnamon, gnome, and a few others. Test is to
+get version from gtk-launcher, which is MUCH faster than doing a package
+version query on the random libgtk toolkit that might be tested, and actually
+was tested for pacman, apt, and rpm in the old days, but that was removed
+because it was a silly hack. It's possible that now and then gtk desktops
+will be 0.0.1 versions off, but in most cases, the version matched, so I decided
+to restore the tk: item for a selection of gtk or gnome based desktops.
+
+So now gtk desktops, except mate, which of course will be using gtk 2 for a 
+while longer, toolkit version should be working again, and the new method
+works on everything, unlike the old nasty hack that was used, which required
+package queries and guessing at which gtk lib was actually running the desktop,
+it was such a slow nasty hack that it was dumped a while ago, but this new
+method works reliably in most cases and solves most of the issues.
+
+7. As part of the overall program_versions refactor, the package version 
+tester tool was extended to support pacman, dpkg, and rpm, which in practical
+terms covers most gnu/linux users and systems. Since this feature is literally
+only used for ASH and DASH shell version detections, it was really just added
+as a proof of concept, and because it fit in well with the new Package counts
+feature of -I/-r.
+
+8. Updated for version info a few other programs, added compositors as well.
+
+9. Last but not least!! More disk vendor IDs, more disk vendors!! And found
+another source to double check vendor IDs, that's good. 
+
+New Features:
+1. For -Ix/-rx, -Ixx/-rxx, -Ia/-ra, now inxi shows package counts for most
+package managers plus snap, flatpak, and appimage. I didn't test appimage so
+I'm not 100% sure that works, but the others are all tested and work.
+
+If -r, Packages shows in the Repos item as first row, which makes sense, packages,
+repos, fits. Note that in some systems getting full package counts takes some
+time so it's an -x option not default. 
+If -rx, -rxx, -ra, package info moved to -r section, and if -Ix, -Ixx, or -Ia,
+the following data shows:
+ * -Ix or -rx: show total package counts: Packages: 2429
+ * -Ixx or -rxx: shows Packages then counts by package manager located. If there
+ was only one package manager with packages, the total moves from right after 
+ Packages: to the package manager, like: Packages: apt: 3241 but if there were
+ for example 2 or more found, it would show the total then:
+ Packages 3245 apt:3241 snap: 4
+ * -Ia or -ra: adds package managers with 0 packages managed, those are not
+ show with -xx, and also shows how many of those packages per package manager
+ is a library type lib file. 
+ Sample: 
+ inxi -Iay1
+Info:
+  Processes: 470
+  Uptime: 8d 10h 42m
+  Memory: 31.38 GiB
+    used: 14.43 GiB (46.0%)
+  Init: systemd
+    v: 245
+    runlevel: 5
+  Compilers: 
+    gcc: 9.3.0
+    alt: 5/6/7/8/9
+  Packages: 
+    apt: 3685
+      lib: 2098
+    rpm: 0 
+  Shell: Elvish
+    v: 0.13.1+ds1-1
+    default: Bash
+      v: 5.0.16
+    running in: kate
+  pinxi: 3.1.04-1
+
+-----------------------------------
+-- Harald Hope - Sun, 28 Jun 2020 21:07:42 -0700
+
+=====================================================================================
 Version: 3.1.03
 Patch: 00
 Date: 2020-06-12
