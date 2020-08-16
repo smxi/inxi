@@ -39,8 +39,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.1.05';
-my $self_date='2020-08-09';
+my $self_version='3.1.06';
+my $self_date='2020-08-16';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -60,27 +60,28 @@ if (eval {require Time::HiRes}){
 }
 @t0 = eval 'Time::HiRes::gettimeofday()' if $b_hires; # let's start it right away
 ## Hashes
-my (%alerts,%client,%colors,%debugger,%dl,%files,%program_values,%rows,%system_files);
+my (%alerts,%client,%colors,%debugger,%dl,%files,%program_values,%rows,
+%sensors_raw,%system_files);
 
 ## Arrays
 # ps_aux is full output, ps_cmd is only the last 10 columns to last
 my (@app,@dmesg_boot,@devices_audio,@devices_graphics,@devices_network,
 @devices_hwraid,@devices_timer,@dmi,@gpudata,@ifs,@ifs_bsd,
-@paths,@proc_partitions,@ps_aux,@ps_cmd,@ps_gui,
+@paths,@proc_partitions,@ps_aux,@ps_cmd,@ps_gui,@sensors_exclude,@sensors_use,
 @sysctl,@sysctl_battery,@sysctl_sensors,@sysctl_machine,@uname,@usb);
 ## Disk arrays 
 my (@dm_boot_disk,@dm_boot_optical,@glabel,@gpart,@hardware_raid,@labels,
-@lsblk,@partitions,@raid,@swaps,@sysctl_disks,@uuids);
+@lsblk,@partitions,@raid,@sysctl_disks,@swaps,@uuids);
 my @test = (0,0,0,0,0);
 
 ## Booleans
-my ($b_admin,$b_arm,$b_bb_ps,$b_block_tool,$b_console_irc,
+my ($b_admin,$b_arm,$b_bb_ps,$b_block_tool,
 $b_display,$b_dmesg_boot_check,$b_dmi,$b_dmidecode_force,
 $b_fake_bsd,$b_fake_dboot,$b_fake_dmidecode,$b_fake_pciconf,$b_fake_sysctl,
 $b_fake_usbdevs,$b_force_display,$b_gpudata,$b_irc,
-$b_log,$b_log_colors,$b_log_full,$b_man,$b_mem,$b_mips,$b_no_sudo,
+$b_log,$b_log_colors,$b_log_full,$b_man,$b_mem,$b_no_html_wan,$b_mips,$b_no_sudo,
 $b_pci,$b_pci_tool,$b_pkg,$b_ppc,$b_proc_partitions,$b_ps_gui,
-$b_root,$b_running_in_display,$b_skip_dig,
+$b_root,$b_running_in_display,$b_sensors,$b_skip_dig,
 $b_slot_tool,$b_soc_audio,$b_soc_gfx,$b_soc_net,$b_soc_timer,$b_sparc,
 $b_swaps,$b_sysctl,$b_usb,$b_usb_check,$b_usb_sys,$b_usb_tool,
 $b_wmctrl);
@@ -99,7 +100,6 @@ my ($bits_sys,$cpu_arch);
 my ($cpu_sleep,$dl_timeout,$limit,$ps_cols,$ps_count) = (0.35,4,10,0,5);
 my $sensors_cpu_nu = 0;
 my ($dl_ua,$weather_source,$weather_unit) = ('s-tools/' . $self_name  . '-',100,'mi');
-
 ## Tools
 my ($display,$ftp_alt,$tty_session);
 my ($display_opt,$sudo) = ('','');
@@ -506,7 +506,7 @@ sub set_sep {
 # sudo will just error out which is the safest course here for now,
 # otherwise that interactive sudo password thing is too annoying
 sub set_sudo {
-	if (!$b_root && !$b_no_sudo && (my $path = main::check_program('sudo'))) {
+	if (!$b_root && !$b_no_sudo && (my $path = check_program('sudo'))) {
 		my @data = program_data('sudo');
 		$data[1] =~ s/^([0-9]+\.[0-9]+).*/$1/;
 		#print "sudo v: $data[1]\n";
@@ -703,6 +703,7 @@ sub get_color_scheme {
 	[qw(MAGENTA BLUE NORMAL)],
 	[qw(MAGENTA DBLUE NORMAL)],
 	);
+	eval $end if $b_log;
 	if ($type eq 'count' ){
 		return scalar @color_schemes;
 	}
@@ -713,7 +714,6 @@ sub get_color_scheme {
 		return @{$color_schemes[$type]};
 		# print Dumper $color_schemes[$scheme_nu];
 	}
-	eval $end if $b_log;
 }
 
 sub set_color_scheme {
@@ -1020,7 +1020,7 @@ sub process_selection {
 }
 sub delete_all_colors {
 	my @file_lines = main::reader( $user_config_file );
-	open( $w_fh, '>', $user_config_file ) or error_handler('open', $user_config_file, $!);
+	open( $w_fh, '>', $user_config_file ) or main::error_handler('open', $user_config_file, $!);
 	foreach ( @file_lines ) { 
 		if ( $_ !~ /^(CONSOLE_COLOR_SCHEME|GLOBAL_COLOR_SCHEME|IRC_COLOR_SCHEME|IRC_CONS_COLOR_SCHEME|IRC_X_TERM_COLOR_SCHEME|VIRT_TERM_COLOR_SCHEME)/){
 			print {$w_fh} "$_"; 
@@ -1030,7 +1030,7 @@ sub delete_all_colors {
 }
 sub delete_global_color {
 	my @file_lines = main::reader( $user_config_file );
-	open( $w_fh, '>', $user_config_file ) or error_handler('open', $user_config_file, $!);
+	open( $w_fh, '>', $user_config_file ) or main::error_handler('open', $user_config_file, $!);
 	foreach ( @file_lines ) { 
 		if ( $_ !~ /^GLOBAL_COLOR_SCHEME/){
 			print {$w_fh} "$_"; 
@@ -1042,7 +1042,7 @@ sub set_config_color_scheme {
 	my $value = shift;
 	my @file_lines = main::reader( $user_config_file );
 	my $b_found = 0;
-	open( $w_fh, '>', $user_config_file ) or error_handler('open', $user_config_file, $!);
+	open( $w_fh, '>', $user_config_file ) or main::error_handler('open', $user_config_file, $!);
 	foreach ( @file_lines ) { 
 		if ( $_ =~ /^$configs{'variable'}/ ){
 			$_ = "$configs{'variable'}=$value";
@@ -1141,10 +1141,13 @@ sub get_config_item {
 	elsif ($key eq 'LIMIT') {$limit = $val if is_int($val)}
 	elsif ($key eq 'OUTPUT_TYPE') {$output_type = $val if $val =~ /^(json|screen|xml)$/}
 	elsif ($key eq 'NO_DIG') {$b_skip_dig = $val if is_int($val)}
+	elsif ($key eq 'NO_HTML_WAN') {$b_no_html_wan = $val if is_int($val)}
 	elsif ($key eq 'NO_SUDO') {$b_no_sudo = $val if is_int($val)}
 	elsif ($key eq 'PARTITION_SORT') {$show{'partition-sort'} = $val if ($val =~ /^(dev-base|fs|id|label|percent-used|size|uuid|used)$/) }
 	elsif ($key eq 'PS_COUNT') {$ps_count = $val if is_int($val) }
 	elsif ($key eq 'SENSORS_CPU_NO') {$sensors_cpu_nu = $val if is_int($val)}
+	elsif ($key eq 'SENSORS_EXCLUDE') {@sensors_exclude = split /\s*,\s*/, $val if $val}
+	elsif ($key eq 'SENSORS_USE') {@sensors_use = split /\s*,\s*/, $val if $val}
 	elsif ($key eq 'SHOW_HOST' || $key eq 'B_SHOW_HOST') {
 		if (is_int($val)){
 			$show{'host'} = $val;
@@ -1248,7 +1251,7 @@ sub log_data {
 	# print "1: $one 2: $two 3: $three\n";
 	if ($one eq 'fs') {
 		if (ref $three eq 'ARRAY'){
-			my @temp = @$three;
+			# my @temp = @$three;
 			# print Data::Dumper::Dumper \@$three;
 			$args = "\n${spacer}Args: " . joiner($three, '; ', 'unset');
 		}
@@ -1828,6 +1831,8 @@ sub system_data {
 	['rc-status','-l'],
 	['rc-status','-r'],
 	['sensors',''],
+	['sensors','-j'],
+	['sensors','-u'],
 	# leaving this commented out to remind that some systems do not
 	# support strings --version, but will just simply hang at that command
 	# which you can duplicate by simply typing: strings then hitting enter.
@@ -3564,7 +3569,7 @@ sub program_values {
 		@program_data = @{$program_values{$app}};
 	}
 	#my $debug = Dumper \@program_data;
-	main::log_data('dump',"Program Data",\@program_data) if $b_log;
+	log_data('dump',"Program Data",\@program_data) if $b_log;
 	return @program_data;
 }
 
@@ -3772,7 +3777,7 @@ sub writer {
 sub get_defaults {
 	my ($type) = @_;
 	my %defaults = (
-	'ftp-upload' => 'ftp.techpatterns.com/incoming',
+	'ftp-upload' => 'ftp.smxi.org/incoming',
 	'inxi-branch-1' => 'https://github.com/smxi/inxi/raw/one/',
 	'inxi-branch-2' => 'https://github.com/smxi/inxi/raw/two/',
 	'inxi-dev' => 'https://smxi.org/in/',
@@ -3978,8 +3983,8 @@ sub get_options{
 	eval $start if $b_log;
 	my (@args) = @_;
 	$show{'short'} = 1;
-	my ($b_downloader,$b_help,$b_no_man,$b_no_man_force,$b_recommends,$b_updater,
-	$b_version,$b_use_man,$self_download, $download_id);
+	my ($b_downloader,$b_help,$b_no_man,$b_no_man_force,$b_sensors_default,
+	$b_recommends,$b_updater,$b_version,$b_use_man,$self_download, $download_id);
 	GetOptions (
 	'a|admin' => sub {
 		$b_admin = 1;},
@@ -4454,6 +4459,8 @@ sub get_options{
 	'host|hostname' => sub {
 		$show{'host'} = 1;
 		$show{'no-host'} = 0},
+	'html-wan' => sub {
+		$b_no_html_wan = 0; },
 	'indent-min:i' => sub {
 		my ($opt,$arg) = @_;
 		if ($arg =~ /^\d+$/){
@@ -4486,6 +4493,8 @@ sub get_options{
 	'no-host|no-hostname' => sub {
 		$show{'host'} = 0 ;
 		$show{'no-host'} = 1},
+	'no-html-wan' => sub {
+		$b_no_html_wan= 1;},
 	'no-man' => sub {
 		$b_no_man_force = 0; },
 	'no-ssl' => sub {
@@ -4509,6 +4518,24 @@ sub get_options{
 		$b_ppc = 1 },
 	'recommends' => sub {
 		$b_recommends = 1; },
+	'sensors-default' => sub {
+		$b_sensors_default = 1; },
+	'sensors-exclude:s' => sub {
+		my ($opt,$arg) = @_;
+		if ($arg){
+			@sensors_exclude = split /\s*,\s*/, $arg;
+		}
+		else {
+			error_handler('bad-arg',$opt,$arg);
+		}},
+	'sensors-use:s' => sub {
+		my ($opt,$arg) = @_;
+		if ($arg){
+			@sensors_use = split /\s*,\s*/, $arg;
+		}
+		else {
+			error_handler('bad-arg',$opt,$arg);
+		}},
 	'sparc' => sub {
 		$b_sparc = 1; },
 	'sys-debug' => sub {
@@ -4587,6 +4614,10 @@ sub get_options{
 		}
 	}
 	$show{'graphic-basic'} = 0 if $b_admin;
+	if ($b_sensors_default){
+		@sensors_exclude = ();
+		@sensors_use = ();
+	}
 	$b_block_tool = 1 if ( $b_admin && ($show{'partition'} || $show{'partition-full'} ));
 	set_sudo() if ( $show{'unmounted'} || ($extra > 0 && $show{'disk'}) );
 	$extra = 3 if $b_admin;
@@ -4624,7 +4655,6 @@ sub get_options{
 	if ($b_admin && $show{'disk'}){
 		$b_smartctl = 1;
 	}
-	
 } 
 
 sub show_options {
@@ -4966,6 +4996,7 @@ sub show_options {
 	(e.g. -M, -B)." ],
 	['1', '', '--downloader', "Force $self_name to use [curl|fetch|perl|wget] for downloads." ],
 	['1', '', '--host', "Turn on hostname for -S." ],
+	['1', '', '--html-wan', "Overrides configuration item NO_HTML_WAN (resets to default)." ],
 	['1', '', '--indent-min', "Set point where $self_name autowraps line starters." ],
 	['1', '', '--limit', "[-1; 1-x] Set max output limit of IP addresses for -i 
 	(default 10; -1 removes limit)." ],
@@ -4980,6 +5011,8 @@ sub show_options {
 	@rows = (
 	['1', '', '--no-dig', "Skip dig for WAN IP checks, use downloader program." ],
 	['1', '', '--no-host', "Turn off hostname for -S. Useful if showing output from servers etc." ],
+	['1', '', '--no-html-wan', "Skip HTML IP sources for WAN IP checks, use dig only, 
+	or nothing if --no-dig." ],
 	);
 	push @data, @rows;
 	if ( $use{'update'} ){
@@ -4998,6 +5031,12 @@ sub show_options {
 	['1', '', '--output-file', "[Full filepath|print] Output file to be used for --output." ],
 	['1', '', '--partition-sort', "[dev-base|fs|id|label|percent-used|size|uuid|used] 
 	Change sort order of ${partition_string} output. See man page for specifics." ],
+	['1', '', '--sensors-default', "Removes configuration item SENSORS_USE and SENSORS_EXCLUDE.
+	Same as default behavior." ],
+	['1', '', '--sensors-exclude', "[sensor[s] name, comma separated] Exclude supplied sensor 
+	array[s] for -s output (lm-sensors, Linux only)." ],
+	['1', '', '--sensors-use', "[sensor[s] name, comma separated] Use only supplied sensor 
+	array[s] for -s output (lm-sensors, Linux only)." ],
 	['1', '', '--sleep', "[0-x.x] Change CPU sleep time, in seconds, for -C 
 	(default:^$cpu_sleep). Allows system to catch up and show a more accurate CPU 
 	use. Example:^$self_name^-Cxxx^--sleep^0.15" ],
@@ -5021,7 +5060,7 @@ sub show_options {
 	['2', '11', '', "Full file/system info logging." ],
 	['1', '', ,'', "The following create a tar.gz file of system data, plus $self_name 
 	output. To automatically upload debugger data tar.gz file 
-	to ftp.techpatterns.com: $self_name^--debug^21" ],
+	to ftp.smxi.org: $self_name^--debug^21" ],
 	['2', '20', '', "Full system data collection: /sys; xorg conf and log data, xrandr, 
 	xprop, xdpyinfo, glxinfo etc.; data from dev, disks,  
 	${partition_string}s, etc." ],
@@ -5699,6 +5738,7 @@ sub row_defaults {
 	'dmesg-boot-missing' => 'dmesg.boot not found',
 	'IP' => "No $id found. Connected to web? SSL issues?",
 	'IP-dig' => "No $id found. Connected to web? SSL issues? Try --no-dig",
+	'IP-no-dig' => "No $id found. Connected to web? SSL issues? Try enabling dig",
 	'machine-data' => "No machine data: try newer kernel.",
 	'machine-data-bsd' => "No machine data: Is dmidecode installed? Try -M --dmidecode.",
 	'machine-data-dmidecode' => "No machine data: try newer kernel. Is dmidecode installed? Try -M --dmidecode.",
@@ -6897,7 +6937,7 @@ sub create_output_full {
 	my $j = scalar @rows;
 	$cpu{'model_name'} ||= 'N/A'; 
 	@data = ({
-	main::key($num++,1,1,'Topology') => $properties{'cpu-layout'},
+	main::key($num++,1,1,'Info') => $properties{'cpu-layout'},
 	main::key($num++,0,2,'model') => $cpu{'model_name'},
 	},);
 	@rows = (@rows,@data);
@@ -7072,8 +7112,8 @@ sub create_output_short {
 	$cpu[1] ||= main::row_defaults('cpu-model-null');
 	$cpu[2] ||= 'N/A';
 	@data = ({
-	main::key($num++,1,1,$cpu[0]) => $cpu[1],
-	main::key($num++,0,2,'type') => $cpu[2],
+	main::key($num++,1,1,'Info') => $cpu[0] . ' ' . $cpu[1] . ' [' . $cpu[2] . ']',
+	#main::key($num++,0,2,'type') => $cpu[2],
 	},);
 	if ($extra > 0){
 		$data[0]{main::key($num++,0,2,'arch')} = $cpu[7];
@@ -8836,7 +8876,7 @@ sub disk_data {
 		# to same partitions, or btrfs sub volume mounts, is present. The value is 
 		# searched for an earlier appearance of that partition and if it is present, 
 		# the data is not added into the partition used size.
-		if ( $row{'dev-base'} !~ /^\/\/|:\// && ! (grep {/$row{'dev-base'}/} @devs) ){
+		if ( $row{'dev-base'} !~ /^(\/\/|:\/)/ && ! (grep {/$row{'dev-base'}/} @devs) ){
 			$used += $row{'used'} if  $row{'used'};
 			push @devs, $row{'dev-base'};
 		}
@@ -8895,9 +8935,12 @@ sub proc_data {
 		# special case from this data: 8     0  156290904 sda
 		# 43        0   48828124 nbd0
 		# note: known starters: vm: 252/253/254; grsec: 202; nvme: 259 mmcblk: 179
+		# Note: with > 1 nvme drives, the minor number no longer passes the modulus tests,
+		# It appears to just increase randomly from the first 0 minor of the first nvme to 
+		# nvme partitions to next nvme, so it only passes the test for the first nvme drive.
 		if ( $row[0] =~ /^(3|8|22|33|43|179|202|252|253|254|259)$/ && 
 		     $row[-1] =~ /(mmcblk[0-9]+|n[b]?d[0-9]+|nvme[0-9]+n[0-9]+|[hsv]d[a-z]+)$/ && 
-		     ( $row[1] % 16 == 0 || $row[1] % 16 == 8 ) ) {
+		     ( $row[1] % 16 == 0 || $row[1] % 16 == 8 || $row[-1] =~ /(nvme[0-9]+n[0-9]+)$/) ) {
 			$size += $row[2];
 		}
 	}
@@ -9711,12 +9754,12 @@ sub set_vendors {
 	['(Crucial|^(FC)?CT|-CT|^M4\b|Gizmo!)','Crucial','Crucial',''],
 	['^(INTEL|SSD(PAM|SA2))','^INTEL','Intel',''], 
 	# note: S[AV][1-9][0-9] can trigger false positives
-	['(KINGSTON|DataTraveler|DT\s?(DUO|Microduo|101)|^SMS|^SHS|^SS0|^SUV|^Ultimate CF|HyperX|^S[AV][1234]00)','KINGSTON','Kingston',''], # maybe SHS: SHSS37A SKC SUV
+	['(KINGSTON|DataTraveler|DT\s?(DUO|Microduo|101)|^SMS|^SHS|^SS0|^SUV|^Ultimate CF|HyperX|^S[AV][1234]00|^SKYMEDI)','KINGSTON','Kingston',''], # maybe SHS: SHSS37A SKC SUV
 	# must come before samsung MU. NOTE: toshiba can have: TOSHIBA_MK6475GSX: mush: MKNSSDCR120GB_
 	['(^MKN|Mushkin)','Mushkin','Mushkin',''], # MKNS
 	# MU = Multiple_Flash_Reader too risky: |M[UZ][^L] HD103SI HD start risky
 	# HM320II HM320II
-	['(SAMSUNG|^MCG[0-9]+GC|^MCC|^MCBOE|^[GS]2 Portable|^[DG]3 Station|^DUO\b|^P3|^BGN|^BJ[NT]|^BWB|^(HM|SP)[0-9]{2}|^MZMPC|^HD[0-9]{3}[A-Z]{2}$)','SAMSUNG','Samsung',''], # maybe ^SM, ^HM
+	['(SAMSUNG|^MCG[0-9]+GC|^MCC|^MCBOE|^[GS]|\bEVO\b|2 Portable|^[DG]3 Station|^DUO\b|^P3|^BGN|^BJ[NT]|^BWB|^(HM|SP)[0-9]{2}|^MZMPC|^HD[0-9]{3}[A-Z]{2}$)','SAMSUNG','Samsung',''], # maybe ^SM, ^HM
 	# Android UMS Composite?
 	['(SanDisk|^SDS[S]?[DQ]|^SL([0-9]+)G|^AFGCE|^ABLCD|^SDW[1-9]|^U3\b|ULTRA\sFIT|Clip Sport|Cruzer|^Extreme)','SanDisk','SanDisk',''],
 	['^STEC\b','^STEC\b','STEC',''], # ssd drive, must come before seagate ST test
@@ -9737,7 +9780,7 @@ sub set_vendors {
 	['^(Hitachi|HCS|HD[PST]|DK[0-9]|IC|HT|HU|HMS)','^Hitachi','Hitachi',''], 
 	# vb: VB0250EAVER but clashes with vbox; HP_SSD_S700_120G ;GB0500EAFYL GB starter too generic?
 	# DX110064A5xnNMRI ids as HP and Sandisc, same ID, made by sandisc for hp? not sure
-	['^(HP\b|[MV]B[0-6]|G[BJ][01]|DF[FK|012]|v[0-9]{3}[bgorw]$|x[0-9]{3}[w]$)','^HP','HP',''], 
+	['^(HP\b|[MV]B[0-6]|G[BJ][01]|DF|0-9]|FK|0-9]|PSS|v[0-9]{3}[bgorw]$|x[0-9]{3}[w]$)','^HP','HP',''], 
 	['^(LSD|Lexar|JumpDrive|JD\s?Firefly|WorkFlow)','^Lexar','Lexar',''], # mmc-LEXAR_0xb016546c; JD Firefly;
 	# OCZSSD2-2VTXE120G is OCZ-VERTEX2_3.5
 	['^(OCZ|APOC|D2|DEN|DEN|DRSAK|EC188|FTNC|GFGC|MANG|MMOC|NIMC|NIMR|PSIR|RALLY2|TALOS2|TMSC|TRSAK)','^OCZ[\s-]','OCZ',''],
@@ -9818,7 +9861,7 @@ sub set_vendors {
 	['^Fordisk','^Fordisk','Fordisk',''],
 	# FK0032CAAZP/FB160C4081 FK or FV can be HP but can be other things
 	['^FORESEE','^FORESEE','Foresee',''],
-	['^FOXLINE','^FOXLINE','Foxline',''], # russian vendor?
+	['^(FOXLINE|FLD)','^FOXLINE','Foxline',''], # russian vendor?
 	['^(GALAX\b|Gamer\s?L)','^GALAX','GALAX',''],
 	['^Galaxy\b','^Galaxy','Galaxy',''],
 	['^(Garmin|Fenix|Nuvi|Zumo)','^Garmin','Garmin',''],
@@ -9830,7 +9873,7 @@ sub set_vendors {
 	['^Goldendisk','^Goldendisk','Goldendisk',''],
 	['^Goldenfir','^Goldenfir','Goldenfir',''],
 	# Wilk Elektronik SA, poland
-	['^(Wilk\s*)?(GOODRAM|GOODDRIVE|IR SSD|IRP|SSDPR)','^GOODRAM','GOODRAM',''],
+	['^(Wilk\s*)?(GOODRAM|GOODDRIVE|IR[\s-]?SSD|IRP|SSDPR)','^GOODRAM','GOODRAM',''],
 	# supertalent also has FM: |FM
 	['^(G[\.]?SKILL)','^G[\.]?SKILL','G.SKILL',''],
 	['^G[\s-]*Tech','^G[\s-]*Technology','G-Technology',''],
@@ -9873,8 +9916,8 @@ sub set_vendors {
 	['^(Lacie|P92|itsaKey|iamaKey)','^Lacie','LaCie',''],
 	['^LANBO','^LANBO','LANBO',''],
 	['^LDLC','^LDLC','LDLC',''],
-	# LENSE30512GMSP34MEAT3TA
-	['^LEN','^Lenovo','Lenovo',''],
+	# LENSE30512GMSP34MEAT3TA / UMIS RPITJ256PED2MWX
+	['^(LEN|UMIS)','^Lenovo','Lenovo',''],
 	['^RPFT','','Lenovo O.E.M.',''],
 	['^LG\b','^LG','LG',''],
 	['^(LITE[-\s]?ON[\s-]?IT)','^LITE[-]?ON[\s-]?IT','LITE-ON IT',''], # LITEONIT_LSS-24L6G
@@ -9982,7 +10025,7 @@ sub set_vendors {
 	['^(OOS[1-9]|Utania)','Utania','Utania',''],
 	['^U-TECH','U-TECH','U-Tech',''],
 	['^VBOX','','VirtualBox',''],
-	['^(Verbatim|STORE N GO)','^Verbatim','Verbatim',''],
+	['^(Verbatim|STORE N GO|Vi[1-9])','^Verbatim','Verbatim',''],
 	['^V-GEN','^V-GEN','V-Gen',''],
 	['^(Victorinox|Swissflash)','^Victorinox','Victorinox',''],
 	['^(Visipro|SDVP)','^Visipro','Visipro',''],
@@ -9994,6 +10037,7 @@ sub set_vendors {
 	['^XPG','^XPG','XPG',''],
 	['^XUNZHE','^XUNZHE','XUNZHE',''],
 	['^(YUCUN|R880)','^YUCUN','YUCUN',''],
+	['^ZALMAN','^ZALMAN','Zalman',''],
 	['^ZEUSLAP','^ZEUSLAP','ZEUSLAP',''],
 	['^(Zheino|CHN[0-9]|CNM)','^Zheino','Zheino',''],
 	['^(Zotac|ZTSSD)','^Zotac','Zotac',''],
@@ -12279,14 +12323,21 @@ sub if_ip {
 # dig +short +time=1 +tries=1 myip.opendns.com. A @208.67.222.222
 sub wan_ip {
 	eval $start if $b_log;
-	my (@data,$b_dig,$ip,$ua);
+	my (@data,$b_dig,$b_html,$ip,$ua);
 	my $num = 0;
 	# time: 0.06 - 0.07 seconds
+	# cisco opendns.com may be terminating supporting this one, sometimes works, sometimes not: 
+	# use -4/6 to force ipv 4 or 6, but generally we want the 'natural' native
+	# ip returned.
+	# dig +short +time=1 +tries=1 myip.opendns.com @resolver1.opendns.com 
+	# dig +short @ns1-1.akamaitech.net ANY whoami.akamai.net
+	# this one can take forever, and sometimes requires explicit -4 or -6
+	# dig -4 TXT +short o-o.myaddr.l.google.com @ns1.google.com
 	if (!$b_skip_dig && (my $program = main::check_program('dig') )){
-		$ip = (main::grabber("$program +short +time=1 +tries=1 myip.opendns.com \@resolver1.opendns.com 2>/dev/null"))[0];
+		$ip = (main::grabber("$program +short +time=1 +tries=1 \@ns1-1.akamaitech.net ANY whoami.akamai.net 2>/dev/null"))[0];
 		$b_dig = 1;
 	}
-	else {
+	if (!$ip && !$b_no_html_wan) {
 		# note: tests: akamai: 0.055 - 0.065 icanhazip.com: 0.177 0.164
 		# smxi: 0.525, so almost 10x slower. Dig is fast too
 		# leaving smxi as last test because I know it will always be up.
@@ -12303,12 +12354,22 @@ sub wan_ip {
 				last;
 			}
 		}
+		$b_html = 1;
 	}
 	if ($ip && $use{'filter'}){
 		$ip = $filter_string;
 	}
 	if (!$ip){
-		$ip = ($b_dig) ? main::row_defaults('IP-dig', 'WAN IP') : main::row_defaults('IP', 'WAN IP');
+		# true case trips
+		if (!$b_dig){
+			$ip = main::row_defaults('IP-no-dig', 'WAN IP'); 
+		}
+		elsif ($b_dig && !$b_html){
+			$ip = main::row_defaults('IP-dig', 'WAN IP');
+		}
+		else {
+			$ip = main::row_defaults('IP', 'WAN IP');
+		}
 	}
 	@data = ({
 	main::key($num++,0,1,'WAN IP') => $ip,
@@ -13469,8 +13530,8 @@ sub get {
 		},);
 		@processes = (@processes,@rows);
 	}
-	return @processes;
 	eval $end if $b_log;
+	return @processes;
 }
 sub cpu_processes {
 	eval $start if $b_log;
@@ -15583,7 +15644,6 @@ sub file_path {
 ## SensorData
 {
 package SensorData;
-my (@sensors_data);
 my ($b_ipmi) = (0);
 sub get {
 	eval $start if $b_log;
@@ -15635,7 +15695,6 @@ sub get {
 		}
 		@rows = (@rows,@data);
 	}
-	undef @sensors_data;
 	eval $end if $b_log;
 	return @rows;
 }
@@ -15688,6 +15747,9 @@ sub create_output {
 		my $gpu_unit = (defined $gpu[0]{'temp-unit'} && $gpu_temp ) ? " $gpu[0]{'temp-unit'}" : ' C';
 		$rows[$j]{main::key($num++,1,2,'gpu')} = $gpu_type;
 		$rows[$j]{main::key($num++,0,3,'temp')} = $gpu_temp . $gpu_unit;
+		if ($extra > 1 && $gpu[0]{'temp-mem'}){
+			$rows[$j]{main::key($num++,0,3,'mem')} = $gpu[0]{'temp-mem'} . $gpu_unit;
+		}
 	}
 	$j = scalar @rows;
 	my $ref_main = $sensors{'fan-main'};
@@ -15753,8 +15815,17 @@ sub create_output {
 				$rows[$j]{main::key($num++,0,3,'screen')} = $info{'screen'};
 			}
 			$rows[$j]{main::key($num++,0,3,'temp')} = $gpu_temp;
+			if ($extra > 1 && $info{'temp-mem'}){
+				$rows[$j]{main::key($num++,0,3,'mem')} = $info{'temp-mem'} . $gpu_unit;
+			}
 			if (defined $gpu_fan){
 				$rows[$j]{main::key($num++,0,3,'fan')} = $gpu_fan;
+			}
+			if ($extra > 2 && $info{'watts'}){
+				$rows[$j]{main::key($num++,0,3,'watts')} = $info{'watts'};
+			}
+			if ($extra > 2 && $info{'mvolts'}){
+				$rows[$j]{main::key($num++,0,3,'mV')} = $info{'mvolts'};
 			}
 		}
 	}
@@ -15765,7 +15836,7 @@ sub create_output {
 		$sensors{'volts-5'} ||= 'N/A';
 		$sensors{'volts-3.3'} ||= 'N/A';
 		$sensors{'volts-vbat'} ||= 'N/A';
-		$rows[$j]{main::key($num++,1,1,'Voltages')} = $data_source;
+		$rows[$j]{main::key($num++,1,1,'Power')} = $data_source;
 		$rows[$j]{main::key($num++,0,2,'12v')} = $sensors{'volts-12'};
 		$rows[$j]{main::key($num++,0,2,'5v')} = $sensors{'volts-5'};
 		$rows[$j]{main::key($num++,0,2,'3.3v')} = $sensors{'volts-3.3'};
@@ -15777,6 +15848,11 @@ sub create_output {
 			$rows[$j]{main::key($num++,0,2,'dimm-p2')} = $sensors{'volts-dimm-p2'} if $sensors{'volts-dimm-p2'};
 			$rows[$j]{main::key($num++,0,2,'soc-p1')} = $sensors{'volts-soc-p1'} if $sensors{'volts-soc-p1'};
 			$rows[$j]{main::key($num++,0,2,'soc-p2')} = $sensors{'volts-soc-p2'} if $sensors{'volts-soc-p2'};
+		}
+		if (scalar @gpu == 1 && $extra > 2 && ($gpu[0]{'watts'} || $gpu[0]{'mvolts'})){
+			$rows[$j]{main::key($num++,1,2,'gpu')} = $gpu[0]{'type'};
+			$rows[$j]{main::key($num++,0,3,'watts')} = $gpu[0]{'watts'} if $gpu[0]{'watts'}  ;
+			$rows[$j]{main::key($num++,0,3,'mV')} = $gpu[0]{'mvolts'} if $gpu[0]{'mvolts'};
 		}
 	}
 	eval $end if $b_log;
@@ -15950,189 +16026,174 @@ sub ipmi_data {
 sub lm_sensors_data {
 	eval $start if $b_log;
 	my (%sensors);
-	my ($b_valid,$sys_fan_nu)  = (0,0);
-	my ($adapter,$fan_working,$temp_working,$working_unit)  = ('','','','');
-	@sensors_data = main::grabber(main::check_program('sensors') . " 2>/dev/null");
-	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/amdgpu-w-fan-speed-stretch-k10.txt";
-	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/peci-tin-geggo.txt";
-	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-w-other-biker.txt";
-	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-asus-chassis-1.txt";
-	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-devnull-1.txt";
-	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-jammin1.txt";
-	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-mx-incorrect-1.txt";
-	# my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-maximus-arch-1.txt";
-	# @sensors_data = main::reader($file);
-	# print join ("\n", @sensors_data), "\n";
-	@sensors_data = map {$_ =~ s/\s*:\s*\+?/:/;$_} @sensors_data;
-	foreach (@sensors_data){
-		# we get this from gpu_data()
-		if (/^(amdgpu|intel|nouveau|radeon|.*hwmon)-pci/){
-			$b_valid = 0;
-			$adapter = '';
+	my ($sys_fan_nu)  = (0);
+	my ($adapter,$fan_working,$temp_working,$working_unit)  = ('','','','','');
+	lm_sensors_processor() if !$b_sensors;
+	foreach $adapter (keys %{$sensors_raw{'main'}}){
+		next if !$adapter || ref $sensors_raw{'main'}->{$adapter} ne 'ARRAY';
+		# not sure why hwmon is excluded, forgot to add info in comments
+		if ((@sensors_use && !(grep {/$adapter/} @sensors_use)) ||
+		 (@sensors_exclude && (grep {/$adapter/} @sensors_exclude))){
 			next;
 		}
-		if (/^(?:(?!amdgpu|intel|nouveau|radeon|.*hwmon).)*-(isa|pci|virtual)-/){
-			$b_valid = 1;
-			$adapter = $1;
-			next;
-		}
-		next if !$b_valid;
-		my @working = split /:/, $_;
-		next if !$working[0] || /^Adapter/;
-		#print "$working[0]:$working[1]\n";
-		# There are some guesses here, but with more sensors samples it will get closer.
-		# note: using arrays starting at 1 for all fan arrays to make it easier overall
-		# we have to be sure we are working with the actual real string before assigning
-		# data to real variables and arrays. Extracting C/F degree unit as well to use
-		# when constructing temp items for array. 
-		# note that because of charset issues, no "°" degree sign used, but it is required 
-		# in testing regex to avoid error. It might be because I got that data from a forum post,
-		# note directly via debugger.
-		if ($_ =~ /^(AMBIENT|M\/B|MB|Motherboard|SIO|SYS).*:([0-9\.]+)[\s°]*(C|F)/i) {
-			# avoid SYSTIN: 118 C
-			if (main::is_numeric($2) && $2 < 90 ){
-				$sensors{'mobo-temp'} = $2;
+		foreach (@{$sensors_raw{'main'}->{$adapter}}){
+			my @working = split /:/, $_;
+			next if !$working[0];
+			#print "$working[0]:$working[1]\n";
+			# There are some guesses here, but with more sensors samples it will get closer.
+			# note: using arrays starting at 1 for all fan arrays to make it easier overall
+			# we have to be sure we are working with the actual real string before assigning
+			# data to real variables and arrays. Extracting C/F degree unit as well to use
+			# when constructing temp items for array. 
+			# note that because of charset issues, no "°" degree sign used, but it is required 
+			# in testing regex to avoid error. It might be because I got that data from a forum post,
+			# note directly via debugger.
+			if ($_ =~ /^(AMBIENT|M\/B|MB|Motherboard|SIO|SYS).*:([0-9\.]+)[\s°]*(C|F)/i) {
+				# avoid SYSTIN: 118 C
+				if (main::is_numeric($2) && $2 < 90 ){
+					$sensors{'mobo-temp'} = $2;
+					$working_unit = $3;
+					$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
+				}
+			}
+			# issue 58 msi/asus show wrong for CPUTIN so overwrite it if PECI 0 is present
+			# http://www.spinics.net/lists/lm-sensors/msg37308.html
+			# NOTE: had: ^CPU.*\+([0-9]+): but that misses: CPUTIN and anything not with + in starter
+			# However, "CPUTIN is not a reliable measurement because it measures difference to Tjmax,
+			# which is the maximum CPU temperature reported as critical temperature by coretemp"
+			# NOTE: I've seen an inexplicable case where: CPU:52.0°C fails to match with [\s°] but 
+			# does match with: [\s°]*. I can't account for this, but that's why the * is there
+			# Tdie is a new k10temp-pci syntax for cpu die temp
+			elsif ($_ =~ /^(CPU.*|Tdie.*):([0-9\.]+)[\s°]*(C|F)/i) {
+				$temp_working = $2;
+				$working_unit = $3;
+				if ( !$sensors{'cpu-temp'} || 
+					( defined $temp_working && $temp_working > 0 && $temp_working > $sensors{'cpu-temp'} ) ) {
+					$sensors{'cpu-temp'} = $temp_working;
+				}
+				$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
+			}
+			elsif ($_ =~ /^PECI\sAgent\s0.*:([0-9\.]+)[\s°]*(C|F)/i) {
+				$sensors{'cpu-peci-temp'} = $1;
+				$working_unit = $2;
+				$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
+			}
+			elsif ($_ =~ /^(P\/S|Power).*:([0-9\.]+)[\s°]*(C|F)/i) {
+				$sensors{'psu-temp'} = $2;
 				$working_unit = $3;
 				$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 			}
-		}
-		# issue 58 msi/asus show wrong for CPUTIN so overwrite it if PECI 0 is present
-		# http://www.spinics.net/lists/lm-sensors/msg37308.html
-		# NOTE: had: ^CPU.*\+([0-9]+): but that misses: CPUTIN and anything not with + in starter
-		# However, "CPUTIN is not a reliable measurement because it measures difference to Tjmax,
-		# which is the maximum CPU temperature reported as critical temperature by coretemp"
-		# NOTE: I've seen an inexplicable case where: CPU:52.0°C fails to match with [\s°] but 
-		# does match with: [\s°]*. I can't account for this, but that's why the * is there
-		# Tdie is a new k10temp-pci syntax for cpu die temp
-		elsif ($_ =~ /^(CPU.*|Tdie.*):([0-9\.]+)[\s°]*(C|F)/i) {
-			$temp_working = $2;
-			$working_unit = $3;
-			if ( !$sensors{'cpu-temp'} || 
-			   ( defined $temp_working && $temp_working > 0 && $temp_working > $sensors{'cpu-temp'} ) ) {
-				$sensors{'cpu-temp'} = $temp_working;
+			elsif ($_ =~ /^SODIMM.*:([0-9\.]+)[\s°]*(C|F)/i) {
+				$sensors{'sodimm-temp'} = $1;
+				$working_unit = $2;
+				$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 			}
-			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
-		}
-		elsif ($_ =~ /^PECI\sAgent\s0.*:([0-9\.]+)[\s°]*(C|F)/i) {
-			$sensors{'cpu-peci-temp'} = $1;
-			$working_unit = $2;
-			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
-		}
-		elsif ($_ =~ /^(P\/S|Power).*:([0-9\.]+)[\s°]*(C|F)/i) {
-			$sensors{'psu-temp'} = $2;
-			$working_unit = $3;
-			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
-		}
-		elsif ($_ =~ /^SODIMM.*:([0-9\.]+)[\s°]*(C|F)/i) {
-			$sensors{'sodimm-temp'} = $1;
-			$working_unit = $2;
-			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
-		}
-		# for temp1/2 only use temp1/2 if they are null or greater than the last ones
-		elsif ($_ =~ /^temp1:([0-9\.]+)[\s°]*(C|F)/i) {
-			$temp_working = $1;
-			$working_unit = $2;
-			if ( !$sensors{'temp1'} || 
-			   ( defined $temp_working && $temp_working > 0 && $temp_working > $sensors{'temp1'} ) ) {
-				$sensors{'temp1'} = $temp_working;
+			# for temp1/2 only use temp1/2 if they are null or greater than the last ones
+			elsif ($_ =~ /^temp1:([0-9\.]+)[\s°]*(C|F)/i) {
+				$temp_working = $1;
+				$working_unit = $2;
+				if ( !$sensors{'temp1'} || 
+					( defined $temp_working && $temp_working > 0 && $temp_working > $sensors{'temp1'} ) ) {
+					$sensors{'temp1'} = $temp_working;
+				}
+				$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 			}
-			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
-		}
-		elsif ($_ =~ /^temp2:([0-9\.]+)[\s°]*(C|F)/i) {
-			$temp_working = $1;
-			$working_unit = $2;
-			if ( !$sensors{'temp2'} || 
-			   ( defined $temp_working && $temp_working > 0 && $temp_working > $sensors{'temp2'} ) ) {
-				$sensors{'temp2'} = $temp_working;
+			elsif ($_ =~ /^temp2:([0-9\.]+)[\s°]*(C|F)/i) {
+				$temp_working = $1;
+				$working_unit = $2;
+				if ( !$sensors{'temp2'} || 
+					( defined $temp_working && $temp_working > 0 && $temp_working > $sensors{'temp2'} ) ) {
+					$sensors{'temp2'} = $temp_working;
+				}
+				$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 			}
-			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
-		}
-		# temp3 is only used as an absolute override for systems with all 3 present
-		elsif ($_ =~ /^temp3:([0-9\.]+)[\s°]*(C|F)/i) {
-			$temp_working = $1;
-			$working_unit = $2;
-			if ( !$sensors{'temp3'} || 
-			   ( defined $temp_working && $temp_working > 0 && $temp_working > $sensors{'temp3'} ) ) {
-				$sensors{'temp3'} = $temp_working;
+			# temp3 is only used as an absolute override for systems with all 3 present
+			elsif ($_ =~ /^temp3:([0-9\.]+)[\s°]*(C|F)/i) {
+				$temp_working = $1;
+				$working_unit = $2;
+				if ( !$sensors{'temp3'} || 
+					( defined $temp_working && $temp_working > 0 && $temp_working > $sensors{'temp3'} ) ) {
+					$sensors{'temp3'} = $temp_working;
+				}
+				$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 			}
-			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
-		}
-		# final fallback if all else fails, funtoo user showed sensors putting
-		# temp on wrapped second line, not handled
-		elsif ($_ =~ /^(core0|core 0|Physical id 0)(.*):([0-9\.]+)[\s°]*(C|F)/i) {
-			$temp_working = $3;
-			$working_unit = $4;
-			if ( !$sensors{'core-0-temp'} || 
-			   ( defined $temp_working && $temp_working > 0 && $temp_working > $sensors{'core-0-temp'} ) ) {
-				$sensors{'core-0-temp'} = $temp_working;
+			# final fallback if all else fails, funtoo user showed sensors putting
+			# temp on wrapped second line, not handled
+			elsif ($_ =~ /^(core0|core 0|Physical id 0)(.*):([0-9\.]+)[\s°]*(C|F)/i) {
+				$temp_working = $3;
+				$working_unit = $4;
+				if ( !$sensors{'core-0-temp'} || 
+					( defined $temp_working && $temp_working > 0 && $temp_working > $sensors{'core-0-temp'} ) ) {
+					$sensors{'core-0-temp'} = $temp_working;
+				}
+				$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
 			}
-			$sensors{'temp-unit'} = set_temp_unit($sensors{'temp-unit'},$working_unit) if $working_unit;
-		}
-		# note: can be cpu fan:, cpu fan speed:, etc.
-		elsif (!$sensors{'fan-main'}[1] && $_ =~ /^(CPU|Processor).*:([0-9]+)[\s]RPM/i) {
-			$sensors{'fan-main'} = () if !$sensors{'fan-main'};
-			$sensors{'fan-main'}[1] = $2;
-		}
-		elsif (!$sensors{'fan-main'}[2] && $_ =~ /^(M\/B|MB|SYS|Motherboard).*:([0-9]+)[\s]RPM/i) {
-			$sensors{'fan-main'} = () if !$sensors{'fan-main'};
-			$sensors{'fan-main'}[2] = $2;
-		}
-		elsif (!$sensors{'fan-main'}[3] && $_ =~ /(Power|P\/S|POWER).*:([0-9]+)[\s]RPM/i) {
-			$sensors{'fan-main'} = () if !$sensors{'fan-main'};
-			$sensors{'fan-main'}[3] = $2;
-		}
-		elsif (!$sensors{'fan-main'}[4] && $_ =~ /(SODIMM).*:([0-9]+)[\s]RPM/i) {
-			$sensors{'fan-main'} = () if !$sensors{'fan-main'};
-			$sensors{'fan-main'}[4] = $2;
-		}
-		# note that the counters are dynamically set for fan numbers here
-		# otherwise you could overwrite eg aux fan2 with case fan2 in theory
-		# note: cpu/mobo/ps/sodimm are 1/2/3/4
-		elsif ($_ =~ /^(AUX|CASE|CHASSIS).*:([0-9]+)[\s]RPM/i) {
-			$temp_working = $2;
-			$sensors{'fan-main'} = () if !$sensors{'fan-main'};
-			for ( my $i = 5; $i < 30; $i++ ){
-				next if defined $sensors{'fan-main'}[$i];
-				if ( !defined $sensors{'fan-main'}[$i] ){
-					$sensors{'fan-main'}[$i] = $temp_working;
-					last;
+			# note: can be cpu fan:, cpu fan speed:, etc.
+			elsif (!$sensors{'fan-main'}[1] && $_ =~ /^(CPU|Processor).*:([0-9]+)[\s]RPM/i) {
+				$sensors{'fan-main'} = () if !$sensors{'fan-main'};
+				$sensors{'fan-main'}[1] = $2;
+			}
+			elsif (!$sensors{'fan-main'}[2] && $_ =~ /^(M\/B|MB|SYS|Motherboard).*:([0-9]+)[\s]RPM/i) {
+				$sensors{'fan-main'} = () if !$sensors{'fan-main'};
+				$sensors{'fan-main'}[2] = $2;
+			}
+			elsif (!$sensors{'fan-main'}[3] && $_ =~ /(Power|P\/S|POWER).*:([0-9]+)[\s]RPM/i) {
+				$sensors{'fan-main'} = () if !$sensors{'fan-main'};
+				$sensors{'fan-main'}[3] = $2;
+			}
+			elsif (!$sensors{'fan-main'}[4] && $_ =~ /(SODIMM).*:([0-9]+)[\s]RPM/i) {
+				$sensors{'fan-main'} = () if !$sensors{'fan-main'};
+				$sensors{'fan-main'}[4] = $2;
+			}
+			# note that the counters are dynamically set for fan numbers here
+			# otherwise you could overwrite eg aux fan2 with case fan2 in theory
+			# note: cpu/mobo/ps/sodimm are 1/2/3/4
+			elsif ($_ =~ /^(AUX|CASE|CHASSIS).*:([0-9]+)[\s]RPM/i) {
+				$temp_working = $2;
+				$sensors{'fan-main'} = () if !$sensors{'fan-main'};
+				for ( my $i = 5; $i < 30; $i++ ){
+					next if defined $sensors{'fan-main'}[$i];
+					if ( !defined $sensors{'fan-main'}[$i] ){
+						$sensors{'fan-main'}[$i] = $temp_working;
+						last;
+					}
 				}
 			}
-		}
-		# in rare cases syntax is like: fan1: xxx RPM
-		elsif ($_ =~ /^FAN(1)?:([0-9]+)[\s]RPM/i) {
-			$sensors{'fan-default'} = () if !$sensors{'fan-default'};
-			$sensors{'fan-default'}[1] = $2;
-		}
-		elsif ($_ =~ /^FAN([2-9]|1[0-9]).*:([0-9]+)[\s]RPM/i) {
-			$fan_working = $2;
-			$sys_fan_nu = $1;
-			$sensors{'fan-default'} = () if !$sensors{'fan-default'};
-			if ( $sys_fan_nu =~ /^([0-9]+)$/ ) {
-				# add to array if array index does not exist OR if number is > existing number
-				if ( defined $sensors{'fan-default'}[$sys_fan_nu] ) {
-					if ( $fan_working >= $sensors{'fan-default'}[$sys_fan_nu] ) {
+			# in rare cases syntax is like: fan1: xxx RPM
+			elsif ($_ =~ /^FAN(1)?:([0-9]+)[\s]RPM/i) {
+				$sensors{'fan-default'} = () if !$sensors{'fan-default'};
+				$sensors{'fan-default'}[1] = $2;
+			}
+			elsif ($_ =~ /^FAN([2-9]|1[0-9]).*:([0-9]+)[\s]RPM/i) {
+				$fan_working = $2;
+				$sys_fan_nu = $1;
+				$sensors{'fan-default'} = () if !$sensors{'fan-default'};
+				if ( $sys_fan_nu =~ /^([0-9]+)$/ ) {
+					# add to array if array index does not exist OR if number is > existing number
+					if ( defined $sensors{'fan-default'}[$sys_fan_nu] ) {
+						if ( $fan_working >= $sensors{'fan-default'}[$sys_fan_nu] ) {
+							$sensors{'fan-default'}[$sys_fan_nu] = $fan_working;
+						}
+					}
+					else {
 						$sensors{'fan-default'}[$sys_fan_nu] = $fan_working;
 					}
 				}
-				else {
-					$sensors{'fan-default'}[$sys_fan_nu] = $fan_working;
+			}
+			if ($extra > 0){
+				if ($_ =~ /^[+]?(12 Volt|12V).*:([0-9\.]+)\sV/i) {
+					$sensors{'volts-12'} = $2;
 				}
-			}
-		}
-		if ($extra > 0){
-			if ($_ =~ /^[+]?(12 Volt|12V).*:([0-9\.]+)\sV/i) {
-				$sensors{'volts-12'} = $2;
-			}
-			# note: 5VSB is a field name
-			elsif ($_ =~ /^[+]?(5 Volt|5V):([0-9\.]+)\sV/i) {
-				$sensors{'volts-5'} = $2;
-			}
-			elsif ($_ =~ /^[+]?(3\.3 Volt|3\.3V).*:([0-9\.]+)\sV/i) {
-				$sensors{'volts-3.3'} = $2;
-			}
-			elsif ($_ =~ /^(Vbat).*:([0-9\.]+)\sV/i) {
-				$sensors{'volts-vbat'} = $2;
+				# note: 5VSB is a field name
+				elsif ($_ =~ /^[+]?(5 Volt|5V):([0-9\.]+)\sV/i) {
+					$sensors{'volts-5'} = $2;
+				}
+				elsif ($_ =~ /^[+]?(3\.3 Volt|3\.3V).*:([0-9\.]+)\sV/i) {
+					$sensors{'volts-3.3'} = $2;
+				}
+				elsif ($_ =~ /^(Vbat).*:([0-9\.]+)\sV/i) {
+					$sensors{'volts-vbat'} = $2;
+				}
 			}
 		}
 	}
@@ -16142,6 +16203,74 @@ sub lm_sensors_data {
 	# print Data::Dumper::Dumper \%sensors;
 	eval $end if $b_log;
 	return %sensors;
+}
+sub lm_sensors_processor {
+	eval $start if $b_log;
+	my (@data,@sensors_data,@values);
+	my ($adapter,$holder,$type) = ('','','');
+	@sensors_data = main::grabber(main::check_program('sensors') . " 2>/dev/null");
+	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/amdgpu-w-fan-speed-stretch-k10.txt";
+	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/peci-tin-geggo.txt";
+	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-w-other-biker.txt";
+	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-asus-chassis-1.txt";
+	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-devnull-1.txt";
+	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-jammin1.txt";
+	#my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-mx-incorrect-1.txt";
+	# my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-maximus-arch-1.txt";
+	# my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/kernel-58-sensors-ant-1.txt";
+	# my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-zenpower-nvme-2.txt";
+	# @sensors_data = main::reader($file);		# only way to get sensor array data? Unless using sensors -j, but can't assume json 
+	# print join ("\n", @sensors_data), "\n";
+	if (@sensors_data){
+		@sensors_data = map {$_ =~ s/\s*:\s*\+?/:/;$_} @sensors_data;
+		push @sensors_data, 'END';
+	}
+	#print Data::Dumper::Dumper \@sensors_data;
+	foreach (@sensors_data){
+		#print 'st:', $_, "\n";
+		next if /^\s*$/;
+		$_ = main::trimmer($_);
+		if (@values && $adapter && (/^Adapter/ || $_ eq 'END')){
+			# note: drivetemp: known, but many others could exist
+			if ($adapter =~ /^(drive|nvme)/){
+				$type = 'disk';
+			}
+			elsif ($adapter =~ /^(amdgpu|intel|nouveau|radeon)-/){
+				$type = 'gpu';
+			}
+			# ath/iwl: wifi; enp/eno/eth: lan nic
+			elsif ($adapter =~ /^(ath|iwl|en[op][0-9]|eth)[\S]+-/){
+				$type = 'network';
+			}
+			elsif ($adapter =~ /^(.*hwmon)-/){
+				$type = 'hwmon';
+			}
+			else {
+				$type = 'main';
+			}
+			$sensors_raw{$type}->{$adapter} = [@values];
+			@values = ();
+			$adapter = '';
+		}
+		if (/^Adapter/){
+			$adapter = $holder;
+		}
+		elsif (/\S:\S/){
+			push @values, $_;
+		}
+		else {
+			$holder = $_;
+		}
+	}
+	$b_sensors = 1;
+	if ($test[18]){
+		print 'lm sensors: ' , Data::Dumper::Dumper \%sensors_raw;
+	}
+	if ($b_log){
+		main::log_data('dump','lm-sensors data: %sensors_raw',\%sensors_raw);
+	}
+	eval $end if $b_log;
+	return @data;
 }
 
 # oddly, openbsd sysctl actually has hw.sensors data!
@@ -16166,7 +16295,6 @@ sub sysctl_data {
 sub set_temp_unit {
 	my ($sensors,$working) = @_;
 	my $return_unit = '';
-	
 	if ( !$sensors && $working ){
 		$return_unit = $working;
 	}
@@ -16510,39 +16638,44 @@ sub gpu_data {
 			}
 		}
 	}
-	if (@sensors_data){
-		my ($b_found,$holder) = (0,'');
-		foreach (@sensors_data){
-			next if (/^Adapter:/ || /^\s*$/);
-			if (/^(amdgpu|intel|nouveau|radeon)-pci-(.*)/){
-				$b_found = 1;
-				$holder = $1;
-				$j = scalar @gpudata;
-			}
-			if (/^(?:(?!amdgpu|.*hwmon|intel|nouveau|radeon).)*-(pci|virtual|isa)-(.*)/){
-				$b_found = 0;
-				$holder = '';
-			}
-			if ($b_found){
-				$gpudata[$j]{'type'} = $holder;
-				if (/^[^:]*:([0-9]+).*\b(C|F)\s/i){
+	if ($sensors_raw{'gpu'}){
+		#my ($b_found,$holder) = (0,'');
+		foreach my $adapter (keys %{$sensors_raw{'gpu'}}){
+			$j = scalar @gpudata;
+			$gpudata[$j]{'type'} = $adapter;
+			$gpudata[$j]{'type'} =~ s/^(amdgpu|intel|nouveau|radeon)-.*/$1/;
+			# print "ad: $adapter\n";
+			foreach (@{$sensors_raw{'gpu'}->{$adapter}}){
+				# print "val: $_\n";
+				if (/^[^:]*mem[^:]*:([0-9\.]+).*\b(C|F)\b/i){
+					$gpudata[$j]{'temp-mem'} = $1;
+					$gpudata[$j]{'unit'} = $2;
+					 # print "temp: $_\n";
+				}
+				elsif (/^[^:]+:([0-9\.]+).*\b(C|F)\b/i){
 					$gpudata[$j]{'temp'} = $1;
 					$gpudata[$j]{'unit'} = $2;
-					# print "$_\n";
+					 # print "temp: $_\n";
 				}
 				# speeds can be in percents or rpms, so need the 'fan' in regex
-				if (/^.*fan.*:([0-9]+).*(RPM)?/i){
+				elsif (/^.*fan.*:([0-9\.]+).*(RPM)?/i){
 					$gpudata[$j]{'fan-speed'} = $1;
 					# NOTE: we test for nvidia %, everything else stays with nothing
 					$gpudata[$j]{'speed-unit'} = '';
 				}
-				main::log_data('dump','sensors output: video: @gpudata',\@gpudata);
+				elsif (/^[^:]+:([0-9\.]+)\s+W\s/i){
+					$gpudata[$j]{'watts'} = $1;
+				}
+				elsif (/^[^:]+:([0-9\.]+)\s+mV\s/i){
+					$gpudata[$j]{'mvolts'} = $1;
+				}
 			}
 		}
 	}
+	main::log_data('dump','sensors output: video: @gpudata',\@gpudata);
 	# we'll probably use this data elsewhere so make it a one time call
 	$b_gpudata = 1;
-	# print Data::Dumper::Dumper \@gpudata;
+	print 'gpudata: ', Data::Dumper::Dumper \@gpudata if $test[18];
 	eval $end if $b_log;
 	return @gpudata;
 }
@@ -17541,8 +17674,8 @@ sub get_weather {
 		$date_time = test_locale_date($date_time,$show{'weather-location'},$weather{'observation-epoch'});
 		$weather{'observation-time-local'} = $date_time;
 	}
-	return %weather;
 	eval $end if $b_log;
+	return %weather;
 }
 sub download_weather {
 	eval $start if $b_log;
@@ -17735,12 +17868,13 @@ sub get_compiler_version_linux {
 	my $result = $data[0] if @data;
 	if ($result){
 		# $result = $result =~ /\*(gcc|clang)\*eval\*/;
+		# $result='Linux version 5.4.0-rc1 (sourav@archlinux-pc) (clang version 9.0.0 (tags/RELEASE_900/final)) #1 SMP PREEMPT Sun Oct 6 18:02:41 IST 2019';
 		if ($result =~ /(gcc|clang).*version\s([\S]+)/){
 			$version = $2;
 			$version ||= 'N/A'; # we don't really know what linux clang looks like!
 			@compiler = ($1,$version);
 		}
-		elsif ($result =~ /\((gcc|clang)[^\(]*\([^\)]+\)\s+([0-9\.]+)\s.*,\s*GNU/){
+		elsif ($result =~ /\((gcc|clang)[^\(]*\([^\)]+\)\s+([0-9\.]+)\s.*,\s*/){
 			$version = $2;
 			$version ||= 'N/A'; # we don't really know what linux clang looks like!
 			@compiler = ($1,$version);
@@ -17750,7 +17884,6 @@ sub get_compiler_version_linux {
 	eval $end if $b_log;
 	return @compiler;
 }
-
 
 ## Get DesktopEnvironment
 ## returns array:
@@ -18012,8 +18145,8 @@ sub check_gnome {
 		$b_gnome = 1;
 	}
 	main::log_data('data','$detection:$b_gnome',$detection . ":$b_gnome") if $b_log;
-	return $b_gnome;
 	eval $end if $b_log;
+	return $b_gnome;
 }
 sub get_env_xprop_non_gnome_based_data {
 	eval $start if $b_log;
@@ -18419,10 +18552,10 @@ sub get_display_manager {
 		   ( $b_vrun && ( -f "/var/run/$id" || -d "/var/run/$working" ) ) || 
 		   ( $b_vrunrc && ( -f "/var/run/rc.d/$working" || -d "/var/run/rc.d/$id" ) ) ) && 
 		   ! grep {/$working/} @found ){
-			if ($extra > 2 && awk( \@dms_version, $working) && ($path = main::check_program($working)) ){}
+			if ($extra > 2 && awk( \@dms_version, $working) && ($path = check_program($working)) ){}
 			else {$path = $working;}
 			# print "$path $extra\n";
-			@data = main::program_data($working,$path,3);
+			@data = program_data($working,$path,3);
 			$working = $data[0];
 			$working .= ' ' . $data[1] if $data[1];
 			push @found, $working;
@@ -18431,7 +18564,7 @@ sub get_display_manager {
 	if (!@found){
 		# ly does not have a run/pid file
 		if (grep {$_ eq 'ly'} @ps_gui) {
-			@data = main::program_data('ly','ly',3);
+			@data = program_data('ly','ly',3);
 			$found[0] = $data[0];
 			$found[0] .= ' ' . $data[1] if $data[1];
 		}
@@ -19462,6 +19595,8 @@ sub create_output {
 	if ($extra > 1 && %counts){
 		foreach (sort keys %counts){
 			my ($cont,$ind) = (1,2);
+			# if package mgr command returns error, this will not be an array
+			next if ref $counts{$_} ne 'ARRAY';
 			if ($counts{$_}->[0] || $b_admin){
 				my $key = $_;
 				$key =~ s/^zzz-//; # get rid of the special sorters for items to show last
@@ -19684,7 +19819,7 @@ sub get_shell_data {
 			# do nothing, just leave $shell as is
 		}
 		# note: not all programs return version data. This may miss unhandled shells!
-		elsif ((@app = main::program_data(lc($shell),lc($shell),1)) && $app[0]){
+		elsif ((@app = program_data(lc($shell),lc($shell),1)) && $app[0]){
 			$shell = $app[0];
 			$client{'version'} = $app[1] if $app[1]; 
 			#print "app test $shell v: $client{'version'}\n";
@@ -19704,7 +19839,7 @@ sub get_shell_data {
 					if (test_shell($parent)){
 						$shell = $parent;
 					}
-					elsif ((@app = main::program_data(lc($parent),lc($parent),0)) && $app[0]){
+					elsif ((@app = program_data(lc($parent),lc($parent),0)) && $app[0]){
 						$shell = $app[0];
 						$client{'version'} = $app[1] if $app[1];
 					}
@@ -19722,7 +19857,7 @@ sub get_shell_data {
 		$client{'name-print'} = $shell;
 		#print "shell4: $client{'name-print'} version: $client{'version'}\n";
 		if ($extra > 2 && $working && lc($shell) ne lc($working)){
-			if (@app = main::program_data(lc($working))){
+			if (@app = program_data(lc($working))){
 				$client{'default-shell'} = $app[0];
 				$client{'default-shell-v'} = $app[1];
 				$client{'default-shell-v'} =~ s/(\(.*|-release|-version)// if $client{'default-shell-v'};
@@ -20584,7 +20719,7 @@ sub set_dmidecode_data {
 	# about random dmi type ordering in the data, which happens. Also sort 
 	# by handle, as secondary sort.
 	@dmi = sort { $a->[0] <=> $b->[0] || $a->[1] <=> $b->[1] } @dmi;
-	main::log_data('dump','@dmi',\@dmi) if $b_log;
+	log_data('dump','@dmi',\@dmi) if $b_log;
 	print Dumper \@dmi if $test[2];
 	eval $end if $b_log;
 }
@@ -20650,7 +20785,7 @@ sub set_ip_addr {
 		@temp = ($if,[@ips]);
 		@ifs = (@ifs,@temp);
 	}
-	main::log_data('dump','@ifs',\@ifs) if $b_log;
+	log_data('dump','@ifs',\@ifs) if $b_log;
 	print Dumper \@ifs if $test[3];
 	eval $end if $b_log;
 }
@@ -20751,8 +20886,8 @@ sub set_ifconfig {
 	}
 	print Dumper \@ifs if $test[3];
 	print Dumper \@ifs_bsd if $test[3];
-	main::log_data('dump','@ifs',\@ifs) if $b_log;
-	main::log_data('dump','@ifs_bsd',\@ifs_bsd) if $b_log;
+	log_data('dump','@ifs',\@ifs) if $b_log;
+	log_data('dump','@ifs_bsd',\@ifs_bsd) if $b_log;
 	eval $end if $b_log;
 }
 
@@ -21388,7 +21523,7 @@ sub generate_lines {
 	if ($b_log){
 		# I don't think we need to see this, it's long, but leave in case we do
 		#main::log_data('dump','@ps_aux',\@ps_aux);
-		main::log_data('dump','@ps_cmd',\@ps_cmd);
+		log_data('dump','@ps_cmd',\@ps_cmd);
 	}
 	if ( $show{'short'} ){
 		set_dmesg_boot_data() if ($bsd_type && !$b_dmesg_boot_check);
@@ -21589,14 +21724,14 @@ sub generate_short_data {
 	if (@disk){
 		$size = $disk[0]{'size'};
 		# must be > 0
-		if ($disk[0]{'size'} && main::is_numeric($disk[0]{'size'}) ){
+		if ($disk[0]{'size'} && is_numeric($disk[0]{'size'}) ){
 			$size_holder = $disk[0]{'size'};
 			@temp = get_size($size);
 			$size = $temp[0];
 			$size_type = " $temp[1]";
 		}
 		$used = $disk[0]{'used'};
-		if (main::is_numeric($disk[0]{'used'}) ){
+		if (is_numeric($disk[0]{'used'}) ){
 			$used_holder = $disk[0]{'used'};
 			@temp = get_size($used);
 			$used = $temp[0];
