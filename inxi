@@ -31,7 +31,7 @@ use Data::Dumper qw(Dumper); # print_r
 use File::Find;
 use File::stat; # needed for Xorg.0.log file mtime comparisons
 use Getopt::Long qw(GetOptions);
-# Note: default auto_abbrev is enabled, that's fine
+# Note: default auto_abbrev is enabled
 Getopt::Long::Configure ('bundling', 'no_ignore_case', 
 'no_getopt_compat', 'no_auto_abbrev','pass_through');
 use POSIX qw(uname strftime ttyname);
@@ -39,8 +39,8 @@ use POSIX qw(uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.1.08';
-my $self_date='2020-10-16';
+my $self_version='3.1.09';
+my $self_date='2020-11-11';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -60,8 +60,8 @@ if (eval {require Time::HiRes}){
 }
 @t0 = eval 'Time::HiRes::gettimeofday()' if $b_hires; # let's start it right away
 ## Hashes
-my (%alerts,%client,%colors,%debugger,%dl,%files,%program_values,%rows,
-%sensors_raw,%system_files);
+my (%alerts,%build_prop,%client,%colors,%debugger,%dl,%files,%program_values,
+%rows,%sensors_raw,%system_files);
 
 ## Arrays
 # ps_aux is full output, ps_cmd is only the last 10 columns to last
@@ -75,7 +75,7 @@ my (@dm_boot_disk,@dm_boot_optical,@glabel,@gpart,@hardware_raid,@labels,
 my @test = (0,0,0,0,0);
 
 ## Booleans
-my ($b_admin,$b_arm,$b_bb_ps,$b_block_tool,
+my ($b_admin,$b_arm,$b_bb_ps,$b_block_tool,$b_build_prop,
 $b_display,$b_dmesg_boot_check,$b_dmi,$b_dmidecode_force,
 $b_fake_bsd,$b_fake_dboot,$b_fake_dmidecode,$b_fake_pciconf,$b_fake_sysctl,
 $b_fake_usbdevs,$b_force_display,$b_gpudata,$b_irc,
@@ -230,11 +230,11 @@ sub check_tools {
 		%hash = (
 		'dmidecode' => {
 		'action' => $action,
-		'missing' => 'Required program dmidecode not available',
-		'permissions' => 'Unable to run dmidecode. Root privileges required.',
-		'smbios' => 'No SMBIOS data for dmidecode to process',
-		'no-data' => 'dmidecode is not allowed to read /dev/mem',
-		'unknown-error' => 'dmidecode was unable to generate data',
+		'missing' => row_defaults('tool-missing-required','dmidecode'),
+		'permissions' => row_defaults('tool-permissions','dmidecode'),
+		'smbios' => row_defaults('dmidecode-smbios'),
+		'no-data' => row_defaults('dmidecode-dev-mem'),
+		'unknown-error' => row_defaults('tool-unknown-error','dmidecode'),
 		},
 		);
 		%alerts = (%alerts, %hash);
@@ -274,8 +274,8 @@ sub check_tools {
 			%hash = (
 			$_ => {
 			'action' => $action,
-			'missing' => "Missing system tool: $_. Output will be incomplete",
-			'permissions' => "Unable to run $_. Root required?",
+			'missing' => row_defaults('tool-missing-incomplete',"$_"),
+			'permissions' => row_defaults('tool-permissions',"$_"),
 			},
 			);
 			%alerts = (%alerts, %hash);
@@ -315,13 +315,13 @@ sub check_tools {
 	}
 	foreach ( keys %commands ){
 		$action = 'use';
-		$message = 'Present and working';
+		$message = row_defaults('tool-present');
 		if ( ($commands{$_} eq 'linux' && $os ne 'linux' ) || ($commands{$_} eq 'bsd' && $os eq 'linux' ) ){
-			$message = "No " . ucfirst($os) . " support. Is a comparable $_ tool available?";
+			$message = row_defaults('tool-missing-os', ucfirst($os) . " $_");
 			$action = 'platform';
 		}
 		elsif (!check_program($_)){
-			$message = "Required tool $_ not installed. Check --recommends";
+			$message = row_defaults('tool-missing-recommends',"$_");
 			$action = 'missing';
 		}
 		%hash = (
@@ -334,7 +334,6 @@ sub check_tools {
 		%alerts = (%alerts, %hash);
 	}
 	# print Dumper \%alerts;
-	
 	set_fake_tools() if $b_fake_bsd;
 }
 # args: 1 - desktop/app command for --version; 2 - search string; 
@@ -1409,13 +1408,13 @@ sub run_debugger {
 	if (!$b_debug){
 		# note: android has unreadable /sys, but -x and -r tests pass
 		# main::globber('/sys/*') && 
-		if ( main::count_dir_files('/sys') ){
+		if ( $debugger{'sys'} && main::count_dir_files('/sys') ){
 			build_tree('sys');
 			# kernel crash, not sure what creates it, for ppc, as root
 			sys_traverse_data() if ($debugger{'sys'} && ($debugger{'sys-force'} || !$b_root || !$b_ppc )) ; 
 		}
 		else {
-			print "Skipping /sys data collection. /sys not present, or empty.\n";
+			print "Skipping /sys data collection.\n";
 		}
 		print $line3;
 		# note: proc has some files that are apparently kernel processes, I've tried 
@@ -1561,21 +1560,27 @@ sub disk_data {
 	['lsblk', '-pr'],
 	['lsblk', '-pP'],
 	['lsblk', '-r'],
-	['lsblk', '-r --output NAME,PKNAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,MOUNTPOINT,PHY-SEC,LOG-SEC'],
-	['lsblk', '-rb --output NAME,PKNAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,MOUNTPOINT,PHY-SEC,LOG-SEC'],
+	['lsblk', '-r --output NAME,PKNAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,MOUNTPOINT,PHY-SEC,LOG-SEC,PARTFLAGS'],
+	['lsblk', '-rb --output NAME,PKNAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,MOUNTPOINT,PHY-SEC,LOG-SEC,PARTFLAGS'],
 	['lsblk', '-Pb --output NAME,PKNAME,TYPE,RM,FSTYPE,SIZE'],
-	['lsblk', '-Pb --output NAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,SERIAL,MOUNTPOINT,PHY-SEC,LOG-SEC'],
+	['lsblk', '-Pb --output NAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,SERIAL,MOUNTPOINT,PHY-SEC,LOG-SEC,PARTFLAGS'],
 	['gpart', 'list'],
 	['gpart', 'show'],
 	['gpart', 'status'],
 	['ls', '-l /dev'],
+	# block is for mmcblk / arm devices
+	['ls', '-l /dev/block'],
+	['ls', '-l /dev/block/bootdevice'],
+	['ls', '-l /dev/block/bootdevice/by-name'],
 	['ls', '-l /dev/disk'],
 	['ls', '-l /dev/disk/by-id'],
 	['ls', '-l /dev/disk/by-label'],
+	['ls', '-l /dev/disk/by-partlabel'],
+	['ls', '-l /dev/disk/by-partuuid'],
+	['ls', '-l /dev/disk/by-path'],
 	['ls', '-l /dev/disk/by-uuid'],
 	# http://comments.gmane.org/gmane.linux.file-systems.zfs.user/2032
 	['ls', '-l /dev/disk/by-wwn'],
-	['ls', '-l /dev/disk/by-path'],
 	['ls', '-l /dev/mapper'],
 	# LSI raid https://hwraid.le-vert.net/wiki/LSIMegaRAIDSAS
 	['megacli', '-AdpAllInfo -aAll'],
@@ -1842,6 +1847,7 @@ sub system_data {
 	['systemctl','list-units'],
 	['systemctl','list-units --type=target'],
 	['systemd-detect-virt',''],
+	['uname','-a'],
 	['upower','-e'],
 	['uptime',''],
 	['vcgencmd','get_mem arm'],
@@ -1861,6 +1867,8 @@ sub system_files {
 	push (@files, '/etc/issue');
 	push (@files, '/etc/lsb-release');
 	push (@files, '/etc/os-release');
+	push (@files, '/system/build.prop');# android data file, requires rooted
+	push (@files, '/var/log/installer/oem-id'); # ubuntu only for oem installs?
 	copy_files(\@files,'system-distro');
 	@files = main::globber('/etc/upstream[-_]{[rR]elease,[vV]ersion}/*');
 	copy_files(\@files,'system-distro');
@@ -1897,7 +1905,7 @@ sub run_self {
 	print "Creating $self_name output file now. This can take a few seconds...\n";
 	print "Starting $self_name from: $self_path\n";
 	my $i = ($option eq 'main-full')? ' -i' : '';
-	my $z = ($debugger{'z'}) ? ' -z' : '';
+	my $z = ($debugger{'filter'}) ? ' -z' : '';
 	my $iz = "$i$z";
 	$iz =~ s/[\s-]//g;
 	my $cmd = "$self_path/$self_name -FRfJrploudmaxxx$i$z --slots --debug 10 -y 120 > $data_dir/$self_name-FRfJrploudmaxxx$iz-slots-y120.txt 2>&1";
@@ -2152,8 +2160,11 @@ sub wanted {
 		# print $File::Find::name . "\n";
 		# block maybe: cfgroup\/
 		# picdec\/|, wait_for_fb_sleep/wake is an odroid thing caused hang
-		return if $File::Find::name =~ /(^\/sys\/power\/wait_for_fb)/;
+		# wakeup_count also fails for android, but works fine on regular systems
+		return if $b_arm && $File::Find::name =~ /^\/sys\/power\/(wait_for_fb_|wakeup_count$)/;
 		return if $File::Find::name =~ /\/(\.[a-z]|kernel\/|trace\/|parameters\/|debug\/)/;
+		# pp_num_states: amdgpu driver bug; android: wakeup_count
+		return if $File::Find::name =~ /\/pp_num_states$/;
 		# comment this one out if you experience hangs or if 
 		# we discover syntax of foreign language characters
 		# Must be ascii like. This is questionable and might require further
@@ -4399,6 +4410,8 @@ sub get_options{
 		else {
 			error_handler('bad-arg', $opt, $arg);
 		} },
+	'debug-filter|debug-z' => sub {
+		$debugger{'filter'} = 1 },
 	'debug-no-eps' => sub {
 		$debugger{'no-exit'} = 1;
 		$debugger{'no-proc'} = 1;
@@ -4418,8 +4431,6 @@ sub get_options{
 		$debugger{'sys-print'} = 1; },
 	'debug-test-1' => sub {
 		$debugger{'test-1'} = 1; },
-	'debug-z' => sub {
-		$debugger{'z'} = 1 },
 	'dig' => sub {
 		$b_skip_dig = 0; },
 	'display:s' => sub { 
@@ -4938,7 +4949,8 @@ sub show_options {
 	['2', '-D', '', "Firmware rev. if available; partition scheme, in some cases; disk 
 	rotation speed (if detected)." ],
 	['2', '-I', '', "For 'Shell:' adds ([su|sudo|login]) to shell name if present; 
-	adds default shell+version if different; for 'running in:' adds (SSH) if SSH session." ],
+	adds default shell+version if different; for 'running in:' adds (SSH) if SSH session;
+	adds wakeups: (from suspend) to Uptime." ],
 	['2', '-J', '', "For Device: serial number (if present), interface count; USB speed." ],
 	['2', '-m,--memory-modules', '', "Width of memory bus, data and total (if present and greater 
 	than data); Detail for Type, if present; module voltage, if available; serial 
@@ -5081,6 +5093,7 @@ sub show_options {
 	automatically, removes debugger data directory, leaves tar.gz debugger file." ],
 	['2', '22', '', "Upload debugger dataset to $self_name debugger server 
 	automatically, removes debugger data directory and debugger tar.gz file." ],
+	# ['1', '', '--debug-filter', "Add -z flag to debugger $self_name optiions." ],
 	['1', '', '--debug-proc', "Force debugger parsing of /proc as sudo/root." ],
 	['1', '', '--debug-proc-print', "To locate file that /proc debugger hangs on." ],
 	['1', '', '--debug-no-exit', "Skip exit on error to allow completion." ],
@@ -5611,22 +5624,6 @@ sub dmi_cleaner {
 	return $string;
 }
 
-sub remove_duplicates {
-	my ($string) = @_;
-	return if ! $string;
-	my $holder = '';
-	my (@temp);
-	my @data = split /\s+/, $string;
-	foreach (@data){
-		if ($holder ne $_){
-			push @temp, $_;
-		}
-		$holder = $_;
-	}
-	$string = join ' ', @temp;
-	return $string;
-}
-
 # args: $1 - size in KB, return KB, MB, GB, TB, PB, EB
 sub get_size {
 	my ($size,$b_int) = @_;
@@ -5678,10 +5675,11 @@ sub increment_starters {
 sub pci_cleaner {
 	my ($string,$type) = @_;
 	#print "st1 $type:$string\n";
-	my $filter = 'compatible\scontroller|\b(device|controller|connection|multimedia)\b|\([^)]+\)';
+	my $filter = 'and\ssubsidiaries|compatible\scontroller|';
+	$filter .= '\b(device|controller|connection|multimedia)\b|\([^)]+\)';
 	# \[[^\]]+\]$| not trimming off ending [...] initial type filters removes end
 	$filter = '\[[^\]]+\]$|' . $filter if $type eq 'pci';
-	$string =~ s/$filter//ig;
+	$string =~ s/($filter)//ig;
 	$string =~ s/\s\s+/ /g;
 	$string =~ s/^\s+|\s+$//g;
 	#print "st2 $type:$string\n";
@@ -5691,10 +5689,10 @@ sub pci_cleaner {
 sub pci_cleaner_subsystem {
 	my ($string) = @_;
 	# we only need filters for features that might use vendor, -AGN
-	my $filter = 'adapter|(hd\s)?audio|definition|desktop|ethernet|gigabit|graphics|';
-	$filter .= 'hdmi(\/[\S]+)?|high|integrated|motherboard|network|onboard|';
+	my $filter = 'and\ssubsidiaries|adapter|(hd\s)?audio|definition|desktop|ethernet|';
+	$filter .= 'gigabit|graphics|hdmi(\/[\S]+)?|high|integrated|motherboard|network|onboard|';
 	$filter .= 'raid|pci\s?express';
-	$string =~ s/\b($filter)\b//gi;
+	$string =~ s/\b($filter)\b//ig;
 	$string =~ s/\s\s+/ /g;
 	$string =~ s/^\s+|\s+$//g;
 	return $string;
@@ -5721,77 +5719,99 @@ sub regex_cleaner {
 	return $string;
 }
 
+sub remove_duplicates {
+	my ($string) = @_;
+	return if ! $string;
+	my $holder = '';
+	my (@temp);
+	my @data = split /\s+/, $string;
+	foreach (@data){
+		if ($holder ne $_){
+			push @temp, $_;
+		}
+		$holder = $_;
+	}
+	$string = join ' ', @temp;
+	return $string;
+}
+
 sub row_defaults {
 	my ($type,$id) = @_;
 	$id ||= '';
 	my %unfound = (
 	'arm-cpu-f' => 'Use -f option to see features',
-	'arm-pci' => "No ARM data found for this feature.",
-	'battery-data' => "No system battery data found. Is one present?",
-	'battery-data-sys' => "No /sys data found.",
-	'cpu-bugs-null' => "No CPU vulnerability/bugs data available.",
-	'cpu-model-null' => "Model N/A",
+	'arm-pci' => 'No ARM data found for this feature.',
+	'battery-data' => 'No system Battery data found. Is one present?',
+	'battery-data-sys' => 'No /sys data found.',
+	'cpu-bugs-null' => 'No CPU vulnerability/bugs data available.',
+	'cpu-model-null' => 'Model N/A',
 	'cpu-speeds' => "No speed data found for $id cores.",
-	'darwin-feature' => "Feature not supported iu Darwin/OSX.",
-	'disk-data-bsd' => "No disk data found for this BSD system.",
-	'disk-data' => "No Disk data was found.",
-	'disk-size-0' => "Total N/A",
+	'darwin-feature' => 'Feature not supported iu Darwin/OSX.',
+	'disk-data' => 'No Disk data was found.',
+	'disk-data-bsd' => 'No Disk data found for this BSD system.',
+	'disk-size-0' => 'Total N/A',
 	'display-console' => 'No advanced graphics data found on this system in console.',
-	'display-driver-na' => "display driver n/a",
+	'display-driver-na' => 'display driver n/a',
 	'display-null' => 'No advanced graphics data found on this system.',
 	'display-root' => 'Advanced graphics data unavailable in console for root.',
 	'display-root-x' => 'Advanced graphics data unavailable for root.',
-	'display-server' => "No display server data found. Headless machine?",
-	'glxinfo-missing' => "Unable to show advanced data. Required tool glxinfo missing.",
+	'display-server' => 'No display server data found. Headless machine?',
+	'glxinfo-missing' => 'Unable to show advanced data. Required tool glxinfo missing.',
 	'gl-empty' => 'Unset. Missing GL driver?',
 	'display-try' => 'Advanced graphics data unavailable in console. Try -G --display',
 	'dev' => 'Feature under development',
 	'dmesg-boot-permissions' => 'dmesg.boot permissions',
 	'dmesg-boot-missing' => 'dmesg.boot not found',
 	'IP' => "No $id found. Connected to web? SSL issues?",
+	'dmidecode-dev-mem' => 'dmidecode is not allowed to read /dev/mem',
+	'dmidecode-smbios' => 'No SMBIOS data for dmidecode to process',
 	'IP-dig' => "No $id found. Connected to web? SSL issues? Try --no-dig",
 	'IP-no-dig' => "No $id found. Connected to web? SSL issues? Try enabling dig",
-	'machine-data' => "No machine data: try newer kernel.",
-	'machine-data-bsd' => "No machine data: Is dmidecode installed? Try -M --dmidecode.",
-	'machine-data-dmidecode' => "No machine data: try newer kernel. Is dmidecode installed? Try -M --dmidecode.",
-	'machine-data-force-dmidecode' => "No machine data: try newer kernel. Is dmidecode installed? Try -M --dmidecode.",
-	'mips-pci' => "No MIPS data found for this feature.",
-	'optical-data' => "No Optical or Floppy data was found.",
-	'optical-data-bsd' => "No floppy or optical data found for this BSD system.",
+	'machine-data' => 'No Machine data: try newer kernel.',
+	'machine-data-bsd' => 'No Machine data: Is dmidecode installed? Try -M --dmidecode.',
+	'machine-data-dmidecode' => 'No Machine data: try newer kernel. Is dmidecode installed? Try -M --dmidecode.',
+	'machine-data-force-dmidecode' => 'No Machine data: try newer kernel. Is dmidecode installed? Try -M --dmidecode.',
+	'mips-pci' => 'No MIPS data found for this feature.',
+	'optical-data' => 'No Optical or Floppy data was found.',
+	'optical-data-bsd' => 'No Optical or Floppy data found for this BSD system.',
 	'output-limit' => "Output throttled. IPs: $id; Limit: $limit; Override: --limit [1-x;-1 all]",
 	'packages' => 'No packages detected. Unsupported package manager?',
-	'partition-data' => "No Partition data was found.",
-	'partition-hidden' => "N/A (hidden?)",
+	'partition-data' => 'No Partition data was found.',
+	'partition-hidden' => 'N/A (hidden?)',
 	'pci-advanced-data' => 'bus/chip ids unavailable',
-	'pci-card-data' => "No Device data found.",
-	'pci-card-data-root' => "Device data requires root.",
-	'pci-slot-data' => "No PCI slot data found.",
-	'ps-data-null' => "No Process data available.",
-	'raid-data' => "No RAID data was found.",
-	'ram-data' => "No RAM data was found.",
-	'root-required' => "<superuser/root required>",
-	'root-suggested' => "try sudo/root",
-	'sensors-data-ipmi' => "No ipmi sensors data was found.",
-	'sensors-data-linux' => "No sensors data was found. Is sensors configured?",
-	'sensors-ipmi-root' => "Unable to run ipmi sensors. Root privileges required.",
-	'smartctl-command-failed' => "A mandatory SMART command failed. Various possible causes.",
-	'smartctl-root' => "Unable to run smartctl. Root privileges required.",
-	'smartctl-udma-crc' => "Bad cable/connection?",
-	'smartctl-usb' => "Unknown USB bridge. Flash drive/Unsupported enclosure?",
-	'smartctl-unknown' => "Unknown smartctl error. Unable to get data.",
-	'swap-admin' => "No admin swap data available.",
-	'swap-data' => "No Swap data was found.",
-	'tool-missing' => "<missing $id>",
-	'unmounted-data' => "No unmounted partitions found.",
-	'unmounted-data-bsd' => "No unmounted partition data found for this BSD system.",
-	'unmounted-file' => "No /proc/partitions file found.",
-	'usb-data' => "No USB data was found. Server?",
-	'unknown-desktop-version' => "ERR-101",
-	'unknown-dev' => "ERR-102",
-	'unknown-shell' => "ERR-100",
+	'pci-card-data' => 'No Device data found.',
+	'pci-card-data-root' => 'Device data requires root.',
+	'pci-slot-data' => 'No PCI Slot data found.',
+	'ps-data-null' => 'No Process data available.',
+	'raid-data' => 'No RAID data was found.',
+	'ram-data' => 'No RAM data was found.',
+	'root-required' => '<superuser/root required>',
+	'root-suggested' => 'try sudo/root',
+	'sensors-data-ipmi' => 'No ipmi sensors data was found.',
+	'sensors-data-linux' => 'No sensors data was found. Is sensors configured?',
+	'sensors-ipmi-root' => 'Unable to run ipmi sensors. Root privileges required.',
+	'smartctl-command-failed' => 'A mandatory SMART command failed. Various possible causes.',
+	'smartctl-udma-crc' => 'Bad cable/connection?',
+	'smartctl-usb' => 'Unknown USB bridge. Flash drive/Unsupported enclosure?',
+	'swap-admin' => 'No admin Swap data available.',
+	'swap-data' => 'No Swap data was found.',
+	'tool-missing-basic' => "<missing: $id>",
+	'tool-missing-incomplete' => "Missing system tool: $id. Output will be incomplete",
+	'tool-missing-os' => "No OS support. Is a comparable $id tool available?",
+	'tool-missing-recommends' => "Required tool $id not installed. Check --recommends",
+	'tool-missing-required' => "Required program $id not available",
+	'tool-permissions' => "Unable to run $id. Root privileges required.",
+	'tool-present' => 'Present and working',
+	'tool-unknown-error' => "Unknown $id error. Unable to generate data.",
+	'unmounted-data' => 'No Unmounted partitions found.',
+	'unmounted-data-bsd' => 'No Unmounted partition data found for this BSD system.',
+	'unmounted-file' => 'No /proc/partitions file found.',
+	'usb-data' => 'No USB data was found. Server?',
+	'unknown-desktop-version' => 'ERR-101',
+	'unknown-dev' => 'ERR-102',
+	'unknown-shell' => 'ERR-100',
 	'weather-error' => "Error: $id",
 	'weather-null' => "No $id found. Internet connection working?",
-	'xdpyinfo-missing' => '<xdpyinfo missing>',
 	);
 	return $unfound{$type};
 }
@@ -6706,7 +6726,8 @@ sub battery_data_sys {
 		$battery{$id} = ({});
 		foreach $file (@items){
 			$path = "$item/$file";
-			$value = (-f $path) ? (main::reader($path))[0]: '';
+			# android shows some files only root readable
+			$value = (-r $path) ? (main::reader($path))[0]: '';
 			# mains, plus in psu
 			if ($file eq 'type' && $value && lc($value) ne 'battery' ){
 				$battery{$id}{'purpose'} = 'mains';
@@ -8275,6 +8296,7 @@ sub system_cpu_name {
 	if (@working = main::globber('/sys/firmware/devicetree/base/cpus/cpu@*/compatible')){
 		foreach my $file (@working){
 			$compat = (main::reader($file))[0];
+			next if $compat =~ /timer/; # seen on android
 			# these can have non printing ascii... why? As long as we only have the 
 			# splits for: null 00/start header 01/start text 02/end text 03
 			$compat = (split /\x01|\x02|\x03|\x00/, $compat)[0] if $compat;
@@ -8287,7 +8309,7 @@ sub system_cpu_name {
 	elsif (! -d '/sys/firmware/devicetree/base' && @devices_timer){
 		foreach my $ref (@devices_timer){
 			@working = @$ref;
-			next if $working[0] ne 'timer' || !$working[4];
+			next if $working[0] ne 'timer' || !$working[4] || $working[4] =~ /timer-mem$/;
 			$working[4] =~ s/(-system)?-timer$//;
 			$compat = $working[4];
 			$cpus{$compat} = ($cpus{$compat}) ? ++$cpus{$compat}: 1;
@@ -9260,7 +9282,7 @@ sub smartctl_data {
 		print 'Drive:/dev/' . $id . ":\n", Data::Dumper::Dumper\@result if $test[12];
 		if (scalar @result < 4 ){
 			if (grep {/failed: permission denied/i} @result){
-				$data[$i]{'smart-permissions'} = main::row_defaults('smartctl-root');
+				$data[$i]{'smart-permissions'} = main::row_defaults('tool-permissions','smartctl');
 			}
 			elsif (grep {/unknown usb bridge/i} @result){
 				$data[$i]{'smart-error'} = main::row_defaults('smartctl-usb');
@@ -9269,7 +9291,7 @@ sub smartctl_data {
 				$data[$i]{'smart-error'} = main::row_defaults('smartctl-command-failed');
 			}
 			else {
-				$data[$i]{'smart-error'} = main::row_defaults('smartctl-unknown');
+				$data[$i]{'smart-error'} = main::row_defaults('tool-unknown-error','smartctl');
 			}
 			next;
 		}
@@ -9777,21 +9799,21 @@ sub set_vendors {
 	['(^MKN|Mushkin)','Mushkin','Mushkin',''], # MKNS
 	# MU = Multiple_Flash_Reader too risky: |M[UZ][^L] HD103SI HD start risky
 	# HM320II HM320II
-	['(SAMSUNG|^MCG[0-9]+GC|^MCC|^MCBOE|\bEVO\b|^[GS]2 Portable|^[DG]3 Station|^DUO\b|^P3|^BGN|^CJN|^BJ[NT]|^BWB|^(HM|SP)[0-9]{2}|^MZMPC|^HD[0-9]{3}[A-Z]{2}$)','SAMSUNG','Samsung',''], # maybe ^SM, ^HM
+	['(SAMSUNG|^MCG[0-9]+GC|^MCC|^MCBOE|\bEVO\b|^[GS]2 Portable|^DS20|^[DG]3 Station|^DUO\b|^P3|^BGN|^[CD]JN|^BJ[NT]|^[BC]WB|^(HM|SP)[0-9]{2}|^MZMPC|^HD[0-9]{3}[A-Z]{2}$)','SAMSUNG','Samsung',''], # maybe ^SM, ^HM
 	# Android UMS Composite?
-	['(SanDisk|^SDS[S]?[DQ]|^SL([0-9]+)G|^AFGCE|^ABLCD|^SDW[1-9]|^U3\b|ULTRA\sFIT|Clip Sport|Cruzer|^Extreme)','SanDisk','SanDisk',''],
+	['(SanDisk|^SDS[S]?[DQ]|^D[AB]4|^SL([0-9]+)G|^AFGCE|^ABLCD|^SDW[1-9]|^U3\b|ULTRA\sFIT|Clip Sport|Cruzer|^Extreme)','SanDisk','SanDisk',''],
 	['^STEC\b','^STEC\b','STEC',''], # ssd drive, must come before seagate ST test
 	# real, SSEAGATE Backup+; XP1600HE30002 | 024 HN (spinpoint)
 	['(^ST[^T]|[S]?SEAGATE|^X[AFP]|^5AS|^BUP|Expansion Desk|^Expansion|FreeAgent|GoFlex|Backup(\+|\s?Plus)\s?(Hub)?|OneTouch)','[S]?SEAGATE','Seagate',''], 
 	['^(WD|WL[0]9]|Western Digital|My (Book|Passport)|\d*LPCX|Elements|easystore|MD0|M000|EARX|EFRX|\d*EAVS|0JD|JPVX|[0-9]+(BEV|(00)?AAK|AAV|AZL|EA[CD]S)|3200[AB]|2500[BJ]|5000[AB]|6400[AB]|7500[AB]|i HTS)','(^WDC|Western\s?Digital)','Western Digital',''],
 	## Then better known ones ##
 	['^(A-DATA|ADATA|AX[MN]|CH11|HV[1-9]|IM2)','^(A-DATA|ADATA)','A-Data',''],
-	['^ADTRON','^(ADTRON)','Adtron',''],
 	['^ASUS','^ASUS','ASUS',''],
 	# ATCS05 can be hitachi travelstar but not sure
-	['^ATP','^ATP[\s-]','ATP',''],
+	['^ATP','^ATP\b','ATP',''],
 	# Force MP500
 	['^(Corsair|Force\s|(Flash\s*)?(Survivor|Voyager))','^Corsair','Corsair',''],
+	# MAB3045SP shows as HP or Fujitsu, probably HP branded fujitsu
 	['^(FUJITSU|MJA|MH[TVWYZ][0-9]|MP|MAP[0-9])','^FUJITSU','Fujitsu',''],
 	# note: 2012:  wdc bought hgst
 	['^(HGST|Touro|54[15]0|7250)','^HGST','HGST (Hitachi)',''], # HGST HUA
@@ -9799,10 +9821,10 @@ sub set_vendors {
 	# vb: VB0250EAVER but clashes with vbox; HP_SSD_S700_120G ;GB0500EAFYL GB starter too generic?
 	# DX110064A5xnNMRI ids as HP and Sandisc, same ID, made by sandisc for hp? not sure
 	['^(HP\b|[MV]B[0-6]|G[BJ][01]|DF|0-9]|FK|0-9]|PSS|v[0-9]{3}[bgorw]$|x[0-9]{3}[w]$)','^HP','HP',''], 
-	['^(LSD|Lexar|JumpDrive|JD\s?Firefly|WorkFlow)','^Lexar','Lexar',''], # mmc-LEXAR_0xb016546c; JD Firefly;
+	['^(Lexar|LSD|JumpDrive|JD\s?Firefly|WorkFlow)','^Lexar','Lexar',''], # mmc-LEXAR_0xb016546c; JD Firefly;
 	# OCZSSD2-2VTXE120G is OCZ-VERTEX2_3.5
 	['^(OCZ|APOC|D2|DEN|DEN|DRSAK|EC188|FTNC|GFGC|MANG|MMOC|NIMC|NIMR|PSIR|RALLY2|TALOS2|TMSC|TRSAK)','^OCZ[\s-]','OCZ',''],
-	['^OWC','^OWC[\s-]','OWC',''],
+	['^OWC','^OWC\b','OWC',''],
 	['^(Philips|GoGear)','^Philips','Philips',''],
 	['^PIONEER','^PIONEER','Pioneer',''],
 	['^(PNY|Hook\s?Attache|SSD2SC)','^PNY\s','PNY','','^PNY'],
@@ -9814,9 +9836,12 @@ sub set_vendors {
 	# SSD2SC240G726A10 MRS020A128GTS25C EHSAJM0016GB
 	['^5ACE','^5ACE','5ACE',''], # could be seagate: ST316021 5ACE
 	['^(AbonMax|ASU[0-9])','^AbonMax','AbonMax',''],
+	['^Acasis','^Acasis','Acasis (hub)',''],
 	['^Addlink','^Addlink','Addlink',''],
+	['^ADTRON','^(ADTRON)','Adtron',''],
 	['^(Advantech|SQF)','^Advantech','Advantech',''],
 	['^Aireye','^Aireye','Aireye',''],
+	['^Alcatel','^Alcatel','Alcatel',''],
 	['^Alfawise','^Alfawise','Alfawise',''],
 	['^Android','^Android','Android',''],
 	['^ANACOMDA','^ANACOMDA','ANACOMDA',''],
@@ -9837,6 +9862,7 @@ sub set_vendors {
 	['^BIOSTAR','^BIOSTAR','Biostar',''],
 	['^BIWIN','^BIWIN','BIWIN',''],
 	['^Blackpcs','^Blackpcs','Blackpcs',''],
+	['^(MyDigitalSSD|BP4)','^MyDigitalSSD','MyDigitalSSD',''], # BP4 = BulletProof4
 	['^Braveeagle','^Braveeagle','BraveEagle',''],
 	['^(BUFFALO|BSC)','^BUFFALO','Buffalo',''], # usb: BSCR05TU2
 	['^Bulldozer','^Bulldozer','Bulldozer',''],
@@ -9873,6 +9899,7 @@ sub set_vendors {
 	['^Eluktro','^Eluktronics','Eluktronics',''],
 	['^Emperor','^Emperor','Emperor',''],
 	['^Emtec','^Emtec','Emtec',''],
+	['^Epson','^Epson','Epson',''],
 	['^EXCELSTOR','^EXCELSTOR( TECHNO(LOGY)?)?','ExcelStor',''],
 	['^EZLINK','^EZLINK','EZLINK',''],
 	['^Fantom','^Fantom( Drive[s]?)?','Fantom Drives',''],
@@ -9924,6 +9951,7 @@ sub set_vendors {
 	# NOTE: ITY2 120GB hard to find
 	['^JMicron','^JMicron(\s?Tech(nology)?)?','JMicron Tech',''], #JMicron H/W raid
 	['^KimMIDI','^KimMIDI','KimMIDI',''],
+	['^Kimtigo','^Kimtigo','Kimtigo',''],
 	['^Kingchux[\s-]?ing','^Kingchux[\s-]?ing','Kingchuxing',''],
 	['^KingDian','^KingDian','KingDian',''],
 	['^Kingfast','^Kingfast','Kingfast',''],
@@ -9931,8 +9959,10 @@ sub set_vendors {
 	['^Kingrich','^Kingrich','Kingrich',''],
 	['^KING\s?SHARE','^KING\s?SHARE','KingShare',''],
 	['^(KingSpec|ACSC)','^KingSpec','KingSpec',''],
+	['^KingSSD','^KingSSD','KingSSD',''],
 	# kingwin docking, not actual drive
 	['^(EZD|EZ-Dock)','','Kingwin Docking Station',''],
+	['(KIOXIA|^K[BX]G[0-9])','KIOXIA','KIOXIA',''], # company name comes after product ID
 	['^KLEVV','^KLEVV','KLEVV',''],
 	['^Kodak','^Kodak','Kodak',''],
 	['^(Lacie|P92|itsaKey|iamaKey)','^Lacie','LaCie',''],
@@ -9945,6 +9975,7 @@ sub set_vendors {
 	['^(LITE[-\s]?ON[\s-]?IT)','^LITE[-]?ON[\s-]?IT','LITE-ON IT',''], # LITEONIT_LSS-24L6G
 	['^(LITE[-\s]?ON|PH[1-9])','^LITE[-]?ON','LITE-ON',''], # PH6-CE240-L
 	['^LONDISK','^LONDISK','LONDISK',''],
+	['^(LSI|MegaRAID)','^LSI\b','LSI',''],
 	['^M-Systems','^M-Systems','M-Systems',''],
 	['^(Mach\s*Xtreme|MXSSD|MXU)','^Mach\s*Xtreme','Mach Xtreme',''],
 	['^Maximus','^Maximus','Maximus',''],
@@ -9961,6 +9992,7 @@ sub set_vendors {
 	['^Medion','^Medion','Medion',''],
 	['^(MEDIAMAX|WL[0-9]{2})','^MEDIAMAX','MediaMax',''],
 	['^Mengmi','^Mengmi','Mengmi',''],
+	['^MidasForce','^MidasForce','MidasForce',''],
 	['^MINIX','^MINIX','MINIX',''],
 	['^Miracle','^Miracle','Miracle',''],
 	# Monster MONSTER DIGITAL
@@ -9971,11 +10003,13 @@ sub set_vendors {
 	#MRMAD4B128GC9M2C
 	['^(MRMA|Memoright)','^Memoright','Memoright',''],
 	['^MTASE','^MTASE','MTASE',''],
+	['^MSI\b','^MSI\b','MSI',''],
 	['^MTRON','^MTRON','MTRON',''],
 	['^(Neo\s*Forza|NFS[0-9])','^Neo\s*Forza','Neo Forza',''],
 	['^Netac','^Netac','Netac',''],
 	['^Nik','^Nikimi','Nikimi',''],
 	['^Orico','^Orico','Orico',''],
+	['^OSC','^OSC\b','OSC',''],
 	['^OWC','^OWC\b','OWC',''],
 	['^oyunkey','^oyunkey','Oyunkey',''],
 	['^PALIT','PALIT','Palit',''], # ssd 
@@ -9986,6 +10020,7 @@ sub set_vendors {
 	['^PIX[\s]?JR','^PIX[\s]?JR','Disney',''],
 	['^(PLEXTOR|PX-)','^PLEXTOR','Plextor',''],
 	['^(PQI|Intelligent\s?Stick)','^PQI','PQI',''],
+	['^(Premiertek|QSSD|Quaroni)','^Premiertek','Premiertek',''],
 	['^Pretec','Pretec','Pretec',''],
 	['QEMU','^[0-9]*QEMU( QEMU)?','QEMU',''], # 0QUEMU QEMU HARDDISK
 	['(^Quantum|Fireball)','^Quantum','Quantum',''],
@@ -10001,6 +10036,8 @@ sub set_vendors {
 	['^Sage','^Sage(\s?Micro)?','Sage Micro',''],
 	['^SandForce','^SandForce','SandForce',''],
 	['^Sannobel','^Sannobel','Sannobel',''],
+	# SATADOM can be innodisk or supermirco: dom == disk on module
+	# SATAFIRM is an ssd failure message
 	['^SigmaTel','^SigmaTel','SigmaTel',''],
 	# DIAMOND_040_GB
 	['^(SILICON\s?MOTION|SM[0-9])','^SILICON\s?MOTION','Silicon Motion',''],
@@ -10021,7 +10058,7 @@ sub set_vendors {
 	['^SuperSSpeed','^SuperSSpeed','SuperSSpeed',''],
 	# NOTE: F[MNETU] not reliable, g.skill starts with FM too: 
 	# Seagate ST skips STT. 
-	['^(Super\s*Talent|STT|F[HT]M[0-9]|PicoDrive|Teranova)','','Super Talent',''], 
+	['^(Super\s*Talent|STT|F[HTZ]M[0-9]|PicoDrive|Teranova)','','Super Talent',''], 
 	['^(SF|Swissbit)','^Swissbit','Swissbit',''],
 	# ['^(SUPERSPEED)','^SUPERSPEED','SuperSpeed',''], # superspeed is a generic term
 	['^(TakeMS|ColorLine)','^TakeMS','TakeMS',''],
@@ -10043,6 +10080,7 @@ sub set_vendors {
 	['^(TrekStor|DS maxi)','^TrekStor','TrekStor',''],
 	['^UDinfo','^UDinfo','UDinfo',''],
 	['^USBTech','^USBTech','USBTech',''],
+	['^(UNIC2)','^UNIC2','UNIC2',''],
 	['^(UG|Unigen)','^Unigen','Unigen',''],
 	['^(OOS[1-9]|Utania)','Utania','Utania',''],
 	['^U-TECH','U-TECH','U-Tech',''],
@@ -10054,11 +10092,15 @@ sub set_vendors {
 	['^VISIONTEK','^VISIONTEK','VisionTek',''],
 	['^VMware','^VMware','VMware',''],
 	['^(Vseky|Vaseky)','^Vaseky','Vaseky',''], # ata-Vseky_V880_350G_
+	['^(Walgreen|Infinitive)','^Walgreen','Walgreen',''],
 	['^Wilk','^Wilk','Wilk',''],
+	['^(Wortmann(\sAG)?|Terra\s?US)','^Wortmann(\sAG)?','Wortmann AG',''],
 	['^Xintor','^Xintor','Xintor',''],
 	['^XPG','^XPG','XPG',''],
 	['^XrayDisk','^XrayDisk','XrayDisk',''],
+	['^(XUM|HX[0-9])','^XUM','XUM',''],
 	['^XUNZHE','^XUNZHE','XUNZHE',''],
+	['^(Yeyian|valk)','^Yeyian','Yeyian',''],
 	['^(YUCUN|R880)','^YUCUN','YUCUN',''],
 	['^ZALMAN','^ZALMAN','Zalman',''],
 	['^ZEUSLAP','^ZEUSLAP','ZEUSLAP',''],
@@ -10807,7 +10849,7 @@ sub x_display_data {
 		}
 	}
 	else {
-		$graphics{'no-xdpyinfo'} = main::row_defaults('xdpyinfo-missing');
+		$graphics{'no-xdpyinfo'} = main::row_defaults('tool-missing-basic','xdpyinfo');
 	}
 	print 'last: ', Data::Dumper::Dumper $graphics{'screens'} if $test[17];
 	main::log_data('dump','$graphics{screens}',$graphics{'screens'}) if $b_log;
@@ -11552,6 +11594,23 @@ sub machine_data_soc {
 			}
 		}
 	}
+	if (!$soc_machine{'model'} && -r '/system/build.prop'){
+		main::set_build_prop() if !$b_build_prop;
+		if ($build_prop{'product-manufacturer'} && $build_prop{'product-model'}){
+			my $brand = '';
+			if ($build_prop{'product-brand'} && 
+			 $build_prop{'product-brand'} ne $build_prop{'product-manufacturer'}) { 
+				$brand = $build_prop{'product-brand'} . ' ';
+			}
+			$soc_machine{'model'} = $brand . $build_prop{'product-manufacturer'} . ' ' . $build_prop{'product-model'};
+		}
+		elsif ($build_prop{'product-device'} ){
+			$soc_machine{'model'} = $build_prop{'product-device'};
+		}
+		elsif ($build_prop{'product-name'} ){
+			$soc_machine{'model'} = $build_prop{'product-name'};
+		}
+	}
 	if (!$soc_machine{'model'} && -f '/proc/device-tree/model'){
 		my $model  = (main::reader('/proc/device-tree/model'))[0];
 		main::log_data('data',"device-tree-model: $model") if $b_log;
@@ -11571,6 +11630,7 @@ sub machine_data_soc {
 		main::log_data('data',"device-tree-serial: $serial") if $b_log;
 		$soc_machine{'serial'} = $serial if $serial;
 	}
+	
 	#print Data::Dumper::Dumper \%soc_machine;
 	eval $end if $b_log;
 	return %soc_machine;
@@ -12930,6 +12990,7 @@ sub partition_data {
 	set_label_uuid() if !$b_label_uuid;
 	# most current OS support -T and -k, but -P means different things
 	# in freebsd. However since most use is from linux, we make that default
+	# android 7 no -T support
 	if (!$bsd_type){
 		@partitions_working = main::grabber("df -P -T -k 2>/dev/null");
 		if (-d '/dev/mapper'){
@@ -13176,7 +13237,7 @@ sub swap_data {
 		($dev_base,$dev_type,$label,$mount,$priority,
 		$swap_type,$uuid) = ('','','','',undef,'partition','');
 		@data = split /\s+/, $_;
-		if (/^\/dev\/(compcache|ramzwap|zram)/i){
+		if (/^\/dev\/(block\/)?(compcache|ramzwap|zram)/i){
 			$swap_type = 'zram';
 			$dev_type = 'dev';
 		}
@@ -13337,9 +13398,9 @@ sub set_lsblk {
 	$b_lsblk = 1;
 	my (@temp,@working);
 	if (my $program = main::check_program('lsblk')){
-		@working = main::grabber("$program -bP --output NAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,SERIAL,MOUNTPOINT,PHY-SEC,LOG-SEC 2>/dev/null");
+		@working = main::grabber("$program -bP --output NAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,SERIAL,MOUNTPOINT,PHY-SEC,LOG-SEC,PARTFLAGS 2>/dev/null");
 		foreach (@working){
-			if (/NAME="([^"]*)"\s+TYPE="([^"]*)"\s+RM="([^"]*)"\s+FSTYPE="([^"]*)"\s+SIZE="([^"]*)"\s+LABEL="([^"]*)"\s+UUID="([^"]*)"\s+SERIAL="([^"]*)"\s+MOUNTPOINT="([^"]*)"\s+PHY-SEC="([^"]*)"\s+LOG-SEC="([^"]*)"/){
+			if (/NAME="([^"]*)"\s+TYPE="([^"]*)"\s+RM="([^"]*)"\s+FSTYPE="([^"]*)"\s+SIZE="([^"]*)"\s+LABEL="([^"]*)"\s+UUID="([^"]*)"\s+SERIAL="([^"]*)"\s+MOUNTPOINT="([^"]*)"\s+PHY-SEC="([^"]*)"\s+LOG-SEC="([^"]*)"\s+PARTFLAGS="([^"]*)"/){
 				my $size = ($5) ? $5/1024: 0;
 				# some versions of lsblk do not return serial, fs, uuid, or label
 				@temp = ({
@@ -13354,6 +13415,7 @@ sub set_lsblk {
 				'mount' => $9,
 				'block-physical' => $10,
 				'block-logical' => $11,
+				'partition-flags' => $12,
 				});
 				@lsblk = (@lsblk,@temp);
 			}
@@ -14953,6 +15015,8 @@ sub get_repos_linux {
 	my ($key,$path);
 	my $apk = '/etc/apk/repositories';
 	my $apt = '/etc/apt/sources.list';
+	my $apt_termux = '/data/data/com.termux/files/usr' . $apt;
+	$apt = $apt_termux if -e $apt_termux; # for android termux
 	my $cards = '/etc/cards.conf';
 	my $eopkg_dir = '/var/lib/eopkg/';
 	my $pacman = '/etc/pacman.conf';
@@ -14978,7 +15042,7 @@ sub get_repos_linux {
 		my ($apt_arch,$apt_comp,$apt_suites,$apt_types,@apt_urls,@apt_working,
 		$b_apt_enabled,$file,$string);
 		my $counter = 0;
-		@files = main::globber('/etc/apt/sources.list.d/*.list');
+		@files = main::globber("$apt.d/*.list");
 		push @files, $apt;
 		main::log_data('data',"apt repo files:\n" . main::joiner(\@files, "\n", 'unset') ) if $b_log;
 		foreach ( sort @files){
@@ -14987,7 +15051,7 @@ sub get_repos_linux {
 			@rows = (@rows,@data);
 		}
 		#@files = main::globber("$ENV{'HOME'}/bin/scripts/inxi/data/repo/apt/*.sources");
-		@files = main::globber('/etc/apt/sources.list.d/*.sources');
+		@files = main::globber("$apt.d/*.sources");
 		main::log_data('data',"apt deb822 repo files:\n" . main::joiner(\@files, "\n", 'unset') ) if $b_log;
 		foreach $file (@files){
 			# critical: whitespace is the separator, no logical ordering of 
@@ -16956,7 +17020,7 @@ sub create_output {
 				$fs = ($b_root) ? 'N/A' : main::row_defaults('root-required');
 			}
 			else {
-				$fs = 'requires file';
+				$fs = main::row_defaults('tool-missing-basic','file');
 			}
 		}
 		$row{'label'} = main::apply_partition_filter('part', $row{'label'}, '') if $use{'filter-label'};
@@ -16977,7 +17041,8 @@ sub unmounted_data {
 	eval $start if $b_log;
 	my ($file) = @_;
 	my ($fs,$label,$size,$uuid,@data,%part,@unmounted);
-	my @mounted = ('scd[0-9]+','sr[0-9]+','cdrom[0-9]*','cdrw[0-9]*',
+	# last filters to make sure these are dumped
+	my @filters = ('scd[0-9]+','sr[0-9]+','cdrom[0-9]*','cdrw[0-9]*',
 	'dvd[0-9]*','dvdrw[0-9]*','fd[0-9]','ram[0-9]*');
 	my @mounts = main::reader($file,'strip');
 	my $num = 0;
@@ -16986,7 +17051,8 @@ sub unmounted_data {
 	PartitionData::partition_data() if !$b_partitions;
 	PartitionData::set_label_uuid() if !$b_label_uuid;
 	RaidData::raid_data() if !$b_raid;
-	@mounted = get_mounted(@mounted);
+	my @mounted = get_mounted();
+	#print join("\n",(@filters,@mounted)),"\n";
 	foreach (@mounts){
 		my @working = split /\s+/, $_;
 		($fs,$label,$uuid,$size) = ('','','','');
@@ -16997,9 +17063,13 @@ sub unmounted_data {
 		# note: $working[2] != 1 is wrong, it's not related
 		# note: for zfs using /dev/sda no partitions, this will also remove those from 
 		# the unmounted report because sdb is found in sdb1, this is acceptable
+		# in arm/android seen /dev/block/mmcblk0p12
+		#print "mount: $working[-1] row: $_ \n";
 		if ( $working[-1] !~ /^(nvme[0-9]+n|mmcblk|mtdblk|mtdblock)[0-9]+$/ && 
-		     $working[-1] =~ /[a-z][0-9]+$|dm-[0-9]+$/ && $working[-1] !~ /loop/ && 
-		     !(grep {$working[-1] =~ /$_/} @mounted)){
+		     $working[-1] =~ /[a-z][0-9]+$|dm-[0-9]+$/ && 
+		     $working[-1] !~ /\bloop/ && 
+		     !(grep {$working[-1] =~ /$_$/} (@filters,@mounted)) && 
+		     !(grep {$_ =~ /(block\/)?$working[-1]$/} @mounted)){
 			%part = PartitionData::check_lsblk($working[-1],0) if (@lsblk && $working[-1]);
 			if (%part){
 				$fs = $part{'fs'};
@@ -17028,7 +17098,7 @@ sub unmounted_data {
 }
 sub get_mounted {
 	eval $start if $b_log;
-	my (@mounted) = @_;
+	my (@mounted);
 	foreach my $ref (@partitions){
 		my %row = %$ref;
 		push @mounted, $row{'dev-base'} if $row{'dev-base'};
@@ -18934,6 +19004,26 @@ sub get_linux_distro {
 			$distro =~ s/Slackware/Salix/;
 		}
 	}
+	else {
+		# android fallback, sometimes requires root, sometimes doesn't
+		if (-e '/system/build.prop') {
+			main::set_build_prop() if !$b_build_prop;;
+			$distro = 'Android';
+			$distro .= ' ' . $build_prop{'build-version'} if $build_prop{'build-version'};
+			$distro .= ' ' . $build_prop{'build-date'} if $build_prop{'build-date'};
+			if (!$show{'machine'}){
+				if ($build_prop{'product-manufacturer'} && $build_prop{'product-model'}){
+					$distro .= ' (' . $build_prop{'product-manufacturer'} . ' ' . $build_prop{'product-model'} . ')';
+				}
+				elsif ($build_prop{'product-device'}){
+					$distro .= ' (' . $build_prop{'product-device'} . ')';
+				}
+				elsif ($build_prop{'product-name'}){
+					$distro .= ' (' . $build_prop{'product-name'} . ')';
+				}
+			}
+		}
+	}
 	## finally, if all else has failed, give up
 	$distro ||= 'unknown';
 	@distro_data = ($distro,$system_base);
@@ -19093,7 +19183,7 @@ sub debian_id {
 	'9' => 'stretch',
 	'10' => 'buster',
 	'11' => 'bullseye',
-	'12' => 'bookworm', # ?
+	'12' => 'bookworm', 
 	);
 	if (main::is_numeric($debian_version)){
 		$id .= " $debian_version $debians{int($debian_version)}";
@@ -19120,6 +19210,7 @@ sub ubuntu_id {
 	$codename = lc($codename);
 	my ($id) = ('');
 	my %codenames = (
+	'hirsute' => '21.04',
 	'groovy' => '20.10',
 	'focal' => '20.04 LTS',
 	'eoan' => '19.10',
@@ -19379,7 +19470,8 @@ sub get_kernel_parameters {
 sub get_kernel_parameters_linux {
 	eval $start if $b_log;
 	my ($file) = @_;
-	my $line = (reader($file))[0];
+	# unrooted android may have file only root readable
+	my $line = (reader($file))[0] if -r $file;
 	eval $end if $b_log;
 	return $line;
 }
@@ -19439,16 +19531,20 @@ sub get_memory_data {
 sub get_memory_data_linux {
 	eval $start if $b_log;
 	my ($type,$file) = @_;
-	my ($gpu,$memory,$not_used,$total) = (0,'',0,0);
+	my ($available,$gpu,$memory,$not_used,$total) = (0,0,'',0,0);
 	my @data = reader($file);
 	foreach (@data){
 		if ($_ =~ /^MemTotal:/){
 			$total = get_piece($_,2);
 		}
 		elsif ($_ =~ /^(MemFree|Buffers|Cached):/){
-			$not_used +=  get_piece($_,2);
+			$not_used += get_piece($_,2);
+		}
+		elsif ($_ =~ /^MemAvailable:/){
+			$available = get_piece($_,2);
 		}
 	}
+	$not_used = $available if $available;
 	$gpu = get_gpu_ram_arm() if $b_arm;
 	#$gpu = translate_size('128M');
 	$total += $gpu;
@@ -20105,10 +20201,71 @@ sub get_uptime {
 	eval $end if $b_log;
 	return $uptime;
 }
+#  note: seen instance in android where reading file hangs endlessly!!!
+sub get_wakeups {
+	eval $start if $b_log;
+	return if $b_arm || $b_mips || $b_ppc;
+	my ($wakeups);
+	my $path = '/sys/power/wakeup_count';
+	$wakeups = (reader($path,'strip'))[0] if -r $path;
+	eval $end if $b_log;
+	return $wakeups;
+}
 
 #### -------------------------------------------------------------------
 #### SET DATA VALUES
 #### -------------------------------------------------------------------
+
+# android only, for distro / OS id and machine data
+sub set_build_prop {
+	eval $start if $b_log;
+	my $path = '/system/build.prop';
+	$b_build_prop = 1;
+	return if ! -r $path;
+	my @data = reader($path,'strip');
+	foreach (@data){
+		my @working = split /=/, $_;
+		next if $working[0] !~ /^ro\.(build|product)/;
+		if ($working[0] eq 'ro.build.date.utc'){
+			$build_prop{'build-date'} = strftime "%F", gmtime($working[1]);
+		}
+		# ldgacy, replaced by ro.product.device
+		elsif ($working[0] eq 'ro.build.product'){
+			$build_prop{'build-product'} = $working[1];
+		}
+		# this can be brand, company, android, it varies, but we don't want android value
+		elsif ($working[0] eq 'ro.build.user'){
+			$build_prop{'build-user'} = $working[1] if $working[1] !~ /android/i;
+		}
+		elsif ($working[0] eq 'ro.build.version.release'){
+			$build_prop{'build-version'} = $working[1];
+		}
+		elsif ($working[0] eq 'ro.product.board'){
+			$build_prop{'product-board'} = $working[1];
+		}
+		elsif ($working[0] eq 'ro.product.brand'){
+			$build_prop{'product-brand'} = $working[1];
+		}
+		elsif ($working[0] eq 'ro.product.device'){
+			$build_prop{'product-device'} = $working[1];
+		}
+		elsif ($working[0] eq 'ro.product.manufacturer'){
+			$build_prop{'product-manufacturer'} = $working[1];
+		}
+		elsif ($working[0] eq 'ro.product.model'){
+			$build_prop{'product-model'} = $working[1];
+		}
+		elsif ($working[0] eq 'ro.product.name'){
+			$build_prop{'product-name'} = $working[1];
+		}
+		elsif ($working[0] eq 'ro.product.screensize'){
+			$build_prop{'product-screensize'} = $working[1];
+		}
+	}
+	log_data('dump','%build_prop',\%build_prop) if $b_log;
+	print Dumper \%build_prop if $test[20];
+	eval $end if $b_log;
+}
 
 ## creates arrays: @devices_audio; @devices_graphics; @devices_hwraid; 
 ## @devices_network; @devices_timer plus @devices for logging/debugging
@@ -20464,6 +20621,7 @@ sub soc_devices {
 		# it's worthless, we can't use it
 		next if ! defined $type;
 		$type_id = $type;
+		$type = 'display' if $type =~ /mali/i;
 		$chip_id = '' if ! defined $chip_id;
 		$vendor_id = '' if ! defined $vendor_id;
 		$driver = '' if ! defined $driver;
@@ -20492,6 +20650,7 @@ sub soc_devicetree {
 				next if !$type || !$content;
 				$handle = $2 if $2;
 				$type_id = $type;
+				$type = 'display' if $type =~ /mali/i;
 				if ($content){
 					@temp3 = split /,/, $content;
 					$vendor_id = $temp3[0];
@@ -20538,7 +20697,7 @@ sub assign_data {
 # note: for soc, these have been converted in soc_type()
 sub check_audio {
 	if ( ( $_[1] && length($_[1]) == 4 && $_[1] =~/^04/ ) ||
-		( $_[0] && $_[0] =~ /^(audio|hdmi|multimedia|sound)$/ )){
+		( $_[0] && $_[0] =~ /^(audio|hdmi|multimedia|sound)$/i )){
 		return 1;
 	}
 	else {return 0}
@@ -20546,7 +20705,7 @@ sub check_audio {
 sub check_graphics {
 	# note: multimedia class 04 is viddeo if 0400. 'tv' is risky I think
 	if ( ( $_[1] && length($_[1]) == 4 &&  ($_[1] =~/^03/ || $_[1] eq '0400' ) ) ||
-	( $_[0] && $_[0] =~ /^(vga|display|hdmi|3d|video|tv|television)$/)){
+	( $_[0] && $_[0] =~ /^(vga|display|hdmi|3d|video|tv|television)$/i)){
 		return 1;
 	}
 	else {return 0}
@@ -20558,7 +20717,7 @@ sub check_hwraid {
 # https://www-s.acm.illinois.edu/sigops/2007/roll_your_own/7.c.1.html
 sub check_network {
 	if ( ( $_[1] && length($_[1]) == 4 && ($_[1] =~/^02/ || $_[1] eq '0680' ) ) ||
-		( $_[0] && $_[0] =~  /^(ethernet|network|wifi|wlan)$/ ) ){
+		( $_[0] && $_[0] =~  /^(ethernet|network|wifi|wlan)$/i ) ){
 		return 1;
 	}
 	else {return 0}
@@ -21848,10 +22007,14 @@ sub generate_info_data {
 	my %data = (
 	$data_name => [{
 	main::key($num++,0,1,'Processes') => scalar @ps_aux, 
-	main::key($num++,0,1,'Uptime') => &get_uptime(),
+	main::key($num++,1,1,'Uptime') => &get_uptime(),
 	},],
 	);
 	$index = scalar(@{ $data{$data_name} } ) - 1;
+	if ($extra > 2){
+		my $wakeups = get_wakeups();
+		$data{$data_name}[$index]{main::key($num++,0,2,'wakeups')} = $wakeups if defined $wakeups;
+	}
 	if (!$b_mem){
 		my $memory = get_memory_data('splits');
 		if ($memory){
