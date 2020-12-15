@@ -1,4 +1,397 @@
 =====================================================================================
+Version: 3.2.00
+Patch: 00
+Date: 2020-12-15
+-----------------------------------
+Changes:
+-----------------------------------
+
+Huge upgrade, major rewrite/refactor, new features, everything is polished!!!
+
+Note that due to large number of internal changes to code, a separate 
+INTERNAL CODE CHANGES section is at the bottom. Those are changes which in 
+general do not impact what users see that much, but which definitely impact 
+working on and with inxi! They also make errors less likely, and removed many 
+possible bad data error situations.
+
+BUGS:
+
+1. Obscure, but very old Tyan Mobo used a form of dmidecode data for RAM that I'd
+never gotten a dataset for before, this tripped a series of errors in inxi, which
+were actually caused by small errors and failures to check certain things, as
+well as simply never assigning data in corner cases. This system used only dmi
+handles 6 and 7, which is a very rare setup, from the very early days of dmi 
+data being settled, but it was valid data, and actually inxi was supposed to support 
+it, because I'd never gotten a dataset containing such legacy hardware data, the 
+support didn't work. There were actually several bugs discovered while tracking
+this down, all were corrected.
+
+2. Going along with the cpu fixes below, there was a bug that if stepping was 0,
+stepping would not show. I had not realized stepping could be 0, so did a true/false
+test instead of a defined test, which makes 0 in perl always test as false. This is
+corrected.
+
+3. While going through code, discovered that missing second argument to main::grabber
+would have made glabel tool (BSD I think mostly) always fail, without exception.
+That explains why bsd systems were never getting glabel data, heh.
+
+4. Many null get_size tests would not have worked because they were testing 
+for null array but ('','') was actually being returned, which is not a null array.
+The testing and results for get_size were quite random, now hey are all the same
+and consistent, and confirmed correct.
+
+5. In unmounted devices, the match sent to @lsblk to get extended device data
+would never work with dm-xx type names, failed to translate them to their
+mapped name, which is what is used in lsblk matches, this is corrected.
+This could lead to failures to match fs of members of luks, raid, etc, 
+particularly noticeable with complex logical device structures. This means
+the fallback filters against internal logic volume names, various file system
+type matches, would always fail.
+
+6. A small host of further bugs found and fixed during the major refactor, but
+not all of them were noted, they were just fixed, sorry, those will be lost
+to history unless you compare with diffs the two versions, but that's thousands
+of lines, but there were more bugs fixed than listed above, just can't remember 
+them all.
+
+FIXES:
+
+1. There was some ambiguity about when inxi falls back to showing hardware graphics
+driver instead of xorg gfx driver when it can't find an xorg driver. That can happen
+for instance because of wayland, or because of obscure xorg drivers not yet supported.
+Now the message is very clear, it says the gfx software driver is n/a, and that it's 
+showing the hardware gfx driver.
+
+2. Big redo of cpu microarch, finally handled cases where same stepping/model ID
+has two micorarches listed, now that is shown clearly to users, like AMD Zen family
+17, model 18, which can be either Zen or Zen+, so now it shows that ambiguity, and
+a comment: note: check, like it shows for ram report when it's not sure. Shows
+for instance:
+arch: Zen/Zen+ note: check
+in such cases, in other words, it tells users that the naming convention 
+basically changed during the same hardware/die cycle.
+
+3. There were some raid component errors in the unmounted tests which is supposed
+to test the raid components and remove them from the mounted list. Note that inxi
+now also tests better if something is a raid component, or an lvm component, or 
+various other things, so unmounted will be right more often now, though it's still
+not perfect since there are still more unhandled logical storage components that
+will show as unmounted when tney are parts of logical volumes. Bit by bit!!
+
+4. Part of a significant android fine tuning and fix series, for -P, android uses
+different default names for partitions, so none showed, now a subset of standard
+android partitions, like /System, /firmware, etc, shows. Android will never work
+well though because google keeps locking down key file read/search permissions in
+/sys and /proc.
+
+5. More ARM device detections, that got tuned quite a bit and cleaned up, for 
+instance, it was doing case sensitive checks, but found cases where the value
+is all upper case, so it was missing it. Now it does case sensitive device type
+searches.
+
+6. One of the oldest glitches in inxi was the failure to take the size of the raid
+arrays versus the size totals of the raid array components led to Local Storage
+results that were uselessly wrong, being based on what is now called 'raw' disk 
+totals, that's the raw physical total of all system disks. Now if raid is detected
+the old total: used:... is expanded to: total: raw:... usable:....used:, the usable
+being the actual disk space that can be used to store data. Also in the case of
+LVM systems, a further item is added, lvm-free: to report the unused but available
+volume group space, that is, space not currently taken by logical volumes. This
+can provide a useful overview of your system storage, and is much improved over
+the previous version, which was technically unable to solve that issue because
+the internal structures did not support it, now they do. LVM data requires sudo/
+root unfortunately, so you will see different disk raw totals depending on
+if it's root or not if there is LVM RAID running.
+
+Sample: inxi -D
+Drives:    Local Storage: total: raw: 340.19 GiB usable: 276.38 GiB 
+           lvm-free: 84.61 GiB used: 8.49 GiB (3.1%)
+           
+lvm-free is non assigned volume group size, that is, size not assigned
+to a logical volume in the volume group, but available in the volume group.
+raw: is the total of all detected block devices, usable is how much of that
+can be used in file systems, that is, raid is > 1 devices, but those devices
+are not available for storage, only the total of the raid volume is.
+Note that if you are not using LVM, you will never see lvm-free:.
+
+7.  An anonymous user sent a dataset that contained a reasonable alternate
+syntax for sensors output, that made inxi fail to get the sensors data. That was
+prepending 'T' to temp items, and 'F' to fan items, which made enough sense though
+I'd never seen it before, so inxi now supports that alternate sensors temp/fan 
+syntax, so that should expand the systems it supports by default out of the box.
+
+8. Finally was able to resolve a long standing issue of loading File::Find, which
+is only used in --debug 20-22 debugger, from top of inxi to require load in the
+debugger. I'd tried to fix this before, but failed, the problem is that redhat
+/fedora have broken apart Perl core modules, and made some of them into external
+modules, which made inxi fail to start due to missing use of required module that
+was not really required. Thanks to mrmazda for pointing this out to me, I'd tried
+to get this working before but failed, but this time I figured out how to recode 
+some of the uses of File::Find so it would work when loaded without the package
+debugger, hard to figure it, turned out a specific sub routine call in that
+specific case required the parentheses that had been left off, very subtle.
+
+9. Subtle issue, unlike most of the other device data processors, the USB
+data parser did not use the remove duplicates tool, which led in some cases
+to duplicated company names in the output for USB, which looks silly.
+
+10. Somehow devtmpfs was not being detected in all cases to remove that from
+partitions report, that was added to the file systen filters to make sure it
+gets caught.
+
+11. Removed LVM image/meta/data data slices from unmounted report, those are LVM
+items, but they are internal LVM volumes, not available or usable. I believe 
+there are other data/meta type variants for different LVM features but I have
+added as many types as I could find.. Also explictly now remove any _member type
+item, which is always part of some other logical structure, like RAID or 
+LVM, those were not explicitly handled before.
+
+12. Corrected the varous terms ZFS can use for spare drives, and due to how
+those describe slightly different situations than simply spare, changed the spare
+section header to Available, which is more accureate for ZFS.
+
+ENHANCEMENTS:
+
+1. Going along with FIX 2 is updating and adding to intel, elbrus microarch family/
+model/stepping IDs (E8C2), so that is fairly up to date now.
+
+2. Added in a very crude and highly unreliable default fallback for intel:
+/sys/devices/cpu/caps/pmu_name which will show the basic internal name used
+which can be quite different from what the actual microarch name is, but the hope
+is that for new intel cpus that come out after these last inxi updates, something
+may show, instead of nothing. Note these names are often much more generic, like
+using skylake for many different microarches.
+
+3. More android enhancements, for androids that allow reading of /system/build.prop,
+which is a very useful informative system info file, more android data will show, 
+like the device name and variant, and a few other specialized items. You can see if
+your android device lets inxi read build.prop if you see under -S Distro: 
+Android 7.1 (2016-07-23) or just Android. If it shows just android, that means
+it can't read that file. Showing Android however is also new, since while inxi
+can't always read build.prop if that file is there, it's android, so inxi
+finally can recognize it's in android, even though it can't give much info if
+it's locked down. Inxi in fact did not previously know it was running in android,
+which is quite different from ARM systems in some ways, but now it does.
+
+If the data is available, it will be used in Distro: and in Machine: data to add
+more information about the android version and device.
+
+4. A big one, for -p/-P/-o/-j now shows with -x the mapped device name, not just
+the /dev/dm-xx ID, which makes connecting the various new bits easier, for RAID,
+Logical reports. Note that /dev/mapper/ is removed from the mapped name since
+that's redundant and verbose and makes the output harder to read. For mapped 
+devices, the new --logical / -L report lets you drill into the devices to find
+out what dm-xx is actually based on, though that is a limited feature which only
+supports drilling to a depth of 2 components/devices, there can be more, 
+particularly for bcache, luks setups, but it's just too  hard to code that
+level of depth, so something is better than nothing in this case, which 
+is the actual choice I was faced, the perfect in this case really is/was
+the enemy of the good, as they say.
+
+5. More big ones, for -a -p/-P/-o/-j shows kernel device major:minor number,
+which again lets you trace each device around the system and report.
+
+6. Added mdadm if root for mdraid report, that let me add a few other 
+details for mdraid not previously available. This added item 'state;'
+to the mdraid report with right -x options.
+
+7. Added vpu component type to ARM gfx device type detection, don't know
+how video processing vcu had escaped my notice.
+
+8. Added fio[a-z] block device, I'd never heard of that before, but saw
+use of it in dataset, so learned it's real, but was never handled as a 
+valid block device type before, like sda, hda, vda, nvme, mmcblk, 
+etc. fio works the same, it's fio + [a-z] + [0-9]+ partition number.
+
+9. Expanded to alternate syntax Elbrus cpu L1, L2, L3 reporting. Note
+that in their nomenclature, L0 and L1 are actually both L1, so add those
+together when detected.
+
+10. RAM, thanks to a Mint user, antikythera, learned, and handled something
+new, module 'speed:' vs module 'configured clock speed:'. 
+To quote from supermicro:
+
+<<<
+Question: Under dmidecode, my 'Configured Clock Speed' is lower than my 
+'Speed'. What does each term mean and why are they not the same?
+Answer: Under dmidecode, Speed is the expected speed of the memory 
+(what is advertised on the memory spec sheet) and Configured Clock Speed 
+is what the actual speed is now. The cause could be many things but the 
+main possibilities are mismatching memory and using a CPU that doesn't 
+support your expected memory clock speed.
+Please use only one type of memory and make sure that your CPU supports 
+your memory.
+>>>
+
+11. Since RAM was gettng a look, also changed cases where ddr ram speed is reported
+in MHz, now it will show the speeds as: [speed * 2] MT/S ([speed] MHz). This
+will let users make apples to apples speed comparisons between different systems.
+Since MT/S is largely standard now, there's no need to translate that to MHz.
+
+12. And, even more!! When RAM speeds are logically absurd, adds in note: check
+This is from a real user's data by the way, as you can see, it triggers all
+the new RAM per Device report features.
+
+Sample:
+Memory:
+  RAM: total: 31.38 GiB used: 20.65 GiB (65.8%) 
+  Array-1: capacity: N/A slots: 4 note: check EC: N/A 
+  Device-1: DIMM_A1 size: 8 GiB speed: 1600 MT/s (800 MHz) 
+  Device-2: DIMM_A2 size: 8 GiB speed: spec: 1600 MT/s (800 MHz) 
+  actual: 61910 MT/s (30955 MHz) note: check 
+  Device-3: DIMM_B1 size: 8 GiB speed: 1600 MT/s (800 MHz) 
+  Device-4: DIMM_B2 size: 8 GiB speed: spec: 1600 MT/s (800 MHz) 
+  actual: 2 MT/s (1 MHz) note: check
+
+13. More disks vendor!!! More disk vendor IDs!!! Yes, that's right, eternity
+exists, here, now, and manifests every day!! Thanks to linux-lite hardware
+database for this eternally generating list. Never underestimate the 
+creativity of mankind to make more disk drive companies, and to release
+new model IDs for existing companies. Yes, I feel that this is a metaphore
+for something much larger, but what that is, I'm not entirely clear about.
+
+CHANGES:
+
+1. Recent kernel changes have added a lot more sensor data in /sys, although
+this varies system to system, but now, if your system supports it, you can
+get at least partial hdd temp reports without needing hddtemp or root. Early
+results suggest that nvme may have better support than spinning disks, but it 
+really varies. inxi will now look for the /sys based temp first, then fall 
+back to the much slower and root / sudo only hddtemp. You can force hddtemp
+always with --hddtemp option, which has a corresponding configuration item.
+
+2. The long requested and awaited yet arcane and obscure feature -L/--logical,
+which tries to give a reasonably good report on LVM, LUKS, VeraCrypt, as well
+as handling LVM raid, both regular and thin, is now working, more or less. 
+This took a lot of testing and will probably not be reasonably complete for 
+a while, mainly because the levels of abstraction possible between lvm, 
+lvm raid, mdraid, LUKS, bcache, and other caching and other encryption 
+options are just too deep to allow for easy handling, or easy outputs. 
+But a very solid and good start in my view, going from nothing to something 
+is always a big improvement!! LVM reports require root/sudo. This will,
+finally, close issue #135.
+
+3. Going along with -L, and serving as a model for the logic of -L, was the
+complete refactor of -R, RAID, which was a real mess internally,  definitely
+one of the messiest and hardest to work with features of inxi before the 
+refactor. It's now completely cleaned up and modularized, and is easy to add
+raid types, which was not possible before, now it cleanly supports zfs, mdraid,
+and lvm raid, with in depth reports and added items like mdraid size, raid
+component device sizes and maj:min numbers if the -a option is used. Note
+that LVM RAID requires root/sudo.
+
+4. Added some more sensors dimm, volts items, slight expansion. Note that the
+possible expansion of sensors made possible by the recently upgraded sensors 
+output logic, as well as the new inxi internal sensors data structure, 
+which is far more granular than the previous version, and allows for much 
+more fine grained control and output, though only gpu data currently takes 
+advantage of this new power under the covers, although as noted, the /sys based 
+hdd temps use the same source, only straight from /sys, since it was actually 
+easier using the data directly from sys than trying to map the drive locations to
+specific drives in sensors output. Well, to be accurate, since now only
+board type sensors are used for the temp/fan speed, voltage, etc, reports,
+the removal of entire sensor groups means less chance of wrong results.
+
+5. To bring the ancient RAID logic to fit the rest of inxi style, made
+zfs, mdraid, and lvm raid components use incrementing numbers, like cpu
+cores does. This got rid of the kind of ugly hacks used previously
+which were not the same for zfs or mdraid, but now they are all the same,
+except that the numbers for mdraid are the actual device numbers that
+mdraid supplies, and the LVM and ZFS numbers are just autoincremented,
+starting at 1.
+
+6. Changed message <root/superuser required> to <superuser required> because
+it's shorter and communicates the same thing.
+
+INTERNAL CODE CHANGES:
+
+1. Small, transparent test, tested on Perl 5.032 for Perl 7 compatibility. All
+tests passed, no legacy code issues in inxi as of now.
+
+2. Although most users won't notice, a big chunk of inxi was refactored
+internally, which is why the new -L, the revamped -R, and the fixed
+disk totals finally all can work now. This may hopefully result in more
+consistent output and fewer oddities and randomnesses, since more of the
+methods all use the same tools now under the covers. Ths refactor also 
+significantly improved inxi's execution speed, by about 4-5%, but most
+of those gains are not visible due to the added new features, but the
+end result is new inxi runs roughly the same speed as pre 3.2.00 inxi, but
+does more, and does it better, internally at least. If you have a very
+good eye you may also note a few places where this manifests externally
+as well. Last I checked about 10-12% of the lines of inxi had been changed,
+but I think that number is higher now. Everything that could be optimized
+was, everything could be made more efficient was.
+
+3. Several core tools in inxi were expanded to work much more cleanly, 
+like reader(), which now supports returning just the index value you want,
+that always happened on the caller end before, which led to extra code.
+get_size likewise was expanded to do a string return, which let me
+remove a lot of internal redundant code in creating the size unit output,
+like 32 MiB. uniq() was also redone to work exclusively by reference.
+
+4. Many bad reference and dereference practices that had slipped into inxi
+from the start are mostly corrected now, array assignments use push now, 
+rather than assign to array, then add array to another array, and assign 
+those to the master array. Several unnecessary and cpu/ram intensive copying 
+steps, that is, were removed in many locations internally in inxi. Also 
+now inxi uses more direct anonymous array and hash refernce assignments, 
+which again removes redundant array/hash creation, copy, and assignment.
+
+5. Also added explicit -> dereferencing arrows to make the code more clear 
+and readable, and to make it easier for perl to know  what is happening. 
+The lack of consistency actually created confusion, I was not aware of
+what certain code was doing, and didn't realize it was doing the same
+thing as other code because of using different methods and syntaxes for
+referencing array/hash components. I probably missed some, but I got many 
+of them, most probably.
+
+6. Instituted a new perl builtin sub routine rule which is: if the sub
+takes 2 or more arguments, always put in parentheses, it makes the
+code much easier to follow because you see the closing ), like:
+push(@rows,@row); Most perl builtins that take only one arg do not
+use parentheses, except length, which just looks weird when used in
+math tests, that is: length($var) > 13 looks better than length $var > 13.
+This resolved inconsistent uses that had grown over time, so now all the 
+main builtins follow these rules consistently internally.
+
+Due to certain style elements, and the time required to carefully go through
+all these rules, grep and map do not yet consistently use these rules, that's
+because the tendency has been to use the grep {..test..} @array and 
+map {...actions...} @array
+
+7. Mainly to deal with android failures to read standard system files due to
+google locking it down, moved most file queries to use -r, is readable, rather
+than -e, exists, or -f, is file, unless it only needs to know if it exists, 
+of course. This fixed many null data errors in android even on locked androids.
+
+8. Added in %mapper and %dmmapper hashes to allow for easy mapping and
+unmapping of mapped block devices. Got rid of other ways of doing that,
+and made it consistent throughout inxi. These are globals that load once.
+
+9. Learned that perl builtin split() has a very strange and in my view originally
+terrible decision that involves treating as regex rules string characters in split
+string, like split('^^',$string), which should logically be a string value, not
+a ^ start search followed by a ^, but that's how it is, so that was carefully checked
+and made consistent as well. Also expanded split to take advantage of the number of
+splits to do, which I had only used occasionally before, but only updated field/value
+splits where I have a good idea of what the data is. This is very useful when the
+data is in the form of field: value, but value can contain : as well. You have to
+be very careful however, since some data we do want in fact the 2nd split, but not
+the subsequent ones, so I only updated the ones I was very sure about.
+
+10. Going along with the cpu microarch fixes, updated and cleaned up all the lists
+of model/stepping matches, now they are all in order and much easier to scan and 
+find, that had gotten sloppy over the years.
+
+11. More ARM, moved dummy and codec device values into their own storage arrays,
+that let me remove the filters against those in the other detections. Makes logic
+easier to read and maintain as well.
+
+
+-----------------------------------
+-- Harald Hope - Tue, 15 Dec 2020 15:08:05 -0800
+
+=====================================================================================
 Version: 3.1.09
 Patch: 00
 Date: 2020-11-11
