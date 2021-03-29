@@ -258,13 +258,14 @@ COMMITMENT TO LONG TERM STABILITY
 -------------------------------------------------------------------------------
 
 The core mission of inxi is to always work on all systems all the time. Well, 
-all systems with the core tools inxi requires to operate installed. Ie, not 
-Android, yet. What this means is this: you can have a 10 year old box, or 
-probably 15, not sure, and you can install today's inxi on it, and it will run. 
-It won't run fast, but it will run. I test inxi on a 200 MHz laptop from about 
-1998 to keep it honest. That's also what was used to optimize the code at some 
-points, since differences appear as seconds, not 10ths or 100ths of seconds on 
-old systems like that.
+all systems with the core tools inxi requires to operate installed. 
+
+What this means is this: you can have a 10 year old box, or probably 15, not 
+sure, and you can install today's inxi on it, and it will run. It won't run 
+fast, but it will run. I test inxi on a 200 MHz laptop from about 1998 to 
+keep it honest. That's also what was used to optimize the code at some points, 
+since differences appear as seconds, not 10ths or 100ths of seconds on old 
+systems like that.
 
 inxi is being written, and tested, on Perl as old as 5.08, and will work on any 
 system that runs Perl 5.08 or later. Pre 2.9.0 Gawk/Bash inxi will also run on 
@@ -376,9 +377,10 @@ BSD / UNIX
 
 BSD support is not as complete as GNU/Linux support due to the fact some of the 
 data simply is not available, or is structured in a way that makes it unique to 
-each BSD. This fragmentation makes supporting BSDs far more difficult than it 
-should be in the 21st century. The BSD support in inxi is an ongoing process, 
-with more features being added as new data sources and types are discovered.
+each BSD, or is difficult to process. This fragmentation makes supporting BSDs 
+far more difficult than it should be in the 21st century. The BSD support in 
+inxi is an ongoing process, with more features being added as new data sources 
+and types are discovered.
 
 Note that due to time/practicality constraints, in general, only the original
 BSD branches will be actively supported: FreeBSD+derived; OpenBSD+derived;
