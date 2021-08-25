@@ -107,7 +107,7 @@ wget -O inxi https://smxi.org/inxi
 wget -O inxi smxi.org/inxi
 
 NOTE: Just because github calls tagged commits 'Releases' does not mean they are 
-releases! I can't change the words on the tag page. They are tagged commmits, 
+releases! I can't change the words on the tag page. They are tagged commits, 
 period. A tag is a pointer to a commit, and has no further meaning. 
 
 If your distribution has blocked -U self updater and you want a newer version:
