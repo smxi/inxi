@@ -185,7 +185,7 @@ unfortunately sometimes removed.
 
 INXI CONFIGURATION: https://smxi.org/docs/inxi-configuration.htm 
 HTML MAN PAGE: https://smxi.org/docs/inxi-man.htm 
-INXI OPTIONS PAGE: http://smxi.org/docs/inxi-options.htm 
+INXI OPTIONS PAGE: https://smxi.org/docs/inxi-options.htm 
 
 NOTE: Check the inxi version number on each doc page to see which version will 
 support the options listed. The man and options page also link to a legacy 
