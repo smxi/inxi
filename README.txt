@@ -107,7 +107,7 @@ wget -O inxi https://smxi.org/inxi
 wget -O inxi smxi.org/inxi
 
 NOTE: Just because github calls tagged commits 'Releases' does not mean they are 
-releases! I can't change the words on the tag page. They are tagged commits, 
+releases! I can't change the words on the tag page. They are tagged commmits, 
 period. A tag is a pointer to a commit, and has no further meaning. 
 
 If your distribution has blocked -U self updater and you want a newer version:
@@ -185,7 +185,7 @@ unfortunately sometimes removed.
 
 INXI CONFIGURATION: https://smxi.org/docs/inxi-configuration.htm 
 HTML MAN PAGE: https://smxi.org/docs/inxi-man.htm 
-INXI OPTIONS PAGE: https://smxi.org/docs/inxi-options.htm 
+INXI OPTIONS PAGE: http://smxi.org/docs/inxi-options.htm 
 
 NOTE: Check the inxi version number on each doc page to see which version will 
 support the options listed. The man and options page also link to a legacy 
