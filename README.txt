@@ -138,17 +138,15 @@ It's a good idea to check with pinxi if you want to make sure your issue has not
 been corrected, since pinxi is always equal to or ahead of inxi.
 
 --------------------------------------------------------------------------------
-LEGACY BRANCH
+LEGACY INXI (in inxi-legacy repo)
 --------------------------------------------------------------------------------
 
-If you'd like to look at or check out the Gawk/Bash version of inxi, you can 
-find it here, at the inxi-legacy branch (binxi):
+If you'd like to look at the Gawk/Bash version of inxi, you can find it in the 
+inxi-legacy repo, as binxi in the /inxi-legacy directory:
 
-git clone https://github.com/smxi/inxi --branch inxi-legacy --single-branch
+Direct fast and easy install:
 
-OR direct fast and easy install:
-
-wget -O binxi https://github.com/smxi/inxi/raw/inxi-legacy/binxi
+wget -O binxi https://github.com/smxi/inxi-legacy/raw/master/inxi-legacy/binxi
 
 OR easy to remember shortcut (which redirects to github):
 
@@ -157,6 +155,9 @@ wget -O binxi https://smxi.org/binxi
 This version will not be maintained, and it's unlikely that any time will be 
 spent on it in the future, but it is there in case it's of use or interest to 
 anyone.
+
+This was kept for a long time as the inxi-legacy branch of inxi, but was moved 
+to the inxi-legacy repo 2021-09-24.
 
 ================================================================================
 SUPPORT INFO
