@@ -46,8 +46,8 @@ use POSIX qw(ceil uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.3.06';
-my $self_date='2021-07-21';
+my $self_version='3.3.07';
+my $self_date='2021-10-11';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -100,7 +100,7 @@ if (eval {require Time::HiRes}){
 @t0 = eval 'Time::HiRes::gettimeofday()' if $b_hires; # let's start it right away
 
 ## Booleans [busybox_ps not used actively]
-my ($b_admin,$b_android,$b_arm,$b_busybox_ps,$b_display,$b_irc,
+my ($b_admin,$b_android,$b_arm,$b_busybox_ps,$b_cygwin,$b_display,$b_irc,
 $b_mips,$b_ppc,$b_root,$b_running_in_display,$b_sparc);
 
 ## System
@@ -161,7 +161,7 @@ my %use = (
 #### -------------------------------------------------------------------
 
 sub main {
-# 	print Dumper \@ARGV;
+	#	print Dumper \@ARGV;
 	eval $start if $b_log;
 	initialize();
 	## Uncomment these two values for start client debugging
@@ -493,7 +493,6 @@ sub set_display_width {
 	# print "tc: $size{'term'} cmc: $size{'console'} cm: $size{'max'}\n";
 }
 
-# NOTE: most tests internally are against !$bsd_type
 sub set_os {
 	@uname = uname();
 	$os = lc($uname[0]);
@@ -509,6 +508,7 @@ sub set_os {
 	elsif ($cpu_arch =~ /(alpha|64|e2k)/){
 		$bits_sys = 64;
 	}
+	$b_cygwin = 1 if $os =~ /cygwin/;
 	$b_android = 1 if -e '/system/build.prop';
 	if ($os =~ /(aix|bsd|cosix|dragonfly|darwin|hp-?ux|indiana|irix|sunos|solaris|ultrix|unix)/){
 		if ($os =~ /openbsd/){
@@ -517,6 +517,7 @@ sub set_os {
 		elsif ($os =~ /darwin/){
 			$os = 'darwin';
 		}
+		# NOTE: most tests internally are against !$bsd_type
 		if ($os =~ /kfreebsd/){
 			$bsd_type = 'debian-bsd';
 		}
@@ -1144,6 +1145,7 @@ sub set {
 	if (!$configs){
 		@config_files = (
 		qq(/etc/$self_name.conf), 
+		qq(/etc/$self_name.d/$self_name.conf), 
 		qq($user_config_dir/$self_name.conf)
 		);
 	}
@@ -1549,7 +1551,7 @@ sub create_debug_directory {
 	my $host = main::get_hostname();
 	$host =~ s/ /-/g;
 	$host = 'no-host' if !$host || $host eq 'N/A';
-	my ($alt_string,$bsd_string,$root_string) = ('','','');
+	my ($alt_string,$root_string) = ('','');
 	# note: Time::Piece was introduced in perl 5.9.5
 	my ($sec,$min,$hour,$mday,$mon,$year) = localtime;
 	$year = $year+1900;
@@ -1564,13 +1566,15 @@ sub create_debug_directory {
 	if ($b_root){
 		$root_string = '-root';
 	}
-	$bsd_string = "-BSD-$bsd_type" if $bsd_type;
 	my $id = ($debugger{'id'}) ? '-' . $debugger{'id'}: '';
 	if ($b_arm){$alt_string = '-ARM'}
 	elsif ($b_mips){$alt_string = '-MIPS'}
 	elsif ($b_ppc){$alt_string = '-PPC'}
 	elsif ($b_sparc){$alt_string = '-SPARC'}
-	$debug_dir = "$self_name$alt_string$bsd_string-$host$id-$today$root_string-$self_version-$self_patch";
+	$alt_string .= "-BSD-$bsd_type" if $bsd_type;
+	$alt_string .= '-ANDROID' if $b_android; 
+	$alt_string .= '-CYGWIN' if $b_cygwin; # could be windows arm?
+	$debug_dir = "$self_name$alt_string-$host$id-$today$root_string-$self_version-$self_patch";
 	$debug_gz = "$debug_dir.tar.gz";
 	$data_dir = "$user_data_dir/$debug_dir";
 	if (-d $data_dir){
@@ -1603,7 +1607,9 @@ sub audio_data {
 	my (%data,@files,@files2);
 	print "Collecting audio data...\n";
 	my @cmds = (
+	['aplay', '--version'], # alsa
 	['aplay', '-l'], # alsa
+	['pactl', '--version'], # pulseaudio
 	['pactl', 'list'], # pulseaudio
 	);
 	run_commands(\@cmds,'audio');
@@ -1628,7 +1634,7 @@ sub bluetooth_data {
 	print "Collecting bluetooth data...\n";
 # 	no warnings 'uninitialized';
 	my @cmds = (
-	['hciconfig','-a'],
+	['hciconfig','-a'], # no version
 	#['hcidump',''], # hangs sometimes
 	['hcitool','dev'],
 	['rfkill','--output-all'],
@@ -1636,8 +1642,9 @@ sub bluetooth_data {
 	# these hang if bluetoothd not enabled
 	if (@ps_cmd && (grep {m|/bluetoothd|} @ps_cmd)){
 		push(@cmds,
-		['bt-adapter','--list'],
+		['bt-adapter','--list'], # no version
 		['bt-adapter','--info'],
+		['bluetoothctl','--version'],
 		['bluetoothctl','-- list'],
 		['bluetoothctl','-- show']
 		);
@@ -1670,12 +1677,13 @@ sub disk_data {
 	}
 	copy_files(\@files, 'disk');
 	my @cmds = (
+	['blockdev', '--version'],
 	['blockdev', '--report'],
-	['btrfs', 'fi show'],
+	['btrfs', 'fi show'], # no version
 	['btrfs', 'filesystem show'],
 	['btrfs', 'filesystem show --mounted'],
 	# ['btrfs', 'filesystem show --all-devices'],
-	['df', '-h -T'],
+	['df', '-h -T'], # no need for version, and bsd doesn't have its
 	['df', '-h'],
 	['df', '-k'],
 	['df', '-k -T'],
@@ -1686,10 +1694,10 @@ sub disk_data {
 	['findmnt', ''],
 	['findmnt', '--df --no-truncate'],
 	['findmnt', '--list --no-truncate'],
-	['gpart', 'list'],
+	['gpart', 'list'], # no version
 	['gpart', 'show'],
 	['gpart', 'status'],
-	['ls', '-l /dev'],
+	['ls', '-l /dev'],# core util, don't need version
 	# block is for mmcblk / arm devices
 	['ls', '-l /dev/block'],
 	['ls', '-l /dev/block/bootdevice'],
@@ -1704,6 +1712,7 @@ sub disk_data {
 	# http://comments.gmane.org/gmane.linux.file-systems.zfs.user/2032
 	['ls', '-l /dev/disk/by-wwn'],
 	['ls', '-l /dev/mapper'],
+	['lsblk', '--version'], # important since lsblk has been changing output
 	['lsblk', '-fs'],
 	['lsblk', '-fsr'],
 	['lsblk', '-fsP'],
@@ -1721,11 +1730,13 @@ sub disk_data {
 	['lsblk', '-Pb --output NAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,SERIAL,MOUNTPOINT,PHY-SEC,LOG-SEC,PARTFLAGS'],
 	# this should always be the live command used internally:
 	['lsblk', '-bP --output NAME,TYPE,RM,FSTYPE,SIZE,LABEL,UUID,SERIAL,MOUNTPOINT,PHY-SEC,LOG-SEC,PARTFLAGS,MAJ:MIN,PKNAME'],
+	['lvdisplay', '--version'],
 	['lvdisplay', '-c'],
 	['lvdisplay', '-cv'],
 	['lvdisplay', '-cv --segments'],
 	['lvdisplay', '-m --segments'],
 	['lvdisplay', '-ma --segments'],
+	['lvs', '--version'],
 	['lvs', '--separator :'],
 	['lvs', '--separator : --segments'],
 	['lvs', '-o +devices --separator : --segments'],
@@ -1733,18 +1744,20 @@ sub disk_data {
 	['lvs', '-o +devices -av --separator : --segments'],
 	['lvs', '-o +devices -aPv --separator : --segments'],
 	# LSI raid https://hwraid.le-vert.net/wiki/LSIMegaRAIDSAS
-	['megacli', '-AdpAllInfo -aAll'],
+	['megacli', '-AdpAllInfo -aAll'], # no version
 	['megacli', '-LDInfo -L0 -a0'],
 	['megacli', '-PDList -a0'],
-	['megaclisas-status', ''],
+	['megaclisas-status', ''], # no version
 	['megaraidsas-status', ''],
 	['megasasctl', ''],
 	['mount', ''],
-	['nvme', 'present'],
+	['nvme', 'present'], # no version
+	['pvdisplay', '--version'],
 	['pvdisplay', '-c'],
 	['pvdisplay', '-cv'],
 	['pvdisplay', '-m'],
 	['pvdisplay', '-ma'],
+	['pvs', '--version'],
 	['pvs', '--separator :'],
 	['pvs', '--separator : --segments'],
 	['pvs', '-a --separator : --segments'],
@@ -1753,21 +1766,21 @@ sub disk_data {
 	['pvs', '-v --separator : --segments'],
 	['pvs', '-Pv --separator : --segments'],
 	['pvs', '--segments  -o pv_name,pv_size,seg_size,vg_name,lv_name,lv_size,seg_pe_ranges'],
-	['readlink', '/dev/root'],
-	['swapon', '-s'],
+	['readlink', '/dev/root'], # coreutils, don't need version
+	['swapon', '-s'], # coreutils, don't need version
 	# 3ware-raid
 	['tw-cli', 'info'],
 	['vgdisplay', ''],
 	['vgdisplay', '-v'],
 	['vgdisplay', '-c'],
 	['vgdisplay', '-vc'],
-	['vgs', '--separator :'],
+	['vgs', '--separator :'], # part of lvm, don't need version
 	['vgs', '-av --separator :'],
 	['vgs', '-aPv --separator :'],
 	['vgs', '-v --separator :'],
 	['vgs', '-o +pv_name --separator :'],
 	['zfs', 'list'],
-	['zpool', 'list'],
+	['zpool', 'list'], # don't use version, might not be supported in linux
 	['zpool', 'list -v'],
 	);
 	run_commands(\@cmds,'disk');
@@ -1882,7 +1895,8 @@ sub network_data {
 	print "Collecting networking data...\n";
 # 	no warnings 'uninitialized';
 	my @cmds = (
-	['ifconfig',''],
+	['ifconfig',''], # no version maybe in bsd, --version in linux
+	['ip','-Version'],
 	['ip','addr'],
 	['ip','-s link'],
 	);
@@ -1940,6 +1954,7 @@ sub system_data {
 	'ksh-version' => $ksh, # shell, not env, variable
 	'manpath' => $ENV{'MANPATH'},
 	'path' => $ENV{'PATH'},
+	'shell' => $ENV{'SHELL'},
 	'xdg-config-home' => $ENV{'XDG_CONFIG_HOME'},
 	'xdg-config-dirs' => $ENV{'XDG_CONFIG_DIRS'},
 	'xdg-data-home' => $ENV{'XDG_DATA_HOME'},
@@ -1992,14 +2007,18 @@ sub system_data {
 	['clang','--version'],
 	# only for prospective ram feature data collection: requires i2c-tools and module eeprom loaded
 	['decode-dimms',''], 
+	['dmidecode','--version'],
 	['dmidecode',''],
 	['dmesg',''],
 	['gcc','--version'],
 	['initctl','list'],
+	['ipmi-sensors','-V'], # version
 	['ipmi-sensors',''],
 	['ipmi-sensors','--output-sensor-thresholds'],
+	['ipmitool','-V'],# version
 	['ipmitool','sensor'],
-	['lscpu',''],
+	['lscpu',''],# part of util-linux
+	['lspci','--version'],
 	['lspci',''],
 	['lspci','-k'],
 	['lspci','-n'],
@@ -2013,6 +2032,7 @@ sub system_data {
 	['lspci','-mmv'],
 	['lspci','-mmnn'],
 	['lspci','-v'],
+	['lsusb','--version'],
 	['lsusb',''],
 	['lsusb','-t'],
 	['lsusb','-v'],
@@ -2023,6 +2043,7 @@ sub system_data {
 	['rc-status','-a'],
 	['rc-status','-l'],
 	['rc-status','-r'],
+	['sensors','--version'],
 	['sensors',''],
 	['sensors','-j'],
 	['sensors','-u'],
@@ -2032,6 +2053,7 @@ sub system_data {
 	# ['strings','--version'],
 	['strings','present'],
 	['sysctl','-a'],
+	['systemctl','--version'],
 	['systemctl','list-units'],
 	['systemctl','list-units --type=target'],
 	['systemd-detect-virt',''],
@@ -2229,7 +2251,7 @@ sub directory_ls {
 	my ($dir,$depth,$include) = @_;
 	$include ||= '';
 	my ($exclude) = ('');
-	# wd do NOT want to see anything in self or thread-self!!
+	# we do NOT want to see anything in self or thread-self!!
 	# $exclude = 'I self -I thread-self' if $dir eq 'proc';
 	my $cmd = do {
 		if ($depth == 1){ "ls -l $exclude /$dir/$include 2>/dev/null" }
@@ -2255,6 +2277,9 @@ sub directory_ls {
 			}
 			elsif ($working[0] =~ /^l/){
 				$type = "l - ";
+			}
+			elsif ($working[0] =~ /^c/){
+				$type = "c - ";
 			}
 			else {
 				$type = "f - ";
@@ -2343,11 +2368,11 @@ sub wanted {
 	# doesn't try to read files inside of the directories
 	if ($parse_src eq 'proc'){
 		if ($File::Find::name =~ m!^/proc/[0-9]+! || 
-		 $File::Find::name =~ m!^/proc/(irq|spl|sys)! ||
+		 # /proc/registry is from cygwin, we never want to see that
+		 $File::Find::name =~ m!^/proc/(irq|spl|sys|reg)! ||
 		 # these choke on sudo/root: kmsg kcore kpage and we don't want keys or kallsyms
 		 $File::Find::name =~ m!^/proc/k! ||
-		 $File::Find::name =~ m!^/proc/bus/pci! ||
-		 $File::Find::name =~ m!^/proc/(irq|spl|sys)!){
+		 $File::Find::name =~ m!^/proc/bus/pci!){
 			$File::Find::prune = 1;
 			return;
 		}
@@ -4116,18 +4141,24 @@ sub program_version_pkg  {
 sub reader {
 	eval $start if $b_log;
 	my ($file,$strip,$index) = @_;
-	return if !$file;
-	open(my $fh, '<', $file) or error_handler('open', $file, $!);
-	chomp(my @rows = <$fh>);
-	close $fh if $fh;
-	if (@rows && $strip){
-		my @temp;
-		for (@rows){
-			next if /^\s*(#|$)/;
-			$_ =~ s/^\s+|\s+$//g;
-			push(@temp,$_);
+	return if !$file || ! -r $file; # not all OS respect -r tests!!
+	my ($error,@rows);
+	open(my $fh, '<', $file) or $error = $!; # $fh always non null, even on error
+	if ($error){
+		error_handler('open', $file, $error);
+	}
+	else {
+		chomp(@rows = <$fh>);
+		close $fh;
+		if (@rows && $strip){
+			my @temp;
+			for (@rows){
+				next if /^\s*(#|$)/;
+				$_ =~ s/^\s+|\s+$//g;
+				push(@temp,$_);
+			}
+			@rows = @temp;
 		}
-		@rows = @temp;
 	}
 	eval $end if $b_log;
 	# note: returns undef scalar value if $rows[index] does not exist
@@ -4895,9 +4926,10 @@ sub get {
 	'fake:s' => sub {
 		my ($opt,$arg) = @_;
 		if ($arg){
-			my $wl = 'bluetooth|compiler|cpu|dboot|dmidecode|ipmi|logical|pciconf|';
-			$wl .= 'pcictl|pcidump|raid-btrfs|raid-hw|raid-lvm|raid-md|raid-soft|';
-			$wl .= 'raid-zfs|sensors|sysctl|uptime|usbconfig|usbdevs|vmstat|xorg-log';
+			my $wl = 'bluetooth|compiler|cpu|dboot|dmidecode|ipmi|logical|lspci|';
+			$wl .= 'partitions|pciconf|pcictl|pcidump|raid-btrfs|raid-hw|raid-lvm|';
+			$wl .= 'raid-md|raid-soft|raid-zfs|sensors|sysctl|uptime|usbconfig|';
+			$wl .= 'usbdevs|vmstat|xorg-log';
 			for (split(',',$arg)){
 				if ($_ =~ /\b($wl)\b/){
 					$fake{lc($1)} = 1;
@@ -5479,7 +5511,7 @@ sub show_options {
 	driver check list of Xorg for the device vendor, but is not installed on system;
 	Xorg dpi." ],
 	['2', '-I', '', "Other detected installed gcc versions (if present). System 
-	default runlevel. Adds parent program (or tty) for shell info if not in 
+	default runlevel. Adds parent program (or pty/tty) for shell info if not in 
 	IRC. Adds Init version number, RC (if found). Adds per package manager
 	installed package counts if not -r." ],
 	['2', '-j,-p,-P', '', "Swap priority." ],
@@ -6183,6 +6215,22 @@ sub general_cleaner {
 	return $string;
 }
 
+# args: $1 - vendor id; $2 - product id
+# returns print ready vendor:chip id string, or na variants
+sub get_chip_id {
+	my ($vendor,$product)= @_;
+	my $id = 'N/A';
+	if ($vendor && $product){
+		$id = "$vendor:$product";
+	}
+	elsif ($vendor){
+		$id = "$vendor:n/a";
+	}
+	elsif ($product){
+		$id = "n/a:$product";
+	}
+	return $id;
+}
 # args: $1 - size in KB, return KB, MB, GB, TB, PB, EB; $2 - 'string';
 # $3 - default value if null
 # returns string with units or array or size unmodified if not numeric
@@ -6765,6 +6813,7 @@ sub print_data {
 									$holder2 = "$colors{'c2'}$holder2";
 								}
 								# print "xx:$holder";
+								$holder2 =~ s/\s+$//;
 								$line = sprintf("%-${indent}s%s$colors{'cn'}\n","$start","$holder$holder2");
 								print_line($line);
 								$holder = '';
@@ -6778,6 +6827,7 @@ sub print_data {
 						}
 						if ($holder2 !~ /^\s*$/){
 							# print "four\n";
+							$holder2 =~ s/\s+$//;
 							$holder2 = "$colors{'c2'}$holder2";
 							$line = sprintf("%-${indent}s%s$colors{'cn'}\n","$start","$holder$holder2");
 							print_line($line);
@@ -6794,6 +6844,7 @@ sub print_data {
 						# print "H: $counter " . scalar %$val1 . " $indent3 $indent2\n";
 						if ($holder){
 							# print "five\n";
+							$holder =~ s/\s+$//;
 							$line = sprintf("%-${indent_use}s%s$colors{'cn'}\n",$start,"$holder");
 							$length = length("$key$sep{'s2'} $val2") + $indent_use;
 							print_line($line);
@@ -6811,6 +6862,7 @@ sub print_data {
 				}
 				if ($holder !~ /^\s*$/){
 					# print "seven\n";
+					$holder =~ s/\s+$//;
 					$line = sprintf("%-${indent_use}s%s$colors{'cn'}\n",$start,"$start2$holder");
 					print_line($line);
 					$holder = '';
@@ -6943,13 +6995,7 @@ sub device_output {
 			$rows[$j]->{main::key($num++,0,2,'bus-ID')} = (!$row->[2] && !$row->[3]) ? 'N/A' : "$row->[2].$row->[3]";
 		}
 		if ($extra > 1){
-			my $chip_id = 'N/A';
-			if ($row->[5] && $row->[6]){
-				$chip_id = "$row->[5]:$row->[6]";
-			}
-			elsif ($row->[6]){
-				$chip_id = $row->[6];
-			}
+			my $chip_id = main::get_chip_id($row->[5],$row->[6]);
 			$rows[$j]->{main::key($num++,0,2,'chip-ID')} = $chip_id;
 			if ($extra > 2 && $row->[1]){
 				$rows[$j]->{main::key($num++,0,2,'class-ID')} = $row->[1];
@@ -7712,13 +7758,7 @@ sub device_output {
 			$rows[$j]->{main::key($num++,0,2,'bus-ID')} = (!$row->[2] && !$row->[3]) ? 'N/A' : "$row->[2].$row->[3]";
 		}
 		if ($extra > 1){
-			my $chip_id = 'N/A';
-			if ($row->[5] && $row->[6]){
-				$chip_id = "$row->[5]:$row->[6]";
-			}
-			elsif ($row->[6]){
-				$chip_id = $row->[6];
-			}
+			my $chip_id = main::get_chip_id($row->[5],$row->[6]);
 			$rows[$j]->{main::key($num++,0,2,'chip-ID')} = $chip_id;
 			if ($extra > 2 && $row->[1]){
 				$rows[$j]->{main::key($num++,0,2,'class-ID')} = $row->[1];
@@ -9779,7 +9819,7 @@ sub cpu_arch {
 			$arch = 'Zen (Hygon Dhyana)';
 		}
 		elsif ($family eq '19'){
-			# model: 1 21 40 50
+			# model: 0 1 21 40 50
 			$arch = 'Zen 3';
 		}
 		# note: family 20 may be Zen 4 but not known for sure yet
@@ -10382,7 +10422,7 @@ sub drive_data {
 	my $fs_skip = PartitionItem::fs_excludes('disk-used');
 	foreach my $row (@partitions){
 		# don't count remote/distributed/union type fs towards used
-		next if ($row->{'fs'} && $row->{'fs'} =~ /^(fuse(blk)?[\._-]?)?($fs_skip)$/);
+		next if ($row->{'fs'} && $row->{'fs'} =~ /^$fs_skip$/);
 		# don't count non partition swap
 		next if ($row->{'swap-type'} && $row->{'swap-type'} ne 'partition');
 		# in some cases, like redhat, mounted cdrom/dvds show up in partition data
@@ -10887,11 +10927,17 @@ sub smartctl_data {
 				if ($split[$a] eq 'Device Model'){
 					$b_intel = 1 if $split[$r] =~/\bintel\b/i;
 					$b_kingston = 1 if $split[$r] =~/kingston/i;
-					# usb/firewire/thunderbolt
+					# usb/firewire/thunderbolt enclosure id method
 					if ($data->[$i]{'type'}){
 						@working = device_vendor("$split[$r]");
 						$data->[$i]{'drive-model'} = $working[1] if $data->[$i]{'model'} && $data->[$i]{'model'} ne $working[1];
 						$data->[$i]{'drive-vendor'} = $working[0] if $data->[$i]{'vendor'} && $data->[$i]{'vendor'} ne $working[0];
+					}
+					# fallback for very corner cases where primary model id failed
+					if (!$data->[$i]{'model'} && $split[$r]){
+						@working = device_vendor("$split[$r]");
+						$data->[$i]{'model'} = $working[1] if $working[1];
+						$data->[$i]{'vendor'} = $working[0] if $working[0] && !$data->[$i]{'vendor'};
 					}
 				}
 				elsif ($split[$a] eq 'Model Family'){
@@ -11030,17 +11076,20 @@ sub smartctl_data {
 						elsif ($b_kingston){
 							$split[$r] = $split[$r] * 1024 * 1024;
 						}
+						# rare fringe cases, cygwin run as user, block size will not be found
 						# this is what it's supposed to refer to
-						else {
+						elsif ($data->[$i]{'block-logical'}) {
 							$split[$r] = int($data->[$i]{'block-logical'} * $split[$r] / 1024);
 						}
-						$data->[$i]{'smart-read'} = main::get_size($split[$r],'string');
+						if ($b_intel || $b_kingston || $data->[$i]{'block-logical'}){
+							$data->[$i]{'smart-read'} = main::get_size($split[$r],'string');
+						}
 					}
 				}
 				elsif ($split[$a] eq 'Total_LBAs_Written'){
-					if (main::is_numeric($split[$r])){
+					if (main::is_numeric($split[$r]) && $data->[$i]{'block-logical'}){
 						# blocks in bytes, so convert to KiB, the internal unit here
-						# reports in 32MoB units, sigh
+						# reports in 32MiB units, sigh
 						if ($b_intel){
 							$split[$r] = $split[$r] * 32 * 1024;
 						}
@@ -11048,11 +11097,14 @@ sub smartctl_data {
 						elsif ($b_kingston){
 							$split[$r] = $split[$r] * 1024 * 1024;
 						}
+						# rare fringe cases, cygwin run as user, block size will not be found
 						# this is what it's supposed to refer to, in byte blocks
-						else {
+						elsif ($data->[$i]{'block-logical'}) {
 							$split[$r] = int($data->[$i]{'block-logical'} * $split[$r] / 1024);
 						}
-						$data->[$i]{'smart-written'} = main::get_size($split[$r],'string');
+						if ($b_intel || $b_kingston || $data->[$i]{'block-logical'}){
+							$data->[$i]{'smart-written'} = main::get_size($split[$r],'string');
+						}
 					}
 				}
 				## DEVICE OLD AGE ##
@@ -11389,7 +11441,7 @@ sub set_vendors {
 	## THEN BETTER KNOWN ONESs ##
 	# A-Data can be in middle of string
 	['^(.*\bA-?DATA|ASP[0-9]|AX[MN]|CH11|HV[1-9]|IM2|HD[1-9]|HDD\s?CH|IUM)','A-?DATA','A-Data',''],
-	['^ASUS','^ASUS','ASUS',''],
+	['^(ASUS|ROG)','^ASUS','ASUS',''], # ROG ESD-S1C
 	# ATCS05 can be hitachi travelstar but not sure
 	['^ATP','^ATP\b','ATP',''],
 	# Force MP500
@@ -11402,7 +11454,7 @@ sub set_vendors {
 	['^((ATA\s)?Hitachi|HCS|HD[PST]|DK[0-9]|IC|HT|HU|HMS|HDE|0G[0-9])','Hitachi','Hitachi',''], 
 	# vb: VB0250EAVER but clashes with vbox; HP_SSD_S700_120G ;GB0500EAFYL GB starter too generic?
 	['^(HP\b|[MV]B[0-6]|G[BJ][0-9]|DF[0-9]|F[BK]|0-9]|PSS|XR[0-9]{4}|c350|v[0-9]{3}[bgorw]$|x[0-9]{3}[w]$|VK0)','^HP','HP',''], 
-	['^(Lexar|LSD|JumpDrive|JD\s?Firefly|WorkFlow)','^Lexar','Lexar',''], # mmc-LEXAR_0xb016546c; JD Firefly;
+	['^(Lexar|LSD|JumpDrive|JD\s?Firefly|LX[0-9]|WorkFlow)','^Lexar','Lexar',''], # mmc-LEXAR_0xb016546c; JD Firefly;
 	# OCZSSD2-2VTXE120G is OCZ-VERTEX2_3.5
 	['^(OCZ|APOC|D2|DEN|DEN|DRSAK|EC188|FTNC|GFGC|MANG|MMOC|NIMC|NIMR|PSIR|RALLY2|TALOS2|TMSC|TRSAK)','^OCZ[\s-]','OCZ',''],
 	['^OWC','^OWC\b','OWC',''],
@@ -11415,6 +11467,8 @@ sub set_vendors {
 	## LAST: THEY ARE SHORT AND COULD LEAD TO FALSE ID, OR ARE UNLIKELY ##
 	# unknown: AL25744_12345678; ADP may be usb 2.5" adapter; udisk unknown: Z1E6FTKJ 00AAKS
 	# SSD2SC240G726A10 MRS020A128GTS25C EHSAJM0016GB
+	['^2[\s-]?Power','^2[\s-]?Power','2-Power',''], 
+	['^(3ware|9650SE)','^3ware','3ware (controller)',''], 
 	['^5ACE','^5ACE','5ACE',''], # could be seagate: ST316021 5ACE
 	['^(Aarvex|AX[0-9]{2})','^AARVEX','AARVEX',''],
 	['^(AbonMax|ASU[0-9])','^AbonMax','AbonMax',''],
@@ -11444,6 +11498,7 @@ sub set_vendors {
 	['^(ASM|2115)','^ASM','ASMedia',''],#asm1153e
 	['^(AVEXIR|AVSSD)','^AVEXIR','Avexir',''],
 	['^Axiom','^Axiom','Axiom',''],
+	['^(Baititon|BT[0-9])','^Baititon','Baititon',''],
 	['^Bamba','^Bamba','Bamba',''],
 	['^Bell\b','^Bell','Packard Bell',''],
 	['^(BelovedkaiAE|GhostPen)','^BelovedkaiAE','BelovedkaiAE',''],
@@ -11525,6 +11580,7 @@ sub set_vendors {
 	['^Geil','^Geil','Geil',''],
 	['^GelL','^GelL','GelL',''], # typo for Geil? GelL ZENITH R3 120GB
 	['^(Generic|UY[67])','^Generic','Generic',''],
+	['^Geonix','^Geonix','Geonix',''],
 	['^Getrich','^Getrich','Getrich',''],
 	['^Gigabyte','^Gigabyte','Gigabyte',''], # SSD
 	['^Gigastone','^Gigastone','Gigastone',''],
@@ -11546,15 +11602,19 @@ sub set_vendors {
 	['^(Hikvision|HKVSN|HS-SSD)','^Hikvision','Hikvision',''],
 	['^Hoodisk','^Hoodisk','Hoodisk',''],
 	['^HUAWEI','^HUAWEI','Huawei',''],
+	['^Hypertec','^Hypertec','Hypertec',''],
 	['^HyperX','^HyperX','HyperX',''],
 	['^Hyundai','^Hyundai','Hyundai',''],
 	['^(IBM|DT|ESA[1-9])','^IBM','IBM',''], 
 	['^IEI Tech','^IEI Tech(\.|nology)?( Corp(\.|oration)?)?','IEI Technology',''],
+	['^(IGEL|UD Pocket)','^IGEL','IGEL',''],
 	['^(Imation|Nano\s?Pro|HQT)','^Imation(\sImation)?','Imation',''], # Imation_ImationFlashDrive; TF20 is imation/tdk
 	['^(Inateck|FE20)','^Inateck','Inateck',''],
 	['^(Inca\b|Npenterprise)','^Inca','Inca',''],
 	['^(Indilinx|IND-)','^Indilinx','Indilinx',''],
 	['^INDMEM','^INDMEM','INDMEM',''],
+	['^(Infokit)','^Infokit','Infokit',''],
+	['^(Initio)','^Initio','Initio',''], 
 	['^Inland','^Inland','Inland',''],
 	['^(InnoDisk|Innolite|SATA\s?Slim)','^InnoDisk( Corp.)?','InnoDisk',''],
 	['Innostor','Innostor','Innostor',''],
@@ -11563,7 +11623,10 @@ sub set_vendors {
 	['^Intaiel','^Intaiel','Intaiel',''],
 	['^(INM|Integral|V\s?Series)','^Integral(\s?Memory)?','Integral Memory',''],
 	['^(lntenso|Intenso|(Alu|Basic|Business|Micro|c?Mobile|Premium|Rainbow|Slim|Speed|Twister|Ultra) Line|Rainbow)','^Intenso','Intenso',''],
+	['^(I-?O Data|HDCL)','^I-?O Data','I-O Data',''], 
+	['^(Integrated[\s-]?Technology|IT[0-9]+)','^Integrated[\s-]?Technology','Integrated Technology',''], 
 	['^(Iomega|ZIP\b|Clik!)','^Iomega','Iomega',''], 
+	['^ISOCOM','^ISOCOM','ISOCOM (Shenzhen Longsys Electronics)',''],
 	['^JingX','^JingX','JingX',''], #JingX 120G SSD - not confirmed, but guessing
 	['^Jingyi','^Jingyi','Jingyi',''],
 	# NOTE: ITY2 120GB hard to find
@@ -11572,7 +11635,7 @@ sub set_vendors {
 	['^Kimtigo','^Kimtigo','Kimtigo',''],
 	['^Kingbank','^Kingbank','Kingbank',''],
 	['^Kingchux[\s-]?ing','^Kingchux[\s-]?ing','Kingchuxing',''],
-	['^(KingDian|NGF)','^KingDian','KingDian',''],
+	['(KingDian|^NGF)','KingDian','KingDian',''],
 	['^Kingfast','^Kingfast','Kingfast',''],
 	['^KingMAX','^KingMAX','KingMAX',''],
 	['^Kingrich','^Kingrich','KingrSU04Gich',''],
@@ -11586,6 +11649,7 @@ sub set_vendors {
 	['^KLEVV','^KLEVV','KLEVV',''],
 	['^Kodak','^Kodak','Kodak',''],
 	['^(KUAIKAI|MSAM)','^KUAIKAI','KuaKai',''],
+	['(KUIJIA|DAHUA)','^KUIJIA','KUIJIA',''],
 	['^KUNUP','^KUNUP','KUNUP',''],
 	['^(Lacie|P92|itsaKey|iamaKey)','^Lacie','LaCie',''],
 	['^LANBO','^LANBO','LANBO',''],
@@ -11603,10 +11667,10 @@ sub set_vendors {
 	['^LONDISK','^LONDISK','LONDISK',''],
 	['^(LSI|MegaRAID)','^LSI\b','LSI',''],
 	['^(M-Systems|DiskOnKey)','^M-Systems','M-Systems',''],
-	['^(Mach\s*Xtreme|MXSSD|MXU)','^Mach\s*Xtreme','Mach Xtreme',''],
+	['^(Mach\s*Xtreme|MXSSD|MXU|MX[\s-])','^Mach\s*Xtreme','Mach Xtreme',''],
 	['^Maximus','^Maximus','Maximus',''],
 	['^Maxone','^Maxone','Maxone',''],
-	['^(MAXTOR|Atlas|TM[0-9]{4}|[KL]0[1-9]|Y[0-9]{3}[A-Z]|STM[0-9]|F[0-9]{3}L)','^MAXTOR','Maxtor',''], # note M2 M3 is usually maxtor, but can be samsung
+	['^(MAXTOR|Atlas|L(250|500)|TM[0-9]{4}|[KL]0[1-9]|Y[0-9]{3}[A-Z]|STM[0-9]|F[0-9]{3}L)','^MAXTOR','Maxtor',''], # note M2 M3 is usually maxtor, but can be samsung
 	['^(Memorex|TravelDrive|TD\s?Classic)','^Memorex','Memorex',''],
 	# note: C300/400 can be either micron or crucial, but C400 is M4 from crucial
 	['(^MT|^M5|^Micron|00-MT|C[34]00)','^Micron','Micron',''],# C400-MTFDDAK128MAM
@@ -11619,11 +11683,13 @@ sub set_vendors {
 	['^Medion','^Medion','Medion',''],
 	['^(MEDIAMAX|WL[0-9]{2})','^MEDIAMAX','MediaMax',''],
 	['^Mengmi','^Mengmi','Mengmi',''],
+	['^MGTEC','^MGTEC','MGTEC',''],
 	['^(Microsoft|S31)','^Microsoft','Microsoft',''],
 	['^MidasForce','^MidasForce','MidasForce',''],
 	['^(Mimoco|Mimobot)','^Mimoco','Mimoco',''],
 	['^MINIX','^MINIX','MINIX',''],
 	['^Miracle','^Miracle','Miracle',''],
+	['^Moba','^Moba','Moba',''],
 	# Monster MONSTER DIGITAL
 	['^(Monster\s)+(Digital)?|OD[\s-]?ADVANCE','^(Monster\s)+(Digital)?','Monster Digital',''],
 	['^Morebeck','^Morebeck','Morebeck',''],
@@ -11642,6 +11708,7 @@ sub set_vendors {
 	# NGFF is a type, like msata, sata
 	['^Nik','^Nikimi','Nikimi',''],
 	['^NOREL','^NOREL(SYS)?','NorelSys',''],
+	['^ODYS','^ODYS','ODYS',''],
 	['^Olympus','^Olympus','Olympus',''],
 	['^Orico','^Orico','Orico',''],
 	['^OSC','^OSC\b','OSC',''],
@@ -11696,6 +11763,7 @@ sub set_vendors {
 	['^(SMART( Storage Systems)?|TX)','^(SMART( Storage Systems)?)','Smart Storage Systems',''],
 	['^Sobetter','^Sobetter','Sobetter',''],
 	['^(S[FR]-|Sony)','^Sony','Sony',''],
+	['^(SSSTC|CL1-)','^SSSTC','SSSTC',''],
 	['^STE[CK]','^STE[CK]','sTec',''], # wd bought this one
 	['^STmagic','^STmagic','STmagic',''],
 	['^STORFLY','^STORFLY','StorFly',''],
@@ -11714,7 +11782,7 @@ sub set_vendors {
 	['^TC[\s-]*SUNBOW','^TC[\s-]*SUNBOW','TCSunBow',''],
 	['^(TDK|TF[1-9][0-9])','^TDK','TDK',''],
 	['^TEAC','^TEAC','TEAC',''],
-	['^TEAM','^TEAM(\s*Group)?','TeamGroup',''],
+	['^(TEAM|T[\s-]?Create)','^TEAM(\s*Group)?','TeamGroup',''],
 	['^(Teclast|CoolFlash)','^Teclast','Teclast',''],
 	['^Teelkoou','^Teelkoou','Teelkoou',''],
 	['^Tele2','^Tele2','Tele2',''],
@@ -11751,13 +11819,16 @@ sub set_vendors {
 	['^(Wearable|Air-?Stash)','^Wearable','Wearable',''],
 	['^Wellcomm','^Wellcomm','Wellcomm',''],
 	['^Wilk','^Wilk','Wilk',''],
+	['^WPC','^WPC','WPC',''], # WPC-240GB
 	['^(Wortmann(\sAG)?|Terra\s?US)','^Wortmann(\sAG)?','Wortmann AG',''],
+	['^(XinTop|XT-)','^XinTop','XinTop',''],
 	['^Xintor','^Xintor','Xintor',''],
 	['^XPG','^XPG','XPG',''],
 	['^XrayDisk','^XrayDisk','XrayDisk',''],
 	['^Xstar','^Xstar','Xstar',''],
 	['^(XUM|HX[0-9])','^XUM','XUM',''],
 	['^XUNZHE','^XUNZHE','XUNZHE',''],
+	['^(Yangtze|ZhiTai|PC00[5-9]|SC00[1-9])','^Yangtze(\s*Memory)?','Yangtze Memory',''],
 	['^(Yeyian|valk)','^Yeyian','Yeyian',''],
 	['^(YingChu|YGC)','^YingChu','YingChu',''],
 	['^(YUCUN|R880)','^YUCUN','YUCUN',''],
@@ -12095,7 +12166,8 @@ sub device_output {
 			$rows[$j]->{main::key($num++,0,2,'bus-ID')} = (!$row->[2] && !$row->[3]) ? 'N/A' : "$row->[2].$row->[3]";
 		}
 		if ($extra > 1){
-			$rows[$j]->{main::key($num++,0,2,'chip-ID')} = ($row->[5]) ? "$row->[5]:$row->[6]" : $row->[6];
+			my $chip_id = main::get_chip_id($row->[5],$row->[6]);
+			$rows[$j]->{main::key($num++,0,2,'chip-ID')} = $chip_id;
 		}
 		if ($extra > 2 && $row->[1]){
 			$rows[$j]->{main::key($num++,0,2,'class-ID')} = $row->[1];
@@ -14142,7 +14214,7 @@ sub device_output {
 		# print "$row->[0] $row->[3]\n";
 		$j = scalar @rows;
 		my $driver = $row->[9];
-		my $chip_id = "$row->[5]:$row->[6]";
+		my $chip_id = main::get_chip_id($row->[5],$row->[6]);
 		# working around a virtuo bug same chip id is used on two nics
 		if (!defined $holder{$chip_id}){
 			$holder{$chip_id} = 0;
@@ -15044,8 +15116,8 @@ sub create_output {
 			$rows[$j]->{main::key($num++,0,3,'mapped')} = $row->{'dev-mapped'};
 		}
 		# add fs known to not use label/uuid here
-		if (($show{'label'} || $show{'uuid'}) && 
-		 $dev_type eq 'dev' && $fs !~ /^(fuse(blk)?[\._-]?)?($fs_skip)$/){
+		if (($show{'label'} || $show{'uuid'}) && $dev_type eq 'dev' && 
+		 $fs !~ /^$fs_skip$/){
 			if ($show{'label'}){
 				if ($use{'filter-label'}){
 					$row->{'label'} = main::apply_partition_filter('part', $row->{'label'}, '');
@@ -15091,32 +15163,40 @@ sub set_partitions {
 	# most current OS support -T and -k, but -P means different things
 	# in freebsd. However since most use is from linux, we make that default
 	# android 7 no -T support
-	if (!$bsd_type){
-		@partitions_working = main::grabber("df -P -T -k 2>/dev/null");
-		main::set_mapper() if !$loaded{'mapper'};
+	if (!$fake{'partitions'}){
+		if (!$bsd_type){
+			@partitions_working = main::grabber("df -P -T -k 2>/dev/null");
+			main::set_mapper() if !$loaded{'mapper'};
+		}
+		else {
+			# this is missing the file system data
+			if ($bsd_type ne 'darwin'){
+				@partitions_working = main::grabber("df -T -k 2>/dev/null");
+			}
+			#Filesystem 1024-blocks Used Available Capacity iused ifree %iused Mounted on
+			else {
+				$cols = 8;
+				($back_size,$back_used) = (7,6);
+			}
+			# turns out freebsd uses this junk too
+			$b_fake_map = 1;
+		}
+		# busybox only supports -k and -P, openbsd, darwin
+		if (!@partitions_working){
+			@partitions_working = main::grabber("df -k 2>/dev/null");
+			$b_fs = 0;
+			$cols = 5 if !$bsd_type || $bsd_type ne 'darwin';
+			if (my $path = main::check_program('mount')){
+				@mount = main::grabber("$path 2>/dev/null");
+			}
+		}
 	}
 	else {
-		# this is missing the file system data
-		if ($bsd_type ne 'darwin'){
-			@partitions_working = main::grabber("df -T -k 2>/dev/null");
-		}
-		#Filesystem 1024-blocks Used Available Capacity iused ifree %iused Mounted on
-		else {
-			$cols = 8;
-			($back_size,$back_used) = (7,6);
-		}
-		# turns out freebsd uses this junk too
-		$b_fake_map = 1;
+		# my $file;
+		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/df/df-kTP-cygwin-1.txt";
+		# @partitions_working = main::reader($file);
 	}
-	# busybox only supports -k and -P, openbsd, darwin
-	if (!@partitions_working){
-		@partitions_working = main::grabber("df -k 2>/dev/null");
-		$b_fs = 0;
-		$cols = 5 if !$bsd_type || $bsd_type ne 'darwin';
-		if (my $path = main::check_program('mount')){
-			@mount = main::grabber("$path 2>/dev/null");
-		}
-	}
+	# print Data::Dumper::Dumper \@partitions_working;
 	# determine positions
 	my $row1 = shift @partitions_working;
 	# new kernels/df have rootfs and / repeated, creating two entries for the same partition
@@ -15130,14 +15210,18 @@ sub set_partitions {
 	# push @partitions_working, '//mafreebox.freebox.fr/Disque dur cifs         239216096  206434016  20607496      91% /freebox/Disque dur';
 	# push @partitions_working, '//mafreebox.freebox.fr/AllPG      cifs         436616192  316339304 120276888      73% /freebox/AllPG';
 	foreach (@partitions_working){
+		($dev_base,$dev_mapped,$dev_type,$fs,$id,$label,
+		$maj_min,$type,$uuid) = ('','','','','','','','','');
+		($b_load,$b_space,$block_size,$percent_used,$raw_size,$size_available,
+		$size,$used) = (0,0,0,0,0,0,0,0);
+		undef %part;
 		# apple crap, maybe also freebsd?
 		$_ =~ s/^map\s+([\S]+)/map:\/$1/ if $b_fake_map;
-		$b_space = 0;
 		# handle spaces in remote filesystem names
-		# busybox df shows KM, sigh.
-		if (/^(.*)(\s[\S]+)\s+[a-z][a-z0-9]+\s+[0-9]+/){
+		# busybox df shows KM, sigh; note: GoogleDrive Hogne: fuse.rclone  15728640
+		if (/^(.*)(\s[\S]+)\s+[a-z][a-z0-9\.]+\s+[0-9]+/){
 			$replace = $test = "$1$2";
-			if ($test =~ /\s/){
+			if ($test =~ /\s/){ # paranoid test, but better safe than sorry
 				$b_space = 1;
 				$replace =~ s/\s/^^/g;
 				# print ":$replace:\n";
@@ -15146,17 +15230,14 @@ sub set_partitions {
 			}
 		}
 		my @row = split(/\s+/, $_);
+		$row[0] =~ s/\^\^/ /g if $b_space; # reset spaces in > 1 word fs name
 		# autofs is a bsd thing, has size 0
 		if ($row[0] =~ /^($filters)$/ || $row[0] =~ /^ROOT/i || 
 		 ($b_fs && ($row[2] == 0 || $row[1] =~ /^(autofs|devtmpfs|iso9660|tmpfs)$/))){
 			next;
 		}
-		($dev_base,$dev_mapped,$dev_type,$fs,$id,$label,
-		$maj_min,$type,$uuid) = ('','','','','','','','','');
-		($b_load,$block_size,$percent_used,$raw_size,$size_available,
-		$size,$used) = (0,0,0,0,0,0,0,0);
-		undef %part;
 		# NOTE: using -P for linux fixes line wraps, and for bsds, assuming they don't use such long file names
+		# cygwin C:\cygwin passes this test so has to be handled later
 		if ($row[0] =~ /^\/dev\/|:\/|\/\//){
 			# this could point to by-label or by-uuid so get that first. In theory, abs_path should 
 			# drill down to get the real path, but it isn't always working.
@@ -15243,17 +15324,24 @@ sub set_partitions {
 				$size_available = $working[1];
 				$block_size = $working[2];
 			}
-			$dev_base =~ s/\^\^/ /g if $b_space;
 			if (!$dev_type){
+				# C:/cygwin64, D:
+				if ($b_cygwin && $row[0] =~ /^[A-Z]+:/){
+					$dev_type = 'windows';
+					$dev_base = $row[0] if !$dev_base;
+					# looks weird if D:, yes, I know, windows uses \, but cygwin doesn't
+					$dev_base .= '/' if $dev_base =~ /:$/; 
+				}
 				# need data set, this could maybe be converted to use 
 				# dev-mapped and abspath but not without testing
-				if ($dev_base =~ /^map:\/(.*)/){
+				elsif ($dev_base =~ /^map:\/(.*)/){
 					$dev_type = 'mapped';
 					$dev_base = $1;
 				}
-				# note: I have seen this: beta:data/ for sshfs path
-				elsif ($dev_base =~ /^\/\/|:\//){
+				# note: possible: sshfs path: beta:data/; remote: fuse.rclone
+				elsif ($dev_base =~ /^\/\/|:\// || ($fs && $fs =~ /(rclone)/)){
 					$dev_type = 'remote';
+					$dev_base = $row[0] if !$dev_base; # only trips in fs test case
 				}
 				# a slice bsd system, zfs can't be detected this easily
 				elsif ($b_logical && $fs && $fs =~ /^(null(fs)?)$/){
@@ -15429,14 +15517,14 @@ sub swap_data {
 sub swap_advanced_data {
 	eval $start if $b_log;
 	my ($swappiness,$cache_pressure) = (undef,undef);
-	if (-r "/proc/sys/vm/swappiness"){
-		$swappiness = main::reader("/proc/sys/vm/swappiness",'',0);
+	if (-r '/proc/sys/vm/swappiness'){
+		$swappiness = main::reader('/proc/sys/vm/swappiness','',0);
 		if (defined $swappiness){
 			$swappiness .= ($swappiness == 60) ? ' (default)' : ' (default 60)' ;
 		}
 	}
-	if (-r "/proc/sys/vm/vfs_cache_pressure"){
-		$cache_pressure = main::reader("/proc/sys/vm/vfs_cache_pressure",'',0);
+	if (-r '/proc/sys/vm/vfs_cache_pressure'){
+		$cache_pressure = main::reader('/proc/sys/vm/vfs_cache_pressure','',0);
 		if (defined $cache_pressure){
 			$cache_pressure .= ($cache_pressure == 100) ? ' (default)' : ' (default 100)' ;
 		}
@@ -15517,13 +15605,16 @@ sub fs_excludes {
 	my ($source) = @_;
 	# panfs is parallel NAS volume manager, need more data
 	# null is hammer fs slice; nfs/nfs3/nfs4; some can be fuse mounts: fuse.sshfs
-	my $excludes = 'afs|archivemount(fs)?|aufs|avfs|ceph|cifs|gfs\d{0,2}|glusterfs|';
-	$excludes .= 'gmailfs|hdfs|ipfs|iso9660||k(osmos)?fs|.*lafs|mhddfs|mergerfs|';
-	$excludes .= 'moosefs|nfs\d{0,2}|null(fs)?|ocfs\d{0,2}|openafs|orangefs|';
-	$excludes .= 'overla(id|y)(fs)?|panfs|pvfs\d{0,2}|s3fs|sheepdog|squashfs|';
-	$excludes .= 'sshfs|smbfs|unionfs|vmfs';
-	# for non disk used excludes
-	$excludes .= '|ffs|fuse(blk)?' if $source eq 'label-uuid';
+	# afs aufs avfs cifs ffs gfs\d{0,2} hdfs ipfs k(osmos)?fs .*lafs mhddfs
+	# mergerfs nfs\d{0,2} null ocfs\d{0,2} openafs orangefs overla(id|y)(fs)?
+	# panfs pvfs\d{0,2} s3fs squashfs sshfs smbfs unionfs vmfs
+	my $excludes = '(fuse(blk)?[\._-]?)?(';
+	$excludes .= 'f|' if $source eq 'label-uuid'; # ffs not remote, but no u/l
+	$excludes .= 'a|archivemount|au|av|ceph|ci|g|gluster|gmail|hd|ip|';
+	$excludes .= 'iso9660|k(osmos)?|.*la|mhdd|merger|moose|n|null|oc|opena|';
+	$excludes .= 'orange|overla(id|y)|pan|pv|s3|rclone|sheepdog|squash|ssh|';
+	$excludes .= 'smb|union|vm';
+	$excludes .= ')(fs)?(\d{0,2})?';
 	return $excludes;
 }
 sub get_mounts_fs {
@@ -15913,7 +16004,7 @@ sub hw_output {
 			$rows[$j]->{main::key($num++,0,2,'bus-ID')} = $bus_id;
 		}
 		if ($extra > 1){
-			my $chip_id = (defined $row->{'vendor-id'} && defined $row->{'chip-id'}) ? "$row->{'vendor-id'}.$row->{'chip-id'}": 'N/A' ;
+			my $chip_id = main::get_chip_id($row->[5],$row->[6]);
 			$rows[$j]->{main::key($num++,0,2,'chip-ID')} = $chip_id;
 		}
 		if ($extra > 2){
@@ -17901,6 +17992,7 @@ sub set_vendors {
 	['^(T[^\dR]|Team[\s-]?Group)','Team[\s-]?Group','TeamGroup',''],
 	['^(TR\d|JM\d|Transcend)','Transcend','Transcend',''],
 	['^(VK\d|Vaseky)','Vaseky','Vaseky',''],
+	['^(Yangtze|Zhitai)','Yangtze(\s*Memory)?','Yangtze Memory',''],
 	);
 }
 # note: many of these are pci ids, not confirmed valid for ram
@@ -20192,7 +20284,7 @@ sub create_output {
 		$rows[$j]->{main::key($num++,0,2,'size')} = $size;
 		$rows[$j]->{main::key($num++,0,2,'fs')} = $fs;
 		# don't show for fs known to not have label/uuid
-		if (($show{'label'} || $show{'uuid'}) && $fs !~ /^(fuse(blk)?[\._-]?)?($fs_skip)$/){
+		if (($show{'label'} || $show{'uuid'}) && $fs !~ /^$fs_skip$/){
 			if ($show{'label'}){
 				if ($use{'filter-label'}){
 					$row->{'label'} = main::apply_partition_filter('part', $row->{'label'}, '');
@@ -20369,9 +20461,9 @@ sub unmounted_filesystem {
 	}
 	# order matters in this test!
 	my @filesystems = ('ext2','ext3','ext4','ext5','ext','ntfs',
-	'fat32','fat16','FAT\s\(.*\)','vfat','fatx','tfat','swap','btrfs',
+	'fat32','fat16','FAT\s\(.*\)','vfat','fatx','tfat','exfat','swap','btrfs',
 	'ffs','hammer','hfs\+','hfs\splus','hfs\sextended\sversion\s[1-9]','hfsj',
-	'hfs','jfs','nss','reiserfs','reiser4','ufs2','ufs','xfs','zfs');
+	'hfs','apfs','jfs','nss','reiserfs','reiser4','ufs2','ufs','xfs','zfs');
 	if ($file){
 		# this will fail if regular user and no sudo present, but that's fine, it will just return null
 		# note the hack that simply slices out the first line if > 1 items found in string
@@ -22186,8 +22278,8 @@ sub set_xprop {
 # 15 serial number
 {
 package DeviceData;
-my (@bluetooth,@devices,@files,@full_names,@pcis,@temp,@temp2,@temp3);
-my ($b_bt_check);
+my (@bluetooth,@devices,@files,@full_names,@pcis,@temp,@temp2,@temp3,%lspci_n);
+my ($b_bt_check,$b_lspci_n);
 my ($busid,$busid_nu,$chip_id,$content,$device,$driver,$driver_nu,$file,
 $handle,$modules,$port,$rev,$serial,$temp,$type,$type_id,$vendor,$vendor_id);
 
@@ -22242,7 +22334,7 @@ sub set {
 
 sub lspci_data {
 	eval $start if $b_log;
-	my ($subsystem,$subsystem_id);
+	my ($busid_full,$subsystem,$subsystem_id);
 	my @data = pci_grabber('lspci');
 	# print Data::Dumper::Dumper \@data;
 	foreach (@data){
@@ -22277,29 +22369,97 @@ sub lspci_data {
 		}
 		# note: arm servers can have more complicated patterns
 		# 0002:01:02.0 Ethernet controller [0200]: Cavium, Inc. THUNDERX Network Interface Controller virtual function [177d:a034] (rev 08)
-		elsif ($_ =~ /^(([0-9a-f]{2,4}:)?[0-9a-f]{2}:[0-9a-f]{2})[.:]([0-9a-f]+)\s(.*)\s\[([0-9a-f]{4}):([0-9a-f]{4})\](\s\(rev\s([^\)]+)\))?/){
-			$busid = $1;
-			$busid_nu = hex($3);
-			@temp = split(/:\s+/, $4);
-			$device = $temp[1];
-			$type = $temp[0];
-			$vendor_id = $5;
-			$chip_id = $6;
-			$rev = ($8)? $8 : '';
+		# seen cases of lspci trimming too long lines like this:
+		# 01:00.0 Display controller [0380]: Advanced Micro Devices, Inc. [AMD/ATI] Topaz XT [Radeon R7 M260/M265 / M340/M360 / M440/M445 / 530/535 / 620/625 Mobile] [10... (rev c3) (prog-if 00 [Normal decode])
+		# \s(.*)\s\[([0-9a-f]{4}):([0-9a-f]{4})\](\s\(rev\s([^\)]+)\))?
+		elsif ($_ =~ /^((([0-9a-f]{2,4}:)?[0-9a-f]{2}:[0-9a-f]{2})[.:]([0-9a-f]+))\s+/){
+			$busid_full = $1;
+			$busid = $2;
+			$busid_nu = hex($4);
+			($chip_id,$rev,$type,$type_id,$vendor_id) = ('','','','','');
+			$_ =~ s/^\Q$busid_full\E\s+//;
+			# old systems didn't use [...] but type will get caught in lspci_n check
+			if ($_ =~ /^(([^\[]+?)\s+\[([a-f0-9]{4})\]:\s+)/){
+				$type = $2;
+				$type_id = $3;
+				$_ =~ s/^\Q$1\E//;
+				$type = lc($type);
+				$type = main::pci_cleaner($type,'pci');
+				$type =~ s/\s+$//;
+			}
+			# trim off end prog-if and rev items
+			if ($_ =~ /(\s+\(prog[^\)]+\))/){
+				$_ =~ s/\Q$1\E//;
+			}
+			if ($_ =~ /(\s+\(rev\s+[^\)]+\))/){
+				$rev = $2;
+				$_ =~ s/\Q$1\E//;
+			}
+			# get rid of anything in parentheses at end in case other variants show 
+			# up, which they probably will.
+			if ($_ =~ /((\s+\([^\)]+\))+)$/){
+				$_ =~ s/\Q$1\E//;
+			}
+			if ($_ =~ /(\s+\[([0-9a-f]{4}):([0-9a-f]{4})\])$/){
+				$vendor_id = $2;
+				$chip_id = $3;
+				$_ =~ s/\Q$1\E//;
+			}
+			# lspci -nnv string trunctation bug
+			elsif ($_ =~ /(\s+\[[^\]]*\.\.\.)$/){
+				$_ =~ s/\Q$1\E//;
+			}
+			$device = $_;
+			# cases of corrupted string set to ''
 			$device = main::cleaner($device);
-			$temp[0] =~ /\[([^\]]+)\]$/;
-			$type_id = $1;
+			# corrupted lspci truncation bug; and ancient lspci, 2.4 kernels
+			if (!$vendor_id){
+				my @temp = lspci_n_data($busid_full);
+				if (@temp){
+					$vendor_id = $temp[1];
+					$chip_id = $temp[2];
+					$type_id = $temp[0] if !$type_id;
+					$rev = $temp[3] if !$rev && $temp[3];
+				}
+			}
 			$use{'hardware-raid'} = 1 if $type_id eq '0104';
-			$type = lc($type);
-			$type = main::pci_cleaner($type,'pci');
-			$type =~ s/\s+$//;
-			# print "$type\n";
-			($driver,$driver_nu,$modules,$subsystem,$subsystem_id) = ('','','','','');
+			($driver,$driver_nu,$modules,$port,$subsystem,$subsystem_id) = ('','','','','','');
 		}
 	}
 	print Data::Dumper::Dumper \@devices if $dbg[4];
 	main::log_data('dump','lspci @devices',\@devices) if $b_log;
 	eval $end if $b_log;
+}
+# arg: $1 - busID
+# returns if valid busID: (classID,vendorID,productID,revNu)
+# almost never used, only in case of lspci -nnv line truncation bug
+sub lspci_n_data {
+	eval $start if $b_log;
+	my ($bus_id) = @_;
+	if (!$b_lspci_n){
+		$b_lspci_n = 1;
+		my (@data);
+		if ($fake{'lspci'}){
+			# my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/lspci/steve-mint-topaz-lspci-n.txt";
+			# @data = main::reader($file,'strip');
+		}
+		else {
+			@data = main::grabber($alerts{'lspci'}->{'path'} . ' -n 2>/dev/null','','strip');
+		}
+		foreach (@data){
+			if (/^([a-f0-9:\.]+)\s+([a-f0-9]{4}):\s+([a-f0-9]{4}):([a-f0-9]{4})(\s+\(rev\s+([0-9a-z\.]+)\))?/){
+				my $rev = (defined $6) ? $6 : '';
+				$lspci_n{$1} = [$2,$3,$4,$rev];
+			}
+		}
+		print Data::Dumper::Dumper \%lspci_n if $dbg[4];
+		main::log_data('dump','%lspci_n',\%lspci_n) if $b_log;
+	}
+	my @return = ($lspci_n{$bus_id}) ? @{$lspci_n{$bus_id}}: ();
+	print Data::Dumper::Dumper \@return if $dbg[4];
+	main::log_data('dump','@return',\@return) if $b_log;
+	eval $end if $b_log;
+	return @return;
 }
 
 # em0@pci0:6:0:0:	class=0x020000 card=0x10d315d9 chip=0x10d38086 rev=0x00 hdr=0x00
@@ -22501,12 +22661,14 @@ sub pci_grabber {
 		$path = $alerts{'pcictl'}->{'path'};
 		$pattern = '^[0-9a-f:]+:';
 	}
-	if ($fake{'pciconf'} || $fake{'pcictl'} || $fake{'pcidump'}){
+	if ($fake{'lspci'} || $fake{'pciconf'} || $fake{'pcictl'} || $fake{'pcidump'}){
 		# my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/pciconf/pci-freebsd-8.2-2";
 		# my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/pcidump/pci-openbsd-6.1-vm.txt";
 		# my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/pcictl/pci-netbsd-9.1-vm.txt";
 		# my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/lspci/racermach-1-knnv.txt";
 		# my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/lspci/rk016013-knnv.txt";
+		# my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/lspci/kot--book-lspci-nnv.txt";
+		# my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/lspci/steve-mint-topaz-lspci-nnkv.txt";
 		# @data = main::reader($file,'strip');
 	}
 	else {
@@ -22743,7 +22905,7 @@ sub check_bluetooth {
 	else {return 0}
 }
 sub check_graphics {
-	# note: multimedia class 04 is viddeo if 0400. 'tv' is risky I think
+	# note: multimedia class 04 is video if 0400. 'tv' is risky I think
 	if (($_[1] && length($_[1]) == 4 &&  ($_[1] =~ /^03/ || $_[1] eq '0400' || 
 	 $_[1] eq '0d80')) || 
 	 ($_[0] && $_[0] =~ /^(vga|display|hdmi|3d|video|tv|television)$/i)){
@@ -22784,6 +22946,11 @@ sub soc_type {
 	}
 	elsif (($driver && $driver =~ /dummy/i) || ($info && $info =~ /dummy/i)){
 		$type = 'dummy';
+	}
+	# rome_vreg reg_fixed_voltage regulator-fixed wlan_en_vreg
+	elsif (($driver && $driver =~ /\bv?reg(ulat|_)|voltage/i) || 
+	 ($info && $info =~ /_v?reg|\bv?reg(ulat|_)|voltage/i)){
+		$type = 'regulator';
 	}
 	elsif ($type =~ /^(daudio|.*hifi.*|.*sound[_-]card|.*dac[0-9]?)$/i ||
 	 ($info && $info !~ /amp/i && $info =~ /(sound|audio)/i) || 
@@ -23182,7 +23349,7 @@ sub get_display_manager {
 		if ((($b_run && (-f "/run/$id" || -d "/run/$working")) || 
 		 ($b_vrun && (-f "/var/run/$id" || -d "/var/run/$working")) || 
 		 ($b_vrunrc && (-f "/var/run/rc.d/$working" || -d "/var/run/rc.d/$id"))) && 
-		 !grep {/$working/} @found){
+		 !grep {/$working/i} @found){
 			if ($extra > 2 && awk(\@dms_version, $working) && ($path = check_program($working))){}
 			else {$path = $working;}
 			# print "$path $extra\n";
@@ -23464,6 +23631,10 @@ sub get_linux_distro {
 	# test for /etc/lsb-release as a backup in case of failure, in cases 
 	# where > one version/release file were found but the above resulted 
 	# in null distro value. 
+	if (!$distro && $b_cygwin){
+		$distro = $uname[0]; # like so: CYGWIN_NT-10.0-19043
+		$b_skip_osr = 1;
+	}
 	if (!$distro){
 		if (!$b_skip_osr && @osr){
 			$distro = get_os_release();
@@ -24931,8 +25102,11 @@ sub get {
 sub proc_data {
 	eval $start if $b_log;
 	my $file = $_[0];
+	if ($fake{'partitions'}){
+		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/proc-partitions-1.txt";
+	}
 	my @parts = main::reader($file,'strip');
-	# print Dumper \@parts;
+	# print Data::Dumper::Dumper \@parts;
 	shift @parts if @parts; # get rid of headers
 	for (@parts){
 		my @temp = split(/\s+/, $_);
@@ -26991,7 +27165,16 @@ sub info_item{
 		}
 		else {
 			ShellData::tty_number() if !$loaded{'tty-number'};
-			$parent = "tty $client{'tty-number'}" if $client{'tty-number'} ne '';
+			if ($client{'tty-number'} ne ''){
+				my $tty_type = '';
+				if ($client{'tty-number'} =~ /^[a-f0-9]+$/i){
+					$tty_type = 'tty ';
+				}
+				elsif ($client{'tty-number'} =~ /pts/i){
+					$tty_type = 'pty ';
+				}
+				$parent = "$tty_type$client{'tty-number'}";
+			}
 		}
 		# can be tty 0 so test for defined
 		$running_in = $parent if $parent;
@@ -27093,7 +27276,16 @@ sub system_item {
 			ShellData::console_irc_tty() if !$loaded{'con-irc-tty'};
 			$tty = $client{'con-irc-tty'};
 		}
-		$desktop = "tty $tty" if $tty ne '';
+		if ($tty ne ''){
+			my $tty_type = '';
+			if ($tty =~ /^[a-f0-9]+$/i){
+				$tty_type = 'tty ';
+			}
+			elsif ($tty =~ /pts/i){
+				$tty_type = 'pty ';
+			}
+			$desktop = "$tty_type$tty";
+		}
 		$desktop_key = 'Console';
 		$dm_key = 'DM';
 		$ind_dm = 1;
