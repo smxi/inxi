@@ -1,4 +1,437 @@
 ================================================================================
+Version: 3.3.10
+Patch: 01
+Date: 2021-12-13
+--------------------------------------------------------------------------------
+RELEASE NOTES:
+--------------------------------------------------------------------------------
+
+Huge refactor of CPU physical/core/cache logic. That was some very old logic 
+with a lot of hacks and patches, but it had never been actually rewritten to 
+take advantage of Perl's far more powerful and robust data structures and logic. 
+This caused a continuous stream of error cases in subtle ways, or not so subtle, 
+and fixes were just changing how the errors manifested.
+
+Tnanks very much to linuxquestions.org Slackware forum people for massive help,
+and also to linux.org forum members for ongoing help and data and debugging.
+
+Note Changes 5, change of default widths in display to 80 columns, and out (aka, 
+console, or ssh into remote system), 100. You can still use other widths if you 
+like something wider using the configuration options shown. Also upped max 
+columns wrapping line starters to own rows to 110 columns from 90, again the 
+idea being to make output more readable to other users when posted in public.
+
+I've been thinking of this change for a long time, but was hoping -y would 
+register with users, but it hasn't gained enough traction, so the result is way 
+too many super hard to read issue reports, forum posts, linux kernel issues, 
+etc, it's honestly gotten sort of embarrassing because they make it look like 
+inxi has bad output. Sidescrolling code blocks in forums in particular are 
+absurdly hard to read and scan rapidly for data.
+
+Going along with the width and indentation changes, for most main row types, if 
+they wrap to a second row, they are further indented 2 column2, to make it 
+easier to see what they belong to. The two levels of indentation contain more 
+useful visual cues as to what belongs to what.
+
+There was a temptation to release this as either 3.4.00 or 4.0.00 but in the 
+end, I decided to follow the numbering rules, and to just roll it to 3.3.10 
+since there aren't really any primary new features even though CPU was basically
+rewritten in large part, and big parts of inxi were also changed, upgraded, and
+enhanced. But no truly new features, just some display control items like -Y,
+--indent, --indents.
+
+I hope this refactor meets its primary goals, and that the new defaults for 
+display help resolve public posting issues which have grown increasingly 
+annoying for anyone trying to read those pasted in too long outputs.
+
+--------------------------------------------------------------------------------
+KNOWN ISSUES:
+
+1. Android seems to have CPU cache data, but does not show any 'size' item. But
+it does have the other data for each cache type internally, which is odd.
+
+2. In some instances, the parent key:value pairs with '' as value, those are
+parents of children key:value pairs, are left hanging at end of line, with the
+children on the following line. This can look awkward, but in other cases, 
+actually looks very good, it depends if it's at the start or end of the line.
+
+I won't say this is not correctable, but it would be very difficult, and outside
+the scope of this release, but that is something that I may look at for a future
+release now that the output generator logic was reworked slightly for Change 5b.
+
+It's tricky though, because in cases where it's the first item on the line, you 
+want that behavior, but when it's last, you don't. But this may be worth 
+revisiting in the future.
+
+3. In some cases, -Y + -y1 may lead to the start of the block scrolling off the
+top of the visible screen. This isn't really correctable, so if that's an issue
+for you, just don't use -y1 with -Y and all the output will wrap nicely.
+
+4. There is an unaccountable ~10-20ms delay reading cpufreq/scaling_cur_freq, 
+per thread/core, which really adds up on high thread count CPUs. There is a 
+workaround in inxi to use cpufreq_cur_freq if it is readable, ie, if you are 
+root or use sudo, but to fallback to scaling_cur_freq if can't read cpuinfo_...
+
+This is a drag, and really looks like a kernel bug, or a frequency driver bug.
+
+--------------------------------------------------------------------------------
+BUGS:
+
+1. 3.3.09 and 3.3.10 CPU bug fixes:
+* Failed to filter out certain virtual machine CPU core speeds, and showed more
+speeds than the instance actually has. Noticed this with KVM running on Xeon 
+CPUs.
+* For many cases, L2 cache, particularly for Intel, was completely wrong, it was 
+showing L3 caches, or L3+L2. Failed to handle cases where L2 cache belongs to 
+more than 1 core, except for using a crude hack for AMD Bulldozer microarch. 
+Older Intel Core 4 core CPUs would sometimes be 1 L2 per die, and the 4 cores 
+were actually 2 core duo cpu dies, with one L2 cache per die.
+* Shows wrong core count for complex core complexes like those found in Intel 
+Alder Lake, now shows correct count of actual cores, regardless of the MT or ST 
+state of each core.
+* Showed invalid L3 cache values in some legacy cpus that had no L3 cache, that
+is due to a bug in the dmidecode data itself. Solution is to never use dmidecode
+cache data if any other valid L1, L2, or L3 cache data found for Linux, and to
+only use dmidecode data for bsds if no L1, or L2, or L3 data found. Or if forced
+with --dmidecode.
+
+2. An unfortunately long standing bug found and fixed, thanks slackware users!
+cp_cpu_arch was, and has been for a while, failing to convert hex stepping to
+decimal, or test if the string it gets is even a possible hex value, this 
+resulted in all Intel CPUs with stepping > 9 failing to ID correctly for cpu 
+arch. 
+
+3. In a related bug, hex to decimal tool used to create --admin hex/decimal 
+output for family/model/stepping was also not testing if the string was an 
+actual valid hex number. Case in particular, power pc with revision field 
+contained a long string, which was of course not a valid hex number, and that
+tripped a Perl error when it was asked to convert a non hex string to decimal.
+
+4. Long standing bug found while doing Change 5: inxi actually never applied 
+separate in/out of dispay to widths because using a legacy boolean that was not 
+updated, so it was always using out of display widths.
+
+--------------------------------------------------------------------------------
+FIXES:
+
+1. Incorrectly calling PowerPC 'revision' 'stepping' for -Ca, that is now stored
+as $cpu{'revision'} to avoid mixing up the logics there. For PowerPC shows as
+rev: [string].
+
+2. Microarch:
+* AMD family 15, model 2 as bulldozer, actually piledriver. 
+* AMD family 17, model 18, was supposed to be zen/zen+, since I can't tell those
+apart, seen stepping 1 is zen+, but had incorrect match.
+* Intel family 6, model 25, stepping 2 as nehalem, should have been westmere.
+* Changed Penryn to Core Penryn, intel family 6, model 17
+* misc other micro arch fine tunings.
+
+3. Code fix 8, switched to global %risc for arm, mips, ppc, riscv, sparc. This
+corrects many sloppy handlers, and makes all risc processing the same, and calls
+device tree readers for all risc systems, not just arm or arm and mips.
+
+4. In cases where bogomips were 0 due to false values in risc results, show N/A.
+
+5. Removed all attempts to guess at what /proc/cpuinfo cache size: refers to,
+it can literally be anything, a per core L1, a per core or cpu L2, or an L3.
+So applying any math to it is just a random guess at that point. If any L1,2,3
+cache data is found, don't use the cache: value at all, but that will only be
+present if no /sys data was found anyway, and if cpuinfo had no specific cache
+type fields, only generic cache. 
+
+6. Added failsafe tests for stepping and model id before doing conversion to 
+hex. Make sure integer!
+
+7. Added L1 D cache, was only using I cache for BSDs. Output will show total for
+L1 A + L1 D. No idea why I didn't use L1 D, makes little sense, but that's how 
+it goes.
+
+8. Made bogomips tests more granular, now only rejects low sub 50 bogomips 
+values if %risc cpu type. Legacy ancient cpus like 486 could and did have 
+bogomip counts below 50.
+https://tldp.org/HOWTO/BogoMips/bogo-list.html
+
+9. See Enhancement 12 as well. If OpenBSD, which has no per core data or 
+physical cpu data, is running on MT capable cpu, but for security OpenBSD has 
+disabled MT, will now force MT to be not shown via the hw.smt value. This 
+removes a small glitch that would have bothered OpenBSD users who know that 
+OpenBSD has disabled MT for security purposes.
+
+10. Changed BSD hack to use L2 cache totals to deduce > 1 physical cpus, that 
+was flat out dumb, since we can just use dmidecode type 4 to iterate physical 
+cpu counts and skip the pointless logic. Thus, if dmidecode, and if > 1 
+dmidecode type 4 found, and if physical cpu counts equal 1, then replace the 
+found counts with the dmidecode physical cpu counts.
+
+11. Corrected bad assumption that threads would always be 2 per core for MT 
+tests. Still no way to reliably determine threads per core for non x86 cpus like 
+powerpc however, but those are very fringe and should rarely be an issue since 
+that data is only missing on very old linux now I think.
+
+12. Fixed 'parameters:' going to its own line with -Sa, that wasn't supposed to.
+-S is two lines, the kernel / host stuff, and the desktop/console/distro stuff.
+
+13. Fixed case when key: value first word plus other parts of line longer than 
+max width, failed to wrap as expected.
+
+14. Added start/end ' and " start / end \s to main filters.
+
+--------------------------------------------------------------------------------
+ENHANCEMENTS:
+
+1. CPU: most Linux will now show L1 and L3 cache with -Cx without needing 
+sudo/root, and it will be more accurate than ever before.
+
+2. CPU: shows per CPU L1/L2/L3 totals, and shows actual full system physical 
+processor count * L1/L2/L3 total in parentheses, like: L2: 1.5 MiB (3 MiB).
+
+3. CPU: A long standing annoyance, previously for main CPU 'Speed:' item, showed 
+the fastest core speed found, now shows avg: [speed] and with -Cx, shows the 
+'high:' as well if > 1 cores, and if 1 or more cores have a higher speed than 
+the other(s). 
+
+4. CPU: Handles advanced cases of new architectures, like Alder Lake with 
+Performance and Efficiency cores, future Zen, and existing ARM CPUs with 2 or 
+more different core sets, with different max/min frequencies. Previously a hack 
+was used to handle only ARM CPUs with this type of architecture. Will show 
+correct CPU core counts, which previous inxi versions would fail to do for Alder 
+Lake type scenarios of 8 single threaded CPUs and 4-8 multithreaded )MT) 
+perforance cores.
+
+This should also in theory show different the different min/max speeds if they 
+were detected. Those did not seem to be set correctly in Alder Lake sample data 
+I saw however, P and E cores were set to the same min/max speeds.
+
+5. Added CPU types MST (Multi+Single Thread), AMP (Asymmetric Multi Processing), 
+and AMCP (Asymmetrical Multi Core Processor). This will be applied to any CPU 
+that has this type of complex topology that has been dynamically detected, like 
+Alder Lake or different core count or min/max speed RISC CPUs.
+
+6. CPU: shows with -Ca for cases where different L1/L2/L3 caches found per 
+physical CPU, as with Alder Lake, but also many other variants that were poorly 
+or not at all handled before, how many of each cache type (L1 Data, instruction) 
+were found, otherwise will show how many of each cache were found. 
+
+7. CPU: shows with -Ca in Topology: report, for cases like Alder Lake with 
+different core types in one physical CPU (type: MST AMCP), the number that are 
+single threaded (st) and number that are multi-threaded (mt).
+
+8. Basic support for rsyc-v systems, going along with code fix 8, fix 3, now 
+it's easy to add this type of support.
+
+9. Added shortcut options for --filter-label (--zl), --filter-uuid (--zu), and
+andded new filter option, --filter-vulnerabilities (--zv). The latter is added
+by request, a decent idea to have option to not show cpu vulnerabilities.
+
+10. Going with fix 7, switched to a sort of pseudo L1 d/i with desc report for
+any BSD with L1 I/D cache found, or elbrus cache0 (icache) / cache1 (d cache).
+Elbrus should hopefully be handled by the /sys tool. Guesses on the L1 are ok,
+since those are almost always per core, so it's fine. Didn't expect to enhance
+any BSD cpu data this time around, but there you go!! If they have the data, 
+then it will be used. Not going to go overboard though in that, quite useless
+overall since usually can't see how many CPUs are present, at least not usually.
+
+11. For -Ca, full CPU topology report if any complex topogy is detected, 
+otherwise shows the same basic Info: 2x 6-core or Info: dual core as before, no 
+point in wasting a line for something with no more data than the short string. 
+Complex types include MT CPUs since they will have different thread counts etc, 
+and will have 2 or more threads per core, which will also be listed. 
+
+12. If smt status is defined (0/1), shows smt: enabled|disabled in Topology 
+section, can be useful for systems with disabled MT, but supporting it. If no 
+topology data found (OpenBSD for example), for -C shows 'smt: disabled' after 
+'type:' section, and enabled if -Cxxx (since MT really already tells you that).
+
+13. For -Ca Speed: report, added 'governor:' item, if found. Can show 1 or more
+active governors.
+
+14. Output height (in lines) control: -Y [-2|-1|0|1-xxx]]. This lets you break
+up any of the output into whatever number of lines you want. Also useful out of
+DISPLAY for reading -h options menu items etc.
+
+It came tp my attention that the long standing shift+pgup/pgdown (aka 
+'softscrollback) behavior had stopped working, and in fact has been removed from 
+the current Linux kernel, at least until it is rewritten to be more clean and 
+understandable. Read more about it in these kernel post/commit messages:
+
+https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=50145474f6ef4a9c19205b173da6264a644c7489
+https://lwn.net/ml/linux-kernel/CAHk-=whe4ZdTdCebneWqC4gSQZwsVJ5-Emg0BucOGCwPhOAJpw@mail.gmail.com/
+
+Options for -Y are:
+* -Y 0 or -Y: Set maximum block height to terminal line height.
+* -Y [1-xxx]: Set maximum block line height to given integer.
+* -Y -1: Print out one primary data block item at a time, with -F for example.
+* -Y -2: Restore default unlimited height if LINES_MAX configuration item used.
+
+15. And finally, more disk vendors/vendor ids. As usual. As expected.
+
+--------------------------------------------------------------------------------
+CHANGES:
+
+1. If /sys or /proc/cpuinfo speed data available: 
+* For -b CPU item:
+   speed: [speed MHz] min/max: [min]/[max] MHz
+  becomes:
+   speed (MHz): avg: [speed] min/max: [min]/[max]
+* For -C, Speed item 
+   Speed: [speed MHz] min/max: [min]/[max] MHz Cores (MHz): ...
+  becomes:
+   Speed (MHz): avg: [speed] min/max: [min]/[max] cores: ...
+* For short form, shows speed/min/max but uses average speed if available.
+
+For -b and -C, only shows one MHz in Speed line starter, which slightly shortens
+the line even with the added 'avg:' item since 3 MHz are replaced with 1. 
+
+2. Going with change 1, now the 'avg:' item shows not the fastest cpu speed 
+found, which was the case before, but shows an average of all cpu speeds found.
+Showing the fastest made some sense back in the days of single core, or even 
+dual core CPUs, but makes little sense today with many core/threaded cpus.
+
+With -x, it will show the high: [speed] item as well, after 'avg:'.
+
+3. By suggestion, wrapped first Type item in Vulnerabilities to its own line,
+that's a verbose --admin option after all, no need to save lines!
+
+4. Going along with Fix 5, give up on trying to pretend we can guess at L2 
+cache, now if only 'cache' data was available from cpuinfo, will just say:
+cache: [cache size]
+ note: check
+ 
+and call it a day.
+
+5a. Change default width to 80 columns, in and out of display. Too many users 
+are posting horribly wrapping inxi output in forums, issue trackers, etc, and it 
+frankly makes inxi look really bad, creates awful side scrolling code boxes, 
+etc. So now default widths in and out of console are 80 (since often data is 
+generated in SSH or out of X/Wayland) for issues. 
+
+This essentially makes -y 80/-y the default width. This is what I've been using 
+for a few years now, and after seeing far too many side scrolling or badly 
+wrapping inxi outputs online, I think it's probably time to just force 80 column 
+widths as default and call it a day.
+
+You can change these new defaults using configuration options (these are the 
+previous options, though due to a bug, COLS_MAX_CONSOLE was never being used):
+
+ COLS_MAX_CONSOLE=115 # in display, terminal client max width 
+ COLS_MAX_IRC=100 
+ COLS_MAX_NO_DISPLAY=130 # not in display, no X/Wayland running
+ 
+5b. Changed output wrapped indent to 1 column from 2, and make second and 
+greater rows of a line indent +1 to make it more clear that it is a child row of 
+its parent row. Note that because no arg short form, -S, and -I are special 
+types of rows, this behavior is not used, they just print out as usual. This 1 
+column indent also applies to -y1, making for a little more data per line but 
+more readable and easy to follow.
+ 
+6. If > 1 physical cpu detected, no longer uses single/dual/triple/quad core 
+strings, rather uses: 2x 2-core. Also uses lower case -core, not -Core.
+
+7. Only show die counts for CPU (on rare occasions > 1 found) with -xx. Not 
+particularly important bit of data afterall.
+
+8. Make L1, L3 cache data show with -Cx, not -Cxx, now that it's working well.
+
+9. Removed CPU die for -Cxx, that's only going to show with -Ca now.
+
+10. If -Ca, and if certain complexity conditions are met, shows a separate 
+Topology line rather than the Info: 6-core type item. For -b, short, -Cx, -Cxxx
+shows the Info: topology short form.
+
+11. Bogomips always shows before flags data, whether -f or just -Cx trips flag
+output.
+
+12. Flags/Features now shows in the same place, under Speeds: always, whether 
+-Cx shortlist, or -Cf full list. Makes more sense that way, and code is much
+cleaner too.
+
+13. Bogomips, being essentially bogus units of speed for cpu, are moved into
+Speed: report.
+
+--------------------------------------------------------------------------------
+DOCUMENTATION:
+
+1. Updated man/help for new CPU extra data options and output changes. 
+
+2. Cleaned up and added sample outputs for man CPU items. 
+
+3. Now that doas is getting into Linux distros, removed all mentions of doas as
+a BSD option, and made it a general doas/sudo item. Glad to see doas making it
+into linux distros, it's a good tool, much easier to configure and use than 
+sudo. Good job OpenBSD guys. Note that inxi already has had full doas support 
+for a while now, but this finalizes it, and makes it fully agnostic. Internally
+doas is actually preferred over sudo, by the way.
+
+4. Added documention items for INDENT (--indent), INDENT_MIN (--inident-min).
+
+5. Re-ordered help menu and man page, created new Filters and Output Controls 
+sections to make stuff easier to find. In man page, also added on top a list of 
+OPTIONS sections to make finding stuff easier.
+
+--------------------------------------------------------------------------------
+CODE:
+
+1. Removed legacy /sys cpu functions: cpu_bugs_sys(); get_boost_status(); 
+set_cpu_speeds_sys(). cpu_speeds() is deprecated and now will only be used for 
+legacy Linux and BSDs if they had any per core speeds found; get_caches() was 
+only a placeholder for the full featured cpu_sys data source, and was removed; 
+cpu_speeds() no longer needed, integrated into other logic; cpu_dies_sys() 
+removed, integrated into other logic.
+
+This logic is now integrated into cpu_data_sys() data generator.
+
+2. Changed the main CpuItems functions to use array/hash references, not passing 
+full hashes or arrays in most cases now.
+
+3. For machine_data_soc(), switched to CpuItem::cpuinfo_grabber() which then 
+sets the global @cpuinfo and %cpuinfo_machine items, which will be used again
+in Cpu if cpu data is requested. This gets rid of a full parsing of cpuinfo
+just to get the machine data section, and also makes it so cpuinfo in cpu does
+not need to worry about the machine data block, which is not related to the 
+processor blocks anyway, that was always a hack done by the kernel guys to toss
+that SOC data somewhere as far as I can tell.
+
+4. New tools: 
+* either_or() - takes a list, and returns the first defined element of list.
+* regex_range() - generate ranges from comma, space, or ranges like 2-29, or any 
+combination of those, like 3,6,12-29
+
+5. Added --force cpuinfo to bypass all /sys based cpu logic, useful for testing
+to see what would have happened using old logic.
+
+6. Added --dbg switches 39, 40, 41, for the new cpu sys data features, also made
+more consistent --dbg 8 and --dbg 38 switches.
+
+7. Added sys/cpuinfo pair debugger to support debugging complex sys/cpuinfo 
+issues.
+
+8. Got rid of $b_arm,$b_mips,$b_ppc,$b_sparc, replaced with global %risc, also
+added $risc{'riscv'} type. this makes general risc type feature testing a lot 
+easier since inxi can either test for %risc defined, or for a specific type of 
+risc cpu. This is much cleaner, and use $risc{'id'} for print purposes, which 
+got rid of a lot of tests. Also made all risc tests consistent, some were ARM 
+only, or arm/mips, but were supposed to be for all risc cpus.
+
+9. Set help menu code to roughly 80 columns width assuming 2 space tab 
+indentation.
+
+10. Changed all xxx_cleaner subs to clean_xxx, all filter subs to filter_xxx, 
+and row_defaults() to message().
+
+11. Dumped redundant fallback logic in get_kernel_bits, if first getconf method 
+fails, use $sys_bits, and call it good, it was repeating the 32/64 bit tests 
+pointlessly.
+
+12. Cleaned up print_data() to allow for more fine tuned indentation for the new
+2 indent levels.
+
+13. Made help menu code more or less wrap to 80 columns, or close. Ongoing to
+bring to 80 columns where practical, but never at expense of clarity or logic.
+
+--------------------------------------------------------------------------------
+-- Harald Hope - Tue, 13 Dec 2021 10:25:49 -0800
+
+================================================================================
 Version: 3.3.09
 Patch: 01
 Date: 2021-11-22
