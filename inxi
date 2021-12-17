@@ -47,8 +47,8 @@ use POSIX qw(ceil uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.3.10';
-my $self_date='2021-12-13';
+my $self_version='3.3.11';
+my $self_date='2021-12-16';
 my $self_patch='00';
 ## END INXI INFO ##
 my ($b_pledge,@pledges);
@@ -7585,7 +7585,6 @@ sub battery_output {
 				$charge = 'N/A';
 			}
 			$model = $battery->{$key}{'model_name'} if $battery->{$key}{'model_name'};
-			$status = ($battery->{$key}{'status'}) ? $battery->{$key}{'staus'}: 'N/A' ;
 			$vendor = $battery->{$key}{'manufacturer'} if $battery->{$key}{'manufacturer'};
 			if ($vendor || $model){
 				if ($vendor && $model){
@@ -7610,6 +7609,7 @@ sub battery_output {
 			if ($extra > 2 && $upower_data{'rechargeable'}){
 				$rows[$j]->{main::key($num++,0,2,'rechargeable')} = $upower_data{'rechargeable'};
 			}
+			$status = ($battery->{$key}{'status'}) ? $battery->{$key}{'status'}: 'N/A' ;
 			$rows[$j]->{main::key($num++,0,2,'status')} = $status;
 		}
 	}
@@ -8591,6 +8591,10 @@ sub full_output {
 		$rows[$j]->{main::key($num++,0,3,'driver')} = $cpu->{'scaling-driver'};
 		$cpu->{'governor'} ||= 'N/A';
 		$rows[$j]->{main::key($num++,0,3,'governor')} = $cpu->{'governor'};
+		# only set if different from cpu min/max
+		if ($cpu->{'scaling-min-max'} && $cpu->{'scaling-min-max-key'}){
+			$rows[$j]->{main::key($num++,0,3,$cpu->{'scaling-min-max-key'})} = $cpu->{'scaling-min-max'};
+		}
 	}
 	if ($extra > 2){
 		if ($properties->{'volts'}){
@@ -8858,7 +8862,7 @@ sub cpuinfo_data {
 			$cpu{'sys-freq'} = \%freq if %freq;
 		}
 	}
-	cpuinfo_data_grabber($file) if !$loaded{'cpuinfo'};
+	cpuinfo_data_grabber($file,\$cpu{'type'}) if !$loaded{'cpuinfo'};
 	$cpu{'type'} = cpu_vendor($cpu_arch) if $cpu_arch =~ /e2k/; # already set to lower
 	my ($core_count,$proc_count,$speed) = (0,0,0);
 	my ($b_block_1) = (1);
@@ -8912,21 +8916,21 @@ sub cpuinfo_data {
 			# note: stepping and ARM cpu revision are integers
 			$temp = main::get_defined($block->{'stepping'},$block->{'cpu revision'});
 			# can be 0, but can be 'unknown'
-			if (defined $temp){
+			if (defined $temp || 
+			 ($cpu{'type'} eq 'elbrus' && defined $block->{'revision'})){
+				$temp = $block->{'revision'} if defined $block->{'revision'};
 				if ($temp =~ /^\d+$/){
 					$cpu{'stepping'} = uc(sprintf("%x",$temp));
 				}
 			}
-			# PPC revision is a string
+			# PPC revision is a string, but elbrus revision is hex
 			elsif (defined $block->{'revision'}){
 				$cpu{'revision'} = $block->{'revision'};
 			}
 			# this is hex so uc for cpu arch id. raspi 4 has Model rather than Hardware
 			if (defined $block->{'model'}){
 				# can be 0, but can be 'unknown'
-				if ($temp =~ /^\d+$/){
-					$cpu{'model-id'} = uc(sprintf("%x",$block->{'model'}));
-				}
+				$cpu{'model-id'} = uc(sprintf("%x",$block->{'model'}));
 			}
 			if ($block->{'cpu variant'}){
 				$cpu{'model-id'} = uc($block->{'cpu variant'});
@@ -8956,25 +8960,6 @@ sub cpuinfo_data {
 				 $block->{'l3 cache size'} =~ /(\d+\s*[KMG])i?B?$/){
 					$cpu{'l3-cache'} = main::translate_size($1);
 				}
-				if ($cpu{'type'} eq 'elbrus'){
-					# note: cache0 is L1i and cache1 L1d. cp_caches_fallback handles
-					if (!$cpu{'l1i-cache'} && $block->{'cache0'} && 
-					 $block->{'cache0'} =~ /size\s*=\s*(\d+)K\s/){
-						$cpu{'l1i-cache'} = $1;
-					}
-					if (!$cpu{'l1d-cache'} && $block->{'cache1'} && 
-					 $block->{'cache1'} =~ /size\s*=\s*(\d+)K\s/){
-						$cpu{'l1d-cache'} = $1;
-					}
-					if (!$cpu{'l2-cache'} && $block->{'cache2'} && 
-					 $block->{'cache2'} =~ /size\s*=\s*(\d+)(K|M)\s/){
-						$cpu{'l2-cache'} = ($2 eq 'M') ? ($1*1024) : $1;
-					}
-					if (!$cpu{'l3-cache'} && $block->{'cache3'} &&
-					 $block->{'cache3'} =~ /size\s*=\s*(\d+)(K|M)\s/){
-						$cpu{'l3-cache'} = ($2 eq 'M') ? ($1*1024) : $1;
-					}
-				}
 				$temp = main::get_defined($block->{'flags'} || $block->{'features'});
 				if ($temp){
 					$cpu{'flags'} = $temp;
@@ -8995,6 +8980,28 @@ sub cpuinfo_data {
 						}
 					}
 				}
+			}
+		}
+		# These occurs in a separate block with E2C3, last in cpuinfo blocks,
+		# otherwise per block in E8C variants
+		if ($cpu{'type'} eq 'elbrus' && (!$cpu{'l1i-cache'} && 
+		 !$cpu{'l1d-cache'} && !$cpu{'l2-cache'} && !$cpu{'l3-cache'})){
+			# note: cache0 is L1i and cache1 L1d. cp_caches_fallback handles
+			if ($block->{'cache0'} && 
+				$block->{'cache0'} =~ /size\s*=\s*(\d+)K\s/){
+				$cpu{'l1i-cache'} = $1;
+			}
+			if ($block->{'cache1'} && 
+				$block->{'cache1'} =~ /size\s*=\s*(\d+)K\s/){
+				$cpu{'l1d-cache'} = $1;
+			}
+			if ($block->{'cache2'} && 
+				$block->{'cache2'} =~ /size\s*=\s*(\d+)(K|M)\s/){
+				$cpu{'l2-cache'} = ($2 eq 'M') ? ($1*1024) : $1;
+			}
+			if ($block->{'cache3'} &&
+				$block->{'cache3'} =~ /size\s*=\s*(\d+)(K|M)\s/){
+				$cpu{'l3-cache'} = ($2 eq 'M') ? ($1*1024) : $1;
 			}
 		}
 		## Start incrementers
@@ -9050,7 +9057,7 @@ sub cpuinfo_data {
 }
 sub cpuinfo_data_grabber {
 	eval $start if $b_log;
-	my ($file) = @_;
+	my ($file,$cpu_type) = @_; # type by ref
 	$loaded{'cpuinfo'} = 1;
 	# use --arm flag when testing arm cpus, and --fake-cpu to trigger fake data
 	if ($fake{'cpu'}){
@@ -9058,7 +9065,7 @@ sub cpuinfo_data_grabber {
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/sys-ci-pairs/android-pocom3-fake-cpuinfo.txt";
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/sys-ci-pairs/arm-pine64-cpuinfo-1.txt";
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/sys-ci-pairs/arm-riscyslack2-cpuinfo-1.txt";
-		 $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/sys-ci-pairs/ppc-stuntkidz~cpuinfo.txt";
+		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/sys-ci-pairs/ppc-stuntkidz~cpuinfo.txt";
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/sys-ci-pairs/riscv-unmatched-2021~cpuinfo-1.txt";
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/sys-ci-pairs/x86-brickwizard-atom-n270~cpuinfo-1.txt";
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/sys-ci-pairs/x86-amd-phenom-chrisretusn-cpuinfo-1.txt";
@@ -9080,7 +9087,7 @@ sub cpuinfo_data_grabber {
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/amd/4-core-althlon-mjro.txt";
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/amd/4-core-apu-vc-box.txt";
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/amd/4-core-a10-5800k-1.txt";
-		 $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/intel/1-core-486-fourtysixandtwo.txt";
+		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/intel/1-core-486-fourtysixandtwo.txt";
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/intel/2-core-ht-atom-bruh.txt";
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/intel/core-2-i3.txt";
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/intel/8-core-i7-damentz64.txt";
@@ -9091,7 +9098,7 @@ sub cpuinfo_data_grabber {
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/intel/4-1-core-xeon-vps-frodo1.txt";
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/intel/4-6-core-xeon-no-mt-lathander.txt";
 		## Elbrus
-		# $cpu{'type'} = 'elbrus'; # uncomment to test elbrus
+		# $$cpu_type = 'elbrus'; # uncomment to test elbrus
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/elbrus/elbrus-2c3/cpuinfo.txt";
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/elbrus/1xE1C-8.txt";
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/elbrus/1xE2CDSP-4.txt";
@@ -9156,7 +9163,7 @@ sub cpu_sys_data {
 	return \%cpu_sys if !%{$working};
 	$cpu_sys{'data'} = $working->{'data'} if $working->{'data'};
 	my ($core_id,$fake_core_id,$phys_id,) = (0,0,-1);
-	my (%cache_ids,@freq_max,@freq_min);
+	my (%cache_ids,@ci_freq_max,@ci_freq_min,@sc_freq_max,@sc_freq_min);
 	foreach my $key (sort keys %{$working->{'cpus'}}){
 		($core_id,$phys_id) = (0,0);
 		my $cpu_id = $key + 0;
@@ -9194,8 +9201,8 @@ sub cpu_sys_data {
 			# For max / min, we want to prep for the day 1 pys cpu has > 1 min/max freq
 			if (defined $cpu->{'cpufreq'}{'cpuinfo_max_freq'}){
 				$cpu->{'cpufreq'}{'cpuinfo_max_freq'} = clean_speed($cpu->{'cpufreq'}{'cpuinfo_max_freq'},'khz');
-				if (!grep {$_ eq $cpu->{'cpufreq'}{'cpuinfo_max_freq'}} @freq_max){
-					push(@freq_max,$cpu->{'cpufreq'}{'cpuinfo_max_freq'});
+				if (!grep {$_ eq $cpu->{'cpufreq'}{'cpuinfo_max_freq'}} @ci_freq_max){
+					push(@ci_freq_max,$cpu->{'cpufreq'}{'cpuinfo_max_freq'});
 				}
 				if (!grep {$_ eq $cpu->{'cpufreq'}{'cpuinfo_max_freq'}} @{$cpu_sys{'cpus'}->{$phys_id}{'max-freq'}}){
 					push(@{$cpu_sys{'cpus'}->{$phys_id}{'max-freq'}},$cpu->{'cpufreq'}{'cpuinfo_max_freq'});
@@ -9203,11 +9210,29 @@ sub cpu_sys_data {
 			}
 			if (defined $cpu->{'cpufreq'}{'cpuinfo_min_freq'}){
 				$cpu->{'cpufreq'}{'cpuinfo_min_freq'} = clean_speed($cpu->{'cpufreq'}{'cpuinfo_min_freq'},'khz');
-				if (!grep {$_ eq $cpu->{'cpufreq'}{'cpuinfo_min_freq'}} @freq_min){
-					push(@freq_min,$cpu->{'cpufreq'}{'cpuinfo_min_freq'});
+				if (!grep {$_ eq $cpu->{'cpufreq'}{'cpuinfo_min_freq'}} @ci_freq_min){
+					push(@ci_freq_min,$cpu->{'cpufreq'}{'cpuinfo_min_freq'});
 				}
 				if (!grep {$_ eq $cpu->{'cpufreq'}{'cpuinfo_min_freq'}} @{$cpu_sys{'cpus'}->{$phys_id}{'min-freq'}}){
 					push(@{$cpu_sys{'cpus'}->{$phys_id}{'min-freq'}},$cpu->{'cpufreq'}{'cpuinfo_min_freq'});
+				}
+			}
+			if (defined $cpu->{'cpufreq'}{'scaling_max_freq'}){
+				$cpu->{'cpufreq'}{'scaling_max_freq'} = clean_speed($cpu->{'cpufreq'}{'scaling_max_freq'},'khz');
+				if (!grep {$_ eq $cpu->{'cpufreq'}{'scaling_max_freq'}} @sc_freq_max){
+					push(@sc_freq_max,$cpu->{'cpufreq'}{'scaling_max_freq'});
+				}
+				if (!grep {$_ eq $cpu->{'cpufreq'}{'scaling_max_freq'}} @{$cpu_sys{'cpus'}->{$phys_id}{'max-freq'}}){
+					push(@{$cpu_sys{'cpus'}->{$phys_id}{'max-freq'}},$cpu->{'cpufreq'}{'scaling_max_freq'});
+				}
+			}
+			if (defined $cpu->{'cpufreq'}{'scaling_min_freq'}){
+				$cpu->{'cpufreq'}{'scaling_min_freq'} = clean_speed($cpu->{'cpufreq'}{'scaling_min_freq'},'khz');
+				if (!grep {$_ eq $cpu->{'cpufreq'}{'scaling_min_freq'}} @sc_freq_min){
+					push(@sc_freq_min,$cpu->{'cpufreq'}{'scaling_min_freq'});
+				}
+				if (!grep {$_ eq $cpu->{'cpufreq'}{'scaling_min_freq'}} @{$cpu_sys{'cpus'}->{$phys_id}{'min-freq'}}){
+					push(@{$cpu_sys{'cpus'}->{$phys_id}{'min-freq'}},$cpu->{'cpufreq'}{'scaling_min_freq'});
 				}
 			}
 			if (defined $cpu->{'cpufreq'}{'scaling_governor'}){
@@ -9268,13 +9293,27 @@ sub cpu_sys_data {
 	}
 	# cpuinfo_max_freq:["2000000"] cpuinfo_max_freq:["1500000"] 
 	# cpuinfo_min_freq:["200000"]
-	if (@freq_max){
-		$cpu_sys{'data'}->{'speeds'}{'max-freq'} = join(':',@freq_max);
+	if (@ci_freq_max){
+		$cpu_sys{'data'}->{'speeds'}{'max-freq'} = join(':',@ci_freq_max);
 	}
-	if (@freq_min){
-		$cpu_sys{'data'}->{'speeds'}{'min-freq'} = join(':',@freq_min);
+	if (@ci_freq_min){
+		$cpu_sys{'data'}->{'speeds'}{'min-freq'} = join(':',@ci_freq_min);
 	}
-	if ((scalar @freq_max < 2 && scalar @freq_min < 2) && 
+	# also handle off chance that cpuinfo_min/max not set, but scaling_min/max there
+	if (@sc_freq_max){
+		$cpu_sys{'data'}->{'speeds'}{'scaling-max-freq'} = join(':',@sc_freq_max);
+		if (!$cpu_sys{'data'}->{'speeds'}{'max-freq'}){
+			$cpu_sys{'data'}->{'speeds'}{'max-freq'} = $cpu_sys{'data'}->{'speeds'}{'scaling-max-freq'};
+		}
+	}
+	if (@sc_freq_min){
+		$cpu_sys{'data'}->{'speeds'}{'scaling-min-freq'} = join(':',@sc_freq_min);
+		if (!$cpu_sys{'data'}->{'speeds'}{'min-freq'}){
+			$cpu_sys{'data'}->{'speeds'}{'min-freq'} = $cpu_sys{'data'}->{'speeds'}{'scaling-min-freq'};
+		}
+	}
+	# this corrects a bug we see sometimes in min/max frequencies
+	if ((scalar @ci_freq_max < 2 && scalar @ci_freq_min < 2) && 
 		(defined $cpu_sys{'data'}->{'speeds'}{'min-freq'} && 
 		defined $cpu_sys{'data'}->{'speeds'}{'max-freq'}) &&
 		($cpu_sys{'data'}->{'speeds'}{'min-freq'} > $cpu_sys{'data'}->{'speeds'}{'max-freq'} || 
@@ -9292,7 +9331,7 @@ sub sys_data_grabber {
 	# this data has to match the data in cpuinfo grabber fake cpu, and remember
 	# to use --arm flag if arm tests
 	if ($fake{'cpu'}){
-		 my $file;
+		# my $file;
 		## CPU sys/cpuinfo pairs:
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/sys-ci-pairs/android-pocom3-fake-sys.txt";
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/sys-ci-pairs/arm-pine64-sys-1.txt";
@@ -9300,9 +9339,9 @@ sub sys_data_grabber {
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/sys-ci-pairs/ppc-stuntkidz~sys.txt";
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/sys-ci-pairs/riscv-unmatched-2021~sys-1.txt";
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/sys-ci-pairs/x86-brickwizard-atom-n270~sys-1.txt";
-		 $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/sys-ci-pairs/x86-amd-phenom-chrisretusn-sys-1.txt";
+		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/sys-ci-pairs/x86-amd-phenom-chrisretusn-sys-1.txt";
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/cpu/sys-ci-pairs/x86-drgibbon-intel-i7-sys.txt";
-		 @files = main::reader($file);
+		# @files = main::reader($file);
 	}
 	# There's a massive time hit reading full globbed set of files, so grab and 
 	# read only what we need.
@@ -9315,15 +9354,15 @@ sub sys_data_grabber {
 			$glob .= 'cpu*/topology/{core_cpus_list,core_id,core_siblings_list,die_id,';
 			$glob .= 'physical_package_id,thread_siblings_list}';
 			$glob .= ',cpufreq/{boost,ondemand}';
-			$glob .= ',cpu*/cpufreq/{cpb,cpuinfo_max_freq,cpuinfo_min_freq';
-			$glob .= ($type eq 'full' && $b_admin) ? ',scaling_driver,scaling_governor}':'}';
+			$glob .= ',cpu*/cpufreq/{cpb,cpuinfo_max_freq,cpuinfo_min_freq,';
+			$glob .= 'scaling_max_freq,scaling_min_freq';
+			$glob .= ',scaling_driver,scaling_governor' if $type eq 'full' && $b_admin;
+			$glob .= '}';
 			if ($type eq 'full'){
 				$glob .= ',cpu*/cache/index*/{level,shared_cpu_list,shared_cpu_map,size,type}';
 			}
 			$glob .= ',smt/{active,control}';
-			if ($b_admin){
-				$glob .= ',vulnerabilities/*';
-			}
+			$glob .= ',vulnerabilities/*' if $b_admin;
 			$glob .= '}';
 		}
 		@files = main::globber($glob);
@@ -9978,6 +10017,8 @@ sub cpu_properties {
 	'min-max-key' => $speed_info->{'min-max-key'},
 	'min-max' => $speed_info->{'min-max'},
 	'socket' => $dmi_data{'socket'},
+	'scaling-min-max-key' => $speed_info->{'scaling-min-max-key'},
+	'scaling-min-max' => $speed_info->{'scaling-min-max'},
 	'speed-key' => $speed_info->{'speed-key'},
 	'speed' => $speed_info->{'speed'},
 	'topology-full' => $topology{'full'},
@@ -10150,9 +10191,6 @@ sub cp_data_fallback {
 		$counts->{'cpu-cores'} = $cpu->{'cores'}; 
 		$counts->{'dies'} = $cpu->{'dies'} = 4;
 	}
-	# elsif ($tests->{'elbrus'}){
-	# 	$counts->{'cpu-cores'} = 
-	# }
 	# final check, override the num of cores value if it clearly is wrong
 	# and use the raw core count and synthesize the total instead of real count
 	if ($counts->{'cpu-cores'} == 0 && 
@@ -10194,7 +10232,8 @@ sub cp_data_fallback {
 	}
 	# only elbrus shows L1 / L3 cache data in cpuinfo, cpu_sys data should show 
 	# for newer full linux.
-	elsif ($counts->{'cpu-cores'} && $counts->{'cpu-cores'} > 1) {
+	elsif ($counts->{'cpu-cores'} &&
+	 ($tests->{'elbrus'} || $counts->{'cpu-cores'} > 1)) {
 		$counts->{'cores-multiplier'} = $counts->{'cpu-cores'};
 	}
 	# last test to catch some corner cases 
@@ -10281,6 +10320,12 @@ sub cp_data_sys {
 			}
 			if ($cpu_sys->{'cpus'}{$phys_id}{'scaling-driver'}){
 				$cpu->{'scaling-driver'} = $cpu_sys->{'cpus'}{$phys_id}{'scaling-driver'};
+			}
+			if ($cpu_sys->{'cpus'}{$phys_id}{'scaling-max-freq'}){
+				$cpu->{'scaling-max-freq'} = $cpu_sys->{'cpus'}{$phys_id}{'scaling-max-freq'};
+			}
+			if ($cpu_sys->{'cpus'}{$phys_id}{'scaling-min-freq'}){
+				$cpu->{'scaling-min-freq'} = $cpu_sys->{'cpus'}{$phys_id}{'scaling-min-freq'};
 			}
 			if (!grep {$counts->{'cpu-cores'} eq $_} @phys_cores){
 				push(@phys_cores,$counts->{'cpu-cores'});
@@ -10372,7 +10417,6 @@ sub cp_caches_fallback {
 			$caches->{'l1d-desc'} = $counts->{'cores-multiplier'} . 'x';
 			$caches->{'l1d-desc'} .= main::get_size($cpu->{'l1d-cache'},'string');
 			$caches->{'l1'} += $cpu->{'l1d-cache'} * $counts->{'cores-multiplier'};
-			
 		}
 		if ($cpu->{'l1i-cache'}){
 			$caches->{'l1i-desc'} = $counts->{'cores-multiplier'} . 'x';
@@ -11039,6 +11083,20 @@ sub cp_speed_data {
 		if (defined $cpu_sys->{'data'}{'speeds'}{'max-freq'}){
 			$cpu->{'max-freq'} = $cpu_sys->{'data'}{'speeds'}{'max-freq'};
 		}
+		if (defined $cpu_sys->{'data'}{'speeds'}{'scaling-min-freq'}){
+			$cpu->{'scaling-min-freq'} = $cpu_sys->{'data'}{'speeds'}{'scaling-min-freq'};
+		}
+		if (defined $cpu_sys->{'data'}{'speeds'}{'scaling-max-freq'}){
+			$cpu->{'scaling-max-freq'} = $cpu_sys->{'data'}{'speeds'}{'scaling-max-freq'};
+		}
+		# we don't need to see these if they are the same
+		if ($cpu->{'min-freq'} && $cpu->{'max-freq'} && 
+		 $cpu->{'scaling-min-freq'} && $cpu->{'scaling-max-freq'} && 
+		 $cpu->{'min-freq'} eq $cpu->{'scaling-min-freq'} &&
+		 $cpu->{'max-freq'} eq $cpu->{'scaling-max-freq'}){
+			undef $cpu->{'scaling-min-freq'};
+			undef $cpu->{'scaling-max-freq'};
+		}
 		if (defined $cpu_sys->{'data'}{'speeds'}{'all'}){
 			# only replace if we got actual speed values from cpufreq, or if no legacy
 			# sourced processors data. Handles fake syz core speeds for counts.
@@ -11079,19 +11137,16 @@ sub cp_speed_data {
 	if ($cpu->{'cur-freq'} && !$info{'speed'}){
 		$info{'speed'} = $cpu->{'cur-freq'};
 	}
-	# BSDs generally will have processors count, but not per core speeds
-	if ($cpu->{'min-freq'} && $cpu->{'max-freq'}){
-		$info{'min-max'} = "$cpu->{'min-freq'}/$cpu->{'max-freq'}";
-		$info{'min-max-key'} = "min/max";
- 	}
- 	elsif ($cpu->{'max-freq'}){
-		$info{'min-max'} = $cpu->{'max-freq'};
-		$info{'min-max-key'} = "max";
- 	}
- 	elsif ($cpu->{'min-freq'}){
-		$info{'min-max'} = $cpu->{'min-freq'};
-		$info{'min-max-key'} = "min";
- 	}
+	if ($cpu->{'min-freq'} || $cpu->{'max-freq'}){
+		($info{'min-max'},$info{'min-max-key'}) = cp_speed_min_max(
+		$cpu->{'min-freq'},
+		$cpu->{'max-freq'});
+	}
+	if ($cpu->{'scaling-min-freq'} || $cpu->{'scaling-max-freq'}){
+		($info{'scaling-min-max'},$info{'scaling-min-max-key'}) = cp_speed_min_max(
+		$cpu->{'scaling-min-freq'},
+		$cpu->{'scaling-max-freq'});
+	}
  	if ($cpu->{'cur-freq'}){
 		if ($show{'short'}){
 			$info{'speed-key'} = 'speed';
@@ -11105,6 +11160,23 @@ sub cp_speed_data {
  	}
  	eval $end if $b_log;
  	return \%info;
+}
+sub cp_speed_min_max {
+	my ($min,$max) = @_;
+	my ($min_max,$key);
+	if ($min && $max){
+		$min_max = "$min/$max";
+		$key = "min/max";
+ 	}
+ 	elsif ($max){
+		$min_max = $max;
+		$key = "max";
+ 	}
+ 	elsif ($min){
+		$min_max = $min;
+		$key = "min";
+ 	}
+ 	return ($min_max,$key);
 }
 # update $tests by reference
 sub cp_test_types {
