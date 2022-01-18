@@ -47,8 +47,8 @@ use POSIX qw(ceil uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.3.11';
-my $self_date='2021-12-16';
+my $self_version='3.3.12';
+my $self_date='2022-01-18';
 my $self_patch='00';
 ## END INXI INFO ##
 my ($b_pledge,@pledges);
@@ -493,21 +493,31 @@ sub set_os {
 	@uname = uname();
 	$os = lc($uname[0]);
 	$cpu_arch = lc($uname[-1]);
-	if ($cpu_arch =~ /arm|aarch/){$risc{'arm'} = 1;$risc{'id'} = 'arm';}
-	elsif ($cpu_arch =~ /mips/){$risc{'mips'} = 1;$risc{'id'} = 'mips';}
-	elsif ($cpu_arch =~ /power|ppc/){$risc{'ppc'} = 1;$risc{'id'} = 'ppc';}
-	elsif ($cpu_arch =~ /riscv/){$risc{'riscv'} = 1;$risc{'id'} = 'riscv';}
-	elsif ($cpu_arch =~ /sparc/){$risc{'sparc'} = 1;$risc{'id'} = 'sparc';}
-	# aarch32 mips32 intel/amd handled in cpu
-	if ($cpu_arch =~ /(armv[1-7]|32|sparc_v9)/){
+	if ($cpu_arch =~ /arm|aarch/){
+		$risc{'arm'} = 1;
+		$risc{'id'} = 'arm';}
+	elsif ($cpu_arch =~ /mips/){
+		$risc{'mips'} = 1;
+		$risc{'id'} = 'mips';}
+	elsif ($cpu_arch =~ /power|ppc/){
+		$risc{'ppc'} = 1;
+		$risc{'id'} = 'ppc';}
+	elsif ($cpu_arch =~ /riscv/){
+		$risc{'riscv'} = 1;
+		$risc{'id'} = 'riscv';}
+	elsif ($cpu_arch =~ /(sparc|sun4[uv])/){
+		$risc{'sparc'} = 1;
+		$risc{'id'} = 'sparc';}
+	# aarch32 mips32 intel/amd handled in cpu, i386
+	if ($cpu_arch =~ /(armv[1-7]|32|[23456]86)/){
 		$bits_sys = 32;
 	}
-	elsif ($cpu_arch =~ /(alpha|64|e2k)/){
+	elsif ($cpu_arch =~ /(alpha|64|e2k|sparc_v9|sun4[uv]|ultrasparc)/){
 		$bits_sys = 64;
 	}
 	$b_cygwin = 1 if $os =~ /cygwin/;
 	$b_android = 1 if -e '/system/build.prop';
-	if ($os =~ /(aix|bsd|cosix|dragonfly|darwin|hp-?ux|indiana|irix|sunos|solaris|ultrix|unix)/){
+	if ($os =~ /(aix|bsd|cosix|dragonfly|darwin|hp-?ux|indiana|illumos|irix|sunos|solaris|ultrix|unix)/){
 		if ($os =~ /openbsd/){
 			$os = 'openbsd';
 		}
@@ -1693,6 +1703,7 @@ sub disk_data {
 	['df', '-h -T'], # no need for version, and bsd doesn't have its
 	['df', '-h'],
 	['df', '-k'],
+	['df', '-k -P'],
 	['df', '-k -T'],
 	['df', '-k -T -P'],
 	['df', '-k -T -P -a'],
@@ -2007,6 +2018,9 @@ sub system_data {
 	['pcictl','pci0 list'],
 	['pcictl','pci0 list -N'],
 	['pcictl','pci0 list -n'],
+	# sunos
+	['prtdiag',''],
+	['prtdiag','-v'],
 	);
 	run_commands(\@cmds,'system-bsd');
 	# diskinfo -v <disk>
@@ -2020,6 +2034,7 @@ sub system_data {
 	['dmesg',''],
 	['gcc','--version'],
 	['getconf','-a'],
+	['getconf','-l'], # openbsd
 	['initctl','list'],
 	['ipmi-sensors','-V'], # version
 	['ipmi-sensors',''],
@@ -4866,6 +4881,9 @@ sub get {
 		else {
 			main::error_handler('bad-arg', $opt, $arg);
 		}},
+	# set --arm flag separately since android can be on different platforms
+	'android' => sub {
+		$b_android = 1;},
 	'arm' => sub {
 		undef %risc;
 		$risc{'id'} = 'arm';
@@ -4889,6 +4907,8 @@ sub get {
 			main::error_handler('bad-arg', $opt, $arg);
 		}
 	},
+	'cygwin' => sub {
+		$b_cygwin = 1 },
 	'dbg:i' => sub { 
 		my ($opt,$arg) = @_;
 		if ($arg > 0){
@@ -5216,8 +5236,8 @@ sub post_process {
 	    $show{'unmounted'}){
 		$use{'block-tool'} = 1;
 	}
-	if ($show{'raid'} || $show{'disk'} || $show{'disk-total'} || $show{'disk-basic'} 
-	 || $show{'unmounted'}){
+	if ($show{'short'} || $show{'raid'} || $show{'disk'} || $show{'disk-total'} || 
+	 $show{'disk-basic'} || $show{'unmounted'}){
 		$use{'btrfs'} = 1;
 		$use{'mdadm'} = 1;
 	}
@@ -6260,7 +6280,7 @@ sub set_konvi_data {
 
 sub clean {
 	my ($item) = @_;
-	return $item if !$item;# handle cases where it was 0 or ''
+	return $item if !$item;# handle cases where it was 0 or '' or undefined
 	# note: |nee trips engineering, but I don't know why nee was filtered
 	$item =~ s/chipset|company|components|computing|computer|corporation|communications|electronics|electrical|electric|gmbh|group|incorporation|industrial|international|\bnee\b|no\sstring|revision|semiconductor|software|technologies|technology|ltd\.|<ltd>|\bltd\b|inc\.|<inc>|\binc\b|intl\.|co\.|<co>|corp\.|<corp>|\(tm\)|\(r\)|®|\(rev ..\)|\'|\"|\sinc\s*$|\?//gi;
 	$item =~ s/,|\*/ /g;
@@ -6315,7 +6335,7 @@ sub clean_dmi {
 sub clean_pci {
 	my ($string,$type) = @_;
 	# print "st1 $type:$string\n";
-	my $filter = 'and\ssubsidiaries|compatible\scontroller|';
+	my $filter = 'and\ssubsidiaries|compatible\scontroller|licensed\sby|';
 	$filter .= '\b(device|controller|connection|multimedia)\b|\([^)]+\)';
 	# \[[^\]]+\]$| not trimming off ending [...] initial type filters removes end
 	$filter = '\[[^\]]+\]$|' . $filter if $type eq 'pci';
@@ -6331,8 +6351,8 @@ sub clean_pci_subsystem {
 	my ($string) = @_;
 	# we only need filters for features that might use vendor, -AGN
 	my $filter = 'and\ssubsidiaries|adapter|(hd\s)?audio|definition|desktop|ethernet|';
-	$filter .= 'gigabit|graphics|hdmi(\/[\S]+)?|high|integrated|motherboard|network|onboard|';
-	$filter .= 'raid|pci\s?express';
+	$filter .= 'gigabit|graphics|hdmi(\/[\S]+)?|high|integrated|licensed\sby|';
+	$filter .= 'motherboard|network|onboard|raid|pci\s?express';
 	$string =~ s/\b($filter)\b//ig;
 	$string =~ s/^[\s'"]+|[\s'"]+$//g;
 	$string =~ s/\s\s+/ /g;
@@ -8415,7 +8435,7 @@ sub full_output {
 			}
 			else {
 				$key1 = ucfirst($alerts{'sysctl'}->{'action'});
-				$val1 = $alerts{'sysctl'}->{$alerts{'sysctl'}->{'action'}};
+				$val1 = $alerts{'sysctl'}->{'message'};
 				@rows = ({main::key($num++,0,1,$key1) => $val1,});
 				return @rows;
 			}
@@ -8513,7 +8533,7 @@ sub full_output {
 				$rows[$j]->{main::key($num++,0,$id+3,'tpc')} = $topo->{'tpc'};
 				$rows[$j]->{main::key($num++,0,$id+2,'st')} = $topo->{'cores-st'};
 			}
-			if ($topo->{'cores-mt'}){
+			elsif ($topo->{'cores-mt'}){
 				$rows[$j]->{main::key($num++,0,$id+2,'tpc')} = $topo->{'tpc'};
 			}
 			if ($topo->{'max'} || $topo->{'min'}){
@@ -8766,7 +8786,7 @@ sub short_data {
 			}
 			else {
 				$key1 = ucfirst($alerts{'sysctl'}->{'action'});
-				$val1 = $alerts{'sysctl'}->{$alerts{'sysctl'}->{'action'}};
+				$val1 = $alerts{'sysctl'}->{'message'};
 				@data = ({main::key($num++,0,1,$key1) => $val1,});
 				return @data;
 			}
@@ -10336,6 +10356,7 @@ sub cp_data_sys {
 						if ((my $threads = scalar @{$cpu_sys->{'cpus'}{$phys_id}{'cores'}{$key}}) > 1){
 							$counts->{'cpu-topo'}[$i]{'cores-mt'}++;
 							$counts->{'cpu-topo'}[$i]{'threads'} += $threads;
+							# note: for mt+st type cpus, we need to handle tpc on output per type
 							$counts->{'cpu-topo'}[$i]{'tpc'} = $threads;
 							$counts->{'struct-mt'} = 1;
 						}
@@ -16211,6 +16232,7 @@ sub get {
 	my (@rows,$key1,$val1);
 	my $num = 0;
 	set_partitions() if !$loaded{'set-partitions'};
+	# fails in corner case with zram but no other mounted filesystems
  	if (!@partitions){
 		$key1 = 'Message';
 		#$val1 = ($bsd_type && $bsd_type eq 'darwin') ? 
@@ -16311,6 +16333,10 @@ sub create_output {
 			}
 		}
 	}
+	# corner case, no partitions, but zram swap
+	if (!@rows){
+		@rows = ({main::key($num++,0,1,'Message') => main::message('partition-data')});
+	}
 	eval $end if $b_log;
 	return @rows;
 }
@@ -16319,8 +16345,8 @@ sub set_partitions {
 	eval $start if $b_log;
 	#return if $bsd_type && $bsd_type eq 'darwin'; # darwin has muated output, of course
 	my (@data,@rows,@mount,@partitions_working,%part,@working);
-	my ($back_size,$back_used,$b_fs,$cols,$roots) = (4,3,1,6,0);
-	my ($b_fake_map,$b_load,$b_logical,$b_space,);
+	my ($back_size,$back_used,$b_fs,$cols) = (4,3,1,6);
+	my ($b_dfp,$b_fake_map,$b_load,$b_logical,$b_space,);
 	my ($block_size,$blockdev,$dev_base,$dev_mapped,$dev_type,$fs,$id,$label,
 	$maj_min,$percent_used,$raw_size,$replace,$size_available,$size,$test,
 	$type,$uuid,$used);
@@ -16341,48 +16367,79 @@ sub set_partitions {
 	# in freebsd. However since most use is from linux, we make that default
 	# android 7 no -T support
 	if (!$fake{'partitions'}){
-		if (!$bsd_type){
-			@partitions_working = main::grabber("df -P -T -k 2>/dev/null");
-			main::set_mapper() if !$loaded{'mapper'};
+		if (@partitions_working = main::grabber("df -P -T -k 2>/dev/null")){
+			main::set_mapper() if !$loaded{'mapper'} && !$bsd_type;
+			$b_dfp = 1;
 		}
+		elsif (@partitions_working = main::grabber("df -T -k 2>/dev/null")){
+			# fine, it worked, could be bsd or linux
+		}
+		# busybox supports -k and -P, older openbsd, darwin, solaris don't have -P
 		else {
-			# this is missing the file system data
-			if ($bsd_type ne 'darwin'){
-				@partitions_working = main::grabber("df -T -k 2>/dev/null");
+			if (@partitions_working = main::grabber("df -k -P 2>/dev/null")){
+				$b_dfp = 1;
 			}
-			#Filesystem 1024-blocks Used Available Capacity iused ifree %iused Mounted on
 			else {
-				$cols = 8;
-				($back_size,$back_used) = (7,6);
+				@partitions_working = main::grabber("df -k 2>/dev/null");
 			}
-			# turns out freebsd uses this junk too
-			$b_fake_map = 1;
-		}
-		# busybox only supports -k and -P, openbsd, darwin
-		if (!@partitions_working){
-			@partitions_working = main::grabber("df -k 2>/dev/null");
 			$b_fs = 0;
-			$cols = 5 if !$bsd_type || $bsd_type ne 'darwin';
 			if (my $path = main::check_program('mount')){
 				@mount = main::grabber("$path 2>/dev/null");
 			}
 		}
 	}
 	else {
-		# my $file;
+		 my $file;
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/df/df-kTP-cygwin-1.txt";
-		# @partitions_working = main::reader($file);
+		 $file = "$ENV{'HOME'}/bin/scripts/inxi/data/df/df-kT-wrapped-1.txt";
+		 @partitions_working = main::reader($file);
 	}
 	# print Data::Dumper::Dumper \@partitions_working;
 	# determine positions
-	my $row1 = shift @partitions_working;
-	# new kernels/df have rootfs and / repeated, creating two entries for the same partition
-	# so check for two string endings of / then slice out the rootfs one, I could check for it
-	# before slicing it out, but doing that would require the same action twice re code execution
-	foreach (@partitions_working){
-		$roots++ if /\s\/$/;
+	if (@partitions_working){
+		my $row1 = shift @partitions_working;
+		$row1 =~ s/Mounted on/Mounted-on/i;
+		my @temp = split(/\s+/,$row1);
+		$cols = $#temp;
 	}
-	@partitions_working = grep {!/^rootfs/} @partitions_working if $roots > 1;
+	# NOTE: using -P fixes line wraps, otherwise look for hangs and reconnect
+	if (!$b_dfp){ 
+		my $holder = '';
+		my @part_temp;
+		foreach (@partitions_working){
+			my @columns= split(/\s+/,$_);
+			if ($#columns < $cols){
+				$holder = join('^^',@columns[0..$#columns]);
+				next;
+			}
+			if ($holder){ # reconnect hanging lines
+				$_ = $holder . ' ' . $_;
+				$holder = '';
+			}
+			push(@part_temp,$_);
+		}
+		@partitions_working = @part_temp;
+	}
+	if (!$bsd_type){
+		# new kernels/df have rootfs and / repeated, creating two entries for the same partition
+		# so check for two string endings of / then slice out the rootfs one, I could check for it
+		# before slicing it out, but doing that would require the same action twice re code execution
+		my $roots = 0;
+		foreach (@partitions_working){
+			$roots++ if /\s\/$/;
+		}
+		@partitions_working = grep {!/^rootfs/} @partitions_working if $roots > 1;
+	}
+	else {
+		# turns out freebsd uses this junk too
+		$b_fake_map = 1;
+		# darwin k: Filesystem 1024-blocks Used Available Capacity iused ifree %iused Mounted on
+		# linux kT: Filesystem Type 1K-blocks Used Available Use% Mounted on
+		# freebsd kT: Filesystem Type 1024-blocks Used Avail Capacity Mounted on
+		if ($bsd_type eq 'darwin'){
+			($back_size,$back_used) = (7,6);
+		}
+	}
 	my $filters = partition_filters();
 	# push @partitions_working, '//mafreebox.freebox.fr/Disque dur cifs         239216096  206434016  20607496      91% /freebox/Disque dur';
 	# push @partitions_working, '//mafreebox.freebox.fr/AllPG      cifs         436616192  316339304 120276888      73% /freebox/AllPG';
@@ -16413,7 +16470,6 @@ sub set_partitions {
 		 ($b_fs && ($row[2] == 0 || $row[1] =~ /^(autofs|devtmpfs|iso9660|tmpfs)$/))){
 			next;
 		}
-		# NOTE: using -P for linux fixes line wraps, and for bsds, assuming they don't use such long file names
 		# cygwin C:\cygwin passes this test so has to be handled later
 		if ($row[0] =~ /^\/dev\/|:\/|\/\//){
 			# this could point to by-label or by-uuid so get that first. In theory, abs_path should 
@@ -16768,12 +16824,12 @@ sub check_partition_data {
 sub partition_filters {
 	# snap mounts with squashfs; appimage/flatpak mount?
 	# swap is set in swap_data(); cgmfs is in ram, like devfs, sysfs; 
-	# union fs types: aufs, overlayfs, unionfs, mergerfs
+	# union fs types: aufs, lofs, overlayfs, unionfs, mergerfs
 	my $filters = 'aufs|cgroup.*|cgmfs|configfs|debugfs|\/dev|dev|\/dev\/loop[0-9]*|';
 	$filters .= 'devfs|devtmpfs|efivarfs|fdescfs|hugetlbfs|iso9660|kernfs|';
-	$filters .= 'linprocfs|linsysfs|none|overla(id|y)(fs)?|procfs|ptyfs|';
-	$filters .= '/run(\/.*)?|run|securityfs|shm|squashfs|swap|sys|\/sys\/.*|sysfs|';
-	$filters .= 'tmpfs|tracefs|type|udev|unionfs|vartmp';
+	$filters .= 'linprocfs|linsysfs|lofs|mergerfs|none|overla(id|y)(fs)?|procfs|';
+	$filters .= 'ptyfs|/run(\/.*)?|run|securityfs|shm|squashfs|swap|';
+	$filters .= 'sys|\/sys\/.*|sysfs|tmpfs|tracefs|type|udev|unionfs|vartmp';
 	return $filters
 }
 # used to exclude disk used, partition/unmounted/swap label/uuid, unmounted label/uuid
@@ -16782,13 +16838,13 @@ sub fs_excludes {
 	my ($source) = @_;
 	# panfs is parallel NAS volume manager, need more data
 	# null is hammer fs slice; nfs/nfs3/nfs4; some can be fuse mounts: fuse.sshfs
-	# afs aufs avfs cifs ffs gfs\d{0,2} hdfs ipfs k(osmos)?fs .*lafs mhddfs
+	# afs aufs avfs cifs ffs gfs\d{0,2} hdfs ipfs k(osmos)?fs .*lafs lofs mhddfs
 	# mergerfs nfs\d{0,2} null ocfs\d{0,2} openafs orangefs overla(id|y)(fs)?
 	# panfs pvfs\d{0,2} s3fs squashfs sshfs smbfs unionfs vmfs
 	my $excludes = '(fuse(blk)?[\._-]?)?(';
 	$excludes .= 'f|' if $source eq 'label-uuid'; # ffs not remote, but no u/l
 	$excludes .= 'a|archivemount|au|av|ceph|ci|g|gluster|gmail|hd|ip|';
-	$excludes .= 'iso9660|k(osmos)?|.*la|mhdd|merger|moose|n|null|oc|opena|';
+	$excludes .= 'iso9660|k(osmos)?|lo|.*la|mhdd|merger|moose|n|null|oc|opena|';
 	$excludes .= 'orange|overla(id|y)|pan|pv|s3|rclone|sheepdog|squash|ssh|';
 	$excludes .= 'smb|union|vm';
 	$excludes .= ')(fs)?(\d{0,2})?';
@@ -24680,16 +24736,23 @@ sub get_linux_distro {
 	# order matters!
 	my @derived = qw(antix-version aptosid-version bodhibuilder.conf kanotix-version 
 	knoppix-version pclinuxos-release mandrake-release manjaro-release mx-version 
-	pardus-release porteus-version q4os_version sabayon-release siduction-version sidux-version 
-	slitaz-release solusos-release turbolinux-release zenwalk-version);
+	pardus-release porteus-version q4os_version sabayon-release siduction-version 
+	sidux-version slint-version slitaz-release solusos-release turbolinux-release 
+	zenwalk-version);#
 	my $derived_s = join('|', @derived);
-	my @primary = qw(altlinux-release arch-release gentoo-release redhat-release slackware-version 
-	SuSE-release);
+	my @primary = qw(altlinux-release arch-release gentoo-release redhat-release 
+	slackware-version SuSE-release);
 	my $primary_s = join('|', @primary);
 	my $exclude_s = 'debian_version|devuan_version|ubuntu_version';
 	# note, pclinuxos has all these mandrake/mandriva files, careful!
-	my $lsb_good_s = 'mandrake-release|mandriva-release|mandrakelinux-release|manjaro-release';
-	my $os_release_good_s = 'altlinux-release|arch-release|pclinuxos-release|rpi-issue|SuSE-release';
+	my $lsb_good_s = 'mandrake-release|mandriva-release|mandrakelinux-release|';
+	$lsb_good_s .= 'manjaro-release';
+	my $os_release_good_s = 'altlinux-release|arch-release|pclinuxos-release|';
+	$os_release_good_s .= 'rpi-issue|SuSE-release';
+	# we need these empirically verified one by one as they appear, but always remember
+	# that stuff changes, legacy, deprecated, but these ideally are going to be right
+	my $osr_good = 'manjaro|antergos|chakra|guix|pclinuxos|raspberry pi os|slint|';
+	$osr_good .= 'zorin';
  	my ($b_issue,$b_lsb,$b_skip_issue,$b_skip_osr);
 	my ($issue,$lsb_release) = ('/etc/issue','/etc/lsb-release');
 	$b_issue = 1 if -f $issue;
@@ -24728,7 +24791,7 @@ sub get_linux_distro {
 	# Note that antergos changed this around 	# 2018-05, and now lists 
 	# antergos in os-release, sigh... We want these distros to use os-release 
 	# if it contains their names. Last check below
-	if (@osr && (grep {/(manjaro|antergos|chakra|guix|pclinuxos|raspberry pi os|zorin)/i} @osr)){
+	if (@osr && (grep {/($osr_good)/i} @osr)){
 		$distro_file = $os_release;
 	}
 	if (grep {/armbian/} @distro_files){
@@ -24968,6 +25031,10 @@ sub system_base {
 	my $base_osr_ubuntu = 'mint|neon|nitrux|pop!_os|zorin'; 
 	my $base_upstream_lsb = '/etc/upstream-release/lsb-release';
 	my $base_upstream_osr = '/etc/upstream-release/os-release';
+	# these id as themselves, but system base is version file
+	my %base_version = (
+	'salix|slint' => '/etc/slackware-version',
+	);
 	# first: try, some distros have upstream-release, elementary, new mint
 	# and anyone else who uses this method for fallback ID
 	if (-r $base_upstream_osr){
@@ -25025,7 +25092,16 @@ sub system_base {
 	if (!$system_base && $distro && $distro =~ /^($base_arch_distro)/i){
 		$system_base = 'Arch Linux';
 	}
-	if ($distro && -d '/etc/salixtools/' && $distro =~ /Slackware/i){
+	if (!$system_base && $distro){
+		foreach my $key (keys %base_version){
+			if (-r $base_version{$key} && $distro =~ /($key)/i){
+				$system_base = main::reader($base_version{$key},'strip',0);
+				$system_base = main::clean_characters($system_base) if $system_base;
+				last;
+			}
+		}
+	}
+	if (!$system_base && $distro && -d '/etc/salixtools/' && $distro =~ /Slackware/i){
 		$system_base = $distro;
 	}
 	eval $end if $b_log;
@@ -25701,6 +25777,32 @@ sub set_ifconfig {
 }
 }
 
+sub get_kernel_bits {
+	eval $start if $b_log;
+	my $bits = '';
+	if (my $program = check_program('getconf')){
+		# what happens with future > 64 bit kernels? we'll see in the future!
+		if ($bits = (grabber("$program _POSIX_V6_LP64_OFF64 2>/dev/null"))[0]){
+			if ($bits =~ /^(-1|undefined)$/i){
+				$bits = 32;
+			}
+			# no docs for true state, 1 is usually true, but probably can be others
+			else {
+				$bits = 64;
+			}
+		}
+		# returns long bits if we got nothing on first test
+		$bits = (grabber("$program LONG_BIT 2>/dev/null"))[0] if !$bits;
+	}
+	# fallback test
+	if (!$bits && $bits_sys){
+		$bits = $bits_sys;
+	}
+	$bits ||= 'N/A';
+	eval $end if $b_log;
+	return $bits;
+}
+
 sub get_kernel_data {
 	eval $start if $b_log;
 	my ($kernel,$ksplice) = ('','');
@@ -25721,21 +25823,6 @@ sub get_kernel_data {
 	log_data('dump','perl @uname', \@uname) if $b_log;
 	eval $end if $b_log;
 	return $kernel;
-}
-
-sub get_kernel_bits {
-	eval $start if $b_log;
-	my $bits = '';
-	if (my $program = check_program('getconf')){
-		$bits = (grabber("$program LONG_BIT 2>/dev/null"))[0];
-	}
-	# fallback test
-	if (!$bits && $bits_sys){
-		$bits = $bits_sys;
-	}
-	$bits ||= 'N/A';
-	eval $end if $b_log;
-	return $bits;
 }
 
 ## KernelParameters
@@ -26833,7 +26920,8 @@ sub set {
 	}
 	else {
 		$client{'name'} = 'shell';
-		$client{'name-print'} = 'Unknown Shell';
+		# handling na here, not on output, so we can test for !$client{'name-print'}
+		$client{'name-print'} = 'N/A'; 
 	}
 	if (!$client{'su-start'}){
 		$client{'su-start'} = 'sudo' if $ENV{'SUDO_USER'};
