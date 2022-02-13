@@ -8,6 +8,16 @@ issue reports. The code in pre 2.9 versions literally no longer exists in inxi
 3. Bugs from earlier versions cannot usually be solved in the new version since 
 the pre 2.9 and the 2.9 and later versions are completely different internally.
 
+--------------------------------------------------------------------------------
+DONATE
+--------------------------------------------------------------------------------
+
+Help support the project with a one time or a sustaining donation.
+
+Paypal: https://www.paypal.com/donate/?hosted_button_id=77DQVM6A4L5E2
+
+Open Collective: https://opencollective.com/inxi
+
 ================================================================================
 DEVELOPMENT AND ISSUES
 --------------------------------------------------------------------------------
