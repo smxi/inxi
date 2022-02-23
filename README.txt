@@ -35,13 +35,11 @@ data for non trivial issue reports.
 Note that the following options are present:
 
 1. Generate local gz'ed debugger dataset. Leaves gz on your system:
- inxi version 3: inxi --debug 20 
- inxi version <= 2.3: inxi -@14
+ inxi version >= 3: inxi --debug 20 
 2. Generate, upload gz'ed debugger dataset. Leaves gz on your system:
- inxi version 3: inxi --debug 21
- inxi version <= 2.3: inxi -xx@14
+ inxi version >= 3: inxi --debug 21
 3. Generate, upload, delete gz'ed debugger dataset:
- inxi version 3 only: inxi --debug 22
+ inxi version >= 3: inxi --debug 22
 
 You can run these as regular user, or root/sudo, which will gather a bit more 
 data, like from dmidecode, and other tools that need superuser permissions to 
@@ -206,7 +204,7 @@ version, pre 2.9.
 IRC
 --------------------------------------------------------------------------------
 
-You can go to: irc.oftc.net channel #smxi 
+You can go to: irc.oftc.net or irc.libera.chat channel #smxi 
 
 but be prepared to wait around for a while to get a response. Generally it's 
 better to use github issues.
@@ -262,8 +260,8 @@ The primary purpose of inxi is for support, and sys admin use. inxi is used
 widely for forum and IRC support, which is I believe it's most common function.
 
 If you are piping output to paste or post (or writing to file), inxi now 
-automatically turns off color codes, so the old suggestion to use -c 0 to turn 
-off colors is no longer required.
+automatically turns off color codes, so the inxi 2.3.xx and older suggestion to 
+use -c 0 to turn off colors is no longer required.
 
 inxi strives to be as accurate as possible, but some things, like memory/ram 
 data, depend on radically unreliable system self reporting based on OEM filling 
@@ -356,13 +354,13 @@ just to keep it clean, would cause a change.
 The second digit(s), "2", means a new real feature has been added. Not a tweaked 
 existing feature, an actual new feature, which usually also has a new argument 
 option letter attached. The second number goes from 0 to 9, and then rolls over 
-the first after 9. It could also be adding a very complicated expansion of 
-existing features, like Wayland. It depends.
+the first after 9. 
 
-The third, "28", is for everything small, can cover bug fixes, tweaks to 
-existing features to add support for something, pretty much anything where you 
-want the end user to know that they are not up to date. The third goes from 0 to 
-99, then rolls over the second.
+The third, "28", is for everything not covered by 1 and 2, can cover bug fixes, 
+tweaks to existing features to add support for something, full on refactors of 
+existing features, pretty much anything where you want the end user to know that 
+they are not up to date. The third goes from 0 to 99, then rolls over the 
+second.
 
 The fourth, "6", is extra information about certain types of inxi updates. I 
 don't usually use this last one in master branch, but you will see it in 
@@ -379,10 +377,11 @@ confusing.
 inxi does not use the fiction of date based versioning because that imparts no 
 useful information to the end user, when you look at say, 2.2.28, and you last 
 had 2.2.11, you can know with some certainty that inxi has no major new 
-features, just fine tunings and bug fixes. And if you see one with 2.3.2, you 
-will know that there is a new feature, almost, but not always, linked to one or 
-more new line output items. Sometimes a fine tuning can be quite significant, 
-sometimes it's a one line code fix. 
+features, just refactors or expansion of existing logic, enhancements, fine 
+tunings, and bug fixes. And if you see one with 2.3.2, you will know that there 
+is a new feature, almost, but not always, linked to one or more new line output 
+items. Sometimes a the changes in the third number can be quite significant, 
+sometimes it's a one line code or bug fix. 
 
 A move to a new full version number, like the rewrite of inxi to Perl, would 
 reflect in first version say, 2.9.01, then after a period of testing, where most 
@@ -398,14 +397,33 @@ BSD / UNIX
 BSD support is not as complete as GNU/Linux support due to the fact some of the 
 data simply is not available, or is structured in a way that makes it unique to 
 each BSD, or is difficult to process. This fragmentation makes supporting BSDs 
-far more difficult than it should be in the 21st century. The BSD support in 
-inxi is an ongoing process, with more features being added as new data sources 
-and types are discovered.
+far more difficult than it should be in the 21st century. 
+
+The BSD support in inxi is a slowly evolving process. Evolving in the strict 
+technical sense of evolutionary fitness, following fitness for purpose, that is 
+(like OpenBSD's focus on security and high quality code, for instance), not as 
+in progressing forwards. Features are being added as new data sources and types 
+are discovered, and others are being dropped, as prior data sources degenerate 
+or mutate to a point where trying to deal with them stops being interesting. 
+
+Once it starts growing evident that a particular branch has hit a dead end and 
+no longer warrants the time required to follow it to its extinction, support 
+will be reduced to basically maintenance mode. In other words, inxi follows this 
+evolutionary process, and does not try to revive dead or dying branches, since 
+that's a waste of time.
 
 Note that due to time/practicality constraints, in general, only the original 
-BSD branches will be actively supported: FreeBSD+derived; OpenBSD+derived; 
-NetBSD+derived. Other UNIX variants will generally only get the work required to 
-make internal BSD flags get set and to remove visible output errors.
+BSD branches will be supported: OpenBSD+derived; FreeBSD+derived; NetBSD+derived 
+(in that order of priority, with a steep curve down from first to last). With 
+the caveat that since it's my time being volunteered here, if the BSD in 
+question has basically no users, or has bad tools, or no usable tools, or 
+inconsistent or unreliable tools, or bad / weak data, or, worst, no actual clear 
+reason to exist, I'm not willing to spend time on it as a general rule. 
+
+Other UNIX variants will generally only get the work required to make internal 
+BSD flags get set and to remove visible output errors. I am not interested in 
+them at all, zero. They are at this point basically historical artifacts, of 
+interest only to computer museums as far as I'm concerned.
 
 --------------------------------------------------------------------------------
 TRUE BSDs 
@@ -425,11 +443,11 @@ similar one.
 Option 2 is far preferred because in terms of my finite time on this planet of 
 ours, the fact is, if I don't have direct (or SSH) access, I can't get much 
 done, and the little I can get done will take 10 to 1000x longer than it should. 
-That's my time spent (and sadly, with BSDs, largely lost), not yours. 
+That's my time spent (and sadly, with BSDs, largely wasted), not yours. 
 
 I decided I have to adopt this much more strict policy with BSDs after wasting 
 untold hours on trying to get good BSD support, only to see that support break a 
-few years down the road as the data inxi relied in changed structure or syntax, 
+few years down the road as the data inxi relied on changed structure or syntax, 
 or the tools changed, or whatever else makes the BSDs such a challenge to 
 support. In the end, I realized, the only BSDs that are well supported are ones 
 that I have had direct access to for debugging and testing. 
@@ -453,6 +471,29 @@ system as a 'Unix'.
 If you want me to use my time on OSX features or issues, you have to pay me, 
 because Apple is all about money, not freedom (that's what the 'free' in 'free 
 software' is referring to, not cost), and I'm not donating my finite time in 
-support of non-free operating systems. 
+support of non-free operating systems, particularly not one with a market 
+capitalization hovering around 1 trillion dollars, with usually well north of 
+100 billion dollars in liquid assetts. 
+
+================================================================================
+MICROSOFT CORPORATION WINDOWS
+--------------------------------------------------------------------------------
+
+To be quite clear, support for Windows will never happen, I don't care about 
+Windows, and don't want to waste a second of my time on it. I also don't care 
+about cygwin issues, beyond maybe hyper basic issues that can be handled with a 
+line or two of code. inxi isn't going to ruin itself by trying to handle the 
+silly Microsoft path separator \, and obviously there's zero chance of my trying 
+to support PowerShell or whatever else they come up with. 
+
+While I would consider doing Apple stuff if you paid my hourly full market 
+rates, in advance, I would not consider touching Windows for any amount of 
+money. My best advice there is, fork inxi, and do it yourself if you want it. 
+You'll soon run screaming from the project however, once you realize what a 
+nightmare you've stepped into.
+
+If you are interested in something like inxi for Windows, I suggest, rather than 
+forking inxi, you just start out from scratch, and build the features up one by 
+one, that will lead to much better code.
 
 ### EOF ###
