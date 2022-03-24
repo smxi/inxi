@@ -48,8 +48,8 @@ use POSIX qw(ceil uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.3.13';
-my $self_date='2022-02-22';
+my $self_version='3.3.14';
+my $self_date='2022-03-24';
 my $self_patch='00';
 ## END INXI INFO ##
 my ($b_pledge,@pledges);
@@ -4653,6 +4653,12 @@ sub get {
 		$show{'short'} = 0;
 		$show{'bluetooth'} = 1; 
 		$show{'bluetooth-forced'} = 1;},
+	'edid' => sub {
+		$b_admin = 1;
+		$show{'short'} = 0;
+		$show{'edid'} = 1;
+		$show{'graphic'} = 1;
+		$show{'graphic-full'} = 1;},
 	'f|flags|flag' => sub {
 		$show{'short'} = 0;
 		$show{'cpu'} = 1;
@@ -4858,13 +4864,14 @@ sub get {
 			}
 			if ($arg >= 8){
 				$b_admin = 1;
-				$use{'downloader'} = 1;
+				# $use{'downloader'} = 1; # only if weather
+				$show{'edid'} = 1;
 				$show{'process'} = 1;
 				$show{'ps-cpu'} = 1;
 				$show{'ps-mem'} = 1;
 				$show{'repo'} = 1;
 				$show{'slot'} = 1;
-				#$show{'weather'} = 1;
+				# $show{'weather'} = 1;
 			}
 		}
 		else {
@@ -5527,6 +5534,8 @@ sub show_options {
 	size(s)."],
 	['1', '-E', '--bluetooth', "Show bluetooth device data and report, if 
 	available. Shows state, address, IDs, version info."],
+	['1', '', '--edid', "Full graphics data, triggers -a, -G. Add monitor chroma,
+	full modelines (if > 2), EDID errors and warnings, if present."],
 	['1', '-f', '--flags', "All CPU $flags. Triggers -C. Not shown with -F to 
 	avoid spamming."],
 	['1', '-F', '--full', "Full output. Includes all Upper Case line letters 
@@ -5609,7 +5618,7 @@ sub show_options {
 	full RAID; triggers -xx."], 
 	['2', '7', '', "Network IP data (-i), bluetooth, logical (-L), 
 	RAID forced, full CPU $flags; triggers -xxx."],
-	['2', '8', '', "Everything available, including	repos (-r), 
+	['2', '8', '', "Everything available, including	EDID (--edid), repos (-r), 
 	processes (-tcm), PCI slots (--slots); triggers admin (-a)."],
 	);
 	# if distro maintainers don't want the weather feature disable it
@@ -6659,6 +6668,9 @@ sub message {
 	'dmidecode-dev-mem' => 'dmidecode is not allowed to read /dev/mem',
 	'dmidecode-smbios' => 'No SMBIOS data for dmidecode to process',
 	'gl-console' => 'No advanced graphics data found on this system in console.',
+	'edid-revision' => "invalid EDID revision: $id",
+	'edid-sync' => "bad sync value: $id",
+	'edid-version' => "invalid EDID version: $id",
 	'gl-empty' => 'Unset. Missing GL driver?',
 	'gl-null' => 'No GL data found on this system.',
 	'gl-root' => 'GL data unavailable in console for root.',
@@ -6719,6 +6731,7 @@ sub message {
 	'smartctl-open' => 'Unable to open device. Wrong device ID given?',
 	'smartctl-udma-crc' => 'Bad cable/connection?',
 	'smartctl-usb' => 'Unknown USB bridge. Flash drive/Unsupported enclosure?',
+	'stopped' => 'stopped',
 	'swap-admin' => 'No admin swap data available.',
 	'swap-data' => 'No swap data was found.',
 	'tool-missing-basic' => "<missing: $id>",
@@ -7848,7 +7861,9 @@ sub battery_data_sys {
 				# Valid values: Unknown,Charging,Discharging,Not charging,Full
 				# don't use clean_unset because Not charging is a valid value.
 				elsif ($file eq 'status'){
-					$value =~ s/unknown//i;
+					$value = lc($value);
+					$value =~ s/unknown//;
+					
 				}
 			}
 			elsif ($b_root && -e $path && ! -r $path){
@@ -13506,7 +13521,6 @@ sub device_output {
 		next if $row->[3] != 0;
 		# print "$row->[0] $row->[3]\n";
 		$j = scalar @rows;
-		push(@{$graphics{'gpu-drivers'}},$row->[9]) if $row->[9];
 		my $device = main::trimmer($row->[4]);
 		$device = ($device) ? main::clean_pci($device,'output') : 'N/A';
 		# have seen absurdly verbose card descriptions, with non related data etc
@@ -13520,6 +13534,7 @@ sub device_output {
 			my $item = main::get_pci_vendor($row->[4],$row->[12]);
 			$rows[$j]->{main::key($num++,0,2,'vendor')} = $item if $item;
 		}
+		push(@{$graphics{'gpu-drivers'}},$row->[9]) if $row->[9];
 		my $driver = ($row->[9]) ? $row->[9]:'N/A';
 		$rows[$j]->{main::key($num++,1,2,'driver')} = $driver;
 		if ($row->[9] && !$bsd_type){
@@ -13649,9 +13664,9 @@ sub display_output(){
 	my ($num,$j) = (0,0);
 	# note: these may not always be set, they won't be out of X, for example
 	display_protocol();
-	$graphics{'protocol'} = 'wayland' if $force{'wayland'};
 	# get rid of all inactive or disabled monitor port ids
 	set_active_monitors() if $monitor_ids;
+	$graphics{'protocol'} = 'wayland' if $force{'wayland'};
 	# note, since the compositor is the server with wayland, always show it
 	if ($extra > 1 || $graphics{'protocol'} eq 'wayland'){
 		set_compositor_data();
@@ -13777,7 +13792,7 @@ sub display_output(){
 				}
 				my $gpu_drivers = gpu_drivers_sys('all');
 				my $drivers;
-				if ($gpu_drivers ){
+				if ($gpu_drivers){
 					$drivers = join(',',@{$gpu_drivers});
 				}
 				else {
@@ -13924,23 +13939,30 @@ sub monitors_output_basic {
 	}
 	eval $end if $b_log;
 }
-# row, num passed by ref
+# $j, $row, $num passed by ref
 sub monitors_output_full {
 	eval $start if $b_log;
 	my ($type,$monitors,$j,$row,$num) = @_;
 	my ($b_no_size,$resolution);
-	my ($m1,$m2,$m3) = ($type eq 'screen') ? (3,4,5) : (2,3,4);
+	my ($m1,$m2,$m3,$m4) = ($type eq 'screen') ? (3,4,5,6) : (2,3,4,5);
+	# note: in case where mapped id != sys id, the key will not match 'monitor'
 	foreach my $key (sort keys %{$monitors}){
 		$j++;
 		$$row[$j]->{main::key($$num++,1,$m1,'Monitor')} = $monitors->{$key}{'monitor'};
 		if ($monitors->{$key}{'monitor-mapped'}){
 			$$row[$j]->{main::key($$num++,0,$m2,'mapped')} = $monitors->{$key}{'monitor-mapped'};
 		}
+		if ($monitors->{$key}{'disabled'}){
+			$$row[$j]->{main::key($$num++,0,$m2,'note')} = $monitors->{$key}{'disabled'};
+		}
 		if ($monitors->{$key}{'position'}){
 			$$row[$j]->{main::key($$num++,0,$m2,'pos')} = $monitors->{$key}{'position'};
 		}
 		if ($monitors->{$key}{'model'}){
 			$$row[$j]->{main::key($$num++,0,$m2,'model')} = $monitors->{$key}{'model'};
+		}
+		elsif ($monitors->{$key}{'model-id'}){
+			$$row[$j]->{main::key($$num++,0,$m2,'model-id')} = $monitors->{$key}{'model-id'};
 		}
 		if ($extra > 2 && $monitors->{$key}{'serial'}){
 			$$row[$j]->{main::key($$num++,0,$m2,'serial')} = main::filter($monitors->{$key}{'serial'});
@@ -13976,6 +13998,21 @@ sub monitors_output_full {
 		if ($b_admin && $monitors->{$key}{'gamma'}){
 			$$row[$j]->{main::key($$num++,0,$m2,'gamma')} = $monitors->{$key}{'gamma'};
 		}
+		if ($show{'edid'} && $monitors->{$key}{'colors'}){
+			$$row[$j]->{main::key($$num++,1,$m2,'chroma')} = '';
+			$$row[$j]->{main::key($$num++,1,$m3,'red')} = '';
+			$$row[$j]->{main::key($$num++,0,$m4,'x')} = $monitors->{$key}{'colors'}{'red_x'};
+			$$row[$j]->{main::key($$num++,0,$m4,'y')} = $monitors->{$key}{'colors'}{'red_y'};
+			$$row[$j]->{main::key($$num++,1,$m3,'green')} = '';
+			$$row[$j]->{main::key($$num++,0,$m4,'x')} = $monitors->{$key}{'colors'}{'green_x'};
+			$$row[$j]->{main::key($$num++,0,$m4,'y')} = $monitors->{$key}{'colors'}{'green_y'};
+			$$row[$j]->{main::key($$num++,1,$m3,'blue')} = '';
+			$$row[$j]->{main::key($$num++,0,$m4,'x')} = $monitors->{$key}{'colors'}{'blue_x'};
+			$$row[$j]->{main::key($$num++,0,$m4,'y')} = $monitors->{$key}{'colors'}{'blue_y'};
+			$$row[$j]->{main::key($$num++,1,$m3,'white')} = '';
+			$$row[$j]->{main::key($$num++,0,$m4,'x')} = $monitors->{$key}{'colors'}{'white_x'};
+			$$row[$j]->{main::key($$num++,0,$m4,'y')} = $monitors->{$key}{'colors'}{'white_y'};
+		}
 		if ($extra > 2 && $monitors->{$key}{'scale'}){
 			$$row[$j]->{main::key($$num++,0,$m2,'scale')} = $monitors->{$key}{'scale'};
 		}
@@ -13996,13 +14033,27 @@ sub monitors_output_full {
 			$$row[$j]->{main::key($$num++,0,$m2,'ratio')} = $monitors->{$key}{'ratio'};
 		}
 		if ($extra > 2){
-			if ($monitors->{$key}{'modes-min-max'}){
-				$$row[$j]->{main::key($$num++,0,$m2,'modes')} = $monitors->{$key}{'modes-min-max'};
+			if (!$monitors->{$key}{'modes'} || !@{$monitors->{$key}{'modes'}}){
+				$monitors->{$key}{'modes'} = ['N/A'];
 			}
-			elsif ($monitors->{$key}{'modes-min'} && $monitors->{$key}{'modes-max'}){
+			my $cnt = scalar @{$monitors->{$key}{'modes'}};
+			if ($cnt == 1 || ($cnt > 2 && $show{'edid'})){
+				$$row[$j]->{main::key($$num++,0,$m2,'modes')} = join(', ', @{$monitors->{$key}{'modes'}});
+			}
+			else {
 				$$row[$j]->{main::key($$num++,1,$m2,'modes')} = '';
-				$$row[$j]->{main::key($$num++,0,$m3,'max')} = $monitors->{$key}{'modes-max'};
-				$$row[$j]->{main::key($$num++,0,$m3,'min')} = $monitors->{$key}{'modes-min'};
+				$$row[$j]->{main::key($$num++,0,$m3,'max')} = ${$monitors->{$key}{'modes'}}[0];
+				$$row[$j]->{main::key($$num++,0,$m3,'min')} = ${$monitors->{$key}{'modes'}}[-1];
+			}
+		}
+		if ($show{'edid'} && ($monitors->{$key}{'errors'} || $monitors->{$key}{'warnings'})){
+			$j++;
+			$$row[$j]->{main::key($$num++,1,$m2,'EDID')} = '';
+			if ($monitors->{$key}{'errors'}){
+				$$row[$j]->{main::key($$num++,0,$m3,'errors')} = join('; ', @{$monitors->{$key}{'errors'}});
+			}
+			if ($monitors->{$key}{'warnings'}){
+				$$row[$j]->{main::key($$num++,0,$m3,'warnings')} = join('; ', @{$monitors->{$key}{'warnings'}});
 			}
 		}
 	}
@@ -14308,9 +14359,9 @@ sub wayland_data_advanced {
 		!$monitor_ids->{$key}{'dpi'} || !$monitor_ids->{$key}{'diagonal'})){
 			my $size_x = $monitor_ids->{$key}{'size-x'};
 			my $size_y = $monitor_ids->{$key}{'size-y'};
-			$monitor_ids->{$key}{'size-x-i'} = sprintf("%.1f", ($size_x/25.4));
-			$monitor_ids->{$key}{'size-y-i'} = sprintf("%.1f", ($size_y/25.4));
-			$monitor_ids->{$key}{'diagonal'} = sprintf("%.1f", (sqrt($size_x**2 + $size_y**2)/25.4)) + 0;
+			$monitor_ids->{$key}{'size-x-i'} = sprintf("%.2f", ($size_x/25.4)) + 0;
+			$monitor_ids->{$key}{'size-y-i'} = sprintf("%.2f", ($size_y/25.4)) + 0;
+			$monitor_ids->{$key}{'diagonal'} = sprintf("%.2f", (sqrt($size_x**2 + $size_y**2)/25.4)) + 0;
 			$monitor_ids->{$key}{'diagonal-m'} = sprintf("%.0f", (sqrt($size_x**2 + $size_y**2)));
 			if ($monitor_ids->{$key}{'res-x'}){
 				my $res_x = $monitor_ids->{$key}{'res-x'};
@@ -14506,7 +14557,6 @@ sub swaymsg_data {
 					$monitor_ids->{$id}{'model'} = main::clean($mon->{'make'});
 					if ($mon->{'model'}){
 						$monitor_ids->{$id}{'model'} .= ' ' . main::clean($mon->{'model'});
-						
 					}
 					$monitor_ids->{$id}{'model'} = main::remove_duplicates($monitor_ids->{$id}{'model'});
 				}
@@ -14765,11 +14815,10 @@ sub xdpyinfo_data {
 				if ($size_x && $size_y && $res_y){
 					flip_size_x_y(\$size_x,\$size_y,\$res_x,\$res_y);
 				}
-				$size_x_i = ($size_x) ? sprintf("%.1f", ($size_x/25.4)) : 0;
-				$size_y_i = ($size_y) ? sprintf("%.1f", ($size_y/25.4)) : 0;
+				$size_x_i = ($size_x) ? sprintf("%.2f", ($size_x/25.4)) : 0;
+				$size_y_i = ($size_y) ? sprintf("%.2f", ($size_y/25.4)) : 0;
 				$dpi = ($res_x && $size_x) ? sprintf("%.0f", ($res_x*25.4/$size_x)) : '';
-				$diagonal = ($size_x && $size_y) ? sprintf("%.1f", (sqrt($size_x**2 + $size_y**2)/25.4)) : '';
-				$diagonal += 0 if $diagonal;# trick to get rid of decimal 0
+				$diagonal = ($size_x && $size_y) ? sprintf("%.2f", (sqrt($size_x**2 + $size_y**2)/25.4)) + 0 : '';
 				$diagonal_m = ($size_x && $size_y) ? sprintf("%.0f", (sqrt($size_x**2 + $size_y**2))) : '';
 			}
 			$screen = {
@@ -14802,7 +14851,7 @@ sub xrandr_data {
 		@xrandr = main::grabber("$program $display_opt 2>/dev/null",'','strip');
 	}
 	else {
-		@xrandr = main::reader("$ENV{HOME}/bin/scripts/inxi/svn/branches/inxi-perl/xrandr.txt",'strip');
+		@xrandr = main::reader("$ENV{HOME}/bin/scripts/inxi/data/xrandr/xrandr-test-1.txt",'strip');
 	}
 	# $graphics{'dimensions'} = (\@dimensions);
 	# we get a bit more info from xrandr than xdpyinfo, but xrandr fails to handle
@@ -14842,25 +14891,30 @@ sub xrandr_data {
 		# HDMI-2 connected 1920x1200+1080+0 (normal left inverted right x axis y axis) 519mm x 324mm
 		# DP-1 connected primary 2560x1440+1080+1200 (normal left inverted right x axis y axis) 598mm x 336mm
 		# HDMI-1 connected 1080x1920+0+0 left (normal left inverted right x axis y axis) 160mm x 90mm
-		elsif (/^([^\s]+)\s+connected\s(primary\s)?([0-9]+)\s*x\s*([0-9]+)\+([0-9]+)\+([0-9]+)(\s[^(]*\([^)]+\))?(\s([0-9]+)mm\sx\s([0-9]+)mm)?/){
+		# disabled but connected: VGA-1 connected (normal left inverted right x axis y axis)
+		elsif (/^([^\s]+)\s+connected\s(primary\s)?/){
 			$monitor_id = $1;
 			$set_as = $2;
-			$res_x = $3;
-			$res_y = $4;
-			$pos_x = $5;
-			$pos_y = $6;
-			$size_x = $9;
-			$size_y = $10;
-			# flip size x,y if don't roughly  match res x/y ratio
-			if ($size_x && $size_y && $res_y){
-				flip_size_x_y(\$size_x,\$size_y,\$res_x,\$res_y);
+			if (/^[^\s]+\s+connected\s(primary\s)?([0-9]+)\s*x\s*([0-9]+)\+([0-9]+)\+([0-9]+)(\s[^(]*\([^)]+\))?(\s([0-9]+)mm\sx\s([0-9]+)mm)?/){
+				$res_x = $2;
+				$res_y = $3;
+				$pos_x = $4;
+				$pos_y = $5;
+				$size_x = $8;
+				$size_y = $9;
+				# flip size x,y if don't roughly  match res x/y ratio
+				if ($size_x && $size_y && $res_y){
+					flip_size_x_y(\$size_x,\$size_y,\$res_x,\$res_y);
+				}
+				$size_x_i = ($size_x) ? sprintf("%.2f", ($size_x/25.4)) + 0 : 0;
+				$size_y_i = ($size_y) ? sprintf("%.2f", ($size_y/25.4)) + 0 : 0;
+				$dpi = ($res_x && $size_x) ? sprintf("%.0f", $res_x * 25.4 / $size_x) : '';
+				$diagonal = ($res_x && $size_x) ? sprintf("%.2f", (sqrt($size_x**2 + $size_y**2)/25.4)) + 0 : '';
+				$diagonal_m = ($res_x && $size_x) ? sprintf("%.0f", (sqrt($size_x**2 + $size_y**2))) : '';
 			}
-			$size_x_i = ($size_x) ? sprintf("%.1f", ($size_x/25.4)) : 0;
-			$size_y_i = ($size_y) ? sprintf("%.1f", ($size_y/25.4)) : 0;
-			$dpi = ($res_x && $size_x) ? sprintf("%.0f", $res_x * 25.4 / $size_x) : '';
-			$diagonal = ($res_x && $size_x) ? sprintf("%.1f", (sqrt($size_x**2 + $size_y**2)/25.4)) : '';
-			$diagonal += 0 if $diagonal; # trick to get rid of decimal 0
-			$diagonal_m = ($res_x && $size_x) ? sprintf("%.0f", (sqrt($size_x**2 + $size_y**2))) : '';
+			else {
+				($res_x,$res_y,$pos_x,$pos_y,$size_x,$size_x_i,$size_y,$size_y_i,$dpi,$diagonal,$diagonal_m) = ()
+			}
 			undef $primary;
 			push(@ids,$monitor_id);
 			if ($set_as){
@@ -15044,9 +15098,10 @@ sub display_drivers_x {
 			# $log = "$ENV{HOME}/bin/scripts/inxi/data/xorg-logs/xorg-multi-driver-1.log";
 		}
 		my @xorg = main::reader($log);
-		# list is from sgfxi plus non-free drivers, plus ARM drivers
-		my $list = join('|', qw(amdgpu apm ark armsoc atimisc ati 
-		chips cirrus cyrix fbdev fbturbo fglrx geode glide glint 
+		# list is from sgfxi plus non-free drivers, plus ARM drivers. 
+		# Don't use ati. It's just a wrapper for: r128, mach64, radeon
+		my $list = join('|', qw(amdgpu apm ark armsoc atimisc
+		chips cirrus cyrix etnaviv fbdev fbturbo fglrx geode glide glint 
 		i128 i740 i810-dec100 i810e i810 i815 i830 i845 i855 i865 i915 i945 i965 
 		iftv imstt intel ivtv mach64 mesa mga modesetting neomagic newport 
 		nouveau nsc nvidia nv openchrome r128 radeonhd radeon rendition 
@@ -15213,13 +15268,9 @@ sub set_monitors_sys {
 		elsif ($item eq 'modes'){
 			@data = main::reader($file,'strip');
 			next if !@data;
-			if (scalar @data == 1 || $data[-1] eq $data[0]){
-				$monitor_ids->{$port}{'modes-min-max'} = $data[0];
-			}
-			else {
-				$monitor_ids->{$port}{'modes-min'} = $data[-1];
-				$monitor_ids->{$port}{'modes-max'} = $data[0];
-			}
+			# modes has repeat values, probably because kernel doesn't show hz
+			main::uniq(\@data);
+			$monitor_ids->{$port}{'modes'} = [@data];
 		}
 		elsif ($item eq 'edid'){
 			next if -s $file;
@@ -15227,7 +15278,7 @@ sub set_monitors_sys {
 		}
 	}
 	main::log_data('dump','$ports ref',$monitor_ids) if $b_log;
-	print Data::Dumper::Dumper $monitor_ids if $dbg[44];
+	print 'monitor_sys_data(): ', Data::Dumper::Dumper $monitor_ids if $dbg[44];
 	eval $end if $b_log;
 }
 sub monitor_edid_data {
@@ -15239,9 +15290,12 @@ sub monitor_edid_data {
 	return if !$edid_raw;
 	my $edid = ParseEDID::parse_edid($edid_raw,$dbg[47]);
 	main::log_data('dump','Parse::EDID',$edid) if $b_log;
-	print Data::Dumper::Dumper $edid if $dbg[44];
+	print 'parse_edid(): ', Data::Dumper::Dumper $edid if $dbg[44];
 	return if !$edid || ref $edid ne 'HASH' || !%$edid;
 	$monitor_ids->{$port}{'build-date'} = $edid->{'year'};
+	if ($edid->{'color_characteristics'}){
+		$monitor_ids->{$port}{'colors'} = $edid->{'color_characteristics'};
+	}
 	if ($edid->{'gamma'}){
 		$monitor_ids->{$port}{'gamma'} = ($edid->{'gamma'}/100 + 0);
 	}
@@ -15254,26 +15308,37 @@ sub monitor_edid_data {
 			$model .= ' ' if $model;
 			$model .= $edid->{'monitor_name'};
 		}
+		elsif ($model && $edid->{'product_code_h'}){
+			$model .= ' ' . $edid->{'product_code_h'};
+		}
 		$monitor_ids->{$port}{'model'} = main::remove_duplicates(main::clean($model));
+	}
+	elsif ($edid->{'manufacturer_name'} && $edid->{'product_code_h'}){
+		$monitor_ids->{$port}{'model-id'} = $edid->{'manufacturer_name'} . ' ';
+		$monitor_ids->{$port}{'model-id'} .= $edid->{'product_code_h'};
+	}
+	# construct to match xorg values
+	if ($edid->{'manufacturer_name'} && $edid->{'product_code'}){
+		my $id = $edid->{'manufacturer_name'} . sprintf('%x',$edid->{'product_code'});
+		$monitor_ids->{$port}{$id} = ($edid->{'serial_number'}) ? $edid->{'serial_number'}: '';
 	}
 	if ($edid->{'diagonal_size'}){
 		$monitor_ids->{$port}{'diagonal-m'} = sprintf('%.0f',($edid->{'diagonal_size'}*25.4)) + 0;
 		$monitor_ids->{$port}{'diagonal'} = sprintf('%.1f',$edid->{'diagonal_size'}) + 0;
 	}
-	if ($edid->{'ratio_name'}){
-		$edid->{'ratio_name'} =~ s|/|:|; # this should be changed in ParseEDID
-		$monitor_ids->{$port}{'ratio'} = $edid->{'ratio_name'};
+	if ($edid->{'ratios'}){
+		$monitor_ids->{$port}{'ratio'} = join(', ', @{$edid->{'ratios'}});
 	}
 	if ($edid->{'detailed_timings'}){
 		$monitor_ids->{$port}{'res-x'} = $edid->{'detailed_timings'}[0]{'horizontal_active'};
 		$monitor_ids->{$port}{'res-y'} = $edid->{'detailed_timings'}[0]{'vertical_active'};
 		if ($edid->{'detailed_timings'}[0]{'horizontal_image_size'}){
 			$monitor_ids->{$port}{'size-x'} = $edid->{'detailed_timings'}[0]{'horizontal_image_size'};
-			$monitor_ids->{$port}{'size-x-i'} = sprintf('%.1f',($edid->{'detailed_timings'}[0]{'horizontal_image_size'}/25.4)) + 0;
+			$monitor_ids->{$port}{'size-x-i'} = $edid->{'detailed_timings'}[0]{'horizontal_image_size_i'};
 		}
 		if ($edid->{'detailed_timings'}[0]{'vertical_image_size'}){
 			$monitor_ids->{$port}{'size-y'} = $edid->{'detailed_timings'}[0]{'vertical_image_size'};
-			$monitor_ids->{$port}{'size-y-i'} = sprintf('%.1f',($edid->{'detailed_timings'}[0]{'vertical_image_size'}/25.4)) + 0;
+			$monitor_ids->{$port}{'size-y-i'} = $edid->{'detailed_timings'}[0]{'vertical_image_size_i'};
 		}
 		if ($edid->{'detailed_timings'}[0]{'horizontal_dpi'}){
 			$monitor_ids->{$port}{'dpi'} = sprintf('%.0f',$edid->{'detailed_timings'}[0]{'horizontal_dpi'}) + 0;
@@ -15288,6 +15353,14 @@ sub monitor_edid_data {
 			$monitor_ids->{$port}{'serial'} = main::clean_dmi($edid->{'serial_number'}); 
 		}
 	}
+	# this will be an array reference of one or more edid errors
+	if ($edid->{'edid_errors'}){
+		$monitor_ids->{$port}{'edid-errors'} = $edid->{'edid_errors'};
+	}
+	# this will be an array reference of one or more edid warnings
+	if ($edid->{'edid_warnings'}){
+		$monitor_ids->{$port}{'edid-warnings'} = $edid->{'edid_warnings'};
+	}
 	eval $end if $b_log;
 }
 sub advanced_monitor_data {
@@ -15297,7 +15370,7 @@ sub advanced_monitor_data {
 	my $position = '';
 	# then see if we can locate a default position primary monitor
 	foreach my $key (keys %$monitors){
-		next if !defined $monitors->{$key}{'pos-x'};
+		next if !defined $monitors->{$key}{'pos-x'} || !defined $monitors->{$key}{'pos-y'};
 		# this is the only scenario we can guess at if no primary detected
 		if (!$monitors->{$key}{'primary'} &&
 		 $monitors->{$key}{'pos-x'} == 0 && $monitors->{$key}{'pos-y'} == 0){
@@ -15317,9 +15390,9 @@ sub advanced_monitor_data {
 	# print Data::Dumper::Dumper \@horiz;
 	# print Data::Dumper::Dumper \@vert;
 	# print Data::Dumper::Dumper $layouts;
-	# print Data::Dumper::Dumper $monitor_map;
+	# print 'mon advanced monitor_map: ', Data::Dumper::Dumper $monitor_map;
 	foreach my $key (keys %$monitors){
-		if (@horiz && @vert){
+		if (@horiz && @vert && (scalar @horiz > 1 || scalar @vert > 1)){
 			$monitors->{$key}{'position'} ||= '';
 			$position = '';
 			$position = get_monitor_position($monitors->{$key},\@horiz,\@vert);
@@ -15333,18 +15406,44 @@ sub advanced_monitor_data {
 			# note: xorg drivers can be different than gpu drivers
 			$monitors->{$key}{'drivers'} = gpu_drivers_sys($mon_mapped);
 			$monitors->{$key}{'build-date'} = $monitor_ids->{$mon_mapped}{'build-date'};
+			$monitors->{$key}{'colors'} = $monitor_ids->{$mon_mapped}{'colors'};
 			$monitors->{$key}{'diagonal'} = $monitor_ids->{$mon_mapped}{'diagonal'};
 			$monitors->{$key}{'diagonal-m'} = $monitor_ids->{$mon_mapped}{'diagonal-m'};
 			$monitors->{$key}{'gamma'} = $monitor_ids->{$mon_mapped}{'gamma'};
-			$monitors->{$key}{'modes-min-max'} = $monitor_ids->{$mon_mapped}{'modes-min-max'};
-			$monitors->{$key}{'modes-max'} = $monitor_ids->{$mon_mapped}{'modes-max'};
-			$monitors->{$key}{'modes-min'} = $monitor_ids->{$mon_mapped}{'modes-min'};
+			$monitors->{$key}{'modes'} = $monitor_ids->{$mon_mapped}{'modes'};
 			$monitors->{$key}{'model'} = $monitor_ids->{$mon_mapped}{'model'};
+			$monitors->{$key}{'color-characteristics'} = $monitor_ids->{$mon_mapped}{'color-characteristics'};
+			if (!defined $monitors->{$key}{'size-x'} && $monitor_ids->{$mon_mapped}{'size-x'}){
+				$monitors->{$key}{'size-x'} = $monitor_ids->{$mon_mapped}{'size-x'};
+				$monitors->{$key}{'size-x-i'} = $monitor_ids->{$mon_mapped}{'size-x-i'};
+			}
+			if (!defined $monitors->{$key}{'size-y'} && $monitor_ids->{$mon_mapped}{'size-y'}){
+				$monitors->{$key}{'size-y'} = $monitor_ids->{$mon_mapped}{'size-y'};
+				$monitors->{$key}{'size-y-i'} = $monitor_ids->{$mon_mapped}{'size-y-i'};
+			}
+			if (!defined $monitors->{$key}{'dpi'} && $monitor_ids->{$mon_mapped}{'dpi'}){
+				$monitors->{$key}{'dpi'} = $monitor_ids->{$mon_mapped}{'dpi'};
+			}
+			if ($monitor_ids->{$mon_mapped}{'model-id'}){
+				$monitors->{$key}{'model-id'} = $monitor_ids->{$mon_mapped}{'model-id'};
+			}
+			if ($monitor_ids->{$mon_mapped}{'edid-errors'}){
+				$monitors->{$key}{'edid-errors'} = $monitor_ids->{$mon_mapped}{'edid-errors'};
+			}
+			if ($monitor_ids->{$mon_mapped}{'edid-warnings'}){
+				$monitors->{$key}{'edid-warnings'} = $monitor_ids->{$mon_mapped}{'edid-warnings'};
+			}
+			if ($monitor_ids->{$mon_mapped}{'enabled'} && 
+			$monitor_ids->{$mon_mapped}{'enabled'} eq 'disabled'){
+				$monitors->{$key}{'disabled'} = $monitor_ids->{$mon_mapped}{'enabled'};
+			}
 			$monitors->{$key}{'ratio'} = $monitor_ids->{$mon_mapped}{'ratio'};
 			$monitors->{$key}{'serial'} = $monitor_ids->{$mon_mapped}{'serial'};
-			if ($mon_mapped ne $monitors->{$key}{'monitor'}){
-				$monitors->{$key}{'monitor-mapped'} = $mon_mapped;
-			}
+		}
+		# now swap the drm id for the display server id if they don't match
+		if ($mon_mapped && $mon_mapped ne $monitors->{$key}{'monitor'}){
+			$monitors->{$key}{'monitor-mapped'} = $monitors->{$key}{'monitor'};
+			$monitors->{$key}{'monitor'} = $mon_mapped;
 		}
 	}
 	# not printing out primary if Screen has only 1 Monitor
@@ -15359,9 +15458,7 @@ sub advanced_monitor_data {
 sub set_active_monitors {
 	eval $start if $b_log;
 	foreach my $key (keys %$monitor_ids){
-		if (!$monitor_ids->{$key}{'enabled'} || 
-		$monitor_ids->{$key}{'enabled'} ne 'enabled' ||
-		!$monitor_ids->{$key}{'status'} ||
+		if (!$monitor_ids->{$key}{'status'} ||
 		$monitor_ids->{$key}{'status'} ne 'connected'){
 			delete $monitor_ids->{$key};
 		}
@@ -15411,7 +15508,7 @@ sub set_monitor_layouts {
 	 '2-1' => 'middle-l','2-2' => 'middle-c','2-3' => 'middle-r',
 	 '3-1' => 'bottom-l','3-2' => 'bottom-c','3-3' => 'bottom-r'};
 }
-# this is required to resolve the insane situation where some xorg drivers change 
+# this is required to resolve the situation where some xorg drivers change 
 # the kernel ID for the port to something slightly different, amdgpu in particular.
 sub map_monitor_ids {
 	eval $start if $b_log;
@@ -15420,13 +15517,12 @@ sub map_monitor_ids {
 	@$display_ids = sort { lc($a) cmp lc($b) } @$display_ids;
 	my @sys_ids;
 	foreach my $key (keys %$monitor_ids){
-		if ($monitor_ids->{$key}{'status'} eq 'connected' && 
-		 $monitor_ids->{$key}{'enabled'} eq 'enabled'){
+		if ($monitor_ids->{$key}{'status'} eq 'connected'){
 			push(@sys_ids,$key);
 		}
 	}
 	@sys_ids = sort { lc($a) cmp lc($b) } @sys_ids;
-	# @sys_ids = ('DP-1-1','DVI-I-1','VGA-1');
+	# @sys_ids = ('DVI-I-1','eDP-1','VGA-1');
 	main::log_data('dump','@sys_ids',\@sys_ids) if $b_log;
 	main::log_data('dump','$xrandr_ids ref',$display_ids) if $b_log;
 	print 'sys: ', Data::Dumper::Dumper \@sys_ids if $dbg[45];
@@ -15435,31 +15531,37 @@ sub map_monitor_ids {
 	$monitor_map = {};
 	# known patterns: s: DP-1, d: DisplayPort-0; s: HDMI-A-2, d: HDMI-A-1
 	# s: HDMI-A-2, d: HDMI-2; s: DVI-1 d: DVI1; s: HDMI-1, d: HDMI1 
-	# s: DVI-I-1, d: DVI0; s: VGA-1, d: VGA1; s: DP-1-1; d: DP-1-1
-	my ($d_1,$d_2,$d_3,$d_4,$s_1,$s_2,$s_3,$s_4);
+	# s: DVI-I-1, d: DVI0; s: VGA-1, d: VGA1; s: DP-1-1; d: DP-1-1;
+	# s: eDP-1, d: eDP-1-1 (yes, reversed from normal deviation!); s: eDP-1, d: eDP
+	# worst: s: DP-6, d: DP-2-3 (2 banks of 3 according to X); s: eDP-1, d: DP-4;
+	my ($d_1,$d_2,$d_m,$s_1,$s_2,$s_m);
+	my $b_single = (scalar @sys_ids == 1) ? 1 : 0;
+	my $pattern = '([A-Z]+)(-[A-Z]-\d+-\d+|-[A-Z]-\d+|-\d+-\d+|-?\d+|)';
 	for (my $i=0; $i < scalar @$display_ids; $i++){
-		print "s: $sys_ids[$i] x: $display_ids->[$i]\n" if $dbg[45];
-		if ($display_ids->[$i] =~ /^([A-Z]+)(-[AB]|-[ADI]|-[ADI]-\d+?|-\d+?)?(-)?(\d+)$/i){
+		print "s: $sys_ids[$i] d: $display_ids->[$i]\n" if $dbg[45];
+		# try 1: /^([A-Z]+)(-[AB]|-[ADI]|-[ADI]-\d+?|-\d+?)?(-)?(\d+)$/i
+		if ($display_ids->[$i] =~ /^$pattern$/i){
 			$d_1 = $1;
 			$d_2 = ($2) ? $2 : '';
-			$d_3 = ($3) ? $3 : '';
-			$d_4 = $4;
+			$d_2 =~ /(\d+)?$/;
+			$d_m = ($1) ? $1 : 0;
 			$d_1 =~ s/^DisplayPort/DP/i; # amdgpu...
-			print " d1: $d_1 d2: $d_2 d3: $d_3 d4: $d_4\n" if $dbg[45];
-			if ($sys_ids[$i] =~ /^([A-Z]+?)(-[AB]|-[ADI]|-[ADI]-\d+?|-\d+?)?(-)?(\d+)$/i){
+			print " d1: $d_1 d2: $d_2 d3: $d_m\n" if $dbg[45];
+			if ($sys_ids[$i] =~ /^$pattern$/i){
 				$s_1 = $1;
 				$s_2 = ($2) ? $2 : '';
-				$s_3 = ($3) ? $3 : '';
-				$s_4 = $4;
+				$s_2 =~ /(\d+)?$/;
+				$s_m = ($1) ? $1 : 0;
 				$d_1 = $s_1 if uc($d_1) eq 'XWAYLAND';
-				print " d1: $d_1 s1: $s_1 s2: $s_2 s3: $s_3 s4: $s_4\n" if $dbg[45];
-				if ($d_1 eq $s_1 && ($d_4 == $s_4 || $d_4 == ($s_4 - 1))){
+				print " d1: $d_1 s1: $s_1 dm: $d_m sm: $s_m \n" if $dbg[45];
+				if ($d_1 eq $s_1 && ($d_m == $s_m || $d_m == ($s_m - 1))){
 					$monitor_map->{$display_ids->[$i]} = $sys_ids[$i];
 				}
 			}
 		}
 		if (!$monitor_map->{$display_ids->[$i]}){
-			$monitor_map->{$display_ids->[$i]} = main::message('monitor-id');
+			# we're not even going to try, if there's 1 sys and 1 display, just use it!
+			$monitor_map->{$display_ids->[$i]} = ($b_single) ? $sys_ids[$i] : main::message('monitor-id');
 		}
 	}
 	main::log_data('dump','$monitor_map ref',$monitor_map) if $b_log;
@@ -22130,7 +22232,8 @@ sub process_lm_sensors {
 		# my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-zenpower-nvme-2.txt";
 		# my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-pch-intel-1.txt";
 		# my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-ppc-sr71.txt";
-		# @sensors_data = main::reader($file);
+		 my $file = "$ENV{'HOME'}/bin/scripts/inxi/data/sensors/sensors-applesmc-1.txt";
+		 @sensors_data = main::reader($file);
 	}
 	else {
 		# only way to get sensor array data? Unless using sensors -j, but can't assume json 
@@ -22150,6 +22253,9 @@ sub process_lm_sensors {
 			# note: drivetemp: known, but many others could exist
 			if ($adapter =~ /^(drive|nvme)/){
 				$type = 'disk';
+			}
+			elsif ($adapter =~ /^(BAT)/){
+				$type = 'bat';
 			}
 			# intel on die io controller, like southbridge/northbridge used to be
 			elsif ($adapter =~ /^(pch[_-])/){
@@ -22666,11 +22772,18 @@ sub gpu_data {
 package SlotItem;
 sub get {
 	eval $start if $b_log;
-	my (@rows,$key1,$val1);
+	my ($data,@rows,$key1,$val1);
 	my $num = 0;
 	if ($fake{'dmidecode'} || ($alerts{'dmidecode'}->{'action'} eq 'use' && 
 	 (!%risc || $use{'slot-tool'}))){
-		@rows = slot_output();
+		$data = slot_data_dmi();
+		@rows = slot_output($data) if $data;
+		if (!@rows){
+			my $key = 'Message';
+			push(@rows, {
+			main::key($num++,0,1,$key) => main::message('pci-slot-data',''),
+			},);
+		}
 	}
 	elsif (%risc && !$use{'slot-tool'}){
 		$key1 = 'Message';
@@ -22688,62 +22801,161 @@ sub get {
 }
 sub slot_output {
 	eval $start if $b_log;
+	my $data = $_[0];
 	my (@rows);
-	my $num = 0;
-	foreach my $entry (@dmi){
+	my $num = 1;
+	foreach my $slot_data (@$data){
+		next if !$slot_data || ref $slot_data ne 'HASH';
 		$num = 1;
-		if ($entry->[0] == 9){
-			my ($designation,$id,$length,$type,$usage) = ('','','','','');
-			# skip first two row, we don't need that data
-			my $j = scalar @rows;
-			foreach my $item (@$entry[2 .. $#$entry]){
-				if ($item !~ /^~/){ # skip the indented rows
-					my @value = split(/:\s+/, $item);
-					if ($value[0] eq 'Type'){
-						$type = $value[1];
-					}
-					if ($value[0] eq 'Designation'){
-						$designation = $value[1];
-					}
-					if ($value[0] eq 'Current Usage'){
-						$usage = $value[1];
-						
-					}
-					if ($value[0] eq 'ID'){
-						$id = $value[1];
-					}
-					if ($extra > 1 && $value[0] eq 'Length'){
-						$length = $value[1];
-					}
-				}
+		my $j = scalar @rows;
+		$slot_data->{'id'} = 'N/A' if !defined $slot_data->{'id'}; # can be 0
+		$slot_data->{'pci'} ||= 'N/A';
+		push(@rows, {
+		main::key($num++,1,1,'Slot') => $slot_data->{'id'},
+		main::key($num++,0,2,'type') => $slot_data->{'pci'},
+		},);
+		# PCIe only
+		if ($extra > 1 && $slot_data->{'gen'}){
+			$rows[$j]->{main::key($num++,0,2,'gen')} = $slot_data->{'gen'};
+		}
+		if ($slot_data->{'lanes-phys'} && $slot_data->{'lanes-active'} && 
+		$slot_data->{'lanes-phys'} ne $slot_data->{'lanes-active'}){
+			$rows[$j]->{main::key($num++,1,2,'lanes')} = '';
+			$rows[$j]->{main::key($num++,0,3,'phys')} = $slot_data->{'lanes-phys'};
+			$rows[$j]->{main::key($num++,0,3,'active')} = $slot_data->{'lanes-active'};
+		}
+		elsif ($slot_data->{'lanes-phys'}){
+			$rows[$j]->{main::key($num++,0,2,'lanes')} = $slot_data->{'lanes-phys'};
+		}
+		# Non PCIe only
+		if ($extra > 1 && $slot_data->{'bits'}){
+			$rows[$j]->{main::key($num++,0,2,'bits')} = $slot_data->{'bits'};
+		}
+		# PCI-X and PCI only
+		if ($extra > 1 && $slot_data->{'mhz'}){
+			$rows[$j]->{main::key($num++,0,2,'MHz')} = $slot_data->{'mhz'};
+		}
+		$rows[$j]->{main::key($num++,0,2,'status')} = $slot_data->{'usage'};
+		if ($slot_data->{'j'} || $slot_data->{'m2'}){
+			my $info = ($slot_data->{'m2'}) ? $slot_data->{'m2'} : '';
+			if ($slot_data->{'j'}){
+				$info .= ' ' if $info;
+				$info .= $slot_data->{'j'};
 			}
-			if ($type){
-				$id = 'N/A' if ($id eq '');
-				if ($type eq 'Other' && $designation){
-					$type = $designation;
-				}
-				elsif ($type && $designation){
-					$type = "$type $designation";
-				}
-				push(@rows, {
-				main::key($num++,1,1,'Slot') => $id,
-				main::key($num++,0,2,'type') => $type,
-				main::key($num++,0,2,'status') => $usage,
-				},);
-				if ($extra > 1){
-					$rows[$j]->{main::key($num++,0,2,'length')} = $length;
-				}
+			$rows[$j]->{main::key($num++,0,2,'info')} = $info;
+		}
+		if ($extra > 1){
+			$slot_data->{'length'} ||= 'N/A';
+			$rows[$j]->{main::key($num++,0,2,'length')} = $slot_data->{'length'};
+			if ($slot_data->{'cpu'}){
+				$rows[$j]->{main::key($num++,0,2,'cpu')} = $slot_data->{'cpu'};
 			}
 		}
-	}
-	if (!@rows){
-		my $key = 'Message';
-		push(@rows, {
-		main::key($num++,0,1,$key) => main::message('pci-slot-data',''),
-		},);
+		if ($extra > 0){
+			$slot_data->{'bus_address'} ||= 'N/A';
+			$rows[$j]->{main::key($num++,0,2,'bus-ID')} =$slot_data->{'bus_address'};
+		}
 	}
 	eval $end if $b_log;
 	return @rows;
+}
+sub slot_children {
+	eval $start if $b_log;
+	
+	eval $end if $b_log;
+}
+sub slot_data_dmi {
+	eval $start if $b_log;
+	my $i = 0;
+	my @slots;
+	foreach my $slot_data (@dmi){
+		next if $slot_data->[0] != 9;
+		my %data;
+		# skip first two row, we don't need that data
+		foreach my $item (@$slot_data[2 .. $#$slot_data]){
+			if ($item !~ /^~/){ # skip the indented rows
+				my @value = split(/:\s+/, $item, 2);
+				if ($value[0] eq 'Type'){
+					$data{'type'} = $value[1];
+				}
+				if ($value[0] eq 'Designation'){
+					$data{'designation'} = $value[1];
+				}
+				if ($value[0] eq 'Current Usage'){
+					$data{'usage'} = lc($value[1]);
+				}
+				if ($value[0] eq 'ID'){
+					$data{'id'} = $value[1];
+				}
+				if ($extra > 1 && $value[0] eq 'Length'){
+					$data{'length'} = lc($value[1]);
+				}
+				if ($extra > 1 && $value[0] eq 'Bus Address'){
+					$value[1] =~ s/^0000://;
+					$data{'bus_address'} = $value[1];
+				}
+			}
+		}
+		if ($data{'type'} eq 'Other' && $data{'designation'}){
+			$data{'type'} = $data{'designation'};
+			undef $data{'designation'};
+		}
+		foreach my $string (($data{'type'},$data{'designation'})){
+			next if !$string;
+			print "st: $string\n" if $dbg[48];
+			$string =~ s/(PCI[\s_-]?Express|Pci[_-]?e)/PCIe /ig;
+			$string =~ s/PCI[\s_-]?X/PCIX /ig;
+			$string =~ s/Mini[\s_-]?PCI/MiniPCI /ig;
+			$string =~ s/PCMCIA/PCMCIA /ig;
+			if (!$data{'pci'} && $string =~ /(AGP|ISA|MiniPCI|PCIe|PCIX|PCMCIA|PCI)/){
+				$data{'pci'} = $1;
+				# print "pci: $data{'pci'}\n";
+			}
+			if ($string =~ /(MiniPCI|PCMCIA)/){
+				$data{'pci'} = $1;
+				# print "pci: $data{'pci'}\n";
+			}
+			# legacy format: PCIE#3-x8 
+			if (!$data{'lanes-phys'} && $string =~ /(^x|#\d+-x)(\d+)/){
+				$data{'lanes-phys'} = $2;
+			}
+			if (!$data{'lanes-active'} && $string =~ /^x\d+ .*? x(\d+)/){
+				$data{'lanes-active'} = $1;
+			}
+			if (!defined $data{'slot'} && $string =~ s/SLOT-?(\d+)?\b//){
+				$data{'slot'} = $1 if defined $1;
+			}
+			# legacy format, seens with PCI-X/PCIe mobos: PCIX#2-100MHz,  PCIE#3-x8
+			if (!defined $data{'id'} && $string =~ /(#|PCI)(\d+)\b/){
+				$data{'id'} = $2;
+			}
+			if (!$data{'j'} && $string =~ s/\bJ-?(\S+)\b//){
+				$data{'j'} = 'J' . $1;
+			}
+			if (!$data{'m2'} && $string =~ s/\bM\.?2\b//){
+				$data{'m2'} = 'M.2';
+			}
+			if (!$data{'cpu'} && $string =~ s/CPU-?(\d+)\b//){
+				$data{'cpu'} = $1;
+			}
+			if (!$data{'gen'} && $data{'pci'} && $data{'pci'} eq 'PCIe' && 
+			$string =~ /PCIe[\s_-]*([\d.]+)/){
+				$data{'gen'} = $1 + 0;
+			}
+			if (!$data{'mhz'} && $data{'pci'} && $string =~ /(\d+)[\s_-]?MHz/){
+				$data{'mhz'} = $1;
+			}
+			if (!$data{'bits'} && $data{'pci'} && $string =~ /\b(\d+)[\s_-]?bit/){
+				$data{'bits'} = $1;
+			}
+			$i++;
+		}
+		push(@slots,{%data}) if %data;
+	}
+	print '@slots: ',  Data::Dumper::Dumper \@slots if $dbg[48];
+	main::log_data('dump','@slots final',\@slots) if $b_log;
+	eval $end if $b_log;
+	return \@slots if @slots;
 }
 }
 
@@ -25620,6 +25832,7 @@ sub pci_class {
 	'11' => 'signal-processing',
 	'12' => 'processing-accelerators',
 	'13' => 'non-essential-instrumentation',
+	# 14 - fe reserved
 	'40' => 'coprocessor',
 	'ff' => 'unassigned',
 	);
@@ -25986,6 +26199,7 @@ sub get_display_manager {
 		}
 	}
 	@dms = @temp;
+	my (@dm_info);
 	# print Data::Dumper::Dumper \@dms;
 	# we know the files or directories exist so no need for further checks here
 	foreach my $dm (@dms){
@@ -25994,30 +26208,36 @@ sub get_display_manager {
 		 ($path = check_program($dm))){}
 		else {$path = $dm}
 		# print "$path $extra\n";
+		@dm_info = ();
 		@data = program_data($dm,$path,3);
-		$dm = $data[0];
-		$dm .= ' ' . $data[1] if $data[1];
-		push(@found,$dm);
+		$dm_info[0] = $data[0];
+		$dm_info[1] = $data[1];
+		if (scalar @dms > 1 && (my $temp = ServiceData::get('status',$dm))){
+			$dm_info[2] = message('stopped') if $temp && $temp =~ /stopped|disabled/;
+		}
+		push(@found,[@dm_info]);
 	}
 	if (!@found){
 		# ly does not have a run/pid file
 		if (grep {$_ eq 'ly'} @ps_gui){
 			@data = program_data('ly','ly',3);
-			$found[0] = $data[0];
-			$found[0] .= ' ' . $data[1] if $data[1];
+			$dm_info[0] = $data[0];
+			$dm_info[1] = $data[1];
+			$found[0] = [@dm_info];
 		}
 		elsif (grep {/startx$/} @ps_gui){
-			$found[0] = 'startx';
+			$found[0] = ['startx'];
 		}
 		elsif (grep {$_ eq 'xinit'} @ps_gui){
-			$found[0] = 'xinit';
+			$found[0] = ['xinit'];
 		}
 	}
 	# might add this in, but the rate of new dm's makes it more likely it's an 
 	# unknown dm, so we'll keep output to N/A
+	# print Data::Dumper::Dumper \@found;
 	log_data('dump','display manager: @found',\@found) if $b_log;
 	eval $end if $b_log;
-	return join(', ', @found) if @found;
+	return \@found if @found;
 }
 
 ## DistroData
@@ -26102,12 +26322,12 @@ sub get_linux_distro {
 	# note, pclinuxos has all these mandrake/mandriva files, careful!
 	my $lsb_good_s = 'mandrake-release|mandriva-release|mandrakelinux-release|';
 	$lsb_good_s .= 'manjaro-release';
-	my $os_release_good_s = 'altlinux-release|arch-release|pclinuxos-release|';
-	$os_release_good_s .= 'rpi-issue|SuSE-release';
+	my $os_release_good_s = 'altlinux-release|arch-release|mageia-release|';
+	$os_release_good_s .= 'pclinuxos-release|rpi-issue|SuSE-release';
 	# we need these empirically verified one by one as they appear, but always remember
 	# that stuff changes, legacy, deprecated, but these ideally are going to be right
-	my $osr_good = 'manjaro|antergos|chakra|guix|pclinuxos|raspberry pi os|slint|';
-	$osr_good .= 'zorin';
+	my $osr_good = 'manjaro|antergos|chakra|guix|mageia|pclinuxos|raspberry pi os|';
+	$osr_good .= 'slint|zorin';
  	my ($b_issue,$b_lsb,$b_skip_issue,$b_skip_osr);
 	my ($issue,$lsb_release) = ('/etc/issue','/etc/lsb-release');
 	$b_issue = 1 if -f $issue;
@@ -26169,13 +26389,15 @@ sub get_linux_distro {
 			@working = (@derived,@primary);
 			foreach my $file (@working){
 				if ("/etc/$file" =~ /($distro_files_s)$/){
-					# Now lets see if the distro file is in the known-good working-lsb-list
-					# if so, use lsb-release, if not, then just use the found file
-					# this is for only those distro's with self named release/version files
+					# These is for only those distro's with self named release/version files
 					# because Mint does not use such, it must be done as below 
+					# Force use of os-release file in cases where there might be conflict 
+					# between lsb-release rules and os-release priorities.
 					if (@osr && $file =~ /($os_release_good_s)$/){
 						$distro_file = $os_release;
 					}
+					# Now lets see if the distro file is in the known-good working-lsb-list
+					# if so, use lsb-release, if not, then just use the found file
 					elsif ($b_lsb && $file =~ /$lsb_good_s/){
 						$distro_file = $lsb_release;
 					}
@@ -26504,8 +26726,12 @@ sub get_lsb_release {
 	else {
 		# avoid duplicates
 		$distro = $id;
-		$distro .= " $release" if $distro !~ /$release/;
-		$distro .= " $codename" if $distro !~ /$codename/;
+		$distro .= " $release" if $release && $distro !~ /$release/;
+		# eg: release: 9 codename: mga9
+		if ($codename && $distro !~ /$codename/i && 
+		(!$release || $codename !~ /$release/)){
+			$distro .= " $codename";
+		}
 		$distro =~ s/^\s+|\s\s+|\s+$//g; # get rid of double and trailing spaces 
 	}
 	eval $end if $b_log;
@@ -26701,6 +26927,7 @@ sub generate_data {
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/ram/dmidecode-speed-configured-1.txt";
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/ram/dmidecode-speed-configured-2.txt";
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/ram/00srv-dmidecode-mushkin-1.txt";
+		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmidecode/dmidecode-slots-pcix-pcie-1.txt";
 		# open(my $fh, '<', $file) or die "can't open $file: $!";
 		# chomp(@data = <$fh>);
 	}
@@ -27161,24 +27388,26 @@ sub get_kernel_bits {
 
 sub get_kernel_data {
 	eval $start if $b_log;
-	my ($kernel,$ksplice) = ('','');
+	my ($ksplice) = ('');
+	my @kernel;
 	# Linux; yawn; 4.9.0-3.1-liquorix-686-pae; #1 ZEN SMP PREEMPT liquorix 4.9-4 (2017-01-14); i686
 	# FreeBSD; siwi.pair.com; 8.2-STABLE; FreeBSD 8.2-STABLE #0: Tue May 31 14:36:14 EDT 2016     erik5@iddhi.pair.com:/usr/obj/usr/src/sys/82PAIRx-AMD64; amd64
 	if (@uname){
-		$kernel = $uname[2];
-		if ((my $program = check_program('uptrack-uname')) && $kernel){
+		$kernel[0] = $uname[2];
+		if ((my $program = check_program('uptrack-uname')) && $kernel[0]){
 			$ksplice = qx($program -rm);
 			$ksplice = trimmer($ksplice);
-			$kernel = ($ksplice) ? $ksplice . ' (ksplice)' : $kernel;
+			$kernel[0] = $ksplice . ' (ksplice)' if $ksplice;
 		}
-		$kernel .= ' ' . $uname[-1];
-		$kernel = ($bsd_type) ? $uname[0] . ' ' . $kernel : $kernel;
+		$kernel[1] = $uname[-1];
 	}
-	$kernel ||= 'N/A';
-	log_data('data',"kernel: $kernel ksplice: $ksplice") if $b_log;
+	# we want these to have values to save validation checks for output
+	$kernel[0] ||= 'N/A';
+	$kernel[1] ||= 'N/A';
+	log_data('data',"kernel: " . join('; ', @kernel) . " ksplice: $ksplice") if $b_log;
 	log_data('dump','perl @uname', \@uname) if $b_log;
 	eval $end if $b_log;
-	return $kernel;
+	return \@kernel;
 }
 
 ## KernelParameters
@@ -27766,7 +27995,7 @@ my @edid_info = (
 	['C',   'max_size_vertical'], # in cm, 0 on projectors
 	['C',   'gamma'],
 	['a',   'feature_support'],
-	['a10', '_color_characteristics'],
+	['a10', 'color_characteristics'],
 	['a3' , 'established_timings'],
 	['a16', 'standard_timings'],
 	['a72', 'monitor_details'],
@@ -27895,6 +28124,21 @@ my %subfields = (
 		[1, 'native'],
 		[7, 'mode'],
 	],
+	# Section 3.7 in VESA-EEDID-A2.pdf specs
+	color_characteristics => [
+		# Rx1 Rx0 Ry1 Ry0 Gx1 Gx0 Gy1 Gy0
+		[8, 'white_point_red_green'],
+		# Bx1 Bx0 By1 By0 Wx1 Wx0 Wy1 Wy0
+		[8, 'white_point_blue_white'],
+		[8, 'red_x'],
+		[8, 'red_y'],
+		[8, 'green_x'],
+		[8, 'green_y'],
+		[8, 'blue_x'],
+		[8, 'blue_y'],
+		[8, 'white_x'],
+		[8, 'white_y'],
+	],
 );
 my @cea_video_mode_to_detailed_timing = (
 	'pixel_clock',
@@ -27981,50 +28225,58 @@ my @cea_video_modes = (
 	[ 297.000, 1920, 1080, "16/9",  720,  528,  44,  45,  4, 10, 1, 1, 0 ], # 64: 1920x1080@100.00
 );
 # Exist but IDs Unknown: Pixio, AOpen (AON?), AORUS [probably GBT], Deco Gear, 
-# Eyoyo, GAEMS, GeChic, KOORUI, Lilliput, Mobile Pixels, Nexanic,
-# SunFounder, TECNII, TPEKKA, V7/VSEVEN, 
-# Guesses: KYY=KYY, MSI=MSI,  
+# Eyoyo, GAEMS, GeChic, KOORUI, Lilliput, Mobile Pixels, Nexanic, SunFounder,
+# TECNII, TPEKKA, V7/VSEVEN, 
+# Guesses: KYY=KYY, MSI=MSI, KOE=Kaohsiung Opto Electronics
 # PGS: Princeton Graphic Systems; SDC: Samsung Display Co; 
 # SIS: Silicon Integrated Systems; STN: Samsung Electronics America; 
+# BDS: Barco Display Systems
 # TAI: Toshiba America
+# HIQ: Hitachi ImageQuest or Kaohsiung Opto Electronics? or does Imagequest make hitachi:
+# NVD: Nvidia or NewVisionDisplay?
 my %vendors = (
-'ACI' => 'Asus', 'ACR' => 'Acer', 'ACT' => 'Targa', 'ADI' => 'ADI', 
-'AMW' => 'AMW', 'ANX' => 'Acer Netxix', 'AOC' => 'AOC', 'API' => 'Acer', 
+'AAC' => 'AcerView', 'ACI' => 'Asus', 'ACR' => 'Acer', 'ACT' => 'Targa', 'ADI' => 'ADI', 
+'AIC' => 'AG Neovo', 'AMW' => 'AMW', 'ANX' => 'Acer Netxix', 'AOC' => 'AOC', 'API' => 'A Plus Info', 
 'APP' => 'Apple', 'ART' => 'ArtMedia', 'AST' => 'AST Research', 'AUO' => 'AU Optronics', 
-'BEL' => 'Beltronic', 'BMM' => 'BMM', 'BNQ' => 'BenQ', 'BOE' => 'BOE Display', 
-'CMN' => 'Chi Mei Innolux', 'CPL' => 'Compal/ALFA', 'CPQ' => 'Compaq', 
-'CPT' => 'Asus', 'CTX' => 'CTX (Chuntex)', 'CVT' => 'DGM', 
-'DEC' => 'DEC', 'DEL' => 'Dell', 'DPC' => 'Delta', 'DPL' => 'Digital Projection', 'DWE' => 'Daewoo', 
-'ECS' => 'Elitegroup', 'EIZ' => 'EIZO', 'EPI' => 'Envision', 'ETR' => 'Rotel', 
-'FCM' => 'Funai', 'FUS' => 'Fujitsu Siemens', 
-'GBT' => 'Gigabyte', 'GSM' => 'LG (GoldStar)', 'GWY' => 'Gateway 2000',
+'BEL' => 'Beltronic', 'BMM' => 'BMM', 'BNQ' => 'BenQ', 'BOE' => 'BOE Display', 'BDS' => 'Barco',
+'CHO' => 'Sichuang Changhong', 'CMN' => 'ChiMei InnoLux', 'CMO' => 'Chi Mei Optoelectronics', 
+'CPL' => 'Compal/ALFA', 'CPQ' => 'Compaq', 'CPT' => 'Chungwa Picture Tubes', 'CTX' => 'CTX (Chuntex)', 'CVT' => 'DGM', 
+'DEC' => 'DEC', 'DEL' => 'Dell', 'DON' => 'Denon', 'DPC' => 'Delta', 'DPL' => 'Digital Projection', 'DWE' => 'Daewoo', 
+'ECS' => 'Elitegroup', 'EIZ' => 'EIZO', 'ELS' => 'ELSA', 'ENC' => 'EIZO NANAO', 'EPI' => 'Envision', 'ETR' => 'Rotel', 
+'FCM' => 'Funai', 'FUJ' => 'Fujitsu', 'FUS' => 'Fujitsu Siemens', 
+'GBT' => 'Gigabyte', 'GFN' => 'Gefen', 'GSM' => 'LG (GoldStar)', 'GWY' => 'Gateway 2000',
 'HEI' => 'Hyundai.', 'HIQ' => 'Hyundai ImageQuest', 'HIT' => 'Hitachi', 'HPN' => 'HP', 
-'HSD' => 'Hannspree', 'HSL' => 'Hansol', 'HTC' => 'Hitachi', 'HVR' => 'Hitache', 'HWP' => 'HP', 
-'IBM' => 'IBM', 'ICL' => 'Fujitsu ICL', 'IFS' => 'InFocus', 'IQT' => 'Hyundai', 
-'IVM' => 'Idek Iiyama', 
-'KDS' => 'KDS', 'KFC' => 'KFC Computek', 'KYY' => 'KYY', 
-'LEN' => 'Lenovo', 'LGD' => 'LG', 'LKM' => 'Adlas/Azalea', 'LNK' => 'LINK', 
-'LPL' => 'LG Philips', 'LTN' => 'Lite-On', 
-'MAG' => 'MAG InnoVision', 'MAX' => 'Maxdata', 'MED' => 'Medion', 
+'HSD' => 'HannSpree/HannStar', 'HSL' => 'Hansol', 'HTC' => 'Hitachi/Nissei', 'HVR' => 'Hitachi', 
+'HWP' => 'HP', 'HWV' => 'Huawei',
+'IBM' => 'IBM', 'ICL' => 'Fujitsu ICL', 'IFS' => 'InFocus', 'INO' => 'Innolab Pte', 'IQT' => 'Hyundai', 
+'IVM' => 'Idek Iiyama', 'IVO' => 'InfoVision Optronics/Kunshan', 
+'KDS' => 'Korea Data Systems (KDS)', 'KFC' => 'KFC Computek', 'KOE' => 'Kaohsiung OptoElectronics', 
+'KTC' => 'Kingston', 'KYY' => 'KYY', 
+'LCD' => 'Toshiba Matsushita', 'LEN' => 'Lenovo', 'LGD' => 'LG Display', 'LKM' => 'Adlas/Azalea', 
+'LNK' => 'LINK', 'LPL' => 'LG Philips', 'LTN' => 'Lite-On', 
+'MAG' => 'MAG InnoVision', 'MAX' => 'Belinea/Maxdata', 'MED' => 'Medion', 
 'MEI' => 'Panasonic', 'MEL' => 'Mitsubishi', 'MIR' => 'Miro', 'MSI' => 'MSI', 'MTC' => 'MITAC', 
-'NAN' => 'NANAO', 'NEC' => 'NEC', 'NOK' => 'Nokia', 'NVD' => 'Nvidia', 
-'OQI' => 'ViewSonic Optiquest', 'ORN' => 'Orion',
+'NAN' => 'NANAO/EIZO', 'NEX' => 'Nexgen Mediatech', 'NCP' => 'Najing CEC Panda', 'NEC' => 'NEC', 
+'NOK' => 'Nokia', 'NVD' => 'Nvidia', 
+'ONK' => 'Onkyo',  'OPT' => 'Optoma','OQI' => 'ViewSonic Optiquest', 'ORN' => 'Orion',
 'PBN' => 'Packard Bell', 'PCK' => 'Daewoo', 'PDC' => 'Polaroid', 'PGS' => 'Princeton', 
 'PHL' => 'Philips', 'PIO' => 'Pioneer', 'PNR' => 'Planar', 'PRT' => 'Princeton', 
-'QDI' => 'Quahtum Data', 'QDS' => 'Quanta Display', 'REL' => 'Relisys', 
-'SAM' => 'Samsung', 'SAN' => 'Sanyo', 'SDC' => 'Samsung', 'SEC' => 'Seiko Epson', 
-'SEN' => 'Sensics', 'SHP' => 'Sharp', 'SII' => 'Silicon Image', 'SIS' => 'SIS', 
-'SMC' => 'Samtron', 'SMI' => 'Smile', 'SNI' => 'Siemens Nixdorf', 'SNY' => 'Sony', 
-'SPT' => 'Sceptre', 'SRC' => 'Shamrock', 'STN' => 'Samsung', 'STP' => 'Sceptre', 
+'QDI' => 'Quantum Data', 'QDS' => 'Quanta Display', 'REL' => 'Relisys', 'REN' => 'Renesas',
+'SAM' => 'Samsung', 'SAN' => 'Sanyo', 'SBI' => 'Smarttech', 'SDC' => 'Samsung', 'SEC' => 'Seiko Epson', 
+'SEN' => 'Sensics', 'SHP' => 'Sharp', 'SGD' => 'Sigma Designs', 'SGI' => 'SGI', 'SHI' => 'Jiangsu Shinco', 
+'SII' => 'Silicon Image', 'SIS' => 'SIS', 'SKM' => 'Guangzhou Teclast', 'SMC' => 'Samtron', 
+'SMI' => 'Smile', 'SNI' => 'Siemens Nixdorf', 'SNY' => 'Sony', 'SPT' => 'Sceptre', 
+'SRC' => 'Shamrock', 'STN' => 'Samsung', 'STP' => 'Sceptre', 'SUN' => 'Sun Microsystems', 'SYN' => 'Synaptics',
 'TAI' => 'Toshiba', 'TAT' => 'Tatung', 'TOS' => 'Toshiba', 'TRL' => 'Royal Information', 
 'TSB' => 'Toshiba', 'UEG' => 'EliteGroup', 'UNM' => 'Unisys', 
-'VIT' => 'Visitech', 'VLV' => 'Valve', 'VSC' => 'ViewSonic', 'VTK' => 'Viewteck', 
-'WTC' => 'Wen Technology', 'ZCM' => 'Zenith',
+'VIT' => 'Visitech', 'VLV' => 'Valve', 'VSC' => 'ViewSonic', 'VTK' => 'Viewteck', 'VTS' => 'VTech',
+'WTC' => 'Wen Technology', 'XLX' => 'Xilinx', 'YMH' => 'Yamaha', 'ZCM' => 'Zenith',
 );
 sub _within_limit {
 	my ($value, $type, $limit) = @_;
 	$type eq 'min' ? $value >= $limit : $value <= $limit;
 }
+
 sub _get_many_bits {
 	my ($s, $field_name) = @_;
 	my @bits = split('', unpack('B*', $s));
@@ -28032,23 +28284,15 @@ sub _get_many_bits {
 	foreach (@{$subfields{$field_name}}) {
 		my ($size, $field) = @$_;
 		my @l = ('0' x (8 - $size), splice(@bits, 0, $size));
-		$h{$field} = unpack("C", pack('B*', join('', @l))) if $field && $field !~ /^_/;
+		if ($field && $field !~ /^_/){
+			$h{$field} = unpack("C", pack('B*', join('', @l)));
+			# spec: chromacity: 0.xyz: white_point see color_characteristics
+			if ($h{$field} && $field_name eq 'color_characteristics'){
+				$h{$field} = ($field =~ /_[xy]$/) ? sprintf('%0.3f',$h{$field}/255) : [@l[1..8]];
+			}
+		}
 	}
 	\%h;
-}
-sub check_parsed_edid {
-	my ($edid) = @_;
-	$edid->{edid_version} >= 1 && $edid->{edid_version} <= 2 or return 'bad edid_version';
-	$edid->{edid_revision} != 0xff or return 'bad edid_revision';
-	if ($edid->{monitor_range}) {
-		$edid->{monitor_range}{horizontal_min} && 
-		  $edid->{monitor_range}{horizontal_min} <= $edid->{monitor_range}{horizontal_max} 
-			or return 'bad HorizSync';
-		$edid->{monitor_range}{vertical_min} &&
-		  $edid->{monitor_range}{vertical_min} <= $edid->{monitor_range}{vertical_max} 
-			or return 'bad VertRefresh';
-	}
-	'';
 }
 sub _build_detailed_timing {
 	my ($pixel_clock, $vv) = @_;
@@ -28083,11 +28327,12 @@ sub _add_standard_timing_modes {
 	$v;
 }
 sub parse_edid {
+	eval $start if $b_log;
 	my ($raw_edid, $verbose) = @_;
-	my %edid;
+	my (%edid, @warnings);
 	my ($main_edid, @eedid_blocks) = unpack("a128" x (length($raw_edid) / 128), $raw_edid);
 	my @vals = unpack(join('', map { $_->[0] } @edid_info), $main_edid);
-	my $i;
+	my $i = 0;
 	foreach (@edid_info) {
 		my ($field, $v) = ($_->[1], $vals[$i++]);
 		if ($field eq 'year') {
@@ -28101,6 +28346,8 @@ sub parse_edid {
 			$v = _get_many_bits($v, 'video_input_definition');
 		} elsif ($field eq 'feature_support') {
 			$v = _get_many_bits($v, 'feature_support');
+		} elsif ($field eq 'color_characteristics') {
+			$v = _get_many_bits($v, 'color_characteristics');
 		} elsif ($field eq 'established_timings') {
 			my $h = _get_many_bits($v, 'established_timings');
 			$v = [
@@ -28164,9 +28411,9 @@ sub parse_edid {
 						push @{$edid{monitor_text}}, unpack('A13', $vv);
 					} elsif ($flag == 0xff) {
 						push @{$edid{serial_number2}}, unpack('A13', $vv);
-					} else {
-					   $verbose && $vv ne "\0" x 13 && $vv ne " " x 13 and
-						 warn "parse_edid: unknown flag $flag\n";
+					} elsif ($vv ne "\0" x 13 && $vv ne " " x 13) {
+						push(@warnings, "parse_edid: unknown flag $flag");
+						warn "$warnings[-1]\n" if $verbose;
 					}
 				}
 			}
@@ -28182,7 +28429,8 @@ sub parse_edid {
 			$dtd_offset -= 4;
 			while ($dtd_offset > 0) {
 				if (!$v) {
-					warn "parse_edid: DTD offset outside of available data\n" if $verbose;
+					push(@warnings, "parse_edid: DTD offset outside of available data");
+					warn "$warnings[-1]\n" if $verbose;
 					last;
 				}
 				my $h = _get_many_bits($v, 'cea_data_block_collection');
@@ -28195,7 +28443,8 @@ sub parse_edid {
 						$h = _get_many_bits($vmode, 'cea_video_data_block');
 						my $cea_mode = $cea_video_modes[$h->{mode} - 1];
 						if (!$cea_mode) {
-							warn "parse_edid: unhandled CEA mode $h->{mode}\n" if $verbose;
+							push(@warnings, "parse_edid: unhandled CEA mode $h->{mode}");
+							warn "$warnings[-1]\n" if $verbose;
 							next;
 						}
 						my %det_mode = (source => 'cea_vdb');
@@ -28212,11 +28461,18 @@ sub parse_edid {
 					if $h->{horizontal_active} > 1 && $h->{vertical_active} > 1;
 			}
 		} else {
-			$verbose && warn "parse_edid: unknown tag $tag\n";
+			 push(@warnings, "parse_edid: unknown tag $tag");
+       warn "$warnings[-1]\n" if $verbose;
 		}
 	}
 	$edid{max_size_precision} = 'cm';
-	$edid{EISA_ID} = $edid{manufacturer_name} . sprintf('%04x', $edid{product_code}) if $edid{product_code} && $edid{manufacturer_name};
+	if ($edid{product_code}){
+		$edid{product_code_h} = sprintf('%04x', $edid{product_code});
+		if ($edid{manufacturer_name}){
+			$edid{EISA_ID} = $edid{manufacturer_name} . $edid{product_code_h};
+		}
+		$edid{product_code_h} = '0x'. $edid{product_code_h};
+	}
 	if ($edid{monitor_range}) {
 		$edid{HorizSync} = $edid{monitor_range}{horizontal_min} . '-' . $edid{monitor_range}{horizontal_max};
 		$edid{VertRefresh} = $edid{monitor_range}{vertical_min} . '-' . $edid{monitor_range}{vertical_max};
@@ -28260,15 +28516,26 @@ sub parse_edid {
 			$edid{ratio_name} = _ratio_name($in_cm{horizontal}, $in_cm{vertical}, 'mm');
 			$edid{ratio_precision} = 'mm';
 		}
-		$h->{bad_ratio} = 1 if
-			$edid{ratio_precision} &&
-			abs($edid{ratio} - $h->{horizontal_active} / $h->{vertical_active}) > ($edid{ratio_precision} eq 'mm' ? 0.02 : 0.2);
-
+		if ($edid{ratio_precision} &&
+		abs($edid{ratio} - $h->{horizontal_active} / $h->{vertical_active}) > ($edid{ratio_precision} eq 'mm' ? 0.02 : 0.2)) {
+			$h->{bad_ratio} = 1;
+		}
+		if ($edid{ratio_name}) {
+			$edid{ratios} = $edid{ratio_name};
+			$edid{ratios} =~ s|/|:|g;
+			$edid{ratios} = [split(/ or /, $edid{ratios})]; # "3/2 or 16/10"
+		}
 		if ($edid{max_size_vertical}) {
 			$h->{vertical_dpi} = $h->{vertical_active} / $edid{max_size_vertical} * 2.54;
 		}
 		if ($edid{max_size_horizontal}) {
 			$h->{horizontal_dpi} = $h->{horizontal_active} / $edid{max_size_horizontal} * 2.54;
+		}
+		if ($h->{horizontal_image_size}) {
+			$h->{horizontal_image_size_i} = sprintf('%.2f',($h->{horizontal_image_size}/25.4)) + 0;
+		}
+		if ($h->{vertical_image_size}) {
+			$h->{vertical_image_size_i} = sprintf('%.2f',($h->{vertical_image_size}/25.4)) + 0;
 		}
 		my $dpi_string = '';
 		if ($h->{vertical_dpi} && $h->{horizontal_dpi}) {
@@ -28280,35 +28547,77 @@ sub parse_edid {
 		my $horizontal_total = $h->{horizontal_active} + $h->{horizontal_blanking};
 		my $vertical_total = $h->{vertical_active} + $h->{vertical_blanking};
 		no warnings 'uninitialized';
-		$h->{ModeLine_comment} = sprintf qq(# Monitor %s%s modeline (%.1f Hz vsync, %.1f kHz hsync, %sratio %s%s)),
-		  $h->{preferred} ? "preferred" : "supported",
-		  $h->{source} eq 'cea_vdb' ? " CEA" : '',
-		  $h->{pixel_clock} / $horizontal_total / $vertical_total * 1000 * 1000 * ($h->{interlaced} ? 2 : 1),
-		  $h->{pixel_clock} / $horizontal_total * 1000,
-		  $h->{interlaced} ? "interlaced, " : '',
-		  _nearest_ratio($h->{horizontal_active} / $h->{vertical_active}, 0.01) || sprintf("%.2f", $h->{horizontal_active} / $h->{vertical_active}),
-		  $dpi_string ? ", $dpi_string" : '';
-		  
-		  $h->{ModeLine} = sprintf qq("%dx%d" $h->{pixel_clock} %d %d %d %d %d %d %d %d %shsync %svsync%s),
-		  $h->{horizontal_active}, $h->{vertical_active},
+		$h->{ModeLine_comment} = sprintf(qq(# Monitor %s%s modeline (%.1f Hz vsync, %.1f kHz hsync, %sratio %s%s)),
+			$h->{preferred} ? "preferred" : "supported",
+			$h->{source} eq 'cea_vdb' ? " CEA" : '',
+			$h->{pixel_clock} / $horizontal_total / $vertical_total * 1000 * 1000 * ($h->{interlaced} ? 2 : 1),
+			$h->{pixel_clock} / $horizontal_total * 1000,
+			$h->{interlaced} ? "interlaced, " : '',
+			_nearest_ratio($h->{horizontal_active} / $h->{vertical_active}, 0.01) || sprintf("%.2f", $h->{horizontal_active} / $h->{vertical_active}),
+			$dpi_string ? ", $dpi_string" : '');
+			
+		$h->{ModeLine} = sprintf(qq("%dx%d" $h->{pixel_clock} %d %d %d %d %d %d %d %d %shsync %svsync%s),
+			$h->{horizontal_active}, $h->{vertical_active},
 
-		  $h->{horizontal_active},
-		  $h->{horizontal_active} + $h->{horizontal_sync_offset}, 
-		  $h->{horizontal_active} + $h->{horizontal_sync_offset} + $h->{horizontal_sync_pulse_width},
-		  $horizontal_total,
+			$h->{horizontal_active},
+			$h->{horizontal_active} + $h->{horizontal_sync_offset}, 
+			$h->{horizontal_active} + $h->{horizontal_sync_offset} + $h->{horizontal_sync_pulse_width},
+			$horizontal_total,
 
-		  $h->{vertical_active},
-		  $h->{vertical_active} + $h->{vertical_sync_offset}, 
-		  $h->{vertical_active} + $h->{vertical_sync_offset} + $h->{vertical_sync_pulse_width},
-		  $vertical_total,
+			$h->{vertical_active},
+			$h->{vertical_active} + $h->{vertical_sync_offset}, 
+			$h->{vertical_active} + $h->{vertical_sync_offset} + $h->{vertical_sync_pulse_width},
+			$vertical_total,
 
-		  $h->{horizontal_sync_positive} ? '+' : '-',
-		  $h->{vertical_sync_positive} ? '+' : '-',
-		  $h->{interlaced} ? ' Interlace' : '';
+			$h->{horizontal_sync_positive} ? '+' : '-',
+			$h->{vertical_sync_positive} ? '+' : '-',
+			$h->{interlaced} ? ' Interlace' : '');
 	}
 	$edid{diagonal_size} = sqrt(_sqr($edid{max_size_horizontal}) + _sqr($edid{max_size_vertical})) / 2.54;
-
+	# we want to use null data found tests so only return errors/warnings if 
+	# %edid or if verbose, since then we want to know no matter what.
+	if (%edid || $verbose){
+		_edid_errors(\%edid);
+		$edid{edid_warnings} = \@warnings if @warnings;
+	}
+	eval $end if $b_log;
 	\%edid;
+}
+sub _edid_errors {
+	my $edid = shift @_;
+	if (!defined $edid->{edid_version}){
+		_edid_error('edid-version','undefined');
+	}
+	elsif ($edid->{edid_version} < 1 || $edid->{edid_version} > 2){
+		_edid_error('edid-version',$edid->{edid_version});
+	}
+	if (!defined $edid->{edid_revision}){
+		_edid_error('edid-revision','undefined');
+	}
+	elsif ($edid->{edid_revision} == 0xff){
+		_edid_error('edid-revision',$edid->{edid_revision});
+	}
+	if ($edid->{monitor_range}){
+		if (!$edid->{monitor_range}{horizontal_min}){
+			_edid_error('edid-sync','no horizontal');
+		}
+		elsif ($edid->{monitor_range}{horizontal_min} > $edid->{monitor_range}{horizontal_max}){
+			_edid_error('edid-sync', 
+			"bad horizontal values: min: $edid->{monitor_range}{horizontal_min} max: $edid->{monitor_range}{horizontal_max}");
+		}
+		if (!$edid->{monitor_range}{vertical_min}){
+			_edid_error('edid-sync','no vertical');
+		}
+		elsif ($edid->{monitor_range}{vertical_min} > $edid->{monitor_range}{vertical_max}){
+			_edid_error('edid-sync',
+			"bad vertical values: min: $edid->{monitor_range}{vertical_min} max: $edid->{monitor_range}{vertical_max}");
+		}
+	}
+}
+sub _edid_error {
+	my ($edid,$error,$data) = @_;
+	$edid->{edid_errors} = [] if !$edid->{edid_error};
+	push(@{$edid->{edid_errors}},main::message($error,$data));
 }
 sub _nearest_ratio {
 	my ($ratio, $max_error) = @_;
@@ -28392,23 +28701,24 @@ sub get_pci_vendor {
 	eval $start if $b_log;
 	my ($device, $subsystem) = @_;
 	return if !$subsystem;
-	my ($vendor,$sep,$temp) = ('','','');
+	my ($vendor,$sep) = ('','');
 	# get rid of any [({ type characters that will make regex fail
 	# and similar matches show as non-match
-	$subsystem = clean_regex($subsystem);
-	my @data = split(/\s+/, $subsystem);
-	# when using strings in patterns for regex have to escape them
-	foreach (@data){
-		$temp = $_;
-		$temp =~ s/(\+|\$|\?|\^|\*)/\\$1/g;
-		if ($device !~ m|\b$temp\b|){
-			$vendor .= $sep . $_;
+	my @data = split(/\s+/, clean_regex($subsystem));
+	foreach my $word (@data){
+		# AMD Tahiti PRO [Radeon HD 7950/8950 OEM / R9 280]
+		# PC Partner Limited / Sapphire Technology Tahiti PRO [Radeon HD 7950/8950 OEM / R9 280]
+		# $word =~ s/(\+|\$|\?|\^|\*)/\\$1/g;
+		if (length($word) == 1 || $device !~ m|\b\Q$word\E\b|i){
+			$vendor .= $sep . $word;
 			$sep = ' ';
 		}
 		else {
 			last;
 		}
 	}
+	# just in case we had a standalone last character after done
+	$vendor =~ s| [/\(\[\{a\.,-]$|| if $vendor;
 	eval $end if $b_log;
 	return $vendor;
 }
@@ -28462,7 +28772,7 @@ sub get_pcie_data {
 		if ($b_admin && (($data{'max_link_speed'} && 
 		 $data{'max_link_speed'} ne $data{'current_link_speed'}) || 
 		 ($data{'max_link_width'} && 
-		 $data{'max_link_width'} > $data{'current_link_width'}))){
+		 $data{'max_link_width'} ne $data{'current_link_width'}))){
 			$$rows[$j]->{key($$num++,1,3,'link-max')} = '';
 			if ($data{'max_link_speed'} && 
 			 $data{'max_link_speed'} ne $data{'current_link_speed'}){
@@ -28470,7 +28780,7 @@ sub get_pcie_data {
 				$$rows[$j]->{key($$num++,0,4,'speed')} = $data{'max_link_speed'};
 			}
 			if ($data{'max_link_width'} && 
-			 $data{'max_link_width'} > $data{'current_link_width'}){
+			 $data{'max_link_width'} ne $data{'current_link_width'}){
 				$$rows[$j]->{key($$num++,0,4,'lanes')} = $data{'max_link_width'};
 			}
 		}
@@ -28751,12 +29061,14 @@ sub process_status {
 		my @working = split(/\s*:\s*/,$row);
 		($value) = ('');
 		# print "$working[0]::$working[1]\n";
+		# Loaded: masked (Reason: Unit sddm.service is masked.)
 		if ($working[0] eq 'Loaded'){
 			# note: sshd shows ssh for ssh.service
 			$working[1] =~ /^(.+?)\s*\(.*?\.service;\s+(\S+?);.*/;
 			$result = lc($1) if $1;
 			$result = lc($2) if $2; # this will be enabled/disabled
 		}
+		# Active: inactive (dead)
 		elsif ($working[0] eq 'Active'){
 			$working[1] =~ /^(.+?)\s*\((\S+?)\).*/;
 			$value = lc($1) if $1 && (!$result || $result ne 'disabled');
@@ -30413,7 +30725,7 @@ sub short_output {
 	my @data = ({
 		main::key($num++,0,0,'CPU') => $cpu_string,
 		main::key($num++,0,0,$speed_key) => $speed,
-		main::key($num++,0,0,$kernel_os) => main::get_kernel_data(),
+		main::key($num++,0,0,$kernel_os) => join(' ', @{main::get_kernel_data()}),
 		main::key($num++,0,0,'Up') => main::get_uptime(),
 		main::key($num++,0,0,'Mem') => $memory,
 		main::key($num++,0,0,'Storage') => $disk_string,
@@ -30584,7 +30896,7 @@ sub system_item {
 	my ($index);
 	my $data_name = main::key($prefix++,1,0,'System');
 	my ($desktop,$desktop_info,$desktop_key,$dm_key,$toolkit,$wm) = ('','','Desktop','dm','','');
-	my (@desktop_data,$desktop_version);
+	my (@desktop_data,$desktop_version,$tk_version,$wm_version);
 	my %data = (
 	$data_name => [{}],
 	);
@@ -30592,7 +30904,9 @@ sub system_item {
 	if ($show{'host'}){
 		$data{$data_name}->[$index]{main::key($num++,0,1,'Host')} = main::get_hostname();
 	}
-	$data{$data_name}->[$index]{main::key($num++,1,1,'Kernel')} = main::get_kernel_data();
+	my $kernel_data = main::get_kernel_data();
+	$data{$data_name}->[$index]{main::key($num++,1,1,'Kernel')} = $kernel_data->[0];
+	$data{$data_name}->[$index]{main::key($num++,0,2,'arch')} = $kernel_data->[1];
 	$data{$data_name}->[$index]{main::key($num++,0,2,'bits')} = main::get_kernel_bits();
 	if ($extra > 0){
 		my @compiler = CompilerVersion::get(); # get compiler data
@@ -30624,11 +30938,9 @@ sub system_item {
 		my @desktop_data = DesktopEnvironment::get();
 		$desktop = $desktop_data[0] if $desktop_data[0];
 		$desktop_version = $desktop_data[1] if $desktop_data[1];
-		$desktop .= ' ' . $desktop_version if $desktop_version;
 		if ($extra > 0 && $desktop_data[3]){
-			# $desktop .= ' (' . $desktop_data[2];
-			# $desktop .= ($desktop_data[3]) ? ' ' . $desktop_data[3] . ')' : ')';
-			$toolkit = "$desktop_data[2] $desktop_data[3]";
+			$toolkit = $desktop_data[2];
+			$tk_version = $desktop_data[3];
 		}
 		if ($extra > 2 && $desktop_data[4]){
 			$desktop_info = $desktop_data[4];
@@ -30638,7 +30950,7 @@ sub system_item {
 		(!$desktop_data[0] || $desktop_data[5] =~ /^(deepin.+|gnome[\s_-]shell|budgie.+)$/i || 
 		index(lc($desktop_data[5]),lc($desktop_data[0])) == -1)){
 			$wm = $desktop_data[5];
-			$wm .= ' ' . $desktop_data[6] if $extra > 2 && $desktop_data[6];
+			$wm_version = $desktop_data[6] if $extra > 2 && $desktop_data[6];
 		}
 	}
 	if (!$b_display || (!$desktop && $b_root)){
@@ -30669,8 +30981,14 @@ sub system_item {
 	}
 	$desktop ||= 'N/A';
 	$data{$data_name}->[$index]{main::key($num++,$cont_desk,1,$desktop_key)} = $desktop;
+	if ($desktop_version){
+		$data{$data_name}->[$index]{main::key($num++,0,2,'v')} = $desktop_version;
+	}
 	if ($toolkit){
-		$data{$data_name}->[$index]{main::key($num++,0,2,'tk')} = $toolkit;
+		$data{$data_name}->[$index]{main::key($num++,1,2,'tk')} = $toolkit;
+	}
+	if ($tk_version){
+		$data{$data_name}->[$index]{main::key($num++,0,3,'v')} = $tk_version;
 	}
 	if ($extra > 2){
 		if ($desktop_info){
@@ -30678,14 +30996,40 @@ sub system_item {
 		}
 	}
 	if ($extra > 1){
-		$data{$data_name}->[$index]{main::key($num++,0,2,'wm')} = $wm if $wm;
+		if ($wm){
+			$data{$data_name}->[$index]{main::key($num++,1,2,'wm')} = $wm;
+			if ($wm_version){
+				$data{$data_name}->[$index]{main::key($num++,0,3,'v')} = $wm_version;
+			}
+		}
 		if ($extra > 2 && $b_display && defined $ENV{'XDG_VTNR'}){
 			$data{$data_name}->[$index]{main::key($num++,0,2,'vt')} = $ENV{'XDG_VTNR'};
 		}
 		my $dms = main::get_display_manager();
+		# note: version only present if proper extra level so no need to test again
 		if ($dms || $desktop_key ne 'Console'){
-			$dms ||= 'N/A';
-			$data{$data_name}->[$index]{main::key($num++,0,$ind_dm,$dm_key)} = $dms;
+			if ($dms && scalar @{$dms} > 1){
+				my $i = 0;
+				$data{$data_name}->[$index]{main::key($num++,1,$ind_dm,$dm_key)} = '';
+				foreach my $dm_data (@{$dms}){
+					$i++;
+					$data{$data_name}->[$index]{main::key($num++,1,($ind_dm + 1),$i)} = $dm_data->[0];
+					if ($dm_data->[1]){
+						$data{$data_name}->[$index]{main::key($num++,0,($ind_dm + 2),'v')} = $dm_data->[1];
+					}
+					if ($dm_data->[2]){
+						$data{$data_name}->[$index]{main::key($num++,0,($ind_dm + 2),'note')} = $dm_data->[2];
+					}
+				}
+			}
+			else {
+				my $dm = ($dms && $dms->[0][0]) ? $dms->[0][0] : 'N/A';
+				$data{$data_name}->[$index]{main::key($num++,1,$ind_dm,$dm_key)} = $dm;
+				if ($dms->[0][1]){
+					$data{$data_name}->[$index]{main::key($num++,0,($ind_dm + 1),'v')} = $dms->[0][1];
+				}
+			}
+			
 		}
 	}
 	# if ($extra > 2 && $desktop_key ne 'Console'){
