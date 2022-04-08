@@ -48,8 +48,8 @@ use POSIX qw(ceil uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.3.14';
-my $self_date='2022-03-25';
+my $self_version='3.3.15';
+my $self_date='2022-04-08';
 my $self_patch='00';
 ## END INXI INFO ##
 my ($b_pledge,@pledges);
@@ -287,7 +287,7 @@ sub set_dmidecode {
 		}
 	}
 	else {
-		if (grep { $_ =~ /^\/dev\/mem: Permission/i } @$data){
+		if (grep {$_ =~ /(^\/dev\/mem: Permission|Permission denied)/i } @$data){
 			$action = 'permissions';
 		}
 		else {
@@ -444,6 +444,7 @@ sub set_basics {
 	$client{'name-print'} = '';
 	$client{'su-start'} = ''; # shows sudo/su
 	$client{'version'} = '';
+	$client{'whoami'} = getpwuid($<) || '';
 	$colors{'default'} = 2;
 	$show{'partition-sort'} = 'id'; # sort order for partitions
 	@raw_logical = (0,0,0);
@@ -1852,6 +1853,7 @@ sub display_data {
 	print "Collecting X, xprop, glxinfo, xrandr, xdpyinfo data, Wayland info...\n";
 	%data = (
 	'desktop-session' => $ENV{'DESKTOP_SESSION'},
+	'display' => $ENV{'DISPLAY'},
 	'gdmsession' => $ENV{'GDMSESSION'},
 	'gnome-desktop-session-id' => $ENV{'GNOME_DESKTOP_SESSION_ID'},
 	'kde-full-session' => $ENV{'KDE_FULL_SESSION'},
@@ -1861,8 +1863,8 @@ sub display_data {
 	'xdg-session-desktop' => $ENV{'XDG_SESSION_DESKTOP'},
 	'xdg-vtnr' => $ENV{'XDG_VTNR'},
 	# wayland data collectors:
-	'xdg-session-type' => $ENV{'XDG_SESSION_TYPE'},
 	'wayland-display' =>  $ENV{'WAYLAND_DISPLAY'},
+	'xdg-session-type' => $ENV{'XDG_SESSION_TYPE'},
 	'gdk-backend' => $ENV{'GDK_BACKEND'},
 	'qt-qpa-platform' => $ENV{'QT_QPA_PLATFORM'},
 	'clutter-backend' => $ENV{'CLUTTER_BACKEND'},
@@ -4084,7 +4086,10 @@ sub set_program_values {
 	'qmake' => ['^^Using Qt version',4,'--version','Qt',0,0,0,'',''],
 	'qtdiag' => ['^qt',2,'--version','Qt',0,1,0,'',''],
 	## Display Managers (dm) ##
+	'brzdm' => ['^brzdm',0,'-v','brzdm',0,1,0,'',''], # unverified, like slim
 	'cdm' => ['^cdm',0,'0','CDM',0,1,0,'',''],
+	# might be xlogin, unknown output for -V
+	'clogin' => ['^clogin',0,'-V','clogin',0,1,0,'',''], # unverified, maybe xlogin
 	'emptty' => ['^emptty',0,'0','EMPTTY',0,1,0,'',''], # unverified
 	'entrance' => ['^entrance',0,'0','Entrance',0,1,0,'',''],
 	'gdm' => ['^gdm',2,'--version','GDM',0,1,0,'',''],
@@ -4097,6 +4102,7 @@ sub set_program_values {
 	'lxdm' => ['^lxdm',0,'0','LXDM',0,1,0,'',''],
 	'ly' => ['^ly',3,'--version','Ly',0,1,0,'',''],
 	'mdm' => ['^mdm',0,'0','MDM',0,1,0,'',''],
+	'mlogin' => ['^mlogin',0,'0','mlogin',0,1,0,'',''], # unverified
 	'nodm' => ['^nodm',0,'0','nodm',0,1,0,'',''],
 	'pcdm' => ['^pcdm',0,'0','PCDM',0,1,0,'',''],
 	'qingy' => ['^qingy',0,'0','qingy',0,1,0,'',''], # unverified
@@ -4108,6 +4114,7 @@ sub set_program_values {
 	'wdm' => ['^wdm',0,'0','WINGs DM',0,1,0,'',''],
 	'xdm' => ['^xdm',0,'0','XDM',0,1,0,'',''],
 	'xenodm' => ['^xenodm',0,'0','xenodm',0,1,0,'',''],
+	'xlogin' => ['^xlogin',0,'-V','xlogin',0,1,0,'',''], # unverified, probably clogin
 	## Shells - not checked: ion, eshell ##
 	## See ShellData::shell_test() for unhandled but known shells
 	'ash' => ['',3,'pkg','ash',1,0,0,'',''], # special; dash precursor
@@ -5507,7 +5514,7 @@ sub show_options {
 	['0', '', '', ''],
 	['0', '', '', "You can use these options alone or together, 
 	to show or add the item(s) you want to see: A, B, C, D, E, G, I, J, L, M, N, 
-	P, R, S, W, d, f, i, j, l, m, n, o, p, r, s, t, u, w, --slots. 
+	P, R, S, W, d, f, i, j, l, m, n, o, p, r, s, t, u, w, --edid, --slots. 
 	If you use them with -v [level], -b or -F, $self_name will add the requested
 	lines to the output."],
 	['0', '', '', '' ],
@@ -5557,8 +5564,8 @@ sub show_options {
 	LUKS, Crypto, bcache, etc. Shows components/devices, sizes, etc."],
 	['1', '-m', '--memory', "Memory (RAM) data. Requires root. Numbers of 
 	devices (slots) supported and individual memory devices (sticks of memory etc). 
-	For devices, shows device locator, size, speed, type (e.g. DDR3). 
-	If neither -I nor -tm are selected, also shows RAM used/total."],
+	For devices, shows device locator, type (e.g. DDR3), size, speed. If neither 
+	-I nor -tm are selected, also shows RAM used/total."],
 	['1', '', '--memory-modules', "Memory (RAM) data. Exclude empty module slots."],
 	['1', '', '--memory-short', "Memory (RAM) data. Show only short Memory RAM 
 	report, number of arrays, slots, modules, and RAM type."],
@@ -5718,6 +5725,8 @@ sub show_options {
 	pressure, and if values are default or not."],
 	['2', '-L', '', "LV, Crypto, devices, components: add maj:min; show
 	full device/components report (speed, mapped names)."],
+	['2', '-m', '', "Show full volts report, current, min, max, even if 
+	identical."],
 	['2', '-n,-N', '', "If available: list of alternate kernel modules/drivers 
 	for device(s); PCIe lanes-max: gen, speed, lanes (if relevant)."],
 	['2', '-o', '', "If available: maj:min of device."],
@@ -5726,6 +5735,7 @@ sub show_options {
 	['2', '-r', '', "Packages, see -Ia."],
 	['2', '-R', '', "mdraid: device maj:min; per component: size, maj:min, state."],
 	['2', '-S', '', "If available: kernel boot parameters."],
+	['2', '', '--slots', "If available: slot bus ID children."],
 	['0', '', '', ''],
 	['1', '-x', '--extra', "Adds the following extra data (only works with 
 	verbose or line output, not short form):"],
@@ -5760,8 +5770,7 @@ sub show_options {
 	['2', '-j', '', "Add mapped: name if partition mapped."],
 	['2', '-J', '', "For Device: driver."],
 	['2', '-L', '', "For VG > LV, and other Devices, dm:"],
-	['2', '-m,--memory-modules', '', "Max memory module size (if available), 
-	device type."],
+	['2', '-m,--memory-modules', '', "Max memory module size (if available)."],
 	['2', '-N', '', "Specific vendor/product information (if relevant); 
 	PCI/USB ID of device; Version/port(s)/driver version (if available)."],
 	['2', '-o,-p,-P', '', "Add mapped: name if partition mapped."],
@@ -5773,6 +5782,7 @@ sub show_options {
 	vbat."],
 	['2', '-S', '', "Kernel gcc version; system base of distro (if relevant 
 	and detected)"],
+	['2', '', '--slots', "Adds BusID for slot."],
 	['2', '-t', '', "Adds memory use output to CPU (-xt c), and CPU use to 
 	memory (-xt m)."],
 	);
@@ -5809,7 +5819,8 @@ sub show_options {
 	for LVM RAID, adds RAID report line (if not -R); show all components >
 	devices, number of 'c' or 'p' indicate depth of device."],
 	['2', '-m,--memory-modules', '', "Manufacturer, part number; single/double 
-	bank (if found)."],
+	bank (if found); memory array voltage (legacy, rare); module voltage (if 
+	available)."],
 	['2', '-M', '', "Chassis info, BIOS ROM size (dmidecode only), if available."],
 	['2', '-N', '', "Chip vendor:product ID; PCIe speed, lanes (if found)."],
 	['2', '-r', '', "Packages, see -Ixx."],
@@ -5819,7 +5830,7 @@ sub show_options {
 	['2', '-S', '', "Display manager (dm) in desktop output (e.g. kdm, 
 	gdm3, lightdm); active window manager if detected; desktop toolkit, 
 	if available (Xfce/KDE/Trinity only)."],
-	['2', '--slots', '', "Slot length."],
+	['2', '--slots', '', "Slot length; slot voltage, if available."],
 	);
 	if ($use{'weather'}){
 		push(@data,
@@ -5846,8 +5857,8 @@ sub show_options {
 	['2', '-J', '', "If present: Devices: serial number, interface count; USB 
 	speed; max power."],
 	['2', '-m,--memory-modules', '', "Width of memory bus, data and total (if 
-	present and greater than data); Detail for Type, if present; module voltage,
-	if available; serial number."],
+	present and greater than data); Detail for Type, if present; module current,
+	min, max voltages (if present and different from each other); serial number."],
 	['2', '-N', '', "Serial number, class ID."],
 	['2', '-R', '', "zfs-raid: portion allocated (used) by RAID devices/arrays. 
 	md-raid: system md-raid support types (kernel support, read ahead, RAID 
@@ -13685,11 +13696,8 @@ sub display_output(){
 	}
 	# no xdpyinfo installed
 	# undef $graphics{'x-server'};
-	if (!$graphics{'x-server'} || !$graphics{'x-server'}->[0][1] || 
-	!$b_display || $graphics{'protocol'} eq 'wayland'){
-		# fallback, will complete x-server/x-version, set flags, if found
-		display_server_data(); 
-	}
+	# Completes X server data if no previous detections, tests/adds xwayland
+	display_server_data(); 
 	if (!defined $graphics{'display-id'} && defined $ENV{'DISPLAY'}){
 		$graphics{'display-id'} = $ENV{'DISPLAY'};
 	}
@@ -13771,36 +13779,43 @@ sub display_output(){
 			}
 			# if xvesa, will always have display-driver set
 			if ($graphics{'xvesa'} && $graphics{'display-driver'}){
-				$row[0]->{main::key($num++,1,2,'driver')} = join(',',@{$graphics{'display-driver'}});;
+				$row[0]->{main::key($num++,0,2,'driver')} = join(',',@{$graphics{'display-driver'}});
 			}
 			else {
-				$row[0]->{main::key($num++,1,2,'driver')} = '';
-				# The only wayland setups with x drivers have xorg, transitional that is.
-				if ($x_drivers){
-					$row[0]->{main::key($num++,1,3,'X')} = '';
-					my $driver = ($x_drivers->[0]) ? $x_drivers->[0] : 'N/A';
-					$row[0]->{main::key($num++,1,4,'loaded')} = $driver;
-					if ($x_drivers->[1]){
-						$row[0]->{main::key($num++,0,4,'unloaded')} = $x_drivers->[1];
-					}
-					if ($x_drivers->[2]){
-						$row[0]->{main::key($num++,0,4,'failed')} = $x_drivers->[2];
-					}
-					if ($extra > 1 && $x_drivers->[3]){
-						$row[0]->{main::key($num++,0,4,'alternate')} = $x_drivers->[3];
-					}
-				}
 				my $gpu_drivers = gpu_drivers_sys('all');
-				my $drivers;
-				if ($gpu_drivers){
-					$drivers = join(',',@{$gpu_drivers});
+				my $note_indent = 4;
+				if ($gpu_drivers || $x_drivers){
+					$row[0]->{main::key($num++,1,2,'driver')} = '';
+					# The only wayland setups with x drivers have xorg, transitional that is.
+					if ($x_drivers){
+						$row[0]->{main::key($num++,1,3,'X')} = '';
+						my $driver = ($x_drivers->[0]) ? $x_drivers->[0] : 'N/A';
+						$row[0]->{main::key($num++,1,4,'loaded')} = $driver;
+						if ($x_drivers->[1]){
+							$row[0]->{main::key($num++,0,4,'unloaded')} = $x_drivers->[1];
+						}
+						if ($x_drivers->[2]){
+							$row[0]->{main::key($num++,0,4,'failed')} = $x_drivers->[2];
+						}
+						if ($extra > 1 && $x_drivers->[3]){
+							$row[0]->{main::key($num++,0,4,'alternate')} = $x_drivers->[3];
+						}
+					}
+					my $drivers;
+					if ($gpu_drivers){
+						$drivers = join(',',@{$gpu_drivers});
+					}
+					else {
+						$drivers = ($graphics{'gpu-drivers'}) ? join(',',@{$graphics{'gpu-drivers'}}): 'N/A';
+					}
+					$row[0]->{main::key($num++,1,3,'gpu')} = $drivers;
 				}
 				else {
-					$drivers = ($graphics{'gpu-drivers'}) ? join(',',@{$graphics{'gpu-drivers'}}): 'N/A';
+					$note_indent = 3;
+					$row[0]->{main::key($num++,1,2,'driver')} = 'N/A';
 				}
-				$row[0]->{main::key($num++,1,3,'gpu')} = $drivers;
 				if ($driver_note){
-					$row[0]->{main::key($num++,0,4,'note')} = $driver_note;
+					$row[0]->{main::key($num++,0,$note_indent,'note')} = $driver_note;
 				}
 			}
 		}
@@ -14046,14 +14061,24 @@ sub monitors_output_full {
 				$$row[$j]->{main::key($$num++,0,$m3,'min')} = ${$monitors->{$key}{'modes'}}[-1];
 			}
 		}
-		if ($show{'edid'} && ($monitors->{$key}{'errors'} || $monitors->{$key}{'warnings'})){
-			$j++;
-			$$row[$j]->{main::key($$num++,1,$m2,'EDID')} = '';
-			if ($monitors->{$key}{'errors'}){
-				$$row[$j]->{main::key($$num++,0,$m3,'errors')} = join('; ', @{$monitors->{$key}{'errors'}});
+		if ($show{'edid'}){
+			if ($monitors->{$key}{'edid-errors'}){
+				$j++;
+				my $cnt = 1;
+				$$row[$j]->{main::key($$num++,1,$m2,'EDID-Errors')} = '';
+				foreach my $err (@{$monitors->{$key}{'edid-errors'}}){
+					$$row[$j]->{main::key($$num++,0,$m3,$cnt)} = $err;
+					$cnt++;
+				}
 			}
-			if ($monitors->{$key}{'warnings'}){
-				$$row[$j]->{main::key($$num++,0,$m3,'warnings')} = join('; ', @{$monitors->{$key}{'warnings'}});
+			if ($monitors->{$key}{'edid-warnings'}){
+				$j++;
+				my $cnt = 1;
+				$$row[$j]->{main::key($$num++,1,$m2,'EDID-Warnings')} = '';
+				foreach my $warn (@{$monitors->{$key}{'edid-warnings'}}){
+					$$row[$j]->{main::key($$num++,0,$m3,$cnt)} = $warn;
+					$cnt++;
+				}
 			}
 		}
 	}
@@ -15041,8 +15066,7 @@ sub display_server_data {
 		}
 		$graphics{'x-server'} = [[$server,$version]] if $server;
 	}
-	if ((!$b_display || $graphics{'protocol'} eq 'wayland') && 
-	($program = main::check_program('Xwayland'))){
+	if ($program = main::check_program('Xwayland')){
 		undef $version;
 		@data = main::grabber("$program -version 2>&1",'','strip');
 		# Slackware Linux Project Xwayland Version 21.1.4 (12101004)
@@ -15201,17 +15225,22 @@ sub display_protocol {
 	elsif ($graphics{'protocol'} eq 'tty'){
 		$graphics{'protocol'} = '';
 	}
-	# need to confirm that there's a point to this test, I believe no, fails out of x
+	# If no other source, get user session id, then grab session type.
 	# loginctl also results in the session id
-	if (!$graphics{'protocol'} && $b_display && $force{'display'}){
+	# undef $graphics{'protocol'};
+	if (!$graphics{'protocol'}){
 		if (my $program = main::check_program('loginctl')){
 			my $id = '';
 			# $id = $ENV{'XDG_SESSION_ID'}; # returns tty session in console
 			my @data = main::grabber("$program --no-pager --no-legend 2>/dev/null",'','strip');
 			foreach (@data){
-				next if /tty[v]?[0-6]$/; # freebsd: ttyv3
+				# some systems show empty or ??? for TTY field, but whoami should do ok
+				next if /(ttyv?\d|pts\/)/; # freebsd: ttyv3
+				# in display, root doesn't show in the logins
+				next if $client{'whoami'} && $client{'whoami'} ne 'root' && !/\b$client{'whoami'}\b/;
 				$id = (split(/\s+/, $_))[0];
-				last; # multiuser? too bad, we'll go for the first one
+				# multiuser? too bad, we'll go for the first one that isn't a tty/pts
+				last; 
 			}
 			if ($id){
 				my $temp = (main::grabber("$program show-session $id -p Type --no-pager --no-legend 2>/dev/null"))[0];
@@ -18018,7 +18047,7 @@ sub set_partitions {
 				$fs = ($b_fs) ? $row[1]: get_mounts_fs($row[0],\@mount);
 			}
 			# assuming that all null/nullfs are parts of a logical fs
-			$b_logical = 1 if $fs && $fs =~ /^(btrfs|hammer|null|zfs)/; 
+			$b_logical = 1 if $fs && $fs =~ /^(btrfs|hammer|null|wekafs|zfs)/; 
 			$id = join(' ', @row[$cols .. $#row]);
 			$size = $row[$cols - $back_size];
 			if ($b_admin && -e "/sys/block/"){
@@ -19950,7 +19979,7 @@ sub ram_output {
 					$rows[$j]->{main::key($num++,0,3,'note')} = $item->{'mod-qualifier'};
 				}
 			}
-			if ($extra > 2 && $item->{'voltage'}){
+			if ($extra > 1 && $item->{'voltage'}){
 				$rows[$j]->{main::key($num++,0,2,'voltage')} = $item->{'voltage'};
 			}
 		}
@@ -19975,12 +20004,22 @@ sub ram_output {
 				$mod->{'locator'} ||= 'N/A';
 				push(@rows, {
 				main::key($num++,1,2,'Device') => $mod->{'locator'},
-				main::key($num++,0,3,'size') => process_size($mod->{'size'}),
 				});
-				next if ($mod->{'size'} =~ /\D/);
+				# this will contain the no module string
+				if ($mod->{'size'} =~ /\D/){
+					$rows[$j]->{main::key($num++,0,3,'type')} = lc($mod->{'size'});
+					next;
+				}
 				if ($extra > 1 && $mod->{'type'}){
 					$rows[$j]->{main::key($num++,0,3,'info')} = $mod->{'type'};
 				}
+				$mod->{'device-type'} ||= 'N/A';
+				$rows[$j]->{main::key($num++,1,3,'type')} = $mod->{'device-type'};
+				if ($extra > 2 && $mod->{'device-type'} ne 'N/A'){
+					$mod->{'device-type-detail'} ||= 'N/A';
+					$rows[$j]->{main::key($num++,0,4,'detail')} = $mod->{'device-type-detail'};
+				}
+				$rows[$j]->{main::key($num++,0,3,'size')} = process_size($mod->{'size'});
 				if ($mod->{'speed'} && $mod->{'configured-clock-speed'} && 
 				$mod->{'speed'} ne $mod->{'configured-clock-speed'}){
 					$rows[$j]->{main::key($num++,1,3,'speed')} = '';
@@ -20001,19 +20040,45 @@ sub ram_output {
 					$rows[$j]->{main::key($num++,1,3,'speed')} = $mod->{'speed'};
 					$rows[$j]->{main::key($num++,0,4,'note')} = $mod->{'speed-note'} if $mod->{'speed-note'};
 				}
-				if ($extra > 0){
-					$mod->{'device-type'} ||= 'N/A';
-					$rows[$j]->{main::key($num++,0,3,'type')} = $mod->{'device-type'};
-					if ($extra > 2 && $mod->{'device-type'} ne 'N/A'){
-						$mod->{'device-type-detail'} ||= 'N/A';
-						$rows[$j]->{main::key($num++,0,3,'detail')} = $mod->{'device-type-detail'};
+				# handle cases where -xx or -xxx and no voltage data (common) or voltages
+				# are all the same.
+				if ($extra > 1){
+					if (($mod->{'voltage-config'} || $mod->{'voltage-max'} || $mod->{'voltage-min'}) && 
+					($b_admin || (
+					($mod->{'voltage-config'} && $mod->{'voltage-max'} && 
+					$mod->{'voltage-config'} ne $mod->{'voltage-max'}) || 
+					($mod->{'voltage-config'} && $mod->{'voltage-min'} && 
+					$mod->{'voltage-config'} ne $mod->{'voltage-min'}) || 
+					($mod->{'voltage-min'} && $mod->{'voltage-max'} && 
+					$mod->{'voltage-max'} ne $mod->{'voltage-min'})
+					))){
+						$rows[$j]->{main::key($num++,1,3,'volts')} = '';
+						if ($mod->{'voltage-config'}){
+							$rows[$j]->{main::key($num++,0,4,'curr')} = $mod->{'voltage-config'};
+						}
+						if ($mod->{'voltage-min'}){
+							$rows[$j]->{main::key($num++,0,4,'min')} = $mod->{'voltage-min'};
+						}
+						if ($mod->{'voltage-max'}){
+							$rows[$j]->{main::key($num++,0,4,'max')} = $mod->{'voltage-max'};
+						}
+					}
+					else {
+						$mod->{'voltage-config'} ||= 'N/A';
+						$rows[$j]->{main::key($num++,0,3,'volts')} = $mod->{'voltage-config'};
 					}
 				}
 				if ($source ne 'dboot' && $extra > 2){
-					$mod->{'data-width'} ||= 'N/A';
-					$rows[$j]->{main::key($num++,0,3,'bus-width')} = $mod->{'data-width'};
-					$mod->{'total-width'} ||= 'N/A';
-					$rows[$j]->{main::key($num++,0,3,'total')} = $mod->{'total-width'};
+					if (!$mod->{'data-width'} && !$mod->{'total-width'}){
+						$rows[$j]->{main::key($num++,0,3,'width')} = 'N/A';
+					}
+					else {
+						$rows[$j]->{main::key($num++,1,3,'width (bits)')} = '';
+						$mod->{'data-width'} ||= 'N/A';
+						$rows[$j]->{main::key($num++,0,4,'data')} = $mod->{'data-width'};
+						$mod->{'total-width'} ||= 'N/A';
+						$rows[$j]->{main::key($num++,0,4,'total')} = $mod->{'total-width'};
+					}
 				}
 				if ($source ne 'dboot' && $extra > 1){
 					$mod->{'manufacturer'} ||= 'N/A';
@@ -20066,7 +20131,7 @@ sub dmidecode_data {
 					$ram[$k]->{'max-capacity-5'} = $max_cap_5;
 				}
 				elsif ($temp[0] eq 'Memory Module Voltage'){
-					$temp[1] =~ s/\s*V.*$//;
+					$temp[1] =~ s/\s*V.*$//; # seen: 5.0 V 3.3 V
 					$ram[$k]->{'voltage'} = $temp[1];
 				}
 				elsif ($temp[0] eq 'Associated Memory Slots'){
@@ -20111,7 +20176,7 @@ sub dmidecode_data {
 					$bank_locator = $temp[1];
 				}
 				elsif ($temp[0] eq 'Type'){
-					$device_type = $temp[1];
+					$device_type = main::clean_dmi($temp[1]);
 				}
 			}
 			# because of the wide range of bank/slot type data, we will just use
@@ -20176,6 +20241,7 @@ sub dmidecode_data {
 			$main_locator) = ('','','','','');
 			my ($manufacturer,$vendor_id,$part_number,$serial,$speed,$speed_note,
 			$total_width) = ('','','','','','','');
+			my ($voltage_config,$voltage_max,$voltage_min);
 			my ($device_size,$i_data,$i_total,$working_size) = (0,0,0,0);
 			foreach my $item (@$entry){
 				@temp = split(/:\s*/, $item, 2);
@@ -20183,11 +20249,14 @@ sub dmidecode_data {
 				if ($temp[0] eq 'Array Handle'){
 					$handle = hex($temp[1]);
 				}
+				# these two can have 'none' or 'unknown' value
 				elsif ($temp[0] eq 'Data Width'){
-					$data_width = $temp[1];
+					$data_width = main::clean_dmi($temp[1]);
+					$data_width =~ s/[\s_-]?bits// if $data_width;
 				}
 				elsif ($temp[0] eq 'Total Width'){
-					$total_width = $temp[1];
+					$total_width = main::clean_dmi($temp[1]);
+					$total_width =~ s/[\s_-]?bits// if $total_width;
 				}
 				# do not try to guess from installed modules, only use this to correct type 5 data
 				elsif ($temp[0] eq 'Size'){
@@ -20211,11 +20280,12 @@ sub dmidecode_data {
 				elsif ($temp[0] eq 'Form Factor'){
 					$form_factor = $temp[1];
 				}
+				# these two can have 'none' or 'unknown' value
 				elsif ($temp[0] eq 'Type'){
-					$device_type = $temp[1];
+					$device_type = main::clean_dmi($temp[1]);
 				}
 				elsif ($temp[0] eq 'Type Detail'){
-					$device_type_detail = $temp[1];
+					$device_type_detail = main::clean_dmi($temp[1]);
 				}
 				elsif ($temp[0] eq 'Speed'){
 					($speed,$speed_note) = process_speed($temp[1],$device_type,$check);
@@ -20234,6 +20304,21 @@ sub dmidecode_data {
 				}
 				elsif ($temp[0] eq 'Serial Number'){
 					$serial = main::clean_unset($temp[1],'^[0]+$|SerNum.*');
+				}
+				elsif ($temp[0] eq 'Configured Voltage'){
+					if ($temp[1] =~ /^([\d\.]+)/){
+						$voltage_config = $1;
+					}
+				}
+				elsif ($temp[0] eq 'Maximum Voltage'){
+					if ($temp[1] =~ /^([\d\.]+)/){
+						$voltage_max = $1;
+					}
+				}
+				elsif ($temp[0] eq 'Minimum Voltage'){
+					if ($temp[1] =~ /^([\d\.]+)/){
+						$voltage_min = $1;
+					}
 				}
 			}
 			# because of the wide range of bank/slot type data, we will just use
@@ -20293,6 +20378,9 @@ sub dmidecode_data {
 			$ram[$handle]->{'modules'}[$i]{'speed'} = $speed;
 			$ram[$handle]->{'modules'}[$i]{'speed-note'} = $speed_note if $speed_note;
 			$ram[$handle]->{'modules'}[$i]{'total-width'} = $total_width;
+			$ram[$handle]->{'modules'}[$i]{'voltage-config'} = $voltage_config;
+			$ram[$handle]->{'modules'}[$i]{'voltage-max'} = $voltage_max;
+			$ram[$handle]->{'modules'}[$i]{'voltage-min'} = $voltage_min;
 			$i++
 		}
 		elsif ($entry->[0] < 17){
@@ -20563,7 +20651,9 @@ sub process_data {
 		'slots' => $item->{'slots-16'},
 		'slots-qualifier' => $est_slots,
 		'use' => $item->{'use'},
-		'voltage' => $item->{'voltage'},
+		'voltage-config' => $item->{'voltage-config'},
+		'voltage-max' => $item->{'voltage-max'},
+		'voltage-min' => $item->{'voltage-min'},
 		});
 	}
 	eval $end if $b_log;
@@ -22770,12 +22860,16 @@ sub gpu_data {
 ## SlotItem
 {
 package SlotItem;
+my ($sys_slots);
 sub get {
 	eval $start if $b_log;
 	my ($data,@rows,$key1,$val1);
 	my $num = 0;
 	if ($fake{'dmidecode'} || ($alerts{'dmidecode'}->{'action'} eq 'use' && 
 	 (!%risc || $use{'slot-tool'}))){
+		if ($b_admin && -e '/sys/devices/pci0000:00'){
+			slot_data_sys();
+		}
 		$data = slot_data_dmi();
 		@rows = slot_output($data) if $data;
 		if (!@rows){
@@ -22836,13 +22930,8 @@ sub slot_output {
 			$rows[$j]->{main::key($num++,0,2,'MHz')} = $slot_data->{'mhz'};
 		}
 		$rows[$j]->{main::key($num++,0,2,'status')} = $slot_data->{'usage'};
-		if ($slot_data->{'j'} || $slot_data->{'m2'}){
-			my $info = ($slot_data->{'m2'}) ? $slot_data->{'m2'} : '';
-			if ($slot_data->{'j'}){
-				$info .= ' ' if $info;
-				$info .= $slot_data->{'j'};
-			}
-			$rows[$j]->{main::key($num++,0,2,'info')} = $info;
+		if ($slot_data->{'extra'}){
+			$rows[$j]->{main::key($num++,0,2,'info')} = join(', ', @{$slot_data->{'extra'}});
 		}
 		if ($extra > 1){
 			$slot_data->{'length'} ||= 'N/A';
@@ -22850,19 +22939,40 @@ sub slot_output {
 			if ($slot_data->{'cpu'}){
 				$rows[$j]->{main::key($num++,0,2,'cpu')} = $slot_data->{'cpu'};
 			}
+			if ($slot_data->{'volts'}){
+				$rows[$j]->{main::key($num++,0,2,'volts')} = $slot_data->{'volts'};
+			}
 		}
 		if ($extra > 0){
 			$slot_data->{'bus_address'} ||= 'N/A';
-			$rows[$j]->{main::key($num++,0,2,'bus-ID')} =$slot_data->{'bus_address'};
+			$rows[$j]->{main::key($num++,1,2,'bus-ID')} = $slot_data->{'bus_address'};
+			if ($b_admin && $slot_data->{'children'}){
+				children_output(\@rows,$j,\$num,$slot_data->{'children'},3);
+			}
 		}
 	}
 	eval $end if $b_log;
 	return @rows;
 }
-sub slot_children {
-	eval $start if $b_log;
-	
-	eval $end if $b_log;
+sub children_output {
+	my ($rows,$j,$num,$children,$ind) = @_;
+	my $cnt = 0;
+	$rows->[$j]{main::key($$num++,1,$ind,'children')} = '';
+	$ind++;
+	foreach my $id (sort keys %{$children}){
+		$cnt++;
+		$rows->[$j]{main::key($$num++,1,$ind,$cnt)} = $id;
+		if ($children->{$id}{'class-id'} && $children->{$id}{'class-id-sub'}){
+			my $class = $children->{$id}{'class-id'} . $children->{$id}{'class-id-sub'};
+			$rows->[$j]{main::key($$num++,0,($ind + 1),'class-ID')} = $class;
+			if ($children->{$id}{'class'}){
+				$rows->[$j]{main::key($$num++,0,($ind + 1),'type')} = $children->{$id}{'class'};
+			}
+		}
+		if ($children->{$id}{'children'}){
+			children_output($rows,$j,$num,$children->{$id}{'children'},$ind + 1);
+		}
+	}
 }
 sub slot_data_dmi {
 	eval $start if $b_log;
@@ -22870,7 +22980,7 @@ sub slot_data_dmi {
 	my @slots;
 	foreach my $slot_data (@dmi){
 		next if $slot_data->[0] != 9;
-		my %data;
+		my (%data,@extra);
 		# skip first two row, we don't need that data
 		foreach my $item (@$slot_data[2 .. $#$slot_data]){
 			if ($item !~ /^~/){ # skip the indented rows
@@ -22887,13 +22997,19 @@ sub slot_data_dmi {
 				if ($value[0] eq 'ID'){
 					$data{'id'} = $value[1];
 				}
-				if ($extra > 1 && $value[0] eq 'Length'){
+				if ($value[0] eq 'Length'){
 					$data{'length'} = lc($value[1]);
 				}
-				if ($extra > 1 && $value[0] eq 'Bus Address'){
+				if ($value[0] eq 'Bus Address'){
 					$value[1] =~ s/^0000://;
 					$data{'bus_address'} = $value[1];
+					if ($b_admin && $sys_slots){
+						$data{'children'} = slot_children($data{'bus_address'},$sys_slots);
+					}
 				}
+			}
+			elsif ($item =~ /^~([\d.]+)[\s-]?V is provided/){
+				$data{'volts'} = $1;
 			}
 		}
 		if ($data{'type'} eq 'Other' && $data{'designation'}){
@@ -22906,6 +23022,9 @@ sub slot_data_dmi {
 			$string =~ s/(PCI[\s_-]?Express|Pci[_-]?e)/PCIe /ig;
 			$string =~ s/PCI[\s_-]?X/PCIX /ig;
 			$string =~ s/Mini[\s_-]?PCI/MiniPCI /ig;
+			$string =~ s/Media[\s_-]?Card/MediaCard/ig;
+			$string =~ s/Express[\s_-]?Card/ExpressCard/ig;
+			$string =~ s/Card[\s_-]?Bus/CardBus/ig;
 			$string =~ s/PCMCIA/PCMCIA /ig;
 			if (!$data{'pci'} && $string =~ /(AGP|ISA|MiniPCI|PCIe|PCIX|PCMCIA|PCI)/){
 				$data{'pci'} = $1;
@@ -22922,18 +23041,21 @@ sub slot_data_dmi {
 			if (!$data{'lanes-active'} && $string =~ /^x\d+ .*? x(\d+)/){
 				$data{'lanes-active'} = $1;
 			}
-			if (!defined $data{'slot'} && $string =~ s/SLOT-?(\d+)?\b//){
-				$data{'slot'} = $1 if defined $1;
-			}
 			# legacy format, seens with PCI-X/PCIe mobos: PCIX#2-100MHz,  PCIE#3-x8
 			if (!defined $data{'id'} && $string =~ /(#|PCI)(\d+)\b/){
 				$data{'id'} = $2;
 			}
-			if (!$data{'j'} && $string =~ s/\bJ-?(\S+)\b//){
-				$data{'j'} = 'J' . $1;
+			if (!defined $data{'id'} && $string =~ /SLOT[\s-]?(\d+)\b/i){
+				$data{'id'} = $1;
 			}
-			if (!$data{'m2'} && $string =~ s/\bM\.?2\b//){
-				$data{'m2'} = 'M.2';
+			if ($string =~ s/\bJ-?(\S+)\b//){
+				push(@extra,'J' . $1) if ! grep {$_ eq 'J' . $1} @extra;
+			}
+			if ($string =~ s/\bM\.?2\b//){
+				push(@extra,'M.2') if ! grep {$_ eq 'M.2'} @extra;
+			}
+			if ($string =~ /(ExpressCard|MediaCard|CardBus)/){
+				push(@extra,$1) if ! grep {$_ eq $1} @extra;
 			}
 			if (!$data{'cpu'} && $string =~ s/CPU-?(\d+)\b//){
 				$data{'cpu'} = $1;
@@ -22950,12 +23072,92 @@ sub slot_data_dmi {
 			}
 			$i++;
 		}
+		if (!$data{'pci'} && $data{'type'} && 
+		$data{'type'} =~ /(ExpressCard|MediaCard|CardBus)/){
+			$data{'pci'} = $1;
+			@extra = grep {$_ ne $data{'pci'}} @extra;
+		}
+		$data{'extra'} = [@extra] if @extra;
 		push(@slots,{%data}) if %data;
 	}
 	print '@slots: ',  Data::Dumper::Dumper \@slots if $dbg[48];
 	main::log_data('dump','@slots final',\@slots) if $b_log;
 	eval $end if $b_log;
 	return \@slots if @slots;
+}
+sub slot_data_sys {
+	eval $start if $b_log;
+	my $path = '/sys/devices/pci0000:*/00*';
+	my @data = main::globber($path);
+	my ($full,$id);
+	foreach $full (@data){
+		$id = $full;
+		$id =~ s/^.*\/\S+:([0-9a-f]{2}:[0-9a-f]{2}\.[0-9a-f]+)$/$1/;
+		$sys_slots->{$id} = slot_data_recursive($full);
+	}
+	print 'sys_slots: ', Data::Dumper::Dumper $sys_slots if $dbg[49];
+	main::log_data('dump','$sys_slots',$sys_slots) if $b_log;
+	eval $end if $b_log;
+}
+sub slot_data_recursive {
+	eval $start if $b_log;
+	my $path = shift @_;
+	my $info = {};
+	my $id = $path;
+	$id =~ s/^.*\/\S+:(\S{2}:\S{2}\.\S+)$/$1/;
+	my ($content,$id2,@files);
+	# @files = main::globber("$full/{class,current_link_speed,current_link_width,max_link_speed,max_link_width,00*}");
+	if (-e "$path/class" && ($content = main::reader("$path/class",'strip',0))){
+		if ($content =~ /^0x(\S{2})(\S{2})/){
+			$info->{'class-id'} = $1;
+			$info->{'class-id-sub'} = $2;
+			$info->{'class'} = DeviceData::pci_class($1);
+			if ($info->{'class-id'} eq '06'){
+				my @files = main::globber("$path/00*:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f].[0-9a-f]");
+				foreach my $item (@files){
+					$id = $item;
+					$id =~ s/^.*\/[0-9a-f]+:([0-9a-f]{2}:[0-9a-f]{2}\.[0-9a-f]+)$/$1/;
+					$info->{'children'}{$id} = slot_data_recursive($item);
+				}
+			}
+		}
+	}
+	if (-e "$path/current_link_speed" && 
+	($content = main::reader("$path/current_link_speed",'strip',0))){
+		$content =~ s/\sPCIe//i;
+		$info->{'current-link-speed'} = main::clean_dmi($content);
+	}
+	if (-e "$path/current_link_width" && 
+	($content = main::reader("$path/current_link_width",'strip',0))){
+		$info->{'current-link-width'} = $content;
+	}
+	eval $end if $b_log;
+	return $info;
+}
+sub slot_children {
+	eval $start if $b_log;
+	my ($bus_id,$slots) = @_;
+	my $children = slot_children_recursive($bus_id,$slots);
+	# $children->{'0a:00.0'}{'children'} = {'3423' => {
+	# 'class' => 'test','class-id' => '05','class-id-sub' => '10'}};
+	print $bus_id, ' children: ', Data::Dumper::Dumper $children if $dbg[49];
+	main::log_data('dump','$children',$children) if $b_log;
+	eval $end if $b_log;
+	return $children;
+}
+sub slot_children_recursive {
+	my ($bus_id,$slots) = @_;
+	my $children;
+	foreach my $key (keys %{$slots}){
+		if ($slots->{$bus_id}){
+			$children = $slots->{$bus_id}{'children'} if $slots->{$bus_id}{'children'};
+			last;
+		}
+		elsif ($slots->{$key}{'children'}){
+			slot_children_recursive($bus_id,$slots->{$key}{'children'});
+		}
+	}
+	return $children;
 }
 }
 
@@ -25084,7 +25286,6 @@ sub set_xprop {
 
 }
 
-## DeviceData / PCI / SOC
 # creates arrays: $devices{'audio'}; $devices{'graphics'}; $devices{'hwraid'}; 
 # $devices{'network'}; $devices{'timer'} and local @devices for logging/debugging
 # 0 type
@@ -26158,9 +26359,12 @@ sub get_display_manager {
 	# Not verified: qingy emptty; greetd.run verified, but alternate:
 	# greetd-684.sock if no .run seen. Add Ly in case they add run file/directory.
 	# greetd frontends: agreety dlm gtkgreet qtgreet tuigreet wlgreet
-	my @dms = qw(cdm emptty entranced gdm gdm3 greetd kdm kdm3 ldm lightdm lxdm ly
-	mdm nodm pcdm qingy sddm slim tbsm tdm udm wdm xdm xenodm);
-	# these are the only one I know of so far that have version info
+	# mlogin may be mlogind, not verified
+	my @dms = qw(brzdm cdm clogin emptty entranced gdm gdm3 greetd kdm kdm3 ldm 
+	lightdm lxdm ly mdm mlogin nodm pcdm qingy sddm slim tbsm tdm udm wdm xdm 
+	xenodm xlogin);
+	# these are the only one I know of so far that have version info. xlogin /
+	# clogin do, -V, brzdm -v, but syntax not verified.
 	my @dms_version = qw(gdm gdm3 lightdm ly slim);
 	my $pattern = '';
 	if (-d '/run'){
@@ -26928,6 +27132,7 @@ sub generate_data {
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/ram/dmidecode-speed-configured-2.txt";
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/ram/00srv-dmidecode-mushkin-1.txt";
 		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmidecode/dmidecode-slots-pcix-pcie-1.txt";
+		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/dmidecode/dmidecode-Microknopix-pci-vga-types-5-6-16-17.txt";
 		# open(my $fh, '<', $file) or die "can't open $file: $!";
 		# chomp(@data = <$fh>);
 	}
@@ -28586,37 +28791,37 @@ sub parse_edid {
 sub _edid_errors {
 	my $edid = shift @_;
 	if (!defined $edid->{edid_version}){
-		_edid_error('edid-version','undefined');
+		_edid_error($edid,'edid-version','undefined');
 	}
 	elsif ($edid->{edid_version} < 1 || $edid->{edid_version} > 2){
-		_edid_error('edid-version',$edid->{edid_version});
+		_edid_error($edid,'edid-version',$edid->{edid_version});
 	}
 	if (!defined $edid->{edid_revision}){
-		_edid_error('edid-revision','undefined');
+		_edid_error($edid,'edid-revision','undefined');
 	}
 	elsif ($edid->{edid_revision} == 0xff){
-		_edid_error('edid-revision',$edid->{edid_revision});
+		_edid_error($edid,'edid-revision',$edid->{edid_revision});
 	}
 	if ($edid->{monitor_range}){
 		if (!$edid->{monitor_range}{horizontal_min}){
-			_edid_error('edid-sync','no horizontal');
+			_edid_error($edid,'edid-sync','no horizontal');
 		}
 		elsif ($edid->{monitor_range}{horizontal_min} > $edid->{monitor_range}{horizontal_max}){
-			_edid_error('edid-sync', 
+			_edid_error($edid,'edid-sync', 
 			"bad horizontal values: min: $edid->{monitor_range}{horizontal_min} max: $edid->{monitor_range}{horizontal_max}");
 		}
 		if (!$edid->{monitor_range}{vertical_min}){
-			_edid_error('edid-sync','no vertical');
+			_edid_error($edid,'edid-sync','no vertical');
 		}
 		elsif ($edid->{monitor_range}{vertical_min} > $edid->{monitor_range}{vertical_max}){
-			_edid_error('edid-sync',
+			_edid_error($edid,'edid-sync',
 			"bad vertical values: min: $edid->{monitor_range}{vertical_min} max: $edid->{monitor_range}{vertical_max}");
 		}
 	}
 }
 sub _edid_error {
 	my ($edid,$error,$data) = @_;
-	$edid->{edid_errors} = [] if !$edid->{edid_error};
+	$edid->{edid_errors} = [] if !$edid->{edid_errors};
 	push(@{$edid->{edid_errors}},main::message($error,$data));
 }
 sub _nearest_ratio {
