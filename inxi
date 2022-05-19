@@ -48,8 +48,8 @@ use POSIX qw(ceil uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.3.15';
-my $self_date='2022-04-08';
+my $self_version='3.3.16';
+my $self_date='2022-05-19';
 my $self_patch='00';
 ## END INXI INFO ##
 my ($b_pledge,@pledges);
@@ -1295,7 +1295,7 @@ sub process_item {
 			if ($val == 0){
 				$size{'max-lines'} = $size{'term-lines'};}
 			elsif ($val == -1){
-				$size{'output-block'} = 1;}
+				$use{'output-block'} = 1;}
 			else {
 				$size{'max-lines'} = $val;}
 		}}
@@ -2559,7 +2559,7 @@ sub download_file {
 	my $debug_data = '';
 	my $result = 1;
 	$ua = ($ua && $dl{'ua'}) ? $dl{'ua'} . $ua : '';
-	$dl{'no-ssl-opt'} ||= '';
+	$dl{'no-ssl'} ||= '';
 	$dl{'spider'} ||= '';
 	$file ||= 'N/A'; # to avoid debug error
 	if (!$dl{'dl'}){
@@ -2568,7 +2568,7 @@ sub download_file {
 	if ($dl{'timeout'}){
 		$timeout = "$dl{'timeout'}$dl_timeout";
 	}
-	# print "$dl{'no-ssl-opt'}\n";
+	# print "$dl{'no-ssl'}\n";
 	# print "$dl{'dl'}\n";
 	# tiny supports spider sort of
 	## NOTE: 1 is success, 0 false for Perl
@@ -2583,19 +2583,19 @@ sub download_file {
 	else {
 		if ($type eq 'stdout'){
 			$args = $dl{'stdout'};
-			$cmd = "$dl{'dl'} $dl{'no-ssl-opt'} $ua $timeout $args \"$url\" $dl{'null'}";
+			$cmd = "$dl{'dl'} $dl{'no-ssl'} $ua $timeout $args \"$url\" $dl{'null'}";
 			$result = qx($cmd);
 			$debug_data = ($result) ? 'Success: stdout data not null.' : 'Download resulted in null data!';
 		}
 		elsif ($type eq 'file'){
 			$args = $dl{'file'};
-			$cmd = "$dl{'dl'} $dl{'no-ssl-opt'} $ua $timeout $args $file \"$url\" $dl{'null'}";
+			$cmd = "$dl{'dl'} $dl{'no-ssl'} $ua $timeout $args $file \"$url\" $dl{'null'}";
 			system($cmd);
 			$result = ($?) ? 0 : 1; # reverse these into Perl t/f
 			$debug_data = $result;
 		}
 		elsif ($dl{'dl'} eq 'wget' && $type eq 'spider'){
-			$cmd = "$dl{'dl'} $dl{'no-ssl-opt'} $ua $timeout $dl{'spider'} \"$url\"";
+			$cmd = "$dl{'dl'} $dl{'no-ssl'} $ua $timeout $dl{'spider'} \"$url\"";
 			system($cmd);
 			$result = ($?) ? 0 : 1; # reverse these into Perl t/f
 			$debug_data = $result;
@@ -2610,7 +2610,7 @@ sub get_file {
 	my ($type, $url, $file) = @_;
 	my $tiny = HTTP::Tiny->new;
 	# note: default is no verify, so default here actually is to verify unless overridden
-	$tiny->verify_SSL => 1 if !$dl{'no-ssl-opt'};
+	$tiny->verify_SSL => 1 if !$use{'no-ssl'};
 	my $response = $tiny->get($url);
 	my $return = 1;
 	my $debug = 0;
@@ -2716,8 +2716,8 @@ sub set_downloader {
 	else {
 		$dl{'dl'} = '';
 	}
-	# no-ssl-opt is set to 1 with --no-ssl, so it is true, then assign
-	$dl{'no-ssl-opt'} = $dl{'no-ssl'} if $dl{'no-ssl-opt'};
+	# $use{'no-ssl' is set to 1 with --no-ssl, when false, unset to ''
+	$dl{'no-ssl'} = '' if !$use{'no-ssl'};
 	eval $end if $b_log;
 }
 
@@ -4727,11 +4727,11 @@ sub get {
 	'm|memory' => sub {
 		$show{'short'} = 0;
 		$show{'ram'} = 1;},
-	'memory-modules' => sub {
+	'memory-modules|mm' => sub {
 		$show{'short'} = 0;
 		$show{'ram'} = 1; 
 		$show{'ram-modules'} = 1;},
-	'memory-short' => sub {
+	'memory-short|ms' => sub {
 		$show{'short'} = 0;
 		$show{'ram'} = 1; 
 		$show{'ram-short'} = 1;},
@@ -4745,6 +4745,12 @@ sub get {
 	'N|network' => sub {
 		$show{'short'} = 0;
 		$show{'network'} = 1;},
+	'nvidia|nv|non-free' => sub {
+		$b_admin = 1;
+		$show{'short'} = 0;
+		$show{'nvidia'} = 1;
+		$show{'graphic'} = 1;
+		$show{'graphic-full'} = 1;},
 	'o|unmounted' => sub {
 		$show{'short'} = 0;
 		$show{'unmounted'} = 1;},
@@ -4873,6 +4879,7 @@ sub get {
 				$b_admin = 1;
 				# $use{'downloader'} = 1; # only if weather
 				$show{'edid'} = 1;
+				$show{'nvidia'} = 1;
 				$show{'process'} = 1;
 				$show{'ps-cpu'} = 1;
 				$show{'ps-mem'} = 1;
@@ -5042,13 +5049,13 @@ sub get {
 	},
 	'cygwin' => sub {
 		$b_cygwin = 1;},
-	'dbg:i' => sub { 
+	'dbg:s' => sub { 
 		my ($opt,$arg) = @_;
-		if ($arg > 0){
-			$dbg[$arg] = 1;
-		}
-		else {
+		if ($arg !~ /^\d+(,\d+)*$/){
 			main::error_handler('bad-arg', $opt, $arg);
+		}
+		for (split(',',$arg)){
+			$dbg[$_] = 1;
 		}},
 	'debug:i' => sub { 
 		my ($opt,$arg) = @_;
@@ -5247,7 +5254,7 @@ sub get {
 	'no-man' => sub {
 		$use{'no-man'} = 0;},
 	'no-ssl' => sub {
-		$dl{'no-ssl-opt'} = 1;},
+		$use{'no-ssl'} = 1;},
 	'no-sudo' => sub {
 		$force{'no-sudo'} = 1;},
 	'output-file:s' => sub {
@@ -5566,8 +5573,8 @@ sub show_options {
 	devices (slots) supported and individual memory devices (sticks of memory etc). 
 	For devices, shows device locator, type (e.g. DDR3), size, speed. If neither 
 	-I nor -tm are selected, also shows RAM used/total."],
-	['1', '', '--memory-modules', "Memory (RAM) data. Exclude empty module slots."],
-	['1', '', '--memory-short', "Memory (RAM) data. Show only short Memory RAM 
+	['1', '', '--memory-modules,--mm', "Memory (RAM) data. Exclude empty module slots."],
+	['1', '', '--memory-short,--ms', "Memory (RAM) data. Show only short Memory RAM 
 	report, number of arrays, slots, modules, and RAM type."],
 	['1', '-M', '--machine', "Machine data. Device type (desktop, server, laptop, 
 	VM etc.), motherboard, BIOS and, if    present, system builder (e.g. Lenovo). 
@@ -5577,6 +5584,7 @@ sub show_options {
 	['1', '-n', '--network-advanced', "Advanced Network device info. Triggers -N. 
 	Shows interface, speed, MAC id, state, etc. "],
 	['1', '-N', '--network', "Network device(s), driver."],
+	['1', '', '--nvidia,--nv', "Show advanced nvidia device info. Triggers -Ga."],
 	['1', '-o', '--unmounted', "Unmounted $partition_string info (includes UUID 
 	and Label if available). Shows file system type if you have lsblk installed 
 	(Linux) or, for BSD/GNU Linux, if 'file' installed and you are root or if 
@@ -5625,8 +5633,9 @@ sub show_options {
 	full RAID; triggers -xx."], 
 	['2', '7', '', "Network IP data (-i), bluetooth, logical (-L), 
 	RAID forced, full CPU $flags; triggers -xxx."],
-	['2', '8', '', "Everything available, including	EDID (--edid), repos (-r), 
-	processes (-tcm), PCI slots (--slots); triggers admin (-a)."],
+	['2', '8', '', "Everything available, including	Nvidia non-free (--nvidia), 
+	EDID (--edid), repos (-r), processes (-tcm), PCI slots (--slots); triggers 
+	admin (-a)."],
 	);
 	# if distro maintainers don't want the weather feature disable it
 	if ($use{'weather'}){
@@ -5715,9 +5724,10 @@ sub show_options {
 	family; maj:min, USB drive specifics; SMART report."],
 	['2', '-E', '', "If available: in Report:, adds Info: line: acl-mtu, 
 	sco-mtu, link-policy, link-mode, service-classes."],
-	['2', '-G', '', "PCIe lanes-max: gen, speed, lanes (if relevant); list of 
-	alternate kernel modules/drivers for device(s) (if available); Monitor built 
-	year, gamma, screen ratio (if available)."],
+	['2', '-G', '', "Shows non-free driver info (Nvidia and Linux only); PCIe 
+	lanes-max: gen, speed, lanes (if relevant); list of alternate kernel 
+	modules/drivers for device(s) (if available); Monitor built year, gamma, 
+	screen ratio (if available)."],
 	['2', '-I', '', "As well as per package manager counts, also adds total
 	number of lib files found for each package manager if not -r; adds init
 	service tool."],
@@ -5758,9 +5768,9 @@ sub show_options {
 	Example:^<username>^ALL^=^NOPASSWD:^/usr/sbin/hddtemp"],
 	['2', '-E', '', "PCI/USB Bus ID of device, driver version, 
 	LMP version."],
-	['2', '-G', '', "Specific vendor/product information (if relevant); PCI/USB ID 
-	of device; Direct rendering status (in X); Screen number GPU is running on 
-	(Nvidia only)."],
+	['2', '-G', '', "GPU arch (Nvidia only); Specific vendor/product information 
+	(if relevant); PCI/USB ID of device; Direct rendering status (in X); Screen 
+	number GPU is running on (Nvidia only)."],
 	['2', '-i', '', "For IPv6, show additional scope addresses: Global, Site, 
 	Temporary, Unknown. See --limit for large counts of IP addresses."],
 	['2', '-I', '', "Default system GCC. With -xx, also shows other installed 
@@ -5803,12 +5813,12 @@ sub show_options {
 	['2', '-E', '', "Chip vendor:product ID, LMP subversion; PCIe speed, lanes 
 	(if found)."],
 	['2', '-G', '', "Chip vendor:product ID for each video device; Output ports, 
-	used and empty; PCIe speed, lanes (if found); Xorg: OpenGL compatibility 
-	version, if free drivers and available; Xorg compositor; alternate Xorg 
-	drivers (if available. Alternate means driver is on automatic driver check 
-	list of Xorg for the device vendor, but is not installed on system); Xorg 
-	Screen data: ID, s-res, dpi;  Monitors: ID, position (if > 1), resolution, 
-	dpi, model, diagonal."],
+	used and empty; PCIe speed, lanes (if found); Xorg: 
+	OpenGL compatibility version, if free drivers and available; Xorg compositor; 
+	alternate Xorg drivers (if available. Alternate means driver is on automatic 
+	driver check list of Xorg for the device vendor, but is not installed on 
+	system); Xorg Screen data: ID, s-res, dpi;  Monitors: ID, position (if > 1), 
+	resolution, dpi, model, diagonal."],
 	['2', '-I', '', "Other detected installed gcc versions (if present). System 
 	default runlevel. Adds parent program (or pty/tty) for shell info if not in 
 	IRC. Adds Init version number, RC (if found). Adds per package manager
@@ -5974,7 +5984,8 @@ sub show_options {
 	['1', '', '--wm', "Force wm: to use wmctrl as data source. Default uses ps."],
 	['0', '', '', $line ],
 	['0', '', '', "Debugging Options:"],
-	['1', '', '--dbg', "[1-xx] Specific debuggers, change often. See man page."],
+	['1', '', '--dbg', "[1-xx[,1-xx]] Comma separated list of debugger numbers.
+	Each triggers specific debugger[s]. See man page or docs."],
 	['2', '1', '', "Show downloader output. Turns off quiet mode."],
 	['1', '', '--debug', "[1-3|10|11|20-22] Triggers debugging modes."],
 	['2', '1-3', '', "On screen debugger output."],
@@ -6705,6 +6716,11 @@ sub message {
 	'monitor-wayland' => 'no compositor data',
 	'note-check' => 'check',
 	'note-est' => 'est.',
+	'nv-current' => "current (as of $id)",
+	'nv-legacy-active' => "legacy-active (EOL $id)",
+	'nv-legacy-eol' => 'legacy (EOL)',
+	'nv-legacy-eol-try' => 'legacy (EOL, try --nv)',
+	'nv-unknown' => 'unknown device ID',
 	'optical-data' => 'No optical or floppy data found.',
 	'optical-data-bsd' => 'No optical or floppy data found.',
 	'output-control' => "-:: 'Enter' to continue to next block. Any key + 'Enter' to exit:",
@@ -12774,64 +12790,62 @@ sub disk_data_by_id {
 # 0 - match pattern; 1 - replace pattern; 2 - vendor print; 3 - serial pattern
 sub set_vendors {
 	eval $start if $b_log;
-	my $vendors = $_[0];
-	@$vendors = (
+	$vendors = [
 	## MOST LIKELY/COMMON MATCHES ##
-	['(Crucial|^(FC)?CT|-CT|^M4(\b|SSD)|Gizmo!|^((C300-)?CTF[\s-]?)?DDAC)','Crucial','Crucial',''],
+	['(Crucial|^((C300-)?CTF|(FC)?CT|DDAC|M4(\b|SSD))|-CT|Gizmo!)','Crucial','Crucial',''],
 	# H10 HBRPEKNX0202A NVMe INTEL 512GB
-	['(\bINTEL\b|^SSD(PAM|SA2))','\bINTEL\b','Intel',''], 
+	['(\bINTEL\b|^(SSD(PAM|SA2)|HBR|(MEM|SSD)PEB?K|SSD(MCE|S[AC])))','\bINTEL\b','Intel',''], 
 	# note: S[AV][1-9][0-9] can trigger false positives
-	['(K(ING)?STON|DataTraveler|DT\s?(DUO|Microduo|101)|^RBU|^SMS|^SHS|^SS0|^SUV|^T52|^T[AB]29|^Ultimate CF|HyperX|^S[AV][1234]00|^SKYMEDI|13fe\b)','KINGSTON','Kingston',''], # maybe SHS: SHSS37A SKC SUV
+	['(K(ING)?STON|^(OM8P|RBU|S[AV][1234]00|S[HMN]S|SK[CY]|SQ5|SS200|SVP|SS0|SUV|SNV|T52|T[AB]29|Ultimate CF)|DataTraveler|DT\s?(DUO|Microduo|101)|HyperX|13fe\b)','(KINGSTON|13fe)','Kingston',''], # maybe SHS: SHSS37A SKC SUV
 	# must come before samsung MU. NOTE: toshiba can have: TOSHIBA_MK6475GSX: mush: MKNSSDCR120GB_
 	['(^MKN|Mushkin)','Mushkin','Mushkin',''], # MKNS
 	# MU = Multiple_Flash_Reader too risky: |M[UZ][^L] HD103SI HD start risky
-	# HM320II HM320II
-	['(SAMSUNG|^MCG[0-9]+GC|^CKT|^DUT|^MCC|^MCBOE|\bEVO\b|^[GS]2 Portable|^DS20|^[DG]3 Station|^DUO\b|^P3|^[BC]GN|^[CD]JN|^BJ[NT]|^[BC]WB|^(HM|SP)[0-9]{2}|^MZMPC|^HD[0-9]{3}[A-Z]{2}$|^G[CD][1-9][QS]|^M[AB]G[0-9][FG]|SV[0-9]|[BE][A-Z][1-9]QT|YP\b)','SAMSUNG','Samsung',''], # maybe ^SM, ^HM
-	# Android UMS Composite?
-	['(SanDisk|^SDS[S]?[DQ]|^D[AB]4|^SL([0-9]+)G|^AFGCE|^ABLCD|^SDW[1-9]|^SEM[1-9]|^U3\b|^SU[0-9]|^DX[1-9]|^S[CD][0-9]{2}G|ULTRA\s(FIT|trek)|Clip Sport|Cruzer|^Extreme|iXpand|SSD (Plus|U100) [1-9]|0781)','(SanDisk|0781)','SanDisk',''],
+	# HM320II HM320II HM
+	['(SAMSUNG|^(AWMB|[BC]DS20|[BC]WB|BJ[NT]|CJN|CUT|[DG]3 Station|DUO\b|DUT|CKT|[GS]2 Portable|GN|HD[0-9]{3}[A-Z]{2}$|(HM|SP)[0-9]{2}|HS\d|M[AB]G[0-9][FG]|MCC|MCBOE|MCG[0-9]+GC|[CD]JN|MZ|^G[CD][1-9][QS]|P[BM]\d|(SSD\s?)?SM\s?841)|^SSD\s?[89]\d{2}\s(DCT|PRO|QVD|\d+[GT]B)|\bEVO\b|SV[0-9]|[BE][A-Z][1-9]QT|YP\b|[CH]N-M|MMC[QR]E)','SAMSUNG','Samsung',''], # maybe ^SM, ^HM
+	# Android UMS Composite?U1
+	['(SanDisk|^(ABLCD|AFGCE|D[AB]4|DX[1-9]|Extreme|Firebird|S[CD][0-9]{2}G|SD(S[S]?[ADQ]|SDW[1-9]|SEM[1-9]|SL([0-9]+)G|SU[0-9]|U(3\b|1\d0))|\d[STU])|ULTRA\s(FIT|trek|II)|Clip Sport|Cruzer|iXpand|SSD (Plus|U1[01]0) [1-9]|0781|X[1-6]\d{2})','(SanDisk|0781)','SanDisk',''],
 	# these are HP/Sandisk cobranded. DX110064A5xnNMRI ids as HP and Sandisc
 	['(^DX[1-9])','^(HP\b|SANDDISK)','Sandisk/HP',''], # ssd drive, must come before seagate ST test
 	# real, SSEAGATE Backup+; XP1600HE30002 | 024 HN (spinpoint) ; possible usb: 24AS
 	# ST[numbers] excludes other ST starting devices
-	['(^(ATA\s)?ST[0-9]{2}|[S]?SEAGATE|^X[AFP]|^5AS|^BUP|Expansion Desk|^Expansion|FreeAgent|GoFlex|Backup(\+|\s?Plus)\s?(Hub)?|OneTouch|Slim\s? BK)','[S]?SEAGATE','Seagate',''], 
-	['^(WD|WL[0]9]|Western Digital|My (Book|Passport)|\d*LPCX|Elements|easystore|MD0|M000|EARX|EFRX|\d*EAVS|0JD|JP[CV]|[0-9]+(BEV|(00)?AAK|AAV|AZL|EA[CD]S)|3200[AB]|2500[BJ]|EA[A-Z]S|20G2|5000[AB]|6400[AB]|7500[AB]|i HTS|00[ABL][A-Z]{2}|EZRX)','(^WDC|Western\s?Digital)','Western Digital',''],
+	['([S]?SEAGATE|^(^(Barra|Fire)Cuda|BUP|Expansion|(ATA\s|HDD\s)?ST[0-9]{2}|5AS|X[AFP])|Expansion Desk|FreeAgent|GoFlex|Backup(\+|\s?Plus)\s?(Hub)?|OneTouch|Slim\s?BK)','[S]?SEAGATE','Seagate',''], 
+	['^(WD|WL[0]9]|Western Digital|My (Book|Passport)|\d*LPCX|Elements|easystore|MD0|M000|EARX|EFRX|\d*EAVS|0JD|JP[CV]|[0-9]+(BEV|(00)?AAK|AAV|AZL|EA[CD]S)|PC\sSN|3200[AB]|2500[BJ]|EA[A-Z]S|20G2|5000[AB]|6400[AB]|7500[AB]|i HTS|00[ABL][A-Z]{2}|EZRX|SSC\b)','(^WDC|Western\s?Digital)','Western Digital',''],
 	# rare cases WDC is in middle of string
 	['(\bWDC\b|1002FAEX)','','Western Digital',''],
 	## THEN BETTER KNOWN ONESs ##
 	['^Acer','^Acer','Acer',''],
 	# A-Data can be in middle of string
-	['^(.*\bA-?DATA|ASP[0-9]|AX[MN]|CH11|HV[1-9]|IM2|HD[1-9]|HDD\s?CH|IUM)','A-?DATA','A-Data',''],
+	['^(.*\bA-?DATA|ASP[0-9]|AX[MN]|CH11|HV[1-9]|IM2|HD[1-9]|HDD\s?CH|IUM|SX\d|Swordfish)','A-?DATA','A-Data',''],
 	['^(ASUS|ROG)','^ASUS','ASUS',''], # ROG ESD-S1C
 	# ATCS05 can be hitachi travelstar but not sure
 	['^ATP','^ATP\b','ATP',''],
 	# Force MP500
-	['^(Corsair|Force\s|(Flash\s*)?(Survivor|Voyager))','^surge Corsair','Corsair',''],
-	['^(FUJITSU|MJA|MH[TVWYZ][0-9]|MP|MAP[0-9])','^FUJITSU','Fujitsu',''],
+	['^(Corsair|Force\s|(Flash\s*)?(Survivor|Voyager)|Neutron|Padlock)','^Corsair','Corsair',''],
+	['^(FUJITSU|MJA|MH[TVWYZ][0-9]|MP|MAP[0-9]|F\d00s?-)','^FUJITSU','Fujitsu',''],
 	# MAB3045SP shows as HP or Fujitsu, probably HP branded fujitsu
 	['^(MAB[0-9])','^(HP\b|FUJITSU)','Fujitsu/HP',''],
 	# note: 2012:  wdc bought hgst
-	['^(HGST|Touro|54[15]0|7250)','^HGST','HGST (Hitachi)',''], # HGST HUA
-	['^((ATA\s)?Hitachi|HCS|HD[PST]|DK[0-9]|IC|HT|HU|HMS|HDE|0G[0-9])','Hitachi','Hitachi',''], 
+	['^(HGST|Touro|54[15]0|7250|HC[CT]\d)','^HGST','HGST (Hitachi)',''], # HGST HUA
+	['^((ATA\s)?Hitachi|HCS|HD[PST]|DK[0-9]|IC|(HDD\s)?HT|HU|HMS|HDE|0G[0-9]|IHAT)','Hitachi','Hitachi',''], 
 	# vb: VB0250EAVER but clashes with vbox; HP_SSD_S700_120G ;GB0500EAFYL GB starter too generic?
-	['^(HP\b|[MV]B[0-6]|G[BJ][0-9]|DF[0-9]|F[BK]|0-9]|PSS|XR[0-9]{4}|c350|v[0-9]{3}[bgorw]$|x[0-9]{3}[w]$|VK0)','^HP','HP',''], 
+	['^(HP\b|[MV]B[0-6]|G[BJ][0-9]|DF[0-9]|F[BK]|0-9]|MM\d{4}|PSS|XR[0-9]{4}|c350|v[0-9]{3}[bgorw]$|x[0-9]{3}[w]$|VK0|HC[CPY]\d|EX9\d\d)','^HP','HP',''], 
 	['^(Lexar|LSD|JumpDrive|JD\s?Firefly|LX[0-9]|WorkFlow)','^Lexar','Lexar',''], # mmc-LEXAR_0xb016546c; JD Firefly;
 	# OCZSSD2-2VTXE120G is OCZ-VERTEX2_3.5
-	['^(OCZ|APOC|D2|DEN|DEN|DRSAK|EC188|FTNC|GFGC|MANG|MMOC|NIMC|NIMR|PSIR|RALLY2|TALOS2|TMSC|TRSAK)','^OCZ[\s-]','OCZ',''],
+	['^(OCZ|APOC|D2|DEN|DEN|DRSAK|EC188|FTNC|GFGC|MANG|MMOC|NIMC|NIMR|PSIR|RALLY2|TALOS2|TMSC|TRSAK|VERTEX|Trion|Onyx|Vector[\s-]?15)','^OCZ[\s-]','OCZ',''],
 	['^OWC','^OWC\b','OWC',''],
 	['^(Philips|GoGear)','^Philips','Philips',''],
 	['^PIONEER','^PIONEER','Pioneer',''],
-	['^(PNY|Hook\s?Attache|SSD2SC|(SSD7?)?EP7)','^PNY\s','PNY','','^PNY'],
+	['^(PNY|Hook\s?Attache|SSD2SC|(SSD7?)?EP7|CS\d{3}|Elite\s?P)','^PNY\s','PNY','','^PNY'],
 	# note: get rid of: M[DGK] becasue mushkin starts with MK
 	# note: seen: KXG50ZNV512G NVMe TOSHIBA 512GB | THNSN51T02DUK NVMe TOSHIBA 1024GB 
-	['(^[S]?TOS|^THN|TOSHIBA|TransMemory|^M[GKQ][0-9]|KBG4|^HDW|^SA[0-9]{2}G$|^(008|016|032|064|128)G[379E][0-9A]$|0930)','[S]?(TOSHIBA|0930)','Toshiba',''], # scsi-STOSHIBA_STOR.E_EDITION_
+	['(^[S]?TOS|^THN|TOSHIBA|TransMemory|^M[GKQ][0-9]|KBG4|^HDW|^SA[0-9]{2}G$|^(008|016|032|064|128)G[379E][0-9A]$|0930|KSG\d)','[S]?(TOSHIBA|0930)','Toshiba',''], # scsi-STOSHIBA_STOR.E_EDITION_
 	## LAST: THEY ARE SHORT AND COULD LEAD TO FALSE ID, OR ARE UNLIKELY ##
 	# unknown: AL25744_12345678; ADP may be usb 2.5" adapter; udisk unknown: Z1E6FTKJ 00AAKS
 	# SSD2SC240G726A10 MRS020A128GTS25C EHSAJM0016GB
-	['^(Alcor(\s?Micro)?|058F)','^(Alcor(\s?Micro)?|058F)','Alcor Micro',''],
 	['^2[\s-]?Power','^2[\s-]?Power','2-Power',''], 
 	['^(3ware|9650SE)','^3ware','3ware (controller)',''], 
 	['^5ACE','^5ACE','5ACE',''], # could be seagate: ST316021 5ACE
-	['^(Aarvex|AX[0-9]{2})','^AARVEX','AARVEX',''],
+	['^(Aar(vex)?|AX[0-9]{2})','^AARVEX','AARVEX',''],
 	['^(AbonMax|ASU[0-9])','^AbonMax','AbonMax',''],
 	['^Acasis','^Acasis','Acasis (hub)',''],
 	['^Acclamator','^Acclamator','Acclamator',''],
@@ -12845,12 +12859,14 @@ sub set_vendors {
 	['^(Agile|AGI)','^(AGI|Agile\s?Gear\s?Int[a-z]*)','AGI',''],
 	['^Aireye','^Aireye','Aireye',''],
 	['^Alcatel','^Alcatel','Alcatel',''],
+	['^(Alcor(\s?Micro)?|058F)','^(Alcor(\s?Micro)?|058F)','Alcor Micro',''],
 	['^Alfawise','^Alfawise','Alfawise',''],
 	['^Android','^Android','Android',''],
 	['^ANACOMDA','^ANACOMDA','ANACOMDA',''],
+	['^Anucell','^Anucell','Anucell',''],
 	['^Apotop','^Apotop','Apotop',''],
 	# must come before AP|Apacer
-	['^(APPLE|iPod)','^APPLE','Apple',''],
+	['^(APPLE|iPod|SSD\sSM\d+[CEGT])','^APPLE','Apple',''],
 	['^(AP|Apacer)','^Apacer','Apacer',''],
 	['^(Apricom|SATAWire)','^Apricom','Apricom',''],
 	['^(A-?RAM|ARSSD)','^A-?RAM','A-RAM',''],
@@ -12858,6 +12874,7 @@ sub set_vendors {
 	['^(Asenno|AS[1-9])','^Asenno','Asenno',''],
 	['^Asgard','^Asgard','Asgard',''],
 	['^(ASM|2115)','^ASM','ASMedia',''],#asm1153e
+	['^ASolid','^ASolid','ASolid',''],
 	['^(AVEXIR|AVSSD)','^AVEXIR','Avexir',''],
 	['^Axiom','^Axiom','Axiom',''],
 	['^(Baititon|BT[0-9])','^Baititon','Baititon',''],
@@ -12865,7 +12882,7 @@ sub set_vendors {
 	['^(Beckhoff)','^Beckhoff','Beckhoff',''],
 	['^Bell\b','^Bell','Packard Bell',''],
 	['^(BelovedkaiAE|GhostPen)','^BelovedkaiAE','BelovedkaiAE',''],
-	['^BHT','^BHT','BHT',''],
+	['^(BHT|WR20)','^BHT','BHT',''],
 	['^(Big\s?Reservoir|B[RG][_\s-])','^Big\s?Reservoir','Big Reservoir',''],
 	['^BIOSTAR','^BIOSTAR','Biostar',''],
 	['^BIWIN','^BIWIN','BIWIN',''],
@@ -12883,7 +12900,6 @@ sub set_vendors {
 	['^(Centon|DS pro)','^Centon','Centon',''],
 	['^(CFD|CSSD)','^CFD','CFD',''],
 	['^(Chipsbank|CHIPSBNK)','^Chipsbank','Chipsbank',''],
-	['^CHN\b','','Zheino',''],
 	['^Clover','^Clover','Clover',''],
 	['^CODi','^CODi','CODi',''],
 	['^Colorful\b','^Colorful','Colorful',''],
@@ -12891,6 +12907,7 @@ sub set_vendors {
 	# addlink; colorful; goldenfir; kodkak; maxson; netac; teclast; vaseky
 	['^Corn','^Corn','Corn',''],
 	['^CnMemory|Spaceloop','^CnMemory','CnMemory',''],
+	['^(Creative|(Nomad\s?)?MuVo)','^Creative','Creative',''],
 	['^CSD','^CSD','CSD',''],
 	['^(Dane-?Elec|Z Mate)','^Dane-?Elec','DaneElec',''],
 	['^DATABAR','^DATABAR','DataBar',''],
@@ -12912,11 +12929,12 @@ sub set_vendors {
 	['^(Doggo|DQ-|Sendisk|Shenchu)','^(doggo|Sendisk(.?Shenchu)?|Shenchu(.?Sendisk)?)','Doggo (SENDISK/Shenchu)',''],
 	['^(Dogfish|Shark)','^Dogfish(\s*Technology)?','Dogfish Technology',''],
 	['^DragonDiamond','^DragonDiamond','DragonDiamond',''],
-	['^DREVO\b','^DREVO','Drevo',''],
+	['^(DREVO\b|X1\s\d+[GT])','^DREVO','Drevo',''],
 	['^DSS','^DSS DAHUA','DSS DAHUA',''],
 	['^(Dynabook|AE[1-3]00)','^Dynabook','Dynabook',''],
 	# DX1100 is probably sandisk, but could be HP, or it could be hp branded sandisk
 	['^(Eaget|V8$)','^Eaget','Eaget',''],
+	['^(Easy[\s-]?Memory)','^Easy[\s-]?Memory','Easy Memory',''],
 	['^EDGE','^EDGE','EDGE Tech',''],
 	['^Elecom','^Elecom','Elecom',''],
 	['^Eluktro','^Eluktronics','Eluktronics',''],
@@ -12941,33 +12959,36 @@ sub set_vendors {
 	['^FiiO','^FiiO','FiiO',''],
 	['^Fordisk','^Fordisk','Fordisk',''],
 	# FK0032CAAZP/FB160C4081 FK or FV can be HP but can be other things
-	['^FORESEE','^FORESEE','ForeseSU04Ge',''],
+	['^(FORESEE|B[123]0)|P900F|S900M','^FORESEE','Foresee',''],
 	['^Founder','^Founder','Founder',''],
 	['^(FOXLINE|FLD)','^FOXLINE','Foxline',''], # russian vendor?
-	['^(GALAX\b|Gamer\s?L)','^GALAX','GALAX',''],
+	['^(GALAX\b|Gamer\s?L|TA\dD|Gamer[\s-]?V)','^GALAX','GALAX',''],
+	['^Freecom','^Freecom(\sFreecom)?','Freecom',''],
 	['^Galaxy\b','^Galaxy','Galaxy',''],
 	['^Gamer[_\s-]?Black','^Gamer[_\s-]?Black','Gamer Black',''],
 	['^(Garmin|Fenix|Nuvi|Zumo)','^Garmin','Garmin',''],
 	['^Geil','^Geil','Geil',''],
 	['^GelL','^GelL','GelL',''], # typo for Geil? GelL ZENITH R3 120GB
-	['^(Generic|UY[67])','^Generic','Generic',''],
+	['^(Generic|UY[67]|SLD)','^Generic','Generic',''],
 	['^(Genesis(\s?Logic)?|05e3)','(Genesis(\s?Logic)?|05e3)','Genesis Logic',''],
 	['^Geonix','^Geonix','Geonix',''],
 	['^Getrich','^Getrich','Getrich',''],
-	['^Gigabyte','^Gigabyte','Gigabyte',''], # SSD
+	['^(Gigabyte|GP-G)','^Gigabyte','Gigabyte',''], # SSD
 	['^Gigastone','^Gigastone','Gigastone',''],
 	['^Gigaware','^Gigaware','Gigaware',''],
-	['^Gloway','^Gloway','Gloway',''],
+	['^(Gloway|FER\d)','^Gloway','Gloway',''],
 	['^GLOWY','^GLOWY','Glowy',''],
 	['^Goldendisk','^Goldendisk','Goldendisk',''],
 	['^Goldenfir','^Goldenfir','Goldenfir',''],
 	['^Golden[\s_-]?Memory','^Golden[\s_-]?Memory','Golden Memory',''],
 	['^(Goldkey|GKP)','^Goldkey','GoldKey',''],
 	# Wilk Elektronik SA, poland
-	['^(Wilk\s*)?(GOODRAM|GOODDRIVE|IR[\s-]?SSD|IRP|SSDPR)','^GOODRAM','GOODRAM',''],
+	['^(Wilk\s*)?(GOODRAM|GOODDRIVE|IR[\s-]?SSD|IRP|SSDPR|Iridium)','^GOODRAM','GOODRAM',''],
+	['^Gritronix','^Gritronixx?','Gritronix',''],
 	# supertalent also has FM: |FM
 	['^(G[\.]?SKILL)','^G[\.]?SKILL','G.SKILL',''],
 	['^G[\s-]*Tech','^G[\s-]*Technology','G-Technology',''],
+	['^Gaiver','^Gaiver','Gaiver',''],
 	['^(Hajaan|HS[1-9])','^Haajan','Haajan',''],
 	['^Haizhide','^Haizhide','Haizhide',''],
 	['^(Hama|FlashPen\s?Fancy)','^Hama','Hama',''],
@@ -12980,7 +13001,7 @@ sub set_vendors {
 	['^HUAWEI','^HUAWEI','Huawei',''],
 	['^Hypertec','^Hypertec','Hypertec',''],
 	['^HyperX','^HyperX','HyperX',''],
-	['^Hyundai','^Hyundai','Hyundai',''],
+	['^(Hyundai|Sapphire)','^Hyundai','Hyundai',''],
 	['^(IBM|DT|ESA[1-9])','^IBM','IBM',''], 
 	['^IEI Tech','^IEI Tech(\.|nology)?( Corp(\.|oration)?)?','IEI Technology',''],
 	['^(IGEL|UD Pocket)','^IGEL','IGEL',''],
@@ -12993,7 +13014,7 @@ sub set_vendors {
 	['^(Infokit)','^Infokit','Infokit',''],
 	['^(Initio)','^Initio','Initio',''], 
 	['^Inland','^Inland','Inland',''],
-	['^(InnoDisk|Innolite|SATA\s?Slim)','^InnoDisk( Corp.)?','InnoDisk',''],
+	['^(InnoDisk|Innolite|SATA\s?Slim|DRPS)','^InnoDisk( Corp.)?','InnoDisk',''],
 	['(Innostor|1f75)','(Innostor|1f75)','Innostor',''],
 	['(^Innovation|Innovation\s?IT)','Innovation(\s*IT)?','Innovation IT',''],
 	['^Innovera','^Innovera','Innovera',''],
@@ -13002,6 +13023,7 @@ sub set_vendors {
 	['^(INM|Integral|V\s?Series)','^Integral(\s?Memory)?','Integral Memory',''],
 	['^(lntenso|Intenso|(Alu|Basic|Business|Micro|c?Mobile|Premium|Rainbow|Slim|Speed|Twister|Ultra) Line|Rainbow)','^Intenso','Intenso',''],
 	['^(I-?O Data|HDCL)','^I-?O Data','I-O Data',''], 
+	['^(INO-|i\.?norys)','^i\.?norys','i.norys',''], 
 	['^(Integrated[\s-]?Technology|IT[0-9]+)','^Integrated[\s-]?Technology','Integrated Technology',''], 
 	['^(Iomega|ZIP\b|Clik!)','^Iomega','Iomega',''], 
 	['^ISOCOM','^ISOCOM','ISOCOM (Shenzhen Longsys Electronics)',''],
@@ -13010,22 +13032,24 @@ sub set_vendors {
 	['^Jingyi','^Jingyi','Jingyi',''],
 	# NOTE: ITY2 120GB hard to find
 	['^JMicron','^JMicron(\s?Tech(nology)?)?','JMicron Tech',''], #JMicron H/W raid
+	['^Kazuk','^Kazuk','Kazuk',''],
 	['^KimMIDI','^KimMIDI','KimMIDI',''],
 	['^Kimtigo','^Kimtigo','Kimtigo',''],
 	['^Kingbank','^Kingbank','Kingbank',''],
 	['^Kingchux[\s-]?ing','^Kingchux[\s-]?ing','Kingchuxing',''],
-	['(KingDian|^NGF)','KingDian','KingDian',''],
+	['(KingDian|^NGF|S(280|400))','KingDian','KingDian',''],
 	['^(Kingfast|TYFS)','^Kingfast','Kingfast',''],
 	['^KingMAX','^KingMAX','KingMAX',''],
-	['^Kingrich','^Kingrich','KingrSU04Gich',''],
+	['^Kingrich','^Kingrich','Kingrich',''],
+	['^Kingsand','^Kingsand','Kingsand',''],
 	['KING\s?SHA\s?RE','KING\s?SHA\s?RE','KingShare',''],
-	['^(KingSpec|ACSC|KS[DQ]|N[ET]-[0-9]|P4\b|PA[_-]?(18|25)|T-(3260|64|128))','^KingSpec','KingSpec',''],
+	['^(KingSpec|ACSC|KS[DQ]|N[ET]-[0-9]|P3$|P4\b|PA[_-]?(18|25)|Q-180|T-(3260|64|128)|Z(\d\s|F\d))','^KingSpec','KingSpec',''],
 	['^KingSSD','^KingSSD','KingSSD',''],
 	# kingwin docking, not actual drive
 	['^(EZD|EZ-Dock)','','Kingwin Docking Station',''],
 	['^Kingwin','^Kingwin','Kingwin',''],
 	['(KIOXIA|^K[BX]G[0-9])','KIOXIA','KIOXIA',''], # company name comes after product ID
-	['^KLEVV','^KLEVV','KLEVV',''],
+	['^(KLEVV|NEO\sN|CRAS)','^KLEVV','KLEVV',''],
 	['^Kodak','^Kodak','Kodak',''],
 	['^(KUAIKAI|MSAM)','^KUAIKAI','KuaKai',''],
 	['(KUIJIA|DAHUA)','^KUIJIA','KUIJIA',''],
@@ -13040,9 +13064,9 @@ sub set_vendors {
 	['^RPFT','','Lenovo O.E.M.',''],
 	# JAJS300M120C JAJM600M256C JAJS600M1024C JAJS600M256C JAJMS600M128G 
 	['^(Leven|JAJ[MS])','^Leven','Leven',''],
-	['^LG\b','^LG','LG',''],
+	['^(LG\b|Xtick)','^LG','LG',''],
 	['(LITE[-\s]?ON[\s-]?IT)','LITE[-]?ON[\s-]?IT','LITE-ON IT',''], # LITEONIT_LSS-24L6G
-	['(LITE[-\s]?ON|^PH[1-9])','LITE[-]?ON','LITE-ON',''], # PH6-CE240-L; CL1-3D256-Q11 NVMe LITEON 256GB
+	['(LITE[-\s]?ON|^PH[1-9]|^DMT|^CV\d-|L(8[HT]|AT|C[HST]|JH|M[HST]|S[ST])-)','LITE[-]?ON','LITE-ON',''], # PH6-CE240-L; CL1-3D256-Q11 NVMe LITEON 256GB
 	['^LONDISK','^LONDISK','LONDISK',''],
 	['^Longline','^Longline','Longline',''],
 	['^LuminouTek','^LuminouTek','LuminouTek',''],
@@ -13052,10 +13076,10 @@ sub set_vendors {
 	['^Mainic','^Mainic','Mainic',''],
 	['^Maximus','^Maximus','Maximus',''],
 	['^Maxone','^Maxone','Maxone',''],
-	['^(MAXTOR|Atlas|L(250|500)|TM[0-9]{4}|[KL]0[1-9]|Y[0-9]{3}[A-Z]|STM[0-9]|F[0-9]{3}L)','^MAXTOR','Maxtor',''], # note M2 M3 is usually maxtor, but can be samsung
+	['^(MAXTOR|Atlas|L(250|500)|TM[0-9]{4}|[KL]0[1-9]|Y[0-9]{3}[A-Z]|STM[0-9]|F[0-9]{3}L|6[2[B\d|BEGKLNVY]\d|4[DR]\d|3H\d|2F\d|7L\d)','^MAXTOR','Maxtor',''], # note M2 M3 is usually maxtor, but can be samsung
 	['^(Memorex|TravelDrive|TD\s?Classic)','^Memorex','Memorex',''],
 	# note: C300/400 can be either micron or crucial, but C400 is M4 from crucial
-	['(^MT|^M5|^Micron|00-MT|C[34]00)','^Micron','Micron',''],# C400-MTFDDAK128MAM
+	['(^MT|^(\d+|M\d+)\sMTF|^M5|^Micron|00-MT|C[34]00|^2200[SV])','^Micron','Micron',''],# C400-MTFDDAK128MAM
 	['^(MARSHAL\b|MAL[0-9])','^MARSHAL','Marshal',''],
 	['^MARVELL','^MARVELL','Marvell',''],
 	['^Maxsun','^Maxsun','Maxsun',''],
@@ -13088,7 +13112,7 @@ sub set_vendors {
 	['^MTRON','^MTRON','MTRON',''],
 	['^(MyDigitalSSD|BP4)','^MyDigitalSSD','MyDigitalSSD',''], # BP4 = BulletProof4
 	['^(Neo\s*Forza|NFS[0-9])','^Neo\s*Forza','Neo Forza',''],
-	['^Netac','^Netac','Netac',''],
+	['^(Netac|S535N)','^Netac','Netac',''],
 	# NGFF is a type, like msata, sata
 	['^Nik','^Nikimi','Nikimi',''],
 	['^NOREL','^NOREL(SYS)?','NorelSys',''],
@@ -13096,20 +13120,21 @@ sub set_vendors {
 	['^Olympus','^Olympus','Olympus',''],
 	['^Orico','^Orico','Orico',''],
 	['^OSC','^OSC\b','OSC',''],
-	['^(OWC|Aura)','^OWC\b','OWC',''],
+	['^(OWC|Aura|Mercury[\s-]?(Electra|Extreme))','^OWC\b','OWC',''],
 	['^oyunkey','^oyunkey','Oyunkey',''],
 	['^PALIT','PALIT','Palit',''], # ssd 
 	['^Panram','^Panram','Panram',''], # ssd 
 	['^(Parker|TP00)','^Parker','Parker',''],
 	['^(Pasoul|OASD)','^Pasoul','Pasoul',''],
-	['^(Patriot|PS[8F]|VPN|Viper)','^Patriot([-\s]?Memory)?','Patriot',''],#Viper M.2 VPN100
+	['^(Patriot|PS[8F]|P2\d{2}|PBT|VPN|Viper|Burst|Blast|Blaze|Pyro|Ignite)','^Patriot([-\s]?Memory)?','Patriot',''],#Viper M.2 VPN100
 	['^PERC\b','','Dell PowerEdge RAID Card',''], # ssd 
 	['(PHISON[\s-]?|ESR[0-9])','PHISON[\s-]?','Phison',''],# E12-256G-PHISON-SSD-B3-BB1
 	['^Pioneer','Pioneer','Pioneer',''],
+	['^Platinet','Platinet','Platinet',''],
 	['^(PLEXTOR|PX-)','^PLEXTOR','Plextor',''],
 	['^(PQI|Intelligent\s?Stick|Cool\s?Drive)','^PQI','PQI',''],
 	['^(Premiertek|QSSD|Quaroni)','^Premiertek','Premiertek',''],
-	['^(Pretec|UltimateGuard)','Pretec','Pretec',''],
+	['^(-?Pretec|UltimateGuard)','-?Pretec','Pretec',''],
 	['^(Prolific)','^Prolific( Technolgy Inc\.)?','Prolific',''],
 	# PS3109S9 is the result of an error condition with ssd drive
 	['QEMU','^[0-9]*QEMU( QEMU)?','QEMU',''], # 0QUEMU QEMU HARDDISK
@@ -13125,7 +13150,8 @@ sub set_vendors {
 	['^RIM[\s]','^RIM','RIM',''],
 	 #RTDMA008RAV2BWL comes with lenovo but don't know brand
 	['^Runcore','^Runcore','Runcore',''],
-	['^Sabrent','^Sabrent','Sabrent',''],
+	['^(S3Plus|S3\s?SSD)','^S3Plus','S3Plus',''],
+	['^(Sabrent|Rocket)','^Sabrent','Sabrent',''],
 	['^Sage','^Sage(\s?Micro)?','Sage Micro',''],
 	['^SAMSWEET','^SAMSWEET','Samsweet',''],
 	['^SandForce','^SandForce','SandForce',''],
@@ -13141,8 +13167,8 @@ sub set_vendors {
 	['^SiS\b','^SiS','SiS',''],
 	['Smartbuy','\s?Smartbuy','Smartbuy',''], # SSD Smartbuy 60GB; mSata Smartbuy 3
 	# HFS128G39TND-N210A; seen nvme with name in middle
-	['(SK\s?HYNIX|^HF[MS]|^H[BC]G)','\s?SK\s?HYNIX','SK Hynix',''], 
-	['(hynix|^HAG[0-9]|h[BC]8aP)','hynix','Hynix',''],# nvme middle of string, must be after sk hynix
+	['(SK\s?HYNIX|^HF[MS]|^H[BC]G|^BC\d{3}|^SC[234]\d\d\sm?SATA)','\s?SK\s?HYNIX','SK Hynix',''], 
+	['(hynix|^HAG[0-9]|h[BC]8aP|PC\d{3})','hynix','Hynix',''],# nvme middle of string, must be after sk hynix
 	['^SH','','Smart Modular Tech.',''],
 	['^Skill','^Skill','Skill',''],
 	['^(SMART( Storage Systems)?|TX)','^(SMART( Storage Systems)?)','Smart Storage Systems',''],
@@ -13166,10 +13192,10 @@ sub set_vendors {
 	['^(TakeMS|ColorLine)','^TakeMS','TakeMS',''],
 	['^Tammuz','^Tammuz','Tammuz',''],
 	['^TANDBERG','^TANDBERG','Tanberg',''],
-	['^TC[\s-]*SUNBOW','^TC[\s-]*SUNBOW','TCSunBow',''],
-	['^(TDK|TF[1-9][0-9])','^TDK','TDK',''],
+	['^(TC[\s-]*SUNBOW|X3\s\d+[GT])','^TC[\s-]*SUNBOW','TCSunBow',''],
+	['^(TDK|TF[1-9][0-9]|LoR)','^TDK','TDK',''],
 	['^TEAC','^TEAC','TEAC',''],
-	['^(TEAM|T[\s-]?Create)','^TEAM(\s*Group)?','TeamGroup',''],
+	['^(TEAM|T[\s-]?Create|L\d\s?Lite|T\d{3,}[A-Z]|TM\d|(Dark\s?)?L3\b)','^TEAM(\s*Group)?','TeamGroup',''],
 	['^(Teclast|CoolFlash)','^Teclast','Teclast',''],
 	['^Teelkoou','^Teelkoou','Teelkoou',''],
 	['^Tele2','^Tele2','Tele2',''],
@@ -13182,7 +13208,7 @@ sub set_vendors {
 	['^TopSunligt','^TopSunligt','TopSunligt',''], # is this a typo? hard to know
 	['^TopSunlight','^TopSunlight','TopSunlight',''],
 	['^TOROSUS','^TOROSUS','Torosus',''],
-	['(^[F]?TS|Transcend|JetDrive|JetFlash|^USDU|^EZEX|^1307)','^(Transcend|1307)','Transcend',''], 
+	['(^(SSD\s|F)?TS|Transcend|JetDrive|JetFlash|^USDU|^EZEX|^1307)','^(Transcend|1307)','Transcend',''], 
 	['^(TrekStor|DS (maxi|pocket)|DataStation)','^TrekStor','TrekStor',''],
 	['^Turbox','^Turbox','Turbox',''],
 	['^(TwinMOS|TW[0-9])','^TwinMOS','TwinMOS',''],
@@ -13202,7 +13228,7 @@ sub set_vendors {
 	['^(Visipro|SDVP)','^Visipro','Visipro',''],
 	['^VISIONTEK','^VISIONTEK','VisionTek',''],
 	['^VMware','^VMware','VMware',''],
-	['^(Vseky|Vaseky)','^Vaseky','Vaseky',''], # ata-Vseky_V880_350G_
+	['^(Vseky|Vaseky|V8\d{2})','^Vaseky','Vaseky',''], # ata-Vseky_V880_350G_
 	['^(Walgreen|Infinitive)','^Walgreen','Walgreen',''],
 	['^Walram','^Walram','WALRAM',''],
 	['^Walton','^Walton','Walton',''],
@@ -13224,17 +13250,20 @@ sub set_vendors {
 	['^(YUCUN|R880)','^YUCUN','YUCUN',''],
 	['^(ZALMAN|ZM\b)','^ZALMAN','Zalman',''],
 	['^ZXIC','^ZXIC','ZXIC',''],
+	['^(Zebronics|ZEB)','^Zebronics','Zebronics',''],
+	['^Zenfast','^Zenfast','Zenfast',''],
+	['^Zenith','^Zenith','Zenith',''],
 	['^ZEUSLAP','^ZEUSLAP','ZEUSLAP',''],
 	['^(Zheino|CHN[0-9]|CNM)','^Zheino','Zheino',''],
 	['^(Zotac|ZTSSD)','^Zotac','Zotac',''],
 	['^ZSPEED','^ZSPEED','ZSpeed',''],
 	['^ZTC','^ZTC','ZTC',''],
 	['^ZTE','^ZTE','ZTE',''],
+	['^(ZY|ZhanYao)','^ZhanYao([\s-]?data)','ZhanYao',''],
 	['^(ASMT|2115)','^ASMT','ASMT (case)',''],
-	);
+	];
 	eval $end if $b_log;
 }
-
 # receives space separated string that may or may not contain vendor data
 sub device_vendor {
 	eval $start if $b_log;
@@ -13246,10 +13275,7 @@ sub device_vendor {
 	# Data URLs: inxi-resources.txt Section: DriveItem device_vendor()
 	# $model = 'H10 HBRPEKNX0202A NVMe INTEL 512GB';
 	# $model = 'Patriot Memory';
-	if (!$vendors){
-		$vendors = [];
-		set_vendors($vendors);
-	}
+	set_vendors() if !$vendors;
 	foreach my $row (@$vendors){
 		if ($model =~ /$row->[0]/i || ($row->[3] && $serial && $serial =~ /$row->[3]/)){
 			$vendor = $row->[2];
@@ -13481,7 +13507,7 @@ sub device_speed {
 ## GraphicItem 
 {
 package GraphicItem;
-my ($b_wayland_data,%graphics,$monitor_ids,$monitor_map);
+my ($b_wayland_data,%graphics,$monitor_ids,$monitor_map,$nv_arch,$nv_legacy);
 sub get {
 	eval $start if $b_log;
 	my (@rows);
@@ -13494,6 +13520,7 @@ sub get {
 	}
 	else {
 		push(@rows,device_output());
+		($nv_arch,$nv_legacy) = ();
 		if (!@rows){
 			my $key = 'Message';
 			my $type = 'pci-card-data';
@@ -13556,6 +13583,40 @@ sub device_output {
 		if ($b_admin && $row->[10]){
 			$row->[10] = main::get_driver_modules($row->[9],$row->[10]);
 			$rows[$j]->{main::key($num++,0,3,'alternate')} = $row->[10] if $row->[10];
+		}
+		if ($extra > 0 && $row->[5] && $row->[6] && 
+		$row->[5] =~ /^(10de|12d2)$/){
+			my $nv_info = nvidia_data($row->[6]);
+			# my $nv_info = nvidia_data('1bb5');
+			if (!$bsd_type && $b_admin){
+				if ($nv_info->{'legacy'} && $show{'nvidia'}){
+					$rows[$j]->{main::key($num++,1,3,'non-free')} = '';
+					$rows[$j]->{main::key($num++,0,4,'series')} = $nv_info->{'series'};
+					$rows[$j]->{main::key($num++,0,4,'status')} = $nv_info->{'status'};
+					if ($nv_info->{'xorg'}){
+						$rows[$j]->{main::key($num++,1,4,'last')} = '';
+						$rows[$j]->{main::key($num++,0,5,'release')} = $nv_info->{'release'};
+						$rows[$j]->{main::key($num++,0,5,'kernel')} = $nv_info->{'kernel'};
+						$rows[$j]->{main::key($num++,0,5,'xorg')} = $nv_info->{'xorg'};
+					}
+				}
+				else {
+					$nv_info->{'series'} ||= 'N/A';
+					$rows[$j]->{main::key($num++,1,3,'non-free')} = $nv_info->{'series'};
+					$rows[$j]->{main::key($num++,0,4,'status')} = $nv_info->{'status'};
+				}
+			}
+			if ($nv_info->{'arch'}){
+				$rows[$j]->{main::key($num++,1,2,'arch')} = $nv_info->{'arch'};
+				if ($show{'nvidia'}){
+					if ($nv_info->{'code'}){
+						$rows[$j]->{main::key($num++,0,3,'code')} = $nv_info->{'code'};
+					}
+					if ($nv_info->{'process'}){
+						$rows[$j]->{main::key($num++,0,3,'process')} = $nv_info->{'process'};
+					}
+				}
+			}
 		}
 		if ($extra > 0){
 			my $bus_id = (!$row->[2] && !$row->[3]) ? 'N/A' : "$row->[2].$row->[3]";
@@ -14876,7 +14937,8 @@ sub xrandr_data {
 		@xrandr = main::grabber("$program $display_opt 2>/dev/null",'','strip');
 	}
 	else {
-		@xrandr = main::reader("$ENV{HOME}/bin/scripts/inxi/data/xrandr/xrandr-test-1.txt",'strip');
+		# @xrandr = main::reader("$ENV{HOME}/bin/scripts/inxi/data/xrandr/xrandr-test-1.txt",'strip');
+		@xrandr = main::reader("$ENV{HOME}/bin/scripts/inxi/data/xrandr/xrandr-test-2.txt",'strip');
 	}
 	# $graphics{'dimensions'} = (\@dimensions);
 	# we get a bit more info from xrandr than xdpyinfo, but xrandr fails to handle
@@ -15082,6 +15144,53 @@ sub display_server_data {
 	@paths = grep { !/^\/usr\/lib|xorg|X11R6|libexec/ } @paths;
 	eval $end if $b_log;
 }
+sub display_protocol {
+	eval $start if $b_log;
+	$graphics{'protocol'} = '';
+	if ($ENV{'XDG_SESSION_TYPE'}){
+		$graphics{'protocol'} = $ENV{'XDG_SESSION_TYPE'};
+	}
+	if (!$graphics{'protocol'} && $ENV{'WAYLAND_DISPLAY'}){
+		$graphics{'protocol'} = $ENV{'WAYLAND_DISPLAY'};
+	}
+	# can show as wayland-0
+	if ($graphics{'protocol'} && $graphics{'protocol'} =~ /wayland/i){
+		$graphics{'protocol'} = 'wayland';
+	}
+	# yes, I've seen this in 2019 distros, sigh
+	elsif ($graphics{'protocol'} eq 'tty'){
+		$graphics{'protocol'} = '';
+	}
+	# If no other source, get user session id, then grab session type.
+	# loginctl also results in the session id
+	# undef $graphics{'protocol'};
+	if (!$graphics{'protocol'}){
+		if (my $program = main::check_program('loginctl')){
+			my $id = '';
+			# $id = $ENV{'XDG_SESSION_ID'}; # returns tty session in console
+			my @data = main::grabber("$program --no-pager --no-legend 2>/dev/null",'','strip');
+			foreach (@data){
+				# some systems show empty or ??? for TTY field, but whoami should do ok
+				next if /(ttyv?\d|pts\/)/; # freebsd: ttyv3
+				# in display, root doesn't show in the logins
+				next if $client{'whoami'} && $client{'whoami'} ne 'root' && !/\b$client{'whoami'}\b/;
+				$id = (split(/\s+/, $_))[0];
+				# multiuser? too bad, we'll go for the first one that isn't a tty/pts
+				last; 
+			}
+			if ($id){
+				my $temp = (main::grabber("$program show-session $id -p Type --no-pager --no-legend 2>/dev/null"))[0];
+				$temp =~ s/Type=// if $temp;
+				# ssh will not show /dev/ttyx so would have passed the first test
+				$graphics{'protocol'} = $temp if $temp && $temp ne 'tty';
+			}
+		}
+	}
+	$graphics{'protocol'} = lc($graphics{'protocol'}) if $graphics{'protocol'};
+	eval $end if $b_log;
+}
+
+## DRIVER DATA ##
 # for wayland display/monitor drivers, or if no display drivers found for x
 sub gpu_drivers_sys {
 	eval $start if $b_log;
@@ -15208,50 +15317,295 @@ sub display_drivers_x {
 	eval $end if $b_log;
 	@driver_data ? return \@driver_data : return;
 }
-sub display_protocol {
+sub set_nvidia_data {
+	my ($status_eol);
+	# this is vendor id: 12d2, nv1/riva/tnt type cards
+	# 0008|0009|0010|0018|0019
+	# and these are vendor id: 10de for 73.14
+	# 0020|0028|0029|002c|002d|00a0|0100|0101|0103|0150|0151|0152|0153
+	if (($show{'nvidia'})){
+		$status_eol = main::message('nv-legacy-eol');
+	}
+	else {
+		$status_eol = main::message('nv-legacy-eol-try');
+	}
+	# load legacy data, note, if there are 2 or more arch in 1 legacy, it has 1
+	# item per arch. kernel/last/xorg support either from nvidia or sgfxi
+	$nv_legacy = [
+	{'arch' => 'Fahrenhei',
+	'ids' => '0008|0009|0010|0018|0019|0020|0028|0029|002c|002d|00a0',
+	'code' => 'NVx',
+	'kernel' => '2.6.38',
+	'process' => 'TSMC 220-350nm',
+	'release' => '71.86.15',
+	'series' => '71.86.xx',
+	'status' => $status_eol,
+	'xorg' => '1.7',
+	},
+	{'arch' => 'Celsius',
+	'ids' => '0100|0101|0103|0150|0151|0152|0153',
+	'code' => 'NV1x',
+	'kernel' => '2.6.38',
+	'process' => 'TSMC 150-220nm',
+	'release' => '71.86.15',
+	'series' => '71.86.xx',
+	'status' => $status_eol,
+	'xorg' => '1.7',
+	},
+	{'arch' => 'Celsius',
+	'ids' => '0110|0111|0112|0113|01a0',
+	'code' => 'NV1x',
+	'kernel' => '3.6',
+	'process' => 'TSMC 150-220nm',
+	'release' => '96.43.23',
+	'series' => '96.43.xx',
+	'status' => $status_eol,
+	'xorg' => '1.12',
+	},
+	{'arch' => 'Kelvin',
+	'ids' => '0170|0171|0172|0173|0174|0175|0176|0177|0178|0179|017a|017c|017d|' .
+	'0181|0182|0183|0185|0188|018a|018b|018c|01f0|0200|0201|0202|0203|0250|0251|' .
+	'0253|0258|0259|025b|0280|0281|0282|0286|0288|0289|028c',
+	'code' => 'NV[12]x',
+	'kernel' => '3.6',
+	'process' => 'TSMC 150nm',
+	'release' => '96.43.23',
+	'series' => '96.43.xx',
+	'status' => $status_eol,
+	'xorg' => '1.12',
+	},
+	{'arch' => 'Rankine',
+	'ids' => '00fa|00fb|00fc|00fd|00fe|0301|0302|0308|0309|0311|0312|0314|031a|' .
+	'031b|031c|0320|0321|0322|0323|0324|0325|0326|0327|0328|032a|032b|032c|032d|' .
+	'0330|0331|0332|0333|0334|0338|033f|0341|0342|0343|0344|0347|0348|034c|034e',
+	'code' => 'NV3x',
+	'kernel' => '3.12',
+	'process' => '130-150nm', # IBM 130, TSMC 130-150
+	'release' => '173.14.39',
+	'series' => '173.14.xx',
+	'status' => $status_eol,
+	'xorg' => '1.15',
+	},
+	{'arch' => 'Curie',
+	'ids' => '0040|0041|0042|0043|0044|0045|0046|0047|0048|004e|0090|0091|0092|' .
+	'0093|0095|0098|0099|009d|00c0|00c1|00c2|00c3|00c8|00c9|00cc|00cd|00ce|00f1|' .
+	'00f2|00f3|00f4|00f5|00f6|00f8|00f9|0140|0141|0142|0143|0144|0145|0146|0147|' .
+	'0148|0149|014a|014c|014d|014e|014f|0160|0161|0162|0163|0164|0165|0166|0167|' .
+	'0168|0169|016a|01d0|01d1|01d2|01d3|01d6|01d7|01d8|01da|01db|01dc|01dd|01de|' .
+	'01df|0211|0212|0215|0218|0221|0222|0240|0241|0242|0244|0245|0247|0290|0291|' .
+	'0292|0293|0294|0295|0297|0298|0299|029a|029b|029c|029d|029e|029f|02e0|02e1|' .
+	'02e2|02e3|02e4|038b|0390|0391|0392|0393|0394|0395|0397|0398|0399|039c|039e|' .
+	'03d0|03d1|03d2|03d5|03d6|0531|0533|053a|053b|053e|07e0|07e1|07e2|07e3|07e5',
+	'code' => '', # hard to get these, roughly MCP[567]x/NV4x/G7x
+	'kernel' => '4.13',
+	'process' => '90-130nm', # IBM 130, TSMC 90-110
+	'release' => '304.137',
+	'series' => '304.xx',
+	'status' => $status_eol,
+	'xorg' => '1.19',
+	},
+	# these are both Tesla and Tesla 2.0
+	{'arch' => 'Tesla',
+	'ids' => '0191|0193|0194|0197|019d|019e|0400|0401|0402|0403|0404|0405|0406|' .
+	'0407|0408|0409|040a|040b|040c|040d|040e|040f|0410|0420|0421|0422|0423|0424|' .
+	'0425|0426|0427|0428|0429|042a|042b|042c|042d|042e|042f|05e0|05e1|05e2|05e3|' .
+	'05e6|05e7|05ea|05eb|05ed|05f8|05f9|05fd|05fe|05ff|0600|0601|0602|0603|0604|' .
+	'0605|0606|0607|0608|0609|060a|060b|060c|060d|060f|0610|0611|0612|0613|0614|' .
+	'0615|0617|0618|0619|061a|061b|061c|061d|061e|061f|0621|0622|0623|0625|0626|' .
+	'0627|0628|062a|062b|062c|062d|062e|0630|0631|0632|0635|0637|0638|063a|0640|' .
+	'0641|0643|0644|0645|0646|0647|0648|0649|064a|064b|064c|0651|0652|0653|0654|' .
+	'0655|0656|0658|0659|065a|065b|065c|06e0|06e1|06e2|06e3|06e4|06e5|06e6|06e7|' .
+	'06e8|06e9|06ea|06eb|06ec|06ef|06f1|06f8|06f9|06fa|06fb|06fd|06ff|0840|0844|' .
+	'0845|0846|0847|0848|0849|084a|084b|084c|084d|084f|0860|0861|0862|0863|0864|' .
+	'0865|0866|0867|0868|0869|086a|086c|086d|086e|086f|0870|0871|0872|0873|0874|' .
+	'0876|087a|087d|087e|087f|08a0|08a2|08a3|08a4|08a5|0a20|0a22|0a23|0a26|0a27|' .
+	'0a28|0a29|0a2a|0a2b|0a2c|0a2d|0a32|0a34|0a35|0a38|0a3c|0a60|0a62|0a63|0a64|' .
+	'0a65|0a66|0a67|0a68|0a69|0a6a|0a6c|0a6e|0a6f|0a70|0a71|0a72|0a73|0a74|0a75|' .
+	'0a76|0a78|0a7a|0a7c|0ca0|0ca2|0ca3|0ca4|0ca5|0ca7|0ca8|0ca9|0cac|0caf|0cb0|' .
+	'0cb1|0cbc|10c0|10c3|10c5|10d8',
+	'code' => '', # not clear, 8800/GT2xx/maybe G7x
+	'kernel' => '5.4',
+	'process' => '40-80nm',
+	'release' => '340.108',
+	'series' => '340.xx',
+	'status' => $status_eol,
+	'xorg' => '1.20',
+	},
+	{'arch' => 'Kepler',
+	'ids' => '0fef|0ff2|11bf',
+	'code' => 'GKxxx',
+	'kernel' => '',
+	'process' => 'TSMC 28nm',
+	'release' => '',
+	'series' => '367.xx',
+	'status' => main::message('nv-legacy-active','late 2022'),
+	'xorg' => '',
+	},
+	# this is Fermi, Fermi 2.0
+	{'arch' => 'Fermi',
+	'ids' => '06c0|06c4|06ca|06cd|06d1|06d2|06d8|06d9|06da|06dc|06dd|06de|06df|' .
+	'0dc0|0dc4|0dc5|0dc6|0dcd|0dce|0dd1|0dd2|0dd3|0dd6|0dd8|0dda|0de0|0de1|0de2|' .
+	'0de3|0de4|0de5|0de7|0de8|0de9|0dea|0deb|0dec|0ded|0dee|0def|0df0|0df1|0df2|' .
+	'0df3|0df4|0df5|0df6|0df7|0df8|0df9|0dfa|0dfc|0e22|0e23|0e24|0e30|0e31|0e3a|' .
+	'0e3b|0f00|0f01|0f02|0f03|1040|1042|1048|1049|104a|104b|104c|1050|1051|1052|' .
+	'1054|1055|1056|1057|1058|1059|105a|105b|107c|107d|1080|1081|1082|1084|1086|' .
+	'1087|1088|1089|108b|1091|1094|1096|109a|109b|1140|1200|1201|1203|1205|1206|' .
+	'1207|1208|1210|1211|1212|1213|1241|1243|1244|1245|1246|1247|1248|1249|124b|' .
+	'124d|1251',
+	'code' => 'GF1xx',
+	'kernel' => '',
+	'process' => '40/28nm',
+	'release' => '',
+	'series' => '390.xx+',
+	'status' => main::message('nv-legacy-active','late 2022'),
+	'xorg' => '',
+	},
+	{'arch' => 'Fermi 2',
+	'ids' => '0fec|1281|1289|128b|1295|1298',
+	'code' => 'GF119/GK208',
+	'kernel' => '',
+	'process' => 'TSMC 28nm',
+	'release' => '',
+	'series' => '470.xx+',
+	'status' => main::message('nv-legacy-active','~2023/24'),
+	'xorg' => '',
+	},
+	{'arch' => 'Kepler',
+	'ids' => '0fc6|0fc8|0fc9|0fcd|0fce|0fd1|0fd2|0fd3|0fd4|0fd5|0fd8|0fd9|0fdf|' .
+	'0fe0|0fe1|0fe2|0fe3|0fe4|0fe9|0fea|0fed|0fee|0ff6|0ff8|0ff9|0ffa|0ffb|0ffc|' .
+	'0ffd|0ffe|0fff|1001|1004|1005|1007|1008|100a|100c|1021|1022|1023|1024|1026|' .
+	'1027|1028|1029|102a|102d|103a|103c|1180|1183|1184|1185|1187|1188|1189|118a|' .
+	'118e|118f|1193|1194|1195|1198|1199|119a|119d|119e|119f|11a0|11a1|11a2|11a3|' .
+	'11a7|11b4|11b6|11b7|11b8|11ba|11bc|11bd|11be|11c0|11c2|11c3|11c4|11c5|11c6|' .
+	'11c8|11cb|11e0|11e1|11e2|11e3|11fa|11fc|1280|1282|1284|1286|1287|1288|1290|' .
+	'1291|1292|1293|1295|1296|1299|129a|12b9|12ba',
+	'code' => 'GKxxx',
+	'kernel' => '',
+	'process' => 'TSMC 28nm',
+	'release' => '',
+	'series' => '470.xx+',
+	'status' => main::message('nv-legacy-active','~2023/24'),
+	'xorg' => '',
+	},
+	];
+	
+	# load microarch data, as stuff goes legacy, these will form new legacy items.
+	$nv_arch = {
+	'Maxwell' => {
+	'ids' => '1340|1341|1344|1346|1347|1348|1349|134b|134d|134e|134f|137a|137b|' .
+	'1380|1381|1382|1390|1391|1392|1393|1398|1399|139a|139b|139c|139d|13b0|13b1|' .
+	'13b2|13b3|13b4|13b6|13b9|13ba|13bb|13bc|13c0|13c2|13d7|13d8|13d9|13da|13f0|' .
+	'13f1|13f2|13f3|13f8|13f9|13fa|13fb|1401|1402|1406|1407|1427|1430|1431|1436|' .
+	'1617|1618|1619|161a|1667|174d|174e|179c|17c8|17f0|17f1|17fd|1c8c|1c8d|1c90|' .
+	'1c91|1d10|1d12|1e91|1ed1|1ed3|1f14|1f54',
+	'code' => 'GMxxx',
+	'process' => 'TSMC 28nm',
+	'series' => '515.xx+',
+	},
+	'Pascal' => {
+	'ids' => '15f0|15f7|15f8|15f9|17c2|1b00|1b02|1b06|1b30|1b38|1b80|1b81|1b82|' .
+	'1b83|1b84|1b87|1ba0|1ba1|1ba2|1bb0|1bb1|1bb4|1bb5|1bb6|1bb7|1bb8|1bb9|1bbb|' .
+	'1bc7|1be0|1be1|1c02|1c03|1c04|1c06|1c07|1c09|1c20|1c21|1c22|1c23|1c30|1c31|' .
+	'1c60|1c61|1c62|1c81|1c82|1c83|1c8c|1c8d|1c8f|1c90|1c91|1c92|1c94|1c96|1cb1|' .
+	'1cb2|1cb3|1cb6|1cba|1cbb|1cbc|1cbd|1cfa|1cfb|1d01|1d02|1d11|1d13|1d16|1d33|' .
+	'1d34|1d52',
+	'code' => 'GP10x',
+	'process' => 'TSMC 16nm',
+	'series' => '515.xx+',
+	},
+	'Volta' => {
+	'ids' => '1d81|1db1|1db3|1db4|1db5|1db6|1db7|1db8|1dba|1df0|1df2|1df6|1fb0|' .
+	'20b0|20b3|20b6',
+	'code' => 'GV1xx',
+	'process' => 'TSMC 12nm',
+	'series' => '515.xx+',
+	},
+	'Turing' => {
+	'ids' => '1e02|1e04|1e07|1e09|1e30|1e36|1e78|1e81|1e82|1e84|1e87|1e89|1e90|' .
+	'1e91|1e93|1eb0|1eb1|1eb5|1eb6|1ec2|1ec7|1ed0|1ed1|1ed3|1ef5|1f02|1f03|1f06|' .
+	'1f07|1f08|1f0a|1f0b|1f10|1f11|1f12|1f14|1f15|1f36|1f42|1f47|1f50|1f51|1f54|' .
+	'1f55|1f76|1f82|1f91|1f95|1f96|1f97|1f98|1f99|1f9c|1f9d|1f9f|1fa0|1fb0|1fb1|' .
+	'1fb2|1fb6|1fb7|1fb8|1fb9|1fba|1fbb|1fbc|1fdd|1ff0|1ff2|1ff9|2182|2184|2187|' .
+	'2188|2189|2191|2192|21c4|21d1|25a6|25a7|25a9|25aa',
+	'code' => 'TUxxx',
+	'process' => 'TSMC 12nm',
+	'series' => '515.xx+',
+	},
+	'Ampere' => {
+	'ids' => '20b0|20b2|20b5|20b7|20f1|2203|2204|2206|2208|220a|220d|2216|2230|' .
+	'2231|2232|2233|2235|2236|2237|2238|2414|2420|2438|2460|2482|2484|2486|2487|' .
+	'2488|2489|248a|249c|249d|24a0|24b0|24b1|24b6|24b7|24b8|24b9|24ba|24bb|24dc|' .
+	'24dd|24e0|24fa|2503|2504|2507|2508|2520|2523|2531|2560|2563|2571|25a0|25a2|' .
+	'25a5|25b6|25b8|25b9|25ba|25bb|25e0|25e2|25e5|25f9|25fa',
+	'code' => 'GAxxx',
+	'process' => 'TSMC 7nm',
+	'series' => '515.xx+',
+	},
+	# no ids yet
+	# 'Hopper' => {
+	# 'ids' => '',
+	# 'code' => 'GH1xx',
+	# 'process' => 'TSMC n4',
+	# },
+	# 'Lovelace' => {
+	# 'ids' => '',
+	# 'code' => '',
+	# 'process' => '',
+	# },
+	};
+}
+sub nvidia_data {
 	eval $start if $b_log;
-	$graphics{'protocol'} = '';
-	if ($ENV{'XDG_SESSION_TYPE'}){
-		$graphics{'protocol'} = $ENV{'XDG_SESSION_TYPE'};
-	}
-	if (!$graphics{'protocol'} && $ENV{'WAYLAND_DISPLAY'}){
-		$graphics{'protocol'} = $ENV{'WAYLAND_DISPLAY'};
-	}
-	# can show as wayland-0
-	if ($graphics{'protocol'} && $graphics{'protocol'} =~ /wayland/i){
-		$graphics{'protocol'} = 'wayland';
-	}
-	# yes, I've seen this in 2019 distros, sigh
-	elsif ($graphics{'protocol'} eq 'tty'){
-		$graphics{'protocol'} = '';
-	}
-	# If no other source, get user session id, then grab session type.
-	# loginctl also results in the session id
-	# undef $graphics{'protocol'};
-	if (!$graphics{'protocol'}){
-		if (my $program = main::check_program('loginctl')){
-			my $id = '';
-			# $id = $ENV{'XDG_SESSION_ID'}; # returns tty session in console
-			my @data = main::grabber("$program --no-pager --no-legend 2>/dev/null",'','strip');
-			foreach (@data){
-				# some systems show empty or ??? for TTY field, but whoami should do ok
-				next if /(ttyv?\d|pts\/)/; # freebsd: ttyv3
-				# in display, root doesn't show in the logins
-				next if $client{'whoami'} && $client{'whoami'} ne 'root' && !/\b$client{'whoami'}\b/;
-				$id = (split(/\s+/, $_))[0];
-				# multiuser? too bad, we'll go for the first one that isn't a tty/pts
-				last; 
-			}
-			if ($id){
-				my $temp = (main::grabber("$program show-session $id -p Type --no-pager --no-legend 2>/dev/null"))[0];
-				$temp =~ s/Type=// if $temp;
-				# ssh will not show /dev/ttyx so would have passed the first test
-				$graphics{'protocol'} = $temp if $temp && $temp ne 'tty';
-			}
+	my ($product_id) = @_;
+	my (%info);
+	set_nvidia_data() if !$nv_legacy;
+	my $date = $self_date;
+	$date =~ s/-\d+$//;
+	# Test for current active first, those will be most common, these will be
+	# run in random order, which is fine since user ids will also be random
+	foreach my $key (keys %$nv_arch){
+		if ($product_id =~ /^($nv_arch->{$key}{'ids'})$/){
+			%info = (
+			'arch' => $key,
+			'code' => $nv_arch->{$key}{'code'},
+			'kernel' => '',
+			'process' => $nv_arch->{$key}{'process'},
+			'release' => '',
+			'series' => $nv_arch->{$key}{'series'},
+			'status' => main::message('nv-current',$date),
+			'xorg' => '',
+			);
+			last;
 		}
 	}
-	$graphics{'protocol'} = lc($graphics{'protocol'}) if $graphics{'protocol'};
+	# then check for legacy
+	if (!%info){
+		# we reverse here since newer is more likely than older
+		foreach my $item (reverse @$nv_legacy){
+			if ($product_id =~ /^($item->{'ids'})$/){
+				%info = (
+				'arch' => $item->{'arch'},
+				'code' => $item->{'code'},
+				'kernel' => $item->{'kernel'},
+				'process' => $item->{'process'},
+				'release' => $item->{'release'},
+				'series' => $item->{'series'},
+				'status' => $item->{'status'},
+				'xorg' => $item->{'xorg'},
+				);
+				last;
+			}
+		}
+		if (%info){
+			$info{'legacy'} = 1;
+		}
+	}
+	if (!%info){
+		$info{'status'} = main::message('nv-unknown');
+	}
+	main::log_data('dump','%info',\%info) if $b_log;
 	eval $end if $b_log;
+	return \%info;
 }
 
 ## MONITOR DATA ##
@@ -15421,7 +15775,9 @@ sub advanced_monitor_data {
 	# print Data::Dumper::Dumper $layouts;
 	# print 'mon advanced monitor_map: ', Data::Dumper::Dumper $monitor_map;
 	foreach my $key (keys %$monitors){
-		if (@horiz && @vert && (scalar @horiz > 1 || scalar @vert > 1)){
+		# disabled monitor may  not have pos-x/pos-y, so skip
+		if (@horiz && @vert && (scalar @horiz > 1 || scalar @vert > 1) && 
+		defined $monitors->{$key}{'pos-x'} && defined $monitors->{$key}{'pos-y'}){
 			$monitors->{$key}{'position'} ||= '';
 			$position = '';
 			$position = get_monitor_position($monitors->{$key},\@horiz,\@vert);
@@ -15543,29 +15899,30 @@ sub map_monitor_ids {
 	eval $start if $b_log;
 	my ($display_ids) = @_;
 	return if !$monitor_ids;
-	@$display_ids = sort { lc($a) cmp lc($b) } @$display_ids;
-	my @sys_ids;
+	my (@sys_ids,@unmatched_display,@unmatched_sys);
+	@unmatched_display = @$display_ids = sort { lc($a) cmp lc($b) } @$display_ids;
 	foreach my $key (keys %$monitor_ids){
 		if ($monitor_ids->{$key}{'status'} eq 'connected'){
 			push(@sys_ids,$key);
 		}
 	}
-	@sys_ids = sort { lc($a) cmp lc($b) } @sys_ids;
 	# @sys_ids = ('DVI-I-1','eDP-1','VGA-1');
 	main::log_data('dump','@sys_ids',\@sys_ids) if $b_log;
 	main::log_data('dump','$xrandr_ids ref',$display_ids) if $b_log;
 	print 'sys: ', Data::Dumper::Dumper \@sys_ids if $dbg[45];
 	print 'display: ', Data::Dumper::Dumper $display_ids if $dbg[45];
 	return if scalar @sys_ids != scalar @$display_ids;
+	@unmatched_sys = @sys_ids = sort { lc($a) cmp lc($b) } @sys_ids;
 	$monitor_map = {};
-	# known patterns: s: DP-1, d: DisplayPort-0; s: HDMI-A-2, d: HDMI-A-1
-	# s: HDMI-A-2, d: HDMI-2; s: DVI-1 d: DVI1; s: HDMI-1, d: HDMI1 
-	# s: DVI-I-1, d: DVI0; s: VGA-1, d: VGA1; s: DP-1-1; d: DP-1-1;
-	# s: eDP-1, d: eDP-1-1 (yes, reversed from normal deviation!); s: eDP-1, d: eDP
-	# worst: s: DP-6, d: DP-2-3 (2 banks of 3 according to X); s: eDP-1, d: DP-4;
+	# known patterns: s: DP-1 d: DisplayPort-0; s: DP-1 d: DP1-1; s: DP-2 d: DP1-2;
+	# s: HDMI-A-2 d: HDMI-A-1; s: HDMI-A-2 d: HDMI-2; s: DVI-1 d: DVI1; s: HDMI-1 d: HDMI1 
+	# s: DVI-I-1 d: DVI0; s: VGA-1 d: VGA1; s: DP-1-1; d: DP-1-1;
+	# s: eDP-1 d: eDP-1-1 (yes, reversed from normal deviation!); s: eDP-1 d: eDP
+	# worst: s: DP-6 d: DP-2-3 (2 banks of 3 according to X); s: eDP-1 d: DP-4;
+	# s: DP-3 d: DP-4 [yes, +1, not -]; 
 	my ($d_1,$d_2,$d_m,$s_1,$s_2,$s_m);
 	my $b_single = (scalar @sys_ids == 1) ? 1 : 0;
-	my $pattern = '([A-Z]+)(-[A-Z]-\d+-\d+|-[A-Z]-\d+|-\d+-\d+|-?\d+|)';
+	my $pattern = '([A-Z]+)(-[A-Z]-\d+-\d+|-[A-Z]-\d+|-?\d+-\d+|-?\d+|)';
 	for (my $i=0; $i < scalar @$display_ids; $i++){
 		print "s: $sys_ids[$i] d: $display_ids->[$i]\n" if $dbg[45];
 		# try 1: /^([A-Z]+)(-[AB]|-[ADI]|-[ADI]-\d+?|-\d+?)?(-)?(\d+)$/i
@@ -15585,18 +15942,36 @@ sub map_monitor_ids {
 				print " d1: $d_1 s1: $s_1 dm: $d_m sm: $s_m \n" if $dbg[45];
 				if ($d_1 eq $s_1 && ($d_m == $s_m || $d_m == ($s_m - 1))){
 					$monitor_map->{$display_ids->[$i]} = $sys_ids[$i];
+					@unmatched_display = grep {$_ ne $display_ids->[$i]} @unmatched_display;
+					@unmatched_sys = grep {$_ ne $sys_ids[$i]} @unmatched_sys;
 				}
 			}
 		}
+		# in case of one unmatched, we'll dump this, and use the actual unmatched
 		if (!$monitor_map->{$display_ids->[$i]}){
 			# we're not even going to try, if there's 1 sys and 1 display, just use it!
-			$monitor_map->{$display_ids->[$i]} = ($b_single) ? $sys_ids[$i] : main::message('monitor-id');
+			if ($b_single){
+				$monitor_map->{$display_ids->[$i]} = $sys_ids[$i];
+				(@unmatched_display,@unmatched_sys) = ();
+			}
+			else {
+				$monitor_map->{$display_ids->[$i]} = main::message('monitor-id');
+			}
 		}
+	}
+	# we don't care at all what the pattern is, if there is 1 unmatched display 
+	# out of 1 sys ids, we'll assume that is the one. This can only be assumed in
+	# cases where only 1 monitor was not matched, otherwise it's just a guess.
+	# obviously, if one of the matches was wrong, this will also be wrong, but 
+	# thats' life when dealing with irrational data. DP is a particular problem.
+	if (scalar @unmatched_sys == 1){
+		$monitor_map->{$unmatched_display[0]} = $unmatched_sys[0];
 	}
 	main::log_data('dump','$monitor_map ref',$monitor_map) if $b_log;
 	print Data::Dumper::Dumper $monitor_map if $dbg[45];
 	eval $end if $b_log;
 }
+
 # handle case of monitor on left or right edge, vertical that is.
 # mm dimensiions are based on the default position of monitor as sold.
 # very old systems may not have non 0 value for size x or y
@@ -17328,6 +17703,10 @@ sub wan_ip {
 		$b_dig = 1;
 	}
 	if (!$ip && !$force{'no-html-wan'}){
+		# if dig failed or is not installed, set downloader data if unset
+		if (!defined $dl{'no-ssl'}){
+			main::set_downloader();
+		}
 		# note: tests: akamai: 0.055 - 0.065 icanhazip.com: 0.177 0.164
 		# smxi: 0.525, so almost 10x slower. Dig is fast too
 		# leaving smxi as last test because I know it will always be up.
@@ -17889,7 +18268,7 @@ sub set_partitions {
 	}
 	else {
 		 my $file;
-		 # $file = "$ENV{'HOME'}/bin/scripts/inxi/data/df/df-kTP-cygwin-1.txt";
+		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/df/df-kTP-cygwin-1.txt";
 		 $file = "$ENV{'HOME'}/bin/scripts/inxi/data/df/df-kT-wrapped-1.txt";
 		 @partitions_working = main::reader($file);
 	}
@@ -17942,6 +18321,7 @@ sub set_partitions {
 	my $filters = partition_filters();
 	# push @partitions_working, '//mafreebox.freebox.fr/Disque dur cifs         239216096  206434016  20607496      91% /freebox/Disque dur';
 	# push @partitions_working, '//mafreebox.freebox.fr/AllPG      cifs         436616192  316339304 120276888      73% /freebox/AllPG';
+	# push(@partitions_working,'/dev/loop0p1                  iso9660         3424256   3424256           0     100% /media/jason/d-live nf 11.3.0 gn 6555 9555 amd64');
 	foreach (@partitions_working){
 		($dev_base,$dev_mapped,$dev_type,$fs,$id,$label,
 		$maj_min,$type,$uuid) = ('','','','','','','','','');
@@ -17951,8 +18331,8 @@ sub set_partitions {
 		# apple crap, maybe also freebsd?
 		$_ =~ s/^map\s+([\S]+)/map:\/$1/ if $b_fake_map;
 		# handle spaces in remote filesystem names
-		# busybox df shows KM, sigh; note: GoogleDrive Hogne: fuse.rclone  15728640
-		if (/^(.*)(\s[\S]+)\s+[a-z][a-z0-9\.]+\s+[0-9]+/){
+		# busybox df shows KM, sigh; note: GoogleDrive Hogne: fuse.rclone 15728640 316339304 120276888 73%
+		if (/^(.*?)(\s[\S]+)\s+[a-z][a-z0-9\.]+(\s+[0-9]+){3}\s+[0-9]+%\s/){
 			$replace = $test = "$1$2";
 			if ($test =~ /\s/){ # paranoid test, but better safe than sorry
 				$b_space = 1;
@@ -17963,6 +18343,7 @@ sub set_partitions {
 			}
 		}
 		my @row = split(/\s+/, $_);
+		# print Data::Dumper::Dumper \@row;
 		$row[0] =~ s/\^\^/ /g if $b_space; # reset spaces in > 1 word fs name
 		# autofs is a bsd thing, has size 0
 		if ($row[0] =~ /^($filters)$/ || $row[0] =~ /^ROOT/i || 
@@ -26464,16 +26845,8 @@ sub get {
 
 sub get_bsd_os {
 	eval $start if $b_log;
-	if ($bsd_type eq 'darwin'){
-		$distro_file = '/System/Library/CoreServices/SystemVersion.plist';
-		if (-f $distro_file){
-			@working = main::reader($distro_file);
-			@working = grep {/(ProductName|ProductVersion)/} @working if @working;
-			@working = grep {/<string>/} @working if @working;
-			@working = map {s/<[\/]?string>//g;} @working if @working;
-			$distro = join(' ', @working);
-		}
-	}
+	# used to parse /System/Library/CoreServices/SystemVersion.plist for Darwin
+	# but dumping that since it broke, just using standard BSD uname 0 2 name.
 	if (!$distro){
 		my $bsd_type_osr = 'dragonfly';
 		@osr = main::reader($os_release) if -r $os_release;
@@ -28010,7 +28383,7 @@ sub get {
 	eval $start if $b_log;
 	# $num passed by reference to maintain incrementing where requested
 	($type,$num) = @_;
-	$loaded{'packages'} = 1;
+	$loaded{'package-data'} = 1;
 	package_counts();
 	appimage_counts();
 	create_output();
@@ -29475,9 +29848,19 @@ sub set {
 		}
 	}
 	else {
-		$client{'name'} = 'shell';
-		# handling na here, not on output, so we can test for !$client{'name-print'}
-		$client{'name-print'} = 'N/A'; 
+		# last fallback to catch things like busybox shells
+		if (my $busybox = readlink(main::check_program('sh'))){
+			if ($busybox =~ m|busybox$|){
+				$client{'name'} = 'ash';
+				$client{'name-print'} = 'ash (busybox)'; 
+			}
+		}
+		print "8: shell: $client{'name-print'} version: $client{'version'}\n" if $b_debug;
+		if (!$client{'name'}) {
+			$client{'name'} = 'shell';
+			# handling na here, not on output, so we can test for !$client{'name-print'}
+			$client{'name-print'} = 'N/A';
+		}
 	}
 	if (!$client{'su-start'}){
 		$client{'su-start'} = 'sudo' if $ENV{'SUDO_USER'};
@@ -31039,7 +31422,7 @@ sub info_item{
 			$data{$data_name}->[$index]{main::key($num++,0,2,'clang')} = $clang_version;
 		}
 	}
-	if ($extra > 0 && !$loaded{'packages'}){
+	if ($extra > 0 && !$loaded{'package-data'}){
 		my %packages = PackageData::get('inner',\$num);
 		for (keys %packages){
 			$data{$data_name}->[$index]{$_} = $packages{$_};
