@@ -48,8 +48,8 @@ use POSIX qw(ceil uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.3.18';
-my $self_date='2022-06-13';
+my $self_version='3.3.19';
+my $self_date='2022-06-16';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -10794,8 +10794,12 @@ sub cp_cpu_arch {
 		# note: family F K8 needs granular breakdowns, was a long lived family
 		elsif ($family eq 'F'){
 			# positive IDs, but sub arch difficult, can be stepping based
-			if ($model =~ /^(1C)$/){
-				$arch = 'K8'; # Palermo
+			if ($model =~ /^(7)$/){
+				$arch = 'K8'; # 7:A:clawhammer ADA3500DEP4AS
+				$process = 'AMD 130nm';
+				$year = '2004';} # cpuworld says 2004, but body says 2001
+			elsif ($model =~ /^(1C|2F)$/){
+				$arch = 'K8'; # 1C:Palermo;2F:A:Venice
 				$process = 'AMD 90nm';
 				$year = '2001';}
 			elsif ($model =~ /^(7F)$/){
@@ -10803,11 +10807,11 @@ sub cp_cpu_arch {
 				$process = 'AMD 65nm';
 				$year = '2005';}
 			# generic IDs, try to reduce these to solid over time
-			elsif ($model =~ /^(4|5|7|8|B|C|E|F|14|15|17|18|1B|1F)$/){
+			elsif ($model =~ /^(4|5|8|B|C|E|F|14|15|17|18|1B|1F)$/){
 				$arch = 'K8';
 				$process = 'AMD 65-130nm';
 				$year = '';}
-			elsif ($model =~ /^(21|23|24|25|27|28|2C|2F)$/){
+			elsif ($model =~ /^(21|23|24|25|27|28|2C)$/){
 				$arch = 'K8 rev.E';
 				$process = 'AMD 65-130nm';
 				$year = '';}
@@ -10965,9 +10969,9 @@ sub cp_cpu_arch {
 			else {
 				$arch = 'Zen 3/4';
 				$note = $check;
-				$process = 'TSMC n5 (5nm)-7';
+				$process = 'TSMC n5 (5nm)';
 				$year = '2021-22';}
-			# Zen 5: TSCM n3
+			# Zen 5: TSMC n3
 		}
 	}
 	elsif ($type eq 'arm'){
@@ -10976,9 +10980,9 @@ sub cp_cpu_arch {
 		else {
 			$arch='ARM';}
 	}
-# 	elsif ($type eq 'ppc'){
-# 		$arch='PPC';
-# 	}
+	#	elsif ($type eq 'ppc'){
+	#		$arch='PPC';
+	#	}
 	# aka VIA
 	elsif ($type eq 'centaur'){ 
 		if ($family eq '5'){
@@ -22089,14 +22093,22 @@ sub get_repos_linux {
 		my $counter = 0;
 		@files = main::globber("$apt.d/*.list");
 		push(@files, $apt);
+		# prefilter list for logging
+		@files = grep {-f $_} @files; # may not have $apt file.
 		main::log_data('data',"apt repo files:\n" . main::joiner(\@files, "\n", 'unset')) if $b_log;
 		foreach (sort @files){
-			# altlinux/pclinuxos use rpms in apt files
-			$data = repo_builder($_,'apt','^\s*(deb|rpm)') if -r $_;
-			push(@$rows,@$data);
+			# altlinux/pclinuxos use rpms in apt files, -r to be on safe side
+			if (-r $_){
+				$data = repo_builder($_,'apt','^\s*(deb|rpm)');
+				push(@$rows,@$data);
+			}
 		}
-		#@files = main::globber("$fake_data_dir/repo/apt/*.sources");
+		# @files = main::globber("$fake_data_dir/repo/apt/*.sources");
 		@files = main::globber("$apt.d/*.sources");
+		# prefilter list for logging, sometimes globber returns non-prsent files.
+		@files = grep {-f $_} @files;
+		# @files = ("$fake_data_dir/repo/apt/deb822-u193-3.sources",
+		# "$fake_data_dir/repo/apt/deb822-u193-3.sourcesdeb822-u193-4-signed-by.sources");
 		main::log_data('data',"apt deb822 repo files:\n" . main::joiner(\@files, "\n", 'unset')) if $b_log;
 		foreach $file (@files){
 			# critical: whitespace is the separator, no logical ordering of 
@@ -22143,14 +22155,12 @@ sub get_repos_linux {
 					$apt_types = '';
 					$b_apt_enabled = 1;
 				}
-				# print "row:$row\n";
 				elsif ($row =~ /^Types:\s*(.*)/i){
-					# print "ath:$type_holder\n";
+					# print "1:$1\n";
 					$apt_types = $1;
 				}
 				elsif ($row =~ /^Enabled:\s*(.*)/i){
-					my $status = $1;
-					$b_apt_enabled = ($status =~ /\b(disable|false|off|no|without)\b/i) ? 0: 1;
+					$b_apt_enabled = ($1 =~ /\b(disable|false|off|no|without)\b/i) ? 0: 1;
 				}
 				elsif ($row =~ /^[^#]+:\//){
 					my $url = $row;
@@ -22454,8 +22464,10 @@ sub get_repos_linux {
 	}
 	# TinyCore 
 	if (-e $tce_app || -f $tce_file || -f $tce_file2){
-		$data = repo_builder($tce_file,'tce','^\s*[^#]+');
-		push(@$rows,@$data);
+		if (-f $tce_file){
+			$data = repo_builder($tce_file,'tce','^\s*[^#]+');
+			push(@$rows,@$data);
+		}
 		if (-f $tce_file2){
 			$data = repo_builder($tce_file2,'tce','^\s*[^#]+');
 			push(@$rows,@$data);
@@ -22467,8 +22479,10 @@ sub get_repos_linux {
 		push(@files,main::globber("$xbps_dir_2*.conf")) if -d $xbps_dir_2;
 		main::log_data('data',"xbps repo files:\n" . main::joiner(\@files, "\n", 'unset')) if $b_log;
 		foreach (sort @files){
-			$data = repo_builder($_,'xbps','^\s*repository\s*=','\s*=\s*',1) if -r $_;
-			push(@$rows,@$data);
+			if (-r $_){
+				$data = repo_builder($_,'xbps','^\s*repository\s*=','\s*=\s*',1);
+				push(@$rows,@$data);
+			}
 		}
 	}
 	# Mandriva/Mageia using: urpmq
@@ -23455,20 +23469,22 @@ sub load_lm_sensors {
 	my (@sensors_data,@values);
 	my ($adapter,$holder,$type) = ('','','');
 		if ($fake{'sensors'}){
-		# my $file = "$fake_data_dir/sensors/amdgpu-w-fan-speed-stretch-k10.txt";
-		# my $file = "$fake_data_dir/sensors/peci-tin-geggo.txt";
-		# my $file = "$fake_data_dir/sensors/sensors-w-other-biker.txt";
-		# my $file = "$fake_data_dir/sensors/sensors-asus-chassis-1.txt";
-		# my $file = "$fake_data_dir/sensors/sensors-devnull-1.txt";
-		# my $file = "$fake_data_dir/sensors/sensors-jammin1.txt";
-		# my $file = "$fake_data_dir/sensors/sensors-mx-incorrect-1.txt";
-		# my $file = "$fake_data_dir/sensors/sensors-maximus-arch-1.txt";
-		# my $file = "$fake_data_dir/sensors/kernel-58-sensors-ant-1.txt";
-		# my $file = "$fake_data_dir/sensors/sensors-zenpower-nvme-2.txt";
-		# my $file = "$fake_data_dir/sensors/sensors-pch-intel-1.txt";
-		# my $file = "$fake_data_dir/sensors/sensors-ppc-sr71.txt";
-		 my $file = "$fake_data_dir/sensors/sensors-applesmc-1.txt";
-		 @sensors_data = main::reader($file);
+		# my $file;
+		# $file = "$fake_data_dir/sensors/amdgpu-w-fan-speed-stretch-k10.txt";
+		# $file = "$fake_data_dir/sensors/peci-tin-geggo.txt";
+		# $file = "$fake_data_dir/sensors/sensors-w-other-biker.txt";
+		# $file = "$fake_data_dir/sensors/sensors-asus-chassis-1.txt";
+		# $file = "$fake_data_dir/sensors/sensors-devnull-1.txt";
+		# $file = "$fake_data_dir/sensors/sensors-jammin1.txt";
+		# $file = "$fake_data_dir/sensors/sensors-mx-incorrect-1.txt";
+		# $file = "$fake_data_dir/sensors/sensors-maximus-arch-1.txt";
+		# $file = "$fake_data_dir/sensors/kernel-58-sensors-ant-1.txt";
+		# $file = "$fake_data_dir/sensors/sensors-zenpower-nvme-2.txt";
+		# $file = "$fake_data_dir/sensors/sensors-pch-intel-1.txt";
+		# $file = "$fake_data_dir/sensors/sensors-ppc-sr71.txt";
+		# $file = "$fake_data_dir/sensors/sensors-coretemp-acpitz-1.txt";
+		# $file = "$fake_data_dir/sensors/sensors-applesmc-1.txt";
+		# @sensors_data = main::reader($file);
 	}
 	else {
 		# only way to get sensor array data? Unless using sensors -j, but can't assume json 
@@ -23506,6 +23522,9 @@ sub load_lm_sensors {
 			# put last just in case some other sensor type above had intel in name
 			elsif ($adapter =~ /^(amdgpu|intel|nouveau|radeon)-/){
 				$type = 'gpu';
+			}
+			elsif ($adapter =~ /^(acpitz)-/ && $adapter !~ /^(acpitz-virtual)-/ ){
+				$type = 'board';
 			}
 			else {
 				$type = 'main';
