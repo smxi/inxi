@@ -48,8 +48,8 @@ use POSIX qw(ceil uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.3.22';
-my $self_date='2022-10-08';
+my $self_version='3.3.23';
+my $self_date='2022-10-31';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -74,7 +74,7 @@ my ($fake_data_dir,$self_path,$user_config_dir,$user_config_file,$user_data_dir)
 ## Hashes
 my (%alerts,%build_prop,%client,%colors,,%cpuinfo_machine,%disks_bsd,
 %dboot,%devices,%dl,%dmmapper,%force,%loaded,%mapper,%program_values,%risc,
-%service_tool,%show,%sysctl,%system_files,%usb);
+%service_tool,%show,%sysctl,%system_files,%usb,%windows);
 
 ## System Arrays
 my (@app,@cpuinfo,@dmi,@ifs,@ifs_bsd,@paths,@ps_aux,@ps_cmd,@ps_gui,
@@ -102,7 +102,7 @@ if (eval {require Time::HiRes}){
 @t0 = eval 'Time::HiRes::gettimeofday()' if $b_hires; # let's start it right away
 
 ## Booleans [busybox_ps not used actively]
-my ($b_admin,$b_android,$b_busybox_ps,$b_cygwin,$b_display,$b_irc,$b_root);
+my ($b_admin,$b_android,$b_busybox_ps,$b_display,$b_irc,$b_root);
 
 ## System
 my ($bsd_type,$device_vm,$language,$os,$pci_tool) = ('','','','','');
@@ -523,8 +523,16 @@ sub set_os {
 		# force to string e2k, and also in case we need that ID changed
 		$cpu_arch = 'elbrus' if $cpu_arch =~ /e2k|elbrus/;
 	}
-	$b_cygwin = 1 if $os =~ /cygwin/;
-	$b_android = 1 if -e '/system/build.prop';
+	# set some less common scenarios
+	if ($os =~ /cygwin/){
+		$windows{'cygwin'} = 1;
+	}
+	elsif (-e '/usr/lib/wsl/drivers'){
+		$windows{'wsl'} = 1;
+	}
+	elsif (-e '/system/build.prop'){
+		$b_android = 1;
+	}
 	if ($os =~ /(aix|bsd|cosix|dragonfly|darwin|hp-?ux|indiana|illumos|irix|sunos|solaris|ultrix|unix)/){
 		if ($os =~ /openbsd/){
 			$os = 'openbsd';
@@ -1613,7 +1621,8 @@ sub create_debug_directory {
 	$alt_string = '-' . uc($risc{'id'}) if %risc;
 	$alt_string .= "-BSD-$bsd_type" if $bsd_type;
 	$alt_string .= '-ANDROID' if $b_android; 
-	$alt_string .= '-CYGWIN' if $b_cygwin; # could be windows arm?
+	$alt_string .= '-CYGWIN' if $windows{'cygwin'}; # could be windows arm?
+	$alt_string .= '-WSL' if $windows{'wsl'}; # could be windows arm?
 	$debug_dir = "$self_name$alt_string-$host$id-$today$root_string-$self_version-$self_patch";
 	$debug_gz = "$debug_dir.tar.gz";
 	$data_dir = "$user_data_dir/$debug_dir";
@@ -4995,7 +5004,7 @@ sub get {
 		elsif (!$arg){
 			$arg = 80;
 		}
-		if ($arg =~ /\d/ && ($arg == 1 || $arg >= 80)){
+		if ($arg =~ /\d/ && ($arg == 1 || $arg >= 60)){
 			$size{'max-cols-basic'} = $arg if $arg != 1;
 			$size{'max-cols'} = $arg;
 		}
@@ -5088,7 +5097,7 @@ sub get {
 		}
 	},
 	'cygwin' => sub {
-		$b_cygwin = 1;},
+		$windows{'cygwin'} = 1;},
 	'dbg:s' => sub { 
 		my ($opt,$arg) = @_;
 		if ($arg !~ /^\d+(,\d+)*$/){
@@ -5389,6 +5398,8 @@ sub get {
 		$force{'wayland'} = 1;},
 	'wm|wmctrl' => sub { 
 		$force{'wmctrl'} = 1;},
+	'wsl' => sub {
+		$windows{'wsl'} = 1;},
 	'<>' => sub {
 		my ($opt) = @_;
 		main::error_handler('unknown-option', "$opt", "");}
@@ -5769,7 +5780,7 @@ sub show_options {
 	--output."],
 	['1', '', '--partition-sort', "[dev-base|fs|id|label|percent-used|size|uuid|used] 
 	Change sort order of ${partition_string} output. See man page for specifics."],
-	['1', '-y', '--width', "[empty|-1|1|80-xxx] Output line width max. Overrides 
+	['1', '-y', '--width', "[empty|-1|1|60-xxx] Output line width max. Overrides 
 	IRC/Terminal settings or actual widths. If no integer give, defaults to 80. 
 	-1 removes line lengths. 1 switches output to 1 key/value pair per line. 
 	Example:^inxi^-y^130"],
@@ -6173,6 +6184,7 @@ my $pppid = '';
 sub set {
 	eval $start if $b_log;
 	main::set_ps_aux() if !$loaded{'ps-aux'};
+	# $b_irc = 1; # for testing, like cli konvi start which shows as tty
 	if (!$b_irc){
 		# we'll run ShellData::set() for -I, but only then
 	}
@@ -6435,29 +6447,35 @@ sub perl_python_client {
 sub check_modern_konvi {
 	eval $start if $b_log;
 	return 0 if !$client{'qdbus'};
-	my $b_modern_konvi = 0;
-	my $konvi_version = '';
-	my $konvi = '';
-	my $pid = '';
-	my (@temp);
+	my ($b_modern_konvi,$konvi,$konvi_version,$pid) = (0,'','','');
 	# main::log_data('data',"name: $client{'name'} :: qdb: $client{'qdbus'} :: version: $client{'version'} :: konvi: $client{'konvi'} :: PPID: $ppid") if $b_log;
 	# sabayon uses /usr/share/apps/konversation as path
+	# Paths not checked for BSDs to see what they are.
 	if (-d '/usr/share/kde4/apps/konversation' || -d '/usr/share/apps/konversation'){
-		$pid = main::awk(\@ps_aux,'konversation -session',2,'\s+');
-		main::log_data('data',"pid: $pid") if $b_log;
-		$konvi = readlink ("/proc/$pid/exe");
-		$konvi =~ s/^.*\///; # basename
-		@app = main::program_values('konversation');
+		# much faster test, added 2022, newer konvis support
+		# can also query qdbus to see if it's running, but that's a subshell and grep
+		if ($ENV{'PYTHONPATH'} && $ENV{'PYTHONPATH'} =~ /konversation/i){
+			$konvi = 'konversation';
+		}
+		# was -session, then -qwindowtitle; cli start, nothing, just konversation$
+		elsif ($pid = main::awk(\@ps_aux,'konversation( -|$)',2,'\s+')){
+			main::log_data('data',"pid: $pid") if $b_log;
+			if (-e "/proc/$pid/exe"){
+				$konvi = readlink("/proc/$pid/exe");
+				$konvi =~ s/^.*\///; # basename
+			}
+		}
+		# print "$pid $konvi\n";
 		if ($konvi){
 			@app = main::program_values('konversation');
 			$konvi_version = main::program_version($konvi,$app[0],$app[1],$app[2],$app[5],$app[6]);
-			@temp = split('\.', $konvi_version);
 			$client{'console-irc'} = $app[4];
 			$client{'konvi'} = 3;
 			$client{'name'} = 'konversation';
 			$client{'name-print'} = $app[3];
 			$client{'version'} = $konvi_version;
 			# note: we need to change this back to a single dot number, like 1.3, not 1.3.2
+			my @temp = split('\.', $konvi_version);
 			$konvi_version = $temp[0] . "." . $temp[1];
 			if ($konvi_version > 1.1){
 				$b_modern_konvi = 1;
@@ -6468,15 +6486,15 @@ sub check_modern_konvi {
 	qdb: $client{'qdbus'} version: $konvi_version konvi: $konvi PID: $pid") if $b_log;
 	main::log_data('data',"b_is_qt4: $b_modern_konvi") if $b_log;
 	## for testing this module
-# 	my $ppid = getppid();
-# 	system('qdbus org.kde.konversation', '/irc', 'say', $client{'dserver'}, $client{'dtarget'}, 
-# 	"getpid_dir: $konvi_qt4 verNum: $konvi_version pid: $pid ppid: $ppid");
+	# my $ppid = getppid();
+	# system('qdbus org.kde.konversation', '/irc', 'say', $client{'dserver'}, $client{'dtarget'}, 
+	# "getpid_dir: verNum: $konvi_version pid: $pid ppid: $ppid");
+	# print "verNum: $konvi_version pid: $pid ppid: $ppid\n";
 	eval $end if $b_log;
 	return $b_modern_konvi;
 }
 sub set_konvi_data {
 	eval $start if $b_log;
-	my $config_tool = '';
 	# https://userbase.kde.org/Konversation/Scripts/Scripting_guide
 	if ($client{'konvi'} == 3){
 		$client{'dserver'} = shift @ARGV;
@@ -6491,22 +6509,27 @@ sub set_konvi_data {
 	}
 	# for some reason this logic hiccups on multiple spaces between args
 	@ARGV = grep { $_ ne '' } @ARGV;
+	# my $config_cmd = '';
 	# there's no current kde 5 konvi config tool that we're aware of. Correct if changes.
-	if (main::check_program('kde4-config')){
-		$config_tool = 'kde4-config';
-	}
-	elsif (main::check_program('kde5-config')){
-		$config_tool = 'kde5-config';
-	}
-	elsif (main::check_program('kde-config')){
-		$config_tool = 'kde-config';
-	}
+	# This part may never have worked, but I don't have legacy data to determine.
+	# The idea was to get inxi.conf files from konvi data stores, but that was never right.
+	# if (main::check_program('kde4-config')){
+	#	$config_cmd = 'kde4-config --path data';
+	# }
+	# kde5-coinfig never existed, was replaced by $XDG_DATA_HOME in KDE
+	# elsif (main::check_program('kde-config')){
+	# 	$config_cmd = 'kde-config --path data';
+	# }
+	# elsif (main::check_program('qtpaths')){
+	# 	$config_cmd = 'qtpaths --paths GenericDataLocation';
+	# }
 	# The section below is on request of Argonel from the Konversation developer team:
 	# it sources config files like $HOME/.kde/share/apps/konversation/scripts/inxi.conf
-	if ($config_tool){
-		my @data = main::grabber("$config_tool --path data 2>/dev/null",':');
-		Configs::set(\@data);
-	}
+	#  if ($config_cmd){
+	#	  my @data = main::grabber("$config_cmd 2>/dev/null",':');
+	# 	Configs::set(\@data) if @data;
+	#	 main::log_data('dump',"kde config \@data",\@data) if $b_log;
+	# }
 	eval $end if $b_log;
 }
 }
@@ -6769,23 +6792,27 @@ sub message {
 	'disk-data' => 'No disk data found.',
 	'disk-data-bsd' => 'No disk data found.',
 	'disk-size-0' => 'Total N/A',
-	'display-driver-na' => ' X driver n/a',
+	'display-driver-na' => 'X driver n/a',
 	'display-server' => 'No display server data found. Headless machine?',
 	'dmesg-boot-permissions' => 'dmesg.boot permissions',
 	'dmesg-boot-missing' => 'dmesg.boot not found',
 	'dmidecode-dev-mem' => 'dmidecode is not allowed to read /dev/mem',
 	'dmidecode-smbios' => 'No SMBIOS data for dmidecode to process',
-	'gl-console' => 'No advanced graphics data found on this system in console.',
 	'edid-revision' => "invalid EDID revision: $id",
 	'edid-sync' => "bad sync value: $id",
 	'edid-version' => "invalid EDID version: $id",
-	'gl-empty' => 'Unset. Missing GL driver?',
+	'egl-wayland' => 'No known Wayland EGL/GBM data sources.',
+	'egl-wayland-console' => 'No known Wayland EGL/GBM data sources.',
+	'gfx-api' => 'No display API data. No known data sources.',
+	'gfx-api-console' => 'No display API data available in console. Headless machine?',
+	'gfx-api-xvesa' => 'No Xvesa VBE/GOP data found.',
+	'gl-console-glxinfo-missing' => 'GL data unavailable in console and glxinfo missing.',
+	'gl-console-root' => 'GL data unavailable in console for root.',
+	'gl-console-try' => 'GL data unavailable in console. Try -G --display',
+	'gl-display-root' => 'GL data unavailable for root.',
 	'gl-null' => 'No GL data found on this system.',
-	'gl-root' => 'GL data unavailable in console for root.',
-	'gl-root-display' => 'GL data unavailable for root.',
-	'gl-try' => 'GL data unavailable in console. Try -G --display',
+	'gl-value-empty' => 'Unset. Missing GL driver?',
 	'glxinfo-missing' => 'Unable to show GL data. Required tool glxinfo missing.',
-	'interface-wayland' => 'Wayland GBM/EGL data currently not available.',
 	'IP' => "No $id found. Connected to web? SSL issues?",
 	'IP-dig' => "No $id found. Connected to web? SSL issues? Try --no-dig",
 	'IP-no-dig' => "No $id found. Connected to web? SSL issues? Try enabling dig",
@@ -6873,7 +6900,6 @@ sub message {
 	'unknown-shell' => 'ERR-100',
 	'weather-error' => "Error: $id",
 	'weather-null' => "No $id found. Internet connection working?",
-	'xvesa-interface' => 'No Xvesa VBE/GOP data found.',
 	);
 	return $message{$type};
 }
@@ -7239,22 +7265,23 @@ sub print_data {
 					}
 					# see: Use of implicit split to @_ is deprecated. Only get this
 					# warning in Perl 5.08 oddly enough. ie, no: scalar (split(...));
-					my @temp = split(/\s+/, $val2);
-					$split_count = scalar @temp;
+					my @values = split(/\s+/, $val2);
+					$split_count = scalar @values;
 					# print "sc: $split_count l: " . (length("$key$sep{'s2'} $val2") + $indent_use), " val2: $val2\n";
 					if (!$b_single && 
-					 (length("$key$sep{'s2'} $val2") + $length) < $size{'max-cols'}){
+					(length("$key$sep{'s2'} $val2") + $length) <= $size{'max-cols'}){
 						# print "h-1: r1: $b_row1 iu: $indent_use\n";
 						$length += length("$key$sep{'s2'} $val2");
 						$holder .= "$colors{'c1'}$key$sep{'s2'}$colors{'c2'} $val2";
 					}
 					# handle case where the key/value pair is > max, and where there are 
 					# a lot of terms, like cpu flags, raid types supported. Raid can have
-					# the last row have a lot of devices, or many raid types
-					elsif (!$b_single && $split_count > 2 && !defined $ids{$key} &&
-					 (length("$key$sep{'s2'} $val2") + $indent_use + $length) > $size{'max-cols'}){
+					# the last row have a lot of devices, or many raid types. But we don't
+					# want to wrap things like: 3.45 MiB (6.3%)
+					elsif (!$b_single && $split_count > 2 && length($val2) > 24 && 
+					!defined $ids{$key} &&
+					(length("$key$sep{'s2'} $val2") + $indent_use + $length) > $size{'max-cols'}){
 						# print "m-2 r1: $b_row1 iu: $indent_use\n";
-						my @values = split(/\s+/, $val2);
 						$val3 = shift @values;
 						$start2 = "$colors{'c1'}$key$sep{'s2'}$colors{'c2'} $val3 ";
 						# case where not first item in line, but when key+first word added,
@@ -11476,7 +11503,7 @@ sub cp_cpu_arch {
 					$year = '2018';}
 				# note: had it as > 13, but 0xC seems to be CL
 				elsif ($stepping >= 13){
-					$arch = 'Comet Lake'; # guess, have not seen docs yet
+					$arch = 'Comet Lake'; # 10 gen
 					$process = 'Intel 14nm';
 					$year = '2019-20';}
 				# NOTE: not enough info to lock this down
@@ -11514,11 +11541,11 @@ sub cp_cpu_arch {
 					$year = '2018';} 
 			}
 			elsif ($model =~ /^(A5|A6)$/){
-				$arch = 'Comet Lake'; # stepping 0-5
+				$arch = 'Comet Lake'; # 10 gen; stepping 0-5
 				$process = 'Intel 14nm';
 				$year = '2020';}
 			elsif ($model =~ /^(A7|A8)$/){
-				$arch = 'Rocket Lake'; # stepping 1
+				$arch = 'Rocket Lake'; # 11 gen; stepping 1
 				$process = 'Intel 14nm';
 				$year = '2021+';} 
 			# More info: comet: shares family/model, need to find stepping numbers
@@ -11526,7 +11553,7 @@ sub cp_cpu_arch {
 			## IDS UNKNOWN, release late 2022
 			elsif ($model =~ /^(AA|AB|AC|B5)$/){
 				$arch = 'Meteor Lake'; # 14 gen
-				$process = 'Intel 4 (7nm)'; # confirm
+				$process = 'Intel 4 (7nm)';
 				$year = '2023+';}
 			elsif ($model =~ /^(AD|AE)$/){
 				$arch = 'Granite Rapids'; # ?
@@ -11536,13 +11563,16 @@ sub cp_cpu_arch {
 				$arch = 'Grand Ridge'; # 14 gen
 				$process = 'Intel 4 (7nm)'; # confirm
 				$year = '2023+';}
-			elsif ($model =~ /^(B7|BA)$/){
+			elsif ($model =~ /^(B7|BA|BF)$/){
 				$arch = 'Raptor Lake'; # 13 gen, socket LG 1700,1800
 				$process = 'Intel 7 (10nm)';
 			$year = '2022+';}
-			# Granite Rapids: Intel 3 (7nm+)
-			# Arrow Lake - 15 gen, 20A (2nm), 2025
-			# Lunar Lake - 16 gn, 18A (1.8nm), 2025
+			# Emerald Rapids: Intel 7 (10nm), 2023
+			# Granite Rapids: Intel 3 (7nm+), 2024
+			# Diamond Rapids: Intel 3 (7nm+), 2025
+			# Arrow Lake - 15 gen, Intel 20A (2nm), 2024
+			# Lunar Lake - 16 gen, Intel 18A (1.8nm), 2025
+			# Nova Lake - 17 gen, Intel 18A (1.8nm), 2026
 		}
 		# itanium 1 family 7 all recalled
 		elsif ($family eq 'B'){
@@ -14112,7 +14142,7 @@ sub drive_speed {
 ## GraphicItem 
 {
 package GraphicItem;
-my ($b_wayland_data,%graphics,$monitor_ids,$monitor_map);
+my ($b_primary,$b_wayland_data,%graphics,$monitor_ids,$monitor_map);
 my ($gpu_amd,$gpu_intel,$gpu_nv);
 sub get {
 	eval $start if $b_log;
@@ -14148,7 +14178,7 @@ sub get {
 	# note: not perfect, but we need usb gfx to show for all types, soc, pci, etc
 	usb_output($rows);
 	display_output($rows);
-	interface_output($rows);
+	display_api_output($rows);
 	(%graphics,$monitor_ids,$monitor_map) = ();
 	eval $end if $b_log;
 	return $rows;
@@ -14469,7 +14499,7 @@ sub display_output(){
 			else {
 				my $gpu_drivers = gpu_drivers_sys('all');
 				my $note_indent = 4;
-				if (@$gpu_drivers || @$x_drivers){
+				if (@$gpu_drivers || $graphics{'dri-drivers'} && @$x_drivers){
 					$rows->[$j]{main::key($num++,1,2,'driver')} = '';
 					# The only wayland setups with x drivers have xorg, transitional that is.
 					if (@$x_drivers){
@@ -14543,7 +14573,9 @@ sub display_output(){
 					}
 					if ($main->{'res-x'} && $main->{'res-y'}){
 						$resolution = $main->{'res-x'} . 'x' . $main->{'res-y'};
-						$resolution .= '~' . $main->{'hz'} . 'Hz' if $show{'graphic-basic'};
+						if ($main->{'hz'} && $show{'graphic-basic'}){
+							$resolution .= '~' . $main->{'hz'} . 'Hz';
+						}
 					}
 					$resolution ||= 'N/A';
 					if ($s_count == 1 || !$show{'graphic-basic'}){
@@ -14780,70 +14812,88 @@ sub monitors_output_full {
 	eval $end if $b_log;
 }
 
-## INTERFACE OUTPUT ##
-# as soon as EGL for Wayland appears add it!
-sub interface_output {
+## DISPLAY API OUTPUT ##
+# as soon as EGL data source for Wayland appears add it!
+sub display_api_output {
 	eval $start if $b_log;
 	my $rows = $_[0];
 	my $num = 0;
-	my ($program,$type);
+	my ($api,$program,$type);
 	# print ("$b_display : $b_root\n");
-	if ($b_display){
-		if (!$force{'wayland'} && ($program = main::check_program('glxinfo'))){
-			interface_glx_output($program,$rows,\$num);
-		}
-		elsif ($graphics{'xvesa'}){
-			interface_vesa_output($rows,\$num);
-		}
-		# handles no data until we find one for wayland egl data
-		elsif ($graphics{'protocol'} eq 'wayland'){
-			interface_egl_output($rows,\$num);
+	# xvesa is absolute, if it's there, it works in or out of display
+	if ($graphics{'xvesa'}){
+		xvesa_output($rows,\$num);
+	}
+	else {
+		if ($b_display){
+			if (!$force{'wayland'} && ($program = main::check_program('glxinfo'))){
+				opengl_output($program,$rows,\$num);
+			}
+			# handles no data until we find one for wayland egl data
+			elsif ($graphics{'protocol'} eq 'wayland'){
+				egl_output($rows,\$num);
+			}
+			else {
+				if (main::check_program('X') || main::check_program('Xorg')){
+					$api = 'OpenGL';
+					$type = 'glxinfo-missing';
+				}
+				# has to come after X tests, since X can have Xwayland installed.
+				elsif (main::check_program('Xwayland')){
+					$api = 'EGL/GBM';
+					$type = 'egl-wayland';
+				}
+				else {
+					$api = 'N/A';
+					$type = 'gfx-api';
+				}
+				push(@$rows,{
+				main::key($num++,1,1,'API') => $api,
+				main::key($num++,0,2,'Message') => main::message($type)
+				});
+			}
 		}
 		else {
+			if ($graphics{'protocol'} eq 'wayland'){
+				$api = 'EGL/GBM';
+				$type = 'egl-wayland-console';
+			}
+			elsif (main::check_program('glxinfo')){
+				$api = 'OpenGL';
+				$type = ($b_root) ? 'gl-console-root' : 'gl-console-try';
+			}
+			elsif (main::check_program('X') || main::check_program('Xorg')){
+				$api = 'OpenGL';
+				$type = 'gl-console-glxinfo-missing';
+			}
+			# has to come after X tests, since X can have Xwayland installed.
+			elsif (main::check_program('Xwayland')){
+				$api = 'EGL/GBM';
+				$type = 'egl-wayland-console';
+			}
+			# we don't know what it is, headless system, non xwayland wayland
+			else {
+				$api = 'N/A';
+				$type = 'gfx-api-console';
+			}
 			push(@$rows,{
-			main::key($num++,0,1,'Message') => main::message('glxinfo-missing')
+			main::key($num++,1,1,'API') => $api,
+			main::key($num++,0,2,'Message') => main::message($type)
 			});
 		}
 	}
-	else {
-		$type = 'gl-console';
-		if ($graphics{'xvesa'}){
-			interface_vesa_output($rows,\$num);
-		}
-		elsif (!main::check_program('glxinfo')){
-			if ($graphics{'protocol'} eq 'wayland'){
-				$type = 'interface-wayland';
-			}
-			else {
-				$type = 'glxinfo-missing';
-			}
-		}
-		else {
-			if ($graphics{'protocol'} eq 'wayland'){
-				$type = 'interface-wayland';
-			}
-			elsif ($b_root){
-				$type = 'gl-root';
-			}
-			else {
-				$type = 'gl-try';
-			}
-		}
-		push(@$rows,{
-		main::key($num++,0,1,'Message') => main::message($type)
-		});
-	}
 	eval $end if $b_log;
 }
-sub interface_egl_output {
+sub egl_output {
 	eval $start if $b_log;
 	my ($rows,$num) = @_;
 	push(@$rows,{
-	main::key($num++,0,1,'Message') => main::message('interface-wayland')
+	main::key($num++,1,1,'API') => 'EGL/GBM',
+	main::key($num++,0,2,'Message') => main::message('egl-wayland')
 	});
 	eval $end if $b_log;
 }
-sub interface_glx_output {
+sub opengl_output {
 	eval $start if $b_log;
 	my ($program,$rows,$num) = @_;
 	# NOTE: glxinfo -B is not always available, unfortunately
@@ -14851,15 +14901,16 @@ sub interface_glx_output {
 	# my $file = "$fake_data_dir/graphics/glxinfo/glxinfo-ssh-centos.txt";
 	# my @glxinfo = main::reader($file);
 	if (!@$glxinfo){
-		my $type = 'gl-console';
+		my $type;
 		if ($b_root){
-			$type = 'gl-root-display';
+			$type = 'gl-display-root';
 		}
 		else {
 			$type = 'gl-null';
 		}
 		push(@$rows, {
-		main::key($$num++,0,1,'Message') => main::message($type)
+		main::key($$num++,1,1,'API') => 'OpenGL',
+		main::key($$num++,0,2,'Message') => main::message($type)
 		});
 		return;
 	}
@@ -14874,11 +14925,10 @@ sub interface_glx_output {
 			if ($working[1]){
 				$working[1] = main::clean($working[1]);
 			}
-			# note: there are cases where gl drivers are missing and empty 
-			# field value occurs.
+			# note: seen cases where gl drivers are missing, with empty field value.
 			else {
 				$b_nogl = 1;
-				$working[1] = main::message('gl-empty');
+				$working[1] = main::message('gl-value-empty');
 			}
 			push(@renderer, $working[1]);
 		}
@@ -14900,7 +14950,7 @@ sub interface_glx_output {
 				$compat_version = $working[0];
 			}
 			elsif (!$b_nogl){
-				push(@opengl_version, main::message('gl-empty'));
+				push(@opengl_version, main::message('gl-value-empty'));
 			}
 		}
 		elsif (/^opengl core profile version/i){
@@ -14939,9 +14989,9 @@ sub interface_glx_output {
 	$renderer = join(', ', @renderer) if @renderer;
 	my $j = scalar @$rows;
 	push(@$rows, {
-	main::key($$num++,1,1,'OpenGL') => '',
-	main::key($$num++,1,2,'renderer') => ($renderer) ? $renderer : 'N/A',
+	main::key($$num++,1,1,'API') => 'OpenGL',
 	main::key($$num++,0,2,'v') => ($version) ? $version : 'N/A',
+	main::key($$num++,1,2,'renderer') => ($renderer) ? $renderer : 'N/A',
 	});
 	if ($b_compat && $extra > 1 && $compat_version){
 		$rows->[$j]{main::key($$num++,0,2,'compat-v')} = $compat_version;
@@ -14951,15 +15001,16 @@ sub interface_glx_output {
 	}
 	eval $end if $b_log;
 }
-# WARNING! Never seen a GOP type UEFI, needs more data
-sub interface_vesa_output {
+sub xvesa_output {
 	eval $start if $b_log;
 	my ($rows,$num) = @_;
 	my ($controller,$dac,$interface,$ram,$source,$version);
 	# note: goes to stderr, not stdout
 	my @data = main::grabber($graphics{'xvesa'} . ' -listmodes 2>&1');
 	my $j = scalar @$rows;
-	if ($data[0] && $data[0] =~ /^(VBE|GOP)\s+version\s+(\S+)\s\(([^)]+)\)/i){
+	# gop replaced uga, both for uefi
+	# WARNING! Never seen a GOP type UEFI, needs more data
+	if ($data[0] && $data[0] =~ /^(VBE|GOP|UGA)\s+version\s+(\S+)\s\(([^)]+)\)/i){
 		$interface = $1;
 		$version = $2;
 		$source = $3;
@@ -14973,10 +15024,11 @@ sub interface_vesa_output {
 		$ram = main::get_size($ram,'string');
 	}
 	if (!$interface){
-		$rows->[$j]{main::key($$num++,0,1,'Message')} = main::message('xvesa-interface');
+		$rows->[$j]{main::key($$num++,1,1,'API')} = 'VBE/GOP';
+		$rows->[$j]{main::key($$num++,0,2,'Message')} = main::message('gfx-api-xvesa');
 	}
 	else {
-		$rows->[$j]{main::key($$num++,1,1,'Interface')} = $interface;
+		$rows->[$j]{main::key($$num++,1,1,'API')} = $interface;
 		$rows->[$j]{main::key($$num++,0,2,'v')} = ($version) ? $version : 'N/A';
 		$rows->[$j]{main::key($$num++,0,2,'source')} = ($source) ? $source : 'N/A';
 		if ($dac){
@@ -15276,9 +15328,14 @@ sub swaymsg_data {
 					}
 					$monitor_ids->{$id}{'model'} = main::remove_duplicates($monitor_ids->{$id}{'model'});
 				}
-				if ($monitor_ids->{$id}{'primary'} && 
-				$monitor_ids->{$id}{'primary'} ne 'false'){
-					$monitor_ids->{$id}{'primary'} = $id;
+				if ($monitor_ids->{$id}{'primary'}){
+					if ($monitor_ids->{$id}{'primary'} ne 'false'){
+						$monitor_ids->{$id}{'primary'} = $id;
+						$b_primary = 1;
+					}
+					else {
+						$monitor_ids->{$id}{'primary'} = undef;
+					}
 				}
 				if (!$monitor_ids->{$id}{'serial'}){
 					$monitor_ids->{$id}{'serial'} = main::clean_dmi($mon->{'serial'});
@@ -15605,7 +15662,8 @@ sub xrandr_data {
 		$xrandr = main::grabber("$program $display_opt 2>/dev/null",'','strip','ref');
 	}
 	else {
-		 $xrandr = main::reader("$ENV{HOME}/bin/scripts/inxi/data/xrandr/xrandr-4-displays-1.txt",'strip','ref');
+		# $xrandr = main::reader("$ENV{HOME}/bin/scripts/inxi/data/xrandr/xrandr-4-displays-1.txt",'strip','ref');
+		 $xrandr = main::reader("$ENV{HOME}/bin/scripts/inxi/data/xrandr/xrandr-3-display-primary-issue.txt",'strip','ref');
 		# $xrandr = main::reader("$ENV{HOME}/bin/scripts/inxi/data/xrandr/xrandr-test-1.txt",'strip','ref');
 		# $xrandr = main::reader("$ENV{HOME}/bin/scripts/inxi/data/xrandr/xrandr-test-2.txt",'strip','ref');
 	}
@@ -15676,6 +15734,7 @@ sub xrandr_data {
 			if ($set_as){
 				$primary = $monitor_id;
 				$set_as =~ s/\s$//;
+				$b_primary = 1;
 			}
 			$monitors{$monitor_id} = {
 			'screen' => $screen_id,
@@ -15718,6 +15777,7 @@ sub xrandr_data {
 		$graphics{'display-screens'} = scalar @{$graphics{'screens'}};
 	}
 	map_monitor_ids(\@ids) if @ids;
+	# print "xrandr_screens 1: " . Data::Dumper::Dumper \@xrandr_screens;
 	foreach my $main (@{$graphics{'screens'}}){
 		# print "h: " . Data::Dumper::Dumper $main;
 		# print "h: " . Data::Dumper::Dumper @xrandr_screens;
@@ -15743,7 +15803,7 @@ sub xrandr_data {
 		$i++;
 	}
 	undef $layouts;
-	# print "xrand: " . Data::Dumper::Dumper \@xrandr_screens;
+	# print "xrandr_screens 2: " . Data::Dumper::Dumper \@xrandr_screens;
 	print 'Data: xrandr: ', Data::Dumper::Dumper $graphics{'screens'} if $dbg[17];
 	main::log_data('dump','$graphics{screens}',$graphics{'screens'}) if $b_log;
 	eval $end if $b_log;
@@ -16333,14 +16393,14 @@ sub set_intel_data {
 	'years' => '2019-21',
 	},
 	{'arch' => 'Gen-12.1',
-	'ids' => '4905|4908|4909|4c8a|4c8b|4c90|4c9a|9a40|9a49|9a60|9a68|9a70|9a78',
+	'ids' => '4905|4908|4c8a|4c8b|4c90|4c9a|9a40|9a49|9a60|9a68|9a70|9a78',
 	'code' => '',
 	'process' => 'Intel 10nm',
 	'years' => '2020-21',
 	},
 	{'arch' => 'Gen-12.2',
-	'ids' => '4626|4628|4682|4688|468a|468b|4690|4692|4693|46a3|46a6|46a8|46aa|' .
-	'46b3|46c3',
+	'ids' => '4626|4628|462a|4636|4638|463a|4682|4688|468a|468b|4690|4692|4693|' .
+	'46a3|46a6|46a8|46aa|46b0|46b1|46b3|46b6|46b8|46ba|46c1|46c3',
 	'code' => '',
 	'process' => 'Intel 10nm',
 	'years' => '2021-22+',
@@ -16469,7 +16529,7 @@ sub set_nv_data {
 	'xorg' => '1.19',
 	'years' => '2003-13',
 	},
-	# Legacy 340.xx
+	## Legacy 340.xx
 	# these are both Tesla and Tesla 2.0
 	{'arch' => 'Tesla',
 	'ids' => '0191|0193|0194|0197|019d|019e|0400|0401|0402|0403|0404|0405|0406|' .
@@ -16509,7 +16569,8 @@ sub set_nv_data {
 	'release' => '',
 	'series' => '367.xx',
 	'status' => main::message('nv-legacy-active','late 2022'),
-	'xorg' => '2012-18',
+	'xorg' => '',
+	'years' => '2012-18',
 	},
 	## Legacy 390.xx
 	# this is Fermi, Fermi 2.0
@@ -16576,7 +16637,7 @@ sub set_nv_data {
 	'1c91|1d10|1d12|1e91|1ed1|1ed3|1f14|1f54',
 	'code' => 'GMxxx',
 	'process' => 'TSMC 28nm',
-	'series' => '515.xx+',
+	'series' => '520.xx+',
 	'status' => $status_current,
 	'years' => '2014-19',
 	},
@@ -16589,7 +16650,7 @@ sub set_nv_data {
 	'1d34|1d52',
 	'code' => 'GP10x',
 	'process' => 'TSMC 16nm',
-	'series' => '515.xx+',
+	'series' => '520.xx+',
 	'status' => $status_current,
 	'years' => '2016-21',
 	},
@@ -16598,7 +16659,7 @@ sub set_nv_data {
 	'20b0|20b3|20b6',
 	'code' => 'GV1xx',
 	'process' => 'TSMC 12nm',
-	'series' => '515.xx+',
+	'series' => '520.xx+',
 	'status' => $status_current,
 	'years' => '2017-20',
 	},
@@ -16606,43 +16667,42 @@ sub set_nv_data {
 	'ids' => '1e02|1e04|1e07|1e09|1e30|1e36|1e78|1e81|1e82|1e84|1e87|1e89|1e90|' .
 	'1e91|1e93|1eb0|1eb1|1eb5|1eb6|1ec2|1ec7|1ed0|1ed1|1ed3|1ef5|1f02|1f03|1f06|' .
 	'1f07|1f08|1f0a|1f0b|1f10|1f11|1f12|1f14|1f15|1f36|1f42|1f47|1f50|1f51|1f54|' .
-	'1f55|1f76|1f82|1f91|1f95|1f96|1f97|1f98|1f99|1f9c|1f9d|1f9f|1fa0|1fb0|1fb1|' .
-	'1fb2|1fb6|1fb7|1fb8|1fb9|1fba|1fbb|1fbc|1fdd|1ff0|1ff2|1ff9|2182|2184|2187|' .
-	'2188|2189|2191|2192|21c4|21d1|25a6|25a7|25a9|25aa',
+	'1f55|1f76|1f82|1f83|1f91|1f95|1f96|1f97|1f98|1f99|1f9c|1f9d|1f9f|1fa0|1fb0|' .
+	'1fb1|1fb2|1fb6|1fb7|1fb8|1fb9|1fba|1fbb|1fbc|1fdd|1ff0|1ff2|1ff9|2182|2184|' .
+	'2187|2188|2189|2191|2192|21c4|21d1|25a6|25a7|25a9|25aa',
 	'code' => 'TUxxx',
 	'process' => 'TSMC 12nm',
-	'series' => '515.xx+',
+	'series' => '520.xx+',
 	'status' => $status_current,
 	'years' => '2018-22',
 	},
 	{'arch' => 'Ampere',
-	'ids' => '20b0|20b2|20b5|20b7|20f1|2203|2204|2206|2208|220a|220d|2216|2230|' .
-	'2231|2232|2233|2235|2236|2237|2238|2414|2420|2438|2460|2482|2484|2486|2487|' .
-	'2488|2489|248a|249c|249d|24a0|24b0|24b1|24b6|24b7|24b8|24b9|24ba|24bb|24dc|' .
-	'24dd|24e0|24fa|2503|2504|2507|2508|2520|2523|2531|2560|2563|2571|25a0|25a2|' .
-	'25a5|25b6|25b8|25b9|25ba|25bb|25e0|25e2|25e5|25f9|25fa',
+	'ids' => '20b0|20b2|20b5|20b7|20f1|2203|2204|2206|2207|2208|220a|220d|2216|' .
+	'2230|2231|2232|2233|2235|2236|2237|2238|2414|2420|2438|2460|2482|2484|2486|' .
+	'2487|2488|2489|248a|249c|249d|24a0|24b0|24b1|24b6|24b7|24b8|24b9|24ba|24bb|' .
+	'24c9|24dc|24dd|24e0|24fa|2503|2504|2507|2508|2520|2521|2523|2531|2544|2560|' .
+	'2563|2571|25a0|25a2|25a5|25b6|25b8|25b9|25ba|25bb|25e0|25e2|25e5|25f9|25fa',
 	'code' => 'GAxxx',
 	'process' => 'TSMC n7 (7nm)',
-	'series' => '515.xx+',
+	'series' => '520.xx+',
 	'status' => $status_current,
 	'years' => '2020-22',
 	},
-	# no ids yet
 	{'arch' => 'Hopper',
-	'ids' => '',
+	'ids' => '2331',
 	'code' => 'GH1xx',
 	'pattern' => '\bG?H[12]\d{2}',
 	'process' => 'TSMC n4 (5nm)',
-	'series' => '515.xx+',
+	'series' => '520.xx+',
 	'status' => $status_current,
 	'years' => '2022+',
 	},
 	{'arch' => 'Lovelace',
-	'ids' => '',
+	'ids' => '2684',
 	'code' => 'AD1xx',
 	'pattern' => '\bG?L\d{1,4}|\bAD1\d{2}|RTX [6-8]0\d{2}',
 	'process' => 'TSMC n4 (5nm)',
-	'series' => '515.xx+',
+	'series' => '520.xx+',
 	'status' => $status_current,
 	'years' => '2022-23+',
 	},
@@ -16851,7 +16911,7 @@ sub advanced_monitor_data {
 	foreach my $key (keys %$monitors){
 		next if !defined $monitors->{$key}{'pos-x'} || !defined $monitors->{$key}{'pos-y'};
 		# this is the only scenario we can guess at if no primary detected
-		if (!$monitors->{$key}{'primary'} &&
+		if (!$b_primary && !$monitors->{$key}{'primary'} &&
 		 $monitors->{$key}{'pos-x'} == 0 && $monitors->{$key}{'pos-y'} == 0){
 			$monitors->{$key}{'position'} = 'primary';
 			$monitors->{$key}{'primary'} = $monitors->{$key}{'monitor'};
@@ -19413,6 +19473,8 @@ sub set_partitions {
 	# push @partitions_working, '//mafreebox.freebox.fr/Disque dur cifs         239216096  206434016  20607496      91% /freebox/Disque dur';
 	# push @partitions_working, '//mafreebox.freebox.fr/AllPG      cifs         436616192  316339304 120276888      73% /freebox/AllPG';
 	# push(@partitions_working,'/dev/loop0p1                  iso9660         3424256   3424256           0     100% /media/jason/d-live nf 11.3.0 gn 6555 9555 amd64');
+	# push(@partitions_working,'drvfs          9p        511881212 115074772  396806440      23% /mnt/c');
+	# push(@partitions_working,'drivers        9p        511881212 115074772  396806440      23% /usr/lib/wsl/drivers');
 	foreach (@partitions_working){
 		($dev_base,$dev_mapped,$dev_type,$fs,$id,$label,
 		$maj_min,$type,$uuid) = ('','','','','','','','','');
@@ -19438,7 +19500,7 @@ sub set_partitions {
 		$row[0] =~ s/\^\^/ /g if $b_space; # reset spaces in > 1 word fs name
 		# autofs is a bsd thing, has size 0
 		if ($row[0] =~ /^($filters)$/ || $row[0] =~ /^ROOT/i || 
-		 ($b_fs && ($row[2] == 0 || $row[1] =~ /^(autofs|devtmpfs|iso9660|tmpfs)$/))){
+		($b_fs && ($row[2] == 0 || $row[1] =~ /^(autofs|devtmpfs|iso9660|tmpfs)$/))){
 			next;
 		}
 		# cygwin C:\cygwin passes this test so has to be handled later
@@ -19471,14 +19533,15 @@ sub set_partitions {
 		# note: Main/jails/transmission_1 path can be > 1 deep 
 		# Main zfs 3678031340 8156 3678023184 0% /mnt/Main
 		if (!$dev_base && ($row[0] =~ /^([^\/]+\/)(.+)/ || 
-		 ($row[0] =~ /^[^\/]+$/ && $row[1] =~ /^(btrfs|hammer[2-9]?|zfs)$/))){
+		($row[0] =~ /^[^\/]+$/ && $row[1] =~ /^(btrfs|hammer[2-9]?|zfs)$/)) ||
+		($windows{'wsl'} && $row[0] eq 'drivers')){
 			$dev_base = $row[0];
 			$dev_type = 'logical';
 		}
 		# this handles yet another fredforfaen special case where a mounted drive
 		# has the search string in its name, includes / (|
 		if ($row[-1] =~ m%^/(|boot|boot/efi|home|opt|tmp|usr|usr/home|var|var/log|var/tmp)$% ||
-		 ($b_android && $row[-1] =~ /^\/(cache|data|firmware|system)$/)){
+		($b_android && $row[-1] =~ /^\/(cache|data|firmware|system)$/)){
 			$b_load = 1;
 			# note, older df in bsd do not have file system column
 			$type = 'main';
@@ -19530,11 +19593,18 @@ sub set_partitions {
 			}
 			if (!$dev_type){
 				# C:/cygwin64, D:
-				if ($b_cygwin && $row[0] =~ /^[A-Z]+:/){
+				if ($windows{'cygwin'} && $row[0] =~ /^[A-Z]+:/){
 					$dev_type = 'windows';
 					$dev_base = $row[0] if !$dev_base;
 					# looks weird if D:, yes, I know, windows uses \, but cygwin doesn't
 					$dev_base .= '/' if $dev_base =~ /:$/; 
+				}
+				elsif ($windows{'wsl'} && $row[0] =~ /^(drvfs)/){
+					$dev_type = 'windows';
+					if ($id =~ m|^/mnt/([a-z])$|){
+						$dev_base = uc($1) . ':';
+					}
+					$dev_base = $row[0] if !$dev_base;
 				}
 				# need data set, this could maybe be converted to use 
 				# dev-mapped and abspath but not without testing
@@ -20146,7 +20216,7 @@ sub get {
 	# print 'get md: ', Data::Dumper::Dumper \@md_raid;
 	# print 'get zfs: ', Data::Dumper::Dumper \@zfs_raid;
 	if (!@btrfs_raid && !@lvm_raid && !@md_raid && !@zfs_raid && !@soft_raid && 
-	 !$hardware_raid){
+	!$hardware_raid){
 		if ($show{'raid-forced'}){
 			$key1 = 'Message';
 			$val1 = main::message('raid-data');
@@ -20555,7 +20625,7 @@ sub zfs_output {
 				$rows->[$j]{main::key($num++,0,3,'size')} = $size;
 				$rows->[$j]{main::key($num++,0,3,'free')} = $available;
 				if ($extra > 2){
-					$allocated = ($row->{'raw-allocated'}) ? main::get_size($row2->{'allocated'},'string') : '';
+					$allocated = ($row2->{'raw-allocated'}) ? main::get_size($row2->{'raw-allocated'},'string') : '';
 					if ($allocated){
 						$rows->[$j]{main::key($num++,0,3,'allocated')} = $allocated;
 					}
@@ -21188,13 +21258,15 @@ sub zfs_data {
 		#  ada0s2    25.9G  14.6G  11.3G         -     0%    56%
 		#    gptid/3838f796-5c46-11e6-a931-d05099ac4dc2      -      -      -         -      -      -
 		# Using /dev/disk/by-id:
-		#  ata-VBOX_HARDDISK_VB5b6350cd-06618d58      -      -      -        -         -      -      -      -  ONLINE
+		#  ata-VBOX_HARDDISK_VB5b6350cd-06618d58    
+		# Using /dev/disk/by-partuuid:
+		#  ec399377-c03c-e844-a876-8c8b044124b8     -        -         -      -      -      -  ONLINE
 		# Spare in use:
 		#  /home/fred/zvol/hdd-2-3          -      -      -        -         -      -      -      -  INUSE
-		elsif ($row[1] =~ /^(sd[a-z]+|[a-z0-9]+[0-9]+|([\S]+)\/.*|(ata|mmc|nvme|pci|scsi|wwn)-\S+)$/ && 
-		 ($row[2] eq '-' || $row[2] =~ /^[0-9\.]+[MGTPE]$/)){
+		elsif ($row[1] =~ /^(sd[a-z]+|[a-z0-9]+[0-9]+|([\S]+)\/.*|(ata|mmc|nvme|pci|scsi|wwn)-\S+|[a-f0-9]{4,}(-[a-f0-9]{4,}){3,})$/ && 
+		($row[2] eq '-' || $row[2] =~ /^[0-9\.]+[MGTPE]$/)){
 			#print "r1:$row[1]",' :: ', Cwd::abs_path('/dev/disk/by-id/'.$row[1]), "\n";
-			$row[1] =~ /^(sd[a-z]+|[a-z0-9]+[0-9]+|([\S]+)\/.*|(ata|mmc|nvme|pci|scsi|wwn)-\S+)\s.*?(DEGRADED|FAULTED|INUSE|OFFLINE)?$/;
+			$row[1] =~ /^(sd[a-z]+|[a-z0-9]+[0-9]+|([\S]+)\/.*|(ata|mmc|nvme|pci|scsi|wwn)-\S+|[a-f0-9]{4,}(-[a-f0-9]{4,}){3,})\s.*?(DEGRADED|FAULTED|INUSE|OFFLINE)?$/;
 			#my $working = '';
 			my $working = ($1) ? $1 : ''; # note: the negative case can never happen
 			my $state = ($4) ? $4 : '';
@@ -21212,37 +21284,44 @@ sub zfs_data {
 				$real =~ s|/dev/||;
 				$working = $real;
 			}
+			elsif (!$bsd_type && $row[1] =~ /^[a-f0-9]{4,}(-[a-f0-9]{4,}){3,}$/ &&
+			-e "/dev/disk/by-partuuid/$row[1]" && ($real = Cwd::abs_path('/dev/disk/by-partuuid/'.$row[1]))){
+				$real =~ s|/dev/||;
+				$working = $real;
+			}
 			# kind of a hack, things like cache may not show size/free
 			# data since they have no array row, but they might show it in 
 			# component row:
 			#   ada0s2    25.9G  19.6G  6.25G         -     0%    75%
-			if (!$zfs[$j]->{'size'} && $row[2] && $row[2] ne '-'){
-				$size = ($row[2])? main::translate_size($row[2]): '';
+			#   ec399377-c03c-e844-a876-8c8b044124b8  1.88G   397M  1.49G        -         -     0%  20.7%      -    ONLINE
+			# keys were size/allocated/free but those keys don't exist, assume failed to add raw-
+			if (!$zfs[$j]->{'raw-size'} && $row[2] && $row[2] ne '-'){
+				$size = ($row[2]) ? main::translate_size($row[2]): '';
 				$size_holder = 0;
-				$zfs[$j]->{'arrays'}[$k]{'size'} = $size;
+				$zfs[$j]->{'arrays'}[$k]{'raw-size'} = $size;
 				$raw_logical[0] += $size if $size;
 			}
-			if (!$zfs[$j]->{'allocated'} && $row[3] && $row[3] ne '-'){
-				$allocated = ($row[3])? main::translate_size($row[3]): '';
-				$zfs[$j]->{'arrays'}[$k]{'allocated'} = $allocated;
+			if (!$zfs[$j]->{'raw-allocated'} && $row[3] && $row[3] ne '-'){
+				$allocated = ($row[3]) ? main::translate_size($row[3]) : '';
+				$zfs[$j]->{'arrays'}[$k]{'raw-allocated'} = $allocated;
 			}
-			if (!$zfs[$j]->{'free'} && $row[4] && $row[4] ne '-'){
-				$free = ($row[4])? main::translate_size($row[4]): '';
-				$zfs[$j]->{'arrays'}[$k]{'free'} = $free;
+			if (!$zfs[$j]->{'raw-free'} && $row[4] && $row[4] ne '-'){
+				$free = ($row[4]) ? main::translate_size($row[4]) : '';
+				$zfs[$j]->{'arrays'}[$k]{'raw-free'} = $free;
 			}
-			if ((!$maj_min || !$part_size) && @proc_partitions){
+			if ((!$maj_min || !$part_size) && $working && @proc_partitions){
 				my $part = PartitionData::get($working);
 				if (@$part){
 					$maj_min = $part->[0] . ':' . $part->[1];
 					$part_size = $part->[2];
 				}
 			}
-			if ((!$maj_min || !$part_size) && @lsblk){
+			if ((!$maj_min || !$part_size) && $working && @lsblk){
 				my $data= LsblkData::get($working);
 				$maj_min = $data->{'maj-min'};
 				$part_size = $data->{'size'};
 			}
-			if (!$part_size && $bsd_type){
+			if (!$part_size && $bsd_type && $working){
 				my $temp = DiskDataBSD::get($working);
 				$part_size = $temp->{'size'} if $temp->{'size'};
 			}
@@ -28319,7 +28398,9 @@ sub get_linux_distro {
 	# that stuff changes, legacy, deprecated, but these ideally are going to be right
 	my $osr_good = 'manjaro|antergos|chakra|guix|mageia|pclinuxos|raspberry pi os|';
 	$osr_good .= 'slint|zorin';
- 	my ($b_issue,$b_lsb,$b_skip_issue,$b_skip_osr);
+	# force use of pretty name because that's only location of derived distro name
+	my $osr_pretty = 'zinc';
+ 	my ($b_issue,$b_lsb,$b_osr_pretty,$b_skip_issue,$b_skip_osr);
 	my ($issue,$lsb_release) = ('/etc/issue','/etc/lsb-release');
 	$b_issue = 1 if -f $issue;
 	$b_lsb = 1 if -f $lsb_release;
@@ -28357,8 +28438,13 @@ sub get_linux_distro {
 	# Note that antergos changed this around 	# 2018-05, and now lists 
 	# antergos in os-release, sigh... We want these distros to use os-release 
 	# if it contains their names. Last check below
-	if (@osr && (grep {/($osr_good)/i} @osr)){
-		$distro_file = $os_release;
+	if (@osr){
+		if (grep {/($osr_good)/i} @osr){
+			$distro_file = $os_release;
+		}
+		elsif (grep {/($osr_pretty)/i} @osr){
+			$b_osr_pretty = 1;
+		}
 	}
 	if (grep {/armbian/} @distro_files){
 		$distro_id = 'armbian' ;
@@ -28415,7 +28501,7 @@ sub get_linux_distro {
 		$distro = get_lsb_release();
 	}
 	elsif ($distro_file && $distro_file eq $os_release){
-		$distro = get_os_release();
+		$distro = get_os_release($b_osr_pretty);
 		$b_skip_osr = 1;
 	}
 	# if distro id file was found and it's not in the exluded primary distro file list, read it
@@ -28454,7 +28540,7 @@ sub get_linux_distro {
 		# os-release/lsb gives more manageable and accurate output than issue, 
 		# but mint should use issue for now. Antergos uses arch os-release, but issue shows them
 		if (!$b_skip_issue && @osr){
-			$distro = get_os_release();
+			$distro = get_os_release($b_osr_pretty);
 			$b_skip_osr = 1;
 		}
 		elsif (!$b_skip_issue && $b_lsb){
@@ -28484,20 +28570,20 @@ sub get_linux_distro {
 	# not handling the corrupt data, maybe later if needed. 10 + distro: (8) + string
 	if ($distro && length($distro) > 60){
 		if (!$b_skip_osr && @osr){
-			$distro = get_os_release();
+			$distro = get_os_release($b_osr_pretty);
 			$b_skip_osr = 1;
 		}
 	}
 	# test for /etc/lsb-release as a backup in case of failure, in cases 
 	# where > one version/release file were found but the above resulted 
 	# in null distro value. 
-	if (!$distro && $b_cygwin){
+	if (!$distro && $windows{'cygwin'}){
 		$distro = $uname[0]; # like so: CYGWIN_NT-10.0-19043
 		$b_skip_osr = 1;
 	}
 	if (!$distro){
 		if (!$b_skip_osr && @osr){
-			$distro = get_os_release();
+			$distro = get_os_release($b_osr_pretty);
 			$b_skip_osr = 1;
 		}
 		elsif ($b_lsb){
@@ -28600,7 +28686,7 @@ sub system_base {
 	# osr has distro name but has fedora centos redhat ID_LIKE and VERSION_ID same
 	my $base_osr_redhat = 'almalinux|centos|rocky'; 
 	# osr has distro name but has ubuntu ID_LIKE/UBUNTU_CODENAME
-	my $base_osr_ubuntu = 'mint|neon|nitrux|pop!_os|zorin'; 
+	my $base_osr_ubuntu = 'mint|neon|nitrux|pop!_os|tuxedo|zinc|zorin'; 
 	my $base_upstream_lsb = '/etc/upstream-release/lsb-release';
 	my $base_upstream_osr = '/etc/upstream-release/os-release';
 	# these id as themselves, but system base is version file
@@ -28649,7 +28735,7 @@ sub system_base {
 			$system_base = get_os_release();
 		}
 		if (!$system_base && $base_type){
-			$system_base = get_os_release($base_type);
+			$system_base = get_os_release('',$base_type);
 		}
 	}
 	if (!$system_base && @distro_files && 
@@ -28738,7 +28824,7 @@ sub get_lsb_release {
 }
 sub get_os_release {
 	eval $start if $b_log;
-	my ($base_type) = @_;
+	my ($b_osr_pretty,$base_type) = @_;
 	my ($base_id,$base_name,$base_version,$distro,$distro_name,
 	$name,$name_lc,$name_pretty,
 	$version_codename,$version_name,$version_id) = ('','','','','','','','','','','');
@@ -28797,7 +28883,7 @@ sub get_os_release {
 	# arco shows only the release name, like kirk, in pretty name. Too many distros 
 	# are doing pretty name wrong, and just putting in the NAME value there
 	if (!$base_type){
-		if ($name && $version_name){
+		if ((!$b_osr_pretty || !$name_pretty) && $name && $version_name){
 			$distro = $name;
 			$distro = 'Arco Linux' if $name_lc =~ /^arco/;
 			if ($version_id && $version_name !~ /$version_id/){
@@ -29122,24 +29208,27 @@ sub get_hostname {
 	return $hostname;
 }
 
-sub get_init_data {
+## InitData
+{
+package InitData;
+my ($init,$init_version,$program) = ('','','');
+sub get {
 	eval $start if $b_log;
-	my $runlevel = get_runlevel_data();
+	my $runlevel = get_runlevel();
 	my $default = ($extra > 1) ? get_runlevel_default() : '';
-	my ($init,$init_version,$rc,$rc_version,$program) = ('','','','','');
-	my $comm = (-r '/proc/1/comm') ? reader('/proc/1/comm','',0) : '';
-	my (@data);
+	my ($rc,$rc_version) = ('','');
+	my $comm = (-r '/proc/1/comm') ? main::reader('/proc/1/comm','',0) : '';
 	# this test is pretty solid, if pid 1 is owned by systemd, it is systemd
 	# otherwise that is 'init', which covers the rest of the init systems.
 	# more data may be needed for other init systems. 
 	# Some systemd cases no /proc/1/comm exists however :(
 	if (($comm && $comm =~ /systemd/) || -e '/run/systemd/units'){
 		$init = 'systemd';
-		if ($program = check_program('systemd')){
-			$init_version = program_version($program,'^systemd','2','--version',1);
+		if ($program = main::check_program('systemd')){
+			$init_version = main::program_version($program,'^systemd','2','--version',1);
 		}
-		if (!$init_version && ($program = check_program('systemctl'))){
-			$init_version = program_version($program,'^systemd','2','--version',1);
+		if (!$init_version && ($program = main::check_program('systemctl'))){
+			$init_version = main::program_version($program,'^systemd','2','--version',1);
 		}
 		if ($runlevel && $runlevel =~ /^\d$/){
 			my $target = '';
@@ -29153,16 +29242,30 @@ sub get_init_data {
 		}
 	}
 	if (!$init && $comm){
+		# not verified
+		if ($comm =~ /^31init/){
+			$init = '31init';
+			# no version, this is a 31 line C program
+		}
 		# epoch version == Epoch Init System 1.0.1 "Sage"
-		if ($comm =~ /epoch/){
+		elsif ($comm =~ /epoch/){
 			$init = 'Epoch';
-			$init_version = program_version('epoch', '^Epoch', '4','version');
+			$init_version = main::program_version('epoch', '^Epoch', '4','version');
+		}
+		# if they fix dinit to show /proc/1/comm == dinit
+		elsif ($comm =~ /^dinit/){
+			dinit_data();
 		}
 		elsif ($comm =~ /finit/){
 			$init = 'finit';
-			if ($program = check_program('finit')){
-				$init_version = program_version($program,'^Finit','2','-v',1);
+			if ($program = main::check_program('finit')){
+				$init_version = main::program_version($program,'^Finit','2','-v',1);
 			}
+		}
+		# not verified
+		elsif ($comm =~ /^hummingbird/){
+			$init = 'Hummingbird';
+			# no version data known. Complete if more info found.
 		}
 		# nosh can map service manager to systemctl, service, rcctl, at least.
 		elsif ($comm =~ /^nosh/){
@@ -29171,16 +29274,28 @@ sub get_init_data {
 		# missing data: note, runit can install as a dependency without being the 
 		# init system: http://smarden.org/runit/sv.8.html
 		# NOTE: the proc test won't work on bsds, so if runit is used on bsds we 
-		# will need more datas
+		# will need more data
 		elsif ($comm =~ /runit/){
 			$init = 'runit';
-		}
-		elsif ($comm =~ /shepherd/){
-			$init = 'Shepherd';
-			$init_version = program_version('shepherd', '^shepherd', '4','--version',1);
+			# no version data as of 2022-10-26
 		}
 		elsif ($comm =~ /^s6/){
 			$init = 's6';
+			# no version data as of 2022-10-26
+		}
+		elsif ($comm =~ /shepherd/){
+			$init = 'Shepherd';
+			$init_version = main::program_version('shepherd', '^shepherd', '4','--version',1);
+		}
+		# fallback for some inits that link to /sbin/init
+		elsif ($comm eq 'init'){
+			# shows /sbin/dinit-init but may change
+			if (-e '/sbin/dinit' && readlink('/sbin/init') =~ /dinit/){
+				dinit_data();
+			}
+			elsif (-e '/sbin/openrc-init' && readlink('/sbin/init') =~ /openrc/){
+				($init,$init_version) = openrc_data();
+			}
 		}
 	}
 	if (!$init){
@@ -29188,42 +29303,36 @@ sub get_init_data {
 		# init (upstart 0.6.3)
 		# openwrt /sbin/init hangs on --version command, I think
 		if (!%risc && 
-		 ($init_version = program_version('init', 'upstart', '3','--version'))){
+		 ($init_version = main::program_version('init', 'upstart', '3','--version'))){
 			$init = 'Upstart';
 		}
-		elsif (check_program('launchctl')){
+		elsif (main::check_program('launchctl')){
 			$init = 'launchd';
 		}
 		# could be nosh or runit as well for BSDs, not handled yet
 		elsif (-f '/etc/inittab'){
 			$init = 'SysVinit';
-			if (check_program('strings')){
-				@data = grabber('strings /sbin/init');
-				$init_version = awk(\@data,'^version\s+[0-9]',2);
+			if (main::check_program('strings')){
+				my @data = main::grabber('strings /sbin/init');
+				$init_version = main::awk(\@data,'^version\s+[0-9]',2);
 			}
 		}
 		elsif (-f '/etc/ttys'){
 			$init = 'init (BSD)';
 		}
 	}
-	if ((grep { /openrc/ } globber('/run/*openrc*')) || (grep {/openrc/} @ps_cmd)){
-		$rc = 'OpenRC';
-		# /sbin/openrc --version == openrc (OpenRC) 0.13
-		if ($program = check_program('openrc')){
-			$rc_version = program_version($program, '^openrc', '3','--version');
-		}
-		# /sbin/rc --version == rc (OpenRC) 0.11.8 (Gentoo Linux)
-		elsif ($program = check_program('rc')){
-			$rc_version = program_version($program, '^rc', '3','--version');
+	if ((grep { /openrc/ } main::globber('/run/*openrc*')) || (grep {/openrc/} @ps_cmd)){
+		if (!$init || $init ne 'OpenRC'){
+			($rc,$rc_version) = openrc_data();
 		}
 		if (-r '/run/openrc/softlevel'){
-			$runlevel = reader('/run/openrc/softlevel','',0);
+			$runlevel = main::reader('/run/openrc/softlevel','',0);
 		}
 		elsif (-r '/var/run/openrc/softlevel'){
-			$runlevel = reader('/var/run/openrc/softlevel','',0);
+			$runlevel = main::reader('/var/run/openrc/softlevel','',0);
 		}
-		elsif ($program = check_program('rc-status')){
-			$runlevel = (grabber("$program -r 2>/dev/null"))[0];
+		elsif ($program = main::check_program('rc-status')){
+			$runlevel = (main::grabber("$program -r 2>/dev/null"))[0];
 		}
 	}
 	eval $end if $b_log;
@@ -29235,6 +29344,85 @@ sub get_init_data {
 	'runlevel' => $runlevel,
 	'default' => $default,
 	};
+}
+sub dinit_data {
+	eval $start if $b_log;
+	$init = 'dinit';
+	# Dinit version 0.15.1. 
+	if ($program = main::check_program('dinit')){
+		$init_version = main::program_version($program,'^Dinit','3','--version',1);
+		$init_version =~ s/\.$//;
+	}
+	eval $end if $b_log;
+}
+sub openrc_data {
+	eval $start if $b_log;
+	my $version;
+	# /sbin/openrc --version == openrc (OpenRC) 0.13
+	if ($program = main::check_program('openrc')){
+		$version = main::program_version($program, '^openrc', '3','--version');
+	}
+	# /sbin/rc --version == rc (OpenRC) 0.11.8 (Gentoo Linux)
+	elsif ($program = main::check_program('rc')){
+		$version = main::program_version($program, '^rc', '3','--version');
+	}
+	eval $end if $b_log;
+	return ('OpenRC',$version);
+}
+# # check? /var/run/nologin for bsds?
+sub get_runlevel {
+	eval $start if $b_log;
+	my $runlevel = '';
+	if ($program = main::check_program('runlevel')){
+		# variants: N 5; 3 5; unknown
+		$runlevel = (main::grabber("$program 2>/dev/null"))[0];
+		$runlevel = undef if $runlevel && lc($runlevel) eq 'unknown';
+		$runlevel =~ s/^(\S\s)?(\d)$/$2/ if $runlevel;
+		# print_line($runlevel . ";;");
+	}
+	eval $end if $b_log;
+	return $runlevel;
+}
+# note: it appears that at least as of 2014-01-13, /etc/inittab is going 
+# to be used for default runlevel in upstart/sysvinit. systemd default is 
+# not always set so check to see if it's linked.
+sub get_runlevel_default {
+	eval $start if $b_log;
+	my @data;
+	my $default = '';
+	if ($program = main::check_program('systemctl')){
+		# note: systemd systems do not necessarily have this link created
+		my $systemd = '/etc/systemd/system/default.target';
+		# faster to read than run
+		if (-e $systemd){
+			$default = readlink($systemd);
+			$default =~ s/(.*\/|\.target$)//g if $default; 
+		}
+		if (!$default){
+			$default = (main::grabber("$program get-default 2>/dev/null"))[0];
+			$default =~ s/\.target$// if $default;
+		}
+	}
+	if (!$default){
+		# http://askubuntu.com/questions/86483/how-can-i-see-or-change-default-run-level
+		# note that technically default can be changed at boot but for inxi purposes 
+		# that does not matter, we just want to know the system default
+		my $upstart = '/etc/init/rc-sysinit.conf';
+		my $inittab = '/etc/inittab';
+		if (-r $upstart){
+			# env DEFAULT_RUNLEVEL=2
+			@data = main::reader($upstart);
+			$default = main::awk(\@data,'^env\s+DEFAULT_RUNLEVEL',2,'=');
+		}
+		# handle weird cases where null but inittab exists
+		if (!$default && -r $inittab){
+			@data = main::reader($inittab);
+			$default = main::awk(\@data,'^id.*initdefault',2,':');
+		}
+	}
+	eval $end if $b_log;
+	return $default;
+}
 }
 
 ## IpData
@@ -29938,7 +30126,7 @@ sub package_counts {
 	['cards','pkginfo','p','-i',1,1,'','main::check_program(\'cards\')'], 
 	# older dpkg-query do not support -f values consistently: eg ${binary:Package}
 	['dpkg','dpkg-query','p','-W -f=\'${Package}\n\'',1,0,'','',
-	 ['apt','apt-get','aptitude','synaptic']],
+	 ['apt','apt-get','aptitude','deb-get','nala','synaptic']],
 	['emerge','emerge','d','/var/db/pkg/*/*/',1,5,'\\/'],
 	['eopkg','eopkg','d','/var/lib/eopkg/package/*',1,5,'\\/'],
 	['guix-sys','guix','p','package -p "/run/current-system/profile" -I',1,0,''],
@@ -30044,8 +30232,8 @@ sub package_counts {
 	eval $end if $b_log;
 }
 sub appimage_counts {
-	if (@ps_cmd && (grep {/\bappimaged\b/} @ps_cmd)){
-		my @list = main::globber($ENV{'HOME'} . '/.local/bin/*.appimage');
+	if (@ps_cmd && (grep {/\bappimage(d|launcher)\b/} @ps_cmd)){
+		my @list = main::globber($ENV{'HOME'} . '/.{appimage/,local/bin/}*.[aA]pp[iI]mage');
 		$count = scalar @list;
 		$pms{'zzz-appimage'} = {
 		'pkgs' => $count,
@@ -31036,62 +31224,6 @@ sub set_ps_gui {
 	eval $end if $b_log;
 }
 
-# # check? /var/run/nologin for bsds?
-sub get_runlevel_data {
-	eval $start if $b_log;
-	my $runlevel = '';
-	if (my $program = check_program('runlevel')){
-		# variants: N 5; 3 5; unknown
-		$runlevel = (grabber("$program 2>/dev/null"))[0];
-		$runlevel = undef if $runlevel && lc($runlevel) eq 'unknown';
-		$runlevel =~ s/^(\S\s)?(\d)$/$2/ if $runlevel;
-		# print_line($runlevel . ";;");
-	}
-	eval $end if $b_log;
-	return $runlevel;
-}
-
-# note: it appears that at least as of 2014-01-13, /etc/inittab is going 
-# to be used for default runlevel in upstart/sysvinit. systemd default is 
-# not always set so check to see if it's linked.
-sub get_runlevel_default {
-	eval $start if $b_log;
-	my @data;
-	my $default = '';
-	if (my $program = check_program('systemctl')){
-		# note: systemd systems do not necessarily have this link created
-		my $systemd = '/etc/systemd/system/default.target';
-		# faster to read than run
-		if (-e $systemd){
-			$default = readlink($systemd);
-			$default =~ s/(.*\/|\.target$)//g if $default; 
-		}
-		if (!$default){
-			$default = (grabber("$program get-default 2>/dev/null"))[0];
-			$default =~ s/\.target$// if $default;
-		}
-	}
-	if (!$default){
-		# http://askubuntu.com/questions/86483/how-can-i-see-or-change-default-run-level
-		# note that technically default can be changed at boot but for inxi purposes 
-		# that does not matter, we just want to know the system default
-		my $upstart = '/etc/init/rc-sysinit.conf';
-		my $inittab = '/etc/inittab';
-		if (-r $upstart){
-			# env DEFAULT_RUNLEVEL=2
-			@data = reader($upstart);
-			$default = awk(\@data,'^env\s+DEFAULT_RUNLEVEL',2,'=');
-		}
-		# handle weird cases where null but inittab exists
-		if (!$default && -r $inittab){
-			@data = reader($inittab);
-			$default = awk(\@data,'^id.*initdefault',2,':');
-		}
-	}
-	eval $end if $b_log;
-	return $default;
-}
-
 sub get_self_version {
 	eval $start if $b_log;
 	my $patch = $self_patch;
@@ -31157,7 +31289,7 @@ sub process_status {
 		$cmd = "$service_tool{$key}->[0] $service status";
 	}
 	# upstart, legacy, and finit, needs more data
-	elsif ($key eq 'initctl'){
+	elsif ($key eq 'initctl' || $key eq 'dinitctl'){
 		$cmd = "$service_tool{$key}->[0] status $service";
 	}
 	# runit
@@ -31211,14 +31343,15 @@ sub process_status {
 			last;
 		}
 		# Status : running
-		elsif ($working[0] eq 'Status'){
+		elsif ($working[0] eq 'Status' || $working[0] eq 'State'){
 			$result = lc($working[1]);
 			$result = $translate{$result} if $translate{$result};
 			last;
 		}
 		# valid syntax, but service does not exist
 		# * rc-service: service 'ntp' does not exist :: 
-		elsif ($row =~ /$service.*?(not (exist|(be )?found)|no such (directory|file)|unrecognized)/i){
+		# dinitctl: service not loaded [whether exists or not]
+		elsif ($row =~ /$service.*?(not (exist|(be )?found|loaded)|no such (directory|file)|unrecognized)/i){
 			$result = 'not found';
 			last;
 		}
@@ -31284,6 +31417,9 @@ sub set {
 	# needs data, never seen output, but report if present
 	elsif ($path = main::check_program('s6-svstat')){
 		%service_tool = ('s6-rc' => [$path,'s6-rc']);
+	}
+	elsif ($path = main::check_program('dinitctl')){
+		%service_tool = ('dinitctl' => [$path,'dinitctl']);
 	}
 	# make it last in tools, need more data
 	elsif ($path = main::check_program('initctl')){
@@ -32943,7 +33079,7 @@ sub info_item {
 		$data->{$data_name}[$index]{main::key($num++,0,2,'gpu')} = $gpu_ram;
 	}
 	if ((!$b_display || $force{'display'}) || $extra > 0){
-		my $init = main::get_init_data();
+		my $init = InitData::get();
 		my $init_type = ($init->{'init-type'}) ? $init->{'init-type'}: 'N/A';
 		$data->{$data_name}[$index]{main::key($num++,1,1,'Init')} = $init_type;
 		if ($extra > 1){
