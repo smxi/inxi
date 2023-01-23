@@ -200,6 +200,13 @@ NOTE: Check the inxi version number on each doc page to see which version will
 support the options listed. The man and options page also link to a legacy 
 version, pre 2.9.
 
+https://github.com/smxi/inxi/wiki
+
+This is simply a page with links to actual inxi resources, which can be useful 
+for developers and people with technical questions. No attempt will be made 
+to reproduce those external resources here on github. You'll find stuff like 
+how to export to json/xml there, and basic core philosophies, etc. 
+
 --------------------------------------------------------------------------------
 IRC
 --------------------------------------------------------------------------------
