@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 ## infobash: Copyright (C) 2005-2007  Michiel de Boer aka locsmif
-## inxi: Copyright (C) 2008-2022 Harald Hope
+## inxi: Copyright (C) 2008-2023 Harald Hope
 ## Additional features (C) Scott Rogers - kde, cpu info
 ## Parse::EDID (C):  2005-2010 by Mandriva SA, Pascal Rigaux, Anssi Hannula
 ## Further fixes (listed as known): Horst Tritremmel <hjt at sidux.com>
@@ -48,8 +48,8 @@ use POSIX qw(ceil uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.3.24';
-my $self_date='2022-12-27';
+my $self_version='3.3.25';
+my $self_date='2023-02-07';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -1166,22 +1166,21 @@ sub print_irc_message {
 {
 package Configs;
 sub set {
-	my ($configs) = @_;
-	my ($key, $val,@config_files);
-	if (!$configs){
-		@config_files = (
-		qq(/etc/$self_name.conf), 
-		qq(/etc/$self_name.d/$self_name.conf), 
-		qq($user_config_dir/$self_name.conf)
-		);
-	}
-	else {
-		@config_files = @$configs;
-	}
+	my ($b_show) = @_;
+	my ($b_files,$key, $val,@config_files);
+	# removed legacy kde @$configs test which never worked
+	@config_files = (
+	qq(/etc/$self_name.conf), 
+	qq(/etc/$self_name.d/$self_name.conf), 
+	qq($user_config_dir/$self_name.conf)
+	);
 	# Config files should be passed in an array as a param to this function.
 	# Default intended use: global @CONFIGS;
 	foreach (@config_files){
 		next unless open(my $fh, '<', "$_");
+		my $b_configs;
+		$b_files = 1;
+		print "${line1}Configuration file: $_\n" if $b_show;
 		while (<$fh>){
 			chomp;
 			s/#.*//;
@@ -1193,11 +1192,34 @@ sub set {
 			next unless length;
 			($key, $val) = split(/\s*=\s*/, $_, 2);
 			next unless length($val);
-			process_item($key,$val);
+			if (!$b_show){
+				process_item($key,$val);
+			}
+			else {
+				print $line3 if !$b_configs;
+				print "$key=$val\n";
+				$b_configs = 1;
+			}
 			# print "f: $file key: $key val: $val\n";
 		}
 		close $fh;
+		if ($b_show && !$b_configs){
+			print "No configuration items found in file.\n";
+		}
 	}
+	return $b_files if $b_show;
+}
+sub show {
+	print "Showing current active/set configurations, by file. Last overrides previous.\n";
+	my $b_files = set(1);
+	print $line1;
+	if ($b_files){
+		print "All done! Everything look good? If not, fix it.\n";
+	}
+	else {
+		print "No configuration files found. Is that what you expected?\n";
+	}
+	exit 0;
 }
 # note: someone managed to make a config file with corrupted values, so check
 # int explicitly, don't assume it was done correctly.
@@ -2192,14 +2214,18 @@ sub system_files {
 sub run_self {
 	print "Creating $self_name output file now. This can take a few seconds...\n";
 	print "Starting $self_name from: $self_path\n";
+	my $args = '-FERfJLrploudma --slots --pkg --edid';
 	my $a = ($debugger{'arg'}) ? ' ' . $debugger{'arg'} : '';
 	my $i = ($option eq 'main-full')? ' -i' : '';
 	my $z = ($debugger{'filter'}) ? ' -z' : '';
 	my $w = ($debugger{'width'}) ? $debugger{'width'} : 120;
-	my $aiz = "$i$z";
-	$aiz =~ s/[\s-]//g;
-	my $self_file = "$data_dir/$self_name-FERfJLrploudma$aiz-slots-pkg-edid-gpu-y$w.txt";
-	my $cmd = "$self_path/$self_name -FERfJLrploudma$i$z$a --slots --pkg --edid --gpu --debug 10 -y $w > $self_file 2>&1";
+	$args = $debugger{'arg-use'} if $debugger{'arg-use'};
+	$args = "$args$a$i$z --debug 10 -y $w";
+	my $arg_string = $args;
+	$arg_string =~ s/\s//g; 
+	my $self_file = "$data_dir/$self_name$arg_string.txt";
+	my $cmd = "$self_path/$self_name $args > $self_file 2>&1";
+	# print "Args: $args\nArg String: $arg_string\n";exit;
 	system($cmd);
 	copy($log_file, "$data_dir") or main::error_handler('copy-failed', "$log_file", "$!");
 	system("$self_path/$self_name --recommends -y 120 > $data_dir/$self_name-recommends-120.txt 2>&1");
@@ -3931,6 +3957,7 @@ sub set_program_values {
 	'comfc' => ['^comfc',0,'0','comfc',0,1,0,'',''], # unverified
 	'compiz' => ['^compiz',2,'--version','Compiz',0,1,0,'',''],
 	'compton' => ['^\d',1,'--version','Compton',0,1,0,'',''],
+	'cosmic-comp' => ['^cosmic-comp',0,'0','cosmic-comp',0,1,0,'',''], # unverified
 	'ctwm' => ['^\S',1,'-version','ctwm',0,1,0,'',''],
 	'cwm' => ['^cwm',0,'0','CWM',0,1,0,'',''], # no version
 	'dcompmgr' => ['^dcompmgr',0,'0','dcompmgr',0,1,0,'',''], # unverified
@@ -4691,6 +4718,8 @@ sub get {
 	'C|cpu' => sub {
 		$show{'short'} = 0;
 		$show{'cpu'} = 1;},
+	'config|configs|configuration|configurations' => sub {
+		$show{'configs'} = 1;},
 	'd|disk-full|optical' => sub {
 		$show{'short'} = 0;
 		$show{'disk'} = 1;
@@ -4820,6 +4849,17 @@ sub get {
 	's|sensors|sensor' => sub {
 		$show{'short'} = 0;
 		$show{'sensor'} = 1;},
+	'separator|sep:s' => sub {
+		my ($opt,$arg) = @_;
+		if ($arg){
+			$sep{'s1-console'} = $arg;
+			$sep{'s2-console'} = $arg;
+			$sep{'s1-irc'} = $arg;
+			$sep{'s2-irc'} = $arg;
+		}
+		else {
+			main::error_handler('bad-arg',$opt,$arg);
+		}},
 	'sleep:s' => sub {
 		my ($opt,$arg) = @_;
 		$arg ||= 0;
@@ -5116,8 +5156,17 @@ sub get {
 		}},
 	'debug-arg:s' => sub { 
 		my ($opt,$arg) = @_;
-		if ($arg){
+		if ($arg && $arg =~ /^--?[a-z]/ig){
 			$debugger{'arg'} = $arg;
+		}
+		else {
+			main::error_handler('bad-arg', $opt, $arg);
+		}},
+	'debug-arg-use:s' => sub { 
+		my ($opt,$arg) = @_;
+		print "$arg\n";
+		if ($arg && $arg =~ /^--?[a-z]/ig){
+			$debugger{'arg-use'} = $arg;
 		}
 		else {
 			main::error_handler('bad-arg', $opt, $arg);
@@ -5318,7 +5367,7 @@ sub get {
 		$use{'no-ssl'} = 1;},
 	'no-sudo' => sub {
 		$force{'no-sudo'} = 1;},
-	'output:s' => sub {
+	'output|export:s' => sub {
 		my ($opt,$arg) = @_;
 		if ($arg =~ /^(json|screen|xml)$/){
 			$output_type = $arg;
@@ -5326,7 +5375,7 @@ sub get {
 		else {
 			main::error_handler('bad-arg', $opt, $arg);
 		}},
-	'output-file:s' => sub {
+	'output-file|export-file:s' => sub {
 		my ($opt,$arg) = @_;
 		if ($arg){
 			if ($arg eq 'print' || main::check_output_path($arg)){
@@ -5411,18 +5460,18 @@ sub get {
 	eval $end if $b_log;
 }
 sub post_process {
+	# first run all the stuff that exits after running
 	CheckRecommends::run() if $show{'recommends'};
+	Configs::show() if $show{'configs'};
+	main::show_options() if $show{'help'};
+	main::show_version() if ($show{'version'} || $show{'version-short'});
 	# sets for either config or arg here
 	if ($use{'downloader'} || $wan_url || ($force{'no-dig'} && $show{'ip'})){
 		main::set_downloader();
 	}
-	main::set_xorg_log() if $show{'graphic'};
-	if ($show{'version'} || $show{'version-short'}){
-		main::show_version();
-	}
-	main::show_options() if $show{'help'};
 	$use{'man'} = 0 if (!$use{'yes-man'} || $use{'no-man'});
 	main::update_me($self_download, $download_id) if $use{'update-trigger'};
+	main::set_xorg_log() if $show{'graphic'};
 	if ($b_pledge){
 		my $b_update;
 		# if -c 9x, remove in SelectColors::set_selection(), else remove here
@@ -5781,6 +5830,8 @@ sub show_options {
 	--output."],
 	['1', '', '--partition-sort', "[dev-base|fs|id|label|percent-used|size|uuid|used] 
 	Change sort order of ${partition_string} output. See man page for specifics."],
+	['1', '', '--separator, --sep', "[key:value separator character]. Change 
+	separator character(s) for key: value pairs."],
 	['1', '-y', '--width', "[empty|-1|1|60-xxx] Output line width max. Overrides 
 	IRC/Terminal settings or actual widths. If no integer give, defaults to 80. 
 	-1 removes line lengths. 1 switches output to 1 key/value pair per line. 
@@ -5972,6 +6023,8 @@ sub show_options {
 	push(@$rows, 
 	[0, '', '', "$line"],
 	[0, '', '', "Additional Options:"],
+	['1', '--config', '--configuration', "Show active configurations, by file(s). 
+	Last item listed overrides previous."],
 	['1', '-h', '--help', "This help menu."],
  	['1', '', '--recommends', "Checks $self_name application dependencies + 
  	recommends, and directories, then shows what package(s) you need to install 
@@ -6510,27 +6563,6 @@ sub set_konvi_data {
 	}
 	# for some reason this logic hiccups on multiple spaces between args
 	@ARGV = grep { $_ ne '' } @ARGV;
-	# my $config_cmd = '';
-	# there's no current kde 5 konvi config tool that we're aware of. Correct if changes.
-	# This part may never have worked, but I don't have legacy data to determine.
-	# The idea was to get inxi.conf files from konvi data stores, but that was never right.
-	# if (main::check_program('kde4-config')){
-	#	$config_cmd = 'kde4-config --path data';
-	# }
-	# kde5-coinfig never existed, was replaced by $XDG_DATA_HOME in KDE
-	# elsif (main::check_program('kde-config')){
-	# 	$config_cmd = 'kde-config --path data';
-	# }
-	# elsif (main::check_program('qtpaths')){
-	# 	$config_cmd = 'qtpaths --paths GenericDataLocation';
-	# }
-	# The section below is on request of Argonel from the Konversation developer team:
-	# it sources config files like $HOME/.kde/share/apps/konversation/scripts/inxi.conf
-	#  if ($config_cmd){
-	#	  my @data = main::grabber("$config_cmd 2>/dev/null",':');
-	# 	Configs::set(\@data) if @data;
-	#	 main::log_data('dump',"kde config \@data",\@data) if $b_log;
-	# }
 	eval $end if $b_log;
 }
 }
@@ -10823,7 +10855,6 @@ sub cp_caches_fallback {
 	}
 	eval $end if $b_log;
 }
-
 ## START CPU ARCH ##
 sub cp_cpu_arch {
 	eval $start if $b_log;
@@ -10946,7 +10977,7 @@ sub cp_cpu_arch {
 				$year = '2004-2008';}
 		}
 		# K9 was planned but skipped
-		elsif ($family eq '10'){
+		elsif ($family eq '10'){ # 1F
 			## verified
 			if ($model =~ /^(2)$/){
 				$arch = 'K10'; # 2:2:budapest;2:1,3:barcelona
@@ -10965,7 +10996,7 @@ sub cp_cpu_arch {
 		}
 		# very loose, all stepping 1: covers athlon x2, sempron, turion x2
 		# years unclear, could be 2005 start, or 2008
-		elsif ($family eq '11'){
+		elsif ($family eq '11'){ # 2F
 			if ($model =~ /^(3)$/){
 				$arch = 'K11 Turion X2'; # mix of K8/K10
 				$note = $check;
@@ -10973,7 +11004,7 @@ sub cp_cpu_arch {
 				$year = ''; } 
 		}
 		# might also need cache handling like 14/16
-		elsif ($family eq '12'){
+		elsif ($family eq '12'){ # 3F
 			if ($model =~ /^(1)$/){
 				$arch = 'K12 Fusion'; # K10 based apu, llano
 				$process = 'GF 32nm';
@@ -10984,7 +11015,7 @@ sub cp_cpu_arch {
 				$year = '2011';} # check years
 		}
 		# SOC, apu
-		elsif ($family eq '14'){
+		elsif ($family eq '14'){ # 5F
 			if ($model =~ /^(1|2)$/){
 				$arch = 'Bobcat';
 				$process = 'GF 40nm';
@@ -10994,7 +11025,7 @@ sub cp_cpu_arch {
 				$process = 'GF 40nm';
 				$year = '2011-13';}
 		}
-		elsif ($family eq '15'){
+		elsif ($family eq '15'){ # 6F
 			# note: only model 1 confirmd
 			if ($model =~ /^(0|1|3|4|5|6|7|8|9|A|B|C|D|E|F)$/){
 				$arch = 'Bulldozer';
@@ -11021,7 +11052,7 @@ sub cp_cpu_arch {
 				$year = '2011-12';}
 		}
 		# SOC, apu
-		elsif ($family eq '16'){
+		elsif ($family eq '16'){ # 7F
 			if ($model =~ /^(0|1|2|3|4|5|6|7|8|9|A|B|C|D|E|F)$/){
 				$arch = 'Jaguar';
 				$process = 'GF 28nm';
@@ -11035,7 +11066,7 @@ sub cp_cpu_arch {
 				$process = 'GF 28nm';
 				$year = '2013-14';}
 		}
-		elsif ($family eq '17'){
+		elsif ($family eq '17'){ # 8F
 			# can't find stepping/model for no ht 2x2 core/die models, only first ones
 			if ($model =~ /^(1|11|20)$/){
 				$arch = 'Zen';
@@ -11057,7 +11088,7 @@ sub cp_cpu_arch {
 				$process = 'GF 12nm';
 				$year = '2018-21';}
 			# used this but it didn't age well:  ^(2[0123456789ABCDEF]|
-			elsif ($model =~ /^(31|47|60|68|71|90|98|A.)$/){
+			elsif ($model =~ /^(3.|4.|5.|6.|7.|8.|9.|A.)$/){
 				$arch = 'Zen 2';
 				$gen = '3';
 				$process = 'TSMC n7 (7nm)'; # some consumer maybe GF 14nm
@@ -11069,13 +11100,13 @@ sub cp_cpu_arch {
 				$year = '';}
 		}
 		# Joint venture between AMD and Chinese companies. Type amd? or hygon?
-		elsif ($family eq '18'){
+		elsif ($family eq '18'){ # 9F
 			# model 0, zen 1 
 			$arch = 'Zen (Hygon Dhyana)';
 			$gen = '1';
 			$process = 'GF 14nm';
 			$year = '';}
-		elsif ($family eq '19'){
+		elsif ($family eq '19'){ # AF
 			# ext model 6,7, but no base models yet
 			# 10 engineering sample
 			if ($model =~ /^(1.|6.|7.|A.)$/){
@@ -11083,8 +11114,8 @@ sub cp_cpu_arch {
 				$gen = '5';
 				$process = 'TSMC n5 (5nm)'; # Epyc Bergamo 4nm, no model IDs yet
 				$year = '2022';}
-			# double check 40, 44
-			elsif ($model =~ /^(4.)$/){
+			# double check 40, 44; 21 confirmed
+			elsif ($model =~ /^(21|4.)$/){
 				$arch = 'Zen 3+';
 				$gen = '4';
 				$process = 'TSMC n6 (7nm)';
@@ -13505,6 +13536,7 @@ sub set_disk_vendors {
 	['^Alfawise','^Alfawise','Alfawise',''],
 	['^Android','^Android','Android',''],
 	['^ANACOMDA','^ANACOMDA','ANACOMDA',''],
+	['^Ant[\s_-]?Esports','^Ant[\s_-]?Esports','Ant Esports',''],
 	['^Anucell','^Anucell','Anucell',''],
 	['^Apotop','^Apotop','Apotop',''],
 	# must come before AP|Apacer
@@ -13543,6 +13575,7 @@ sub set_disk_vendors {
 	['^(CFD|CSSD)','^CFD','CFD',''],
 	['^CHIPAL','^CHIPAL','CHIPAL',''],
 	['^(Chipsbank|CHIPSBNK)','^Chipsbank','Chipsbank',''],
+	['^(Chipfancie)','^Chipfancier','Chipfancier',''],
 	['^Clover','^Clover','Clover',''],
 	['^CODi','^CODi','CODi',''],
 	['^Colorful\b','^Colorful','Colorful',''],
@@ -13568,6 +13601,7 @@ sub set_disk_vendors {
 	['^DIGITAL\s?FILM','DIGITAL\s?FILM','Digital Film',''],
 	['^(Digma|Run(\sY2)?\b)','^Digma','Digma',''],
 	['^Dikom','^Dikom','Dikom',''],
+	['^DINGGE','^DINGGE','DINGGE',''],
 	['^Disain','^Disain','Disain',''],
 	['^(Disney|PIX[\s]?JR)','^Disney','Disney',''],
 	['^(Doggo|DQ-|Sendisk|Shenchu)','^(doggo|Sendisk(.?Shenchu)?|Shenchu(.?Sendisk)?)','Doggo (SENDISK/Shenchu)',''],
@@ -13590,6 +13624,7 @@ sub set_disk_vendors {
 	['^eNova','^eNOVA','eNOVA',''],
 	['^Epson','^Epson','Epson',''],
 	['^(Etelcom|SSD051)','^Etelcom','Etelcom',''],
+	['^(Shenzhen\s)?Etopso(\sTechnology)?','^(Shenzhen\s)?Etopso(\sTechnology)?','Etopso',''],
 	['^EURS','^EURS','EURS',''],
 	['^eVAULT','^eVAULT','eVAULT',''],
 	# NOTE: ESA3... may be IBM PCIe SAD card/drives
@@ -13616,7 +13651,7 @@ sub set_disk_vendors {
 	['^(Garmin|Fenix|Nuvi|Zumo)','^Garmin','Garmin',''],
 	['^Geil','^Geil','Geil',''],
 	['^GelL','^GelL','GelL',''], # typo for Geil? GelL ZENITH R3 120GB
-	['^(Generic|G1J3|SCA128|SLD|UY[67])','^Generic','Generic',''],
+	['^(Generic|G1J3|M0S00|SCA128|SLD|UY[67])','^Generic','Generic',''],
 	['^(Genesis(\s?Logic)?|05e3)','(Genesis(\s?Logic)?|05e3)','Genesis Logic',''],
 	['^Geonix','^Geonix','Geonix',''],
 	['^Getrich','^Getrich','Getrich',''],
@@ -13627,6 +13662,7 @@ sub set_disk_vendors {
 	['^GLOWY','^GLOWY','Glowy',''],
 	['^Goldendisk','^Goldendisk','Goldendisk',''],
 	['^Goldenfir','^Goldenfir','Goldenfir',''],
+	['^(Goldkey|GKH\d)','^Goldkey','Goldkey',''],
 	['^Golden[\s_-]?Memory','^Golden[\s_-]?Memory','Golden Memory',''],
 	['^(Goldkey|GKP)','^Goldkey','GoldKey',''],
 	# Wilk Elektronik SA, poland
@@ -13635,6 +13671,7 @@ sub set_disk_vendors {
 	# supertalent also has FM: |FM
 	['^(G[\.]?SKILL)','^G[\.]?SKILL','G.SKILL',''],
 	['^G[\s-]*Tech','^G[\s-]*Tech(nology)?','G-Technology',''],
+	['^(Gudga|GIM\d+)','^Gudga','Gudga',''],
 	['^(Hajaan|HS[1-9])','^Haajan','Haajan',''],
 	['^Haizhide','^Haizhide','Haizhide',''],
 	['^(Hama|FlashPen\s?Fancy)','^Hama','Hama',''],
@@ -13672,6 +13709,7 @@ sub set_disk_vendors {
 	['^(INO-|i\.?norys)','^i\.?norys','i.norys',''], 
 	['^(Integrated[\s-]?Technology|IT\d+)','^Integrated[\s-]?Technology','Integrated Technology',''], 
 	['^(Iomega|ZIP\b|Clik!)','^Iomega','Iomega',''], 
+	['^(i[\s_-]?portable\b|ATCS)','^i[\s_-]?portable','i-Portable',''],
 	['^ISOCOM','^ISOCOM','ISOCOM (Shenzhen Longsys Electronics)',''],
 	['^iTE[\s-]*Tech','^iTE[\s-]*Tech(nology)?','iTE Tech',''],
 	['^(James[\s-]?Donkey|JD\d)','^James[\s-]?Donkey','James Donkey',''], 
@@ -13706,6 +13744,7 @@ sub set_disk_vendors {
 	['(KIOXIA|^K[BX]G\d)','KIOXIA','KIOXIA',''], # company name comes after product ID
 	['^(KLEVV|NEO\sN|CRAS)','^KLEVV','KLEVV',''],
 	['^Kodak','^Kodak','Kodak',''],
+	['^(KOOTION)','^KOOTION','KOOTION',''],
 	['^(KUAIKAI|MSAM)','^KUAIKAI','KuaKai',''],
 	['(KUIJIA|DAHUA)','^KUIJIA','KUIJIA',''],
 	['^KUNUP','^KUNUP','KUNUP',''],
@@ -13773,6 +13812,7 @@ sub set_disk_vendors {
 	['^MTRON','^MTRON','MTRON',''],
 	['^(MyDigitalSSD|BP[4X])','^MyDigitalSSD','MyDigitalSSD',''], # BP4 = BulletProof4
 	['^(Myson)','^Myson([\s-]?Century)?([\s-]?Inc\.?)?','Myson Century',''],
+	['^(Natusun|i-flashdisk)','^Natusun','Natusun',''],
 	['^(Neo\s*Forza|NFS\d)','^Neo\s*Forza','Neo Forza',''],
 	['^(Netac|OnlyDisk|S535N)','^Netac','Netac',''],
 	['^NFHK','^NFHK','NFHK',''],
@@ -13816,8 +13856,10 @@ sub set_disk_vendors {
 	['^RevuAhn','^RevuAhn','RevuAhn',''],
 	['^(Ricoh|R5)','^Ricoh','Ricoh',''],
 	['^RIM[\s]','^RIM','RIM',''],
+	['^(Rococo|ITE\b|IT\d{4})','^Rococo','Rococo',''],
 	 #RTDMA008RAV2BWL comes with lenovo but don't know brand
 	['^Runcore','^Runcore','Runcore',''],
+	['^Rundisk','^Rundisk','RunDisk',''],
 	['^(S3Plus|S3\s?SSD)','^S3Plus','S3Plus',''],
 	['^(Sabrent|Rocket)','^Sabrent','Sabrent',''],
 	['^Sage','^Sage(\s?Micro)?','Sage Micro',''],
@@ -13844,7 +13886,8 @@ sub set_disk_vendors {
 	['^Skill','^Skill','Skill',''],
 	['^(SMART( Storage Systems)?|TX)','^(SMART( Storage Systems)?)','Smart Storage Systems',''],
 	['^Sobetter','^Sobetter','Sobetter',''],
-	['^(S[FR]-|Sony|IM9)','^Sony','Sony',''],
+	['^(SOLIDIGM|SSDPFK)','^SOLIDIGM\b','solidgm',''],
+	['^(Sony|IM9|Microvalut|S[FR]-)','^Sony','Sony',''],
 	['^(SSSTC|CL1-)','^SSSTC','SSSTC',''],
 	['^STE[CK]','^STE[CK]','sTec',''], # wd bought this one
 	['^STORFLY','^STORFLY','StorFly',''],
@@ -13916,6 +13959,7 @@ sub set_disk_vendors {
 	['^(Winton|WT\d{2})','^Winton','Winton',''],
 	['^WPC','^WPC','WPC',''], # WPC-240GB
 	['^(Wortmann(\sAG)?|Terra\s?US)','^Wortmann(\sAG)?','Wortmann AG',''],
+	['^(XDisk|X9\b)','^XDisk','XDisk',''],
 	['^(XinTop|XT-)','^XinTop','XinTop',''],
 	['^Xintor','^Xintor','Xintor',''],
 	['^XPG','^XPG','XPG',''],
@@ -14466,6 +14510,7 @@ sub display_output(){
 		my ($driver_note,$resolution,$server_string) = ('','','');
 		my ($b_screen_monitors,$x_drivers);
 		$x_drivers = display_drivers_x() if !$force{'wayland'};
+		# print 'result: ', Data::Dumper::Dumper $x_drivers;
 		# print "$graphics{'x-server'} $graphics{'x-version'} $graphics{'x-vendor-release'}","\n";
 		if ($graphics{'x-server'}){
 			$server_string = $graphics{'x-server'}->[0][0];
@@ -15041,7 +15086,7 @@ sub opengl_output {
 		$rows->[$j]{main::key($$num++,0,2,'compat-v')} = $compat_version;
 	}
 	if ($extra > 0){
-		$rows->[$j]{main::key($$num++,0,2,'direct render')} = $direct_render;
+		$rows->[$j]{main::key($$num++,0,2,'direct-render')} = $direct_render;
 	}
 	eval $end if $b_log;
 }
@@ -16050,7 +16095,7 @@ sub display_drivers_x {
 		s3virge s3 savage siliconmotion sisimedia sisusb sis 
 		sunbw2 suncg14 suncg3 suncg6 sunffb sunleo suntcx tdfx tga trident tseng 
 		unichrome v4l vboxvideo vesa vga via vmware vmwgfx voodoo));
-		$list = qr/$list/; # i only added perl 5.14, don't use
+		# $list = qr/$list/i; # qr/../i only added perl 5.14, fails on older perls
 		my ($b_use_dri,$dri,$driver,%drivers);
 		my ($alternate,$failed,$loaded,$unloaded);
 		my $pattern = 'Failed|Unload|Loading';
@@ -16059,7 +16104,7 @@ sub display_drivers_x {
 			$b_use_dri = 1;
 			$pattern .= '|DRI driver:';
 		}
-		$pattern = qr/$pattern/;
+		# $pattern = qr/$pattern/i;  # qr/../i only added perl 5.14, fails on older perls
 		# it's much cheaper to grab the simple pattern match then do the expensive one 
 		# in the main loop.
 		# @xorg = grep {/Failed|Unload|Loading/} @xorg;
@@ -16132,13 +16177,13 @@ sub display_drivers_x {
 			}
 		}
 		if ($loaded || $unloaded || $failed || $alternate){
-			@$driver_data = ($loaded,$unloaded,$failed,$alternate);
+			$driver_data = [$loaded,$unloaded,$failed,$alternate];
 		}
 	}
 	eval $end if $b_log;
+	# print 'source: ', Data::Dumper::Dumper $driver_data;
 	return $driver_data;
 }
-
 ## GPU DATA ##
 sub set_amd_data {
 	$gpu_amd = [
@@ -16183,12 +16228,14 @@ sub set_amd_data {
 	# 'years' => '1999-2001',
 	# },
 	# rage 5 was game cube flipper chip
+# rage 5 was game cube flipper chip 2000
 	{'arch' => 'Rage-6',
 	'ids' => '4137|4337|4437|4c59|5144|5159|515e',
 	'code' => 'R100',
 	'process' => 'TSMC 180nm',
 	'years' => '2000-07',
 	},
+	# |Radeon (7[3-9]{2}|8d{3}|9[5-9]d{2}
 	{'arch' => 'Rage-7',
 	'ids' => '4136|4150|4152|4170|4172|4242|4336|4966|496e|4c57|4c58|4c66|4c6e|' .
 	'4e51|4f72|4f73|5148|514c|514d|5157|5834|5835|5940|5941|5944|5960|5961|5962|' .
@@ -16214,7 +16261,7 @@ sub set_amd_data {
 	'ids' => '3150|3151|3152|3154|3155|3171|3e50|3e54|3e70|4e4a|4e56|5460|5461|' .
 	'5462|5464|5657|5854|5874|5954|5955|5974|5975|5b60|5b62|5b64|5b65|5b66|5b70|' .
 	'5b74|5b75',
-	'code' => 'R360-R400',
+	'code' => 'Radeon IGP',
 	'process' => 'TSMC 110nm',
 	'years' => '2003-08',
 	},
@@ -16236,6 +16283,7 @@ sub set_amd_data {
 	'process' => 'TSMC 90nm',
 	'years' => '2005-07',
 	},
+	# process:  tsmc 55nm, 65nm, xbox 360s at 40nm
 	{'arch' => 'TeraScale',
 	'ids' => '4346|4630|4631|9400|9401|9403|9405|940a|940b|9440|9441|9442|9443|' .
 	'9444|9446|944a|944b|944c|944e|9450|9452|9456|945a|9460|9462|946a|9480|9488|' .
@@ -16244,7 +16292,7 @@ sub set_amd_data {
 	'9515|9519|9540|954f|9552|9553|9555|9557|955f|9580|9586|9587|9588|9589|958a|' .
 	'958c|9591|9593|9595|9596|9597|9598|9599|95c0|95c2|95c4|95c5|95c6|95c9|95cc|' .
 	'95cd|95cf|9610|9611|9612|9613|9614|9615|9616|9710|9712|9713|9714|9715',
-	'code' => '',
+	'code' => 'R6xx/RV6xx/RV7xx',
 	'process' => 'TSMC 55-65nm',
 	'years' => '2005-13',
 	},
@@ -16271,68 +16319,72 @@ sub set_amd_data {
 	},
 	{'arch' => 'GCN-1',
 	'ids' => '154c|6600|6601|6604|6605|6606|6607|6608|6609|6610|6611|6613|6617|' .
-	'6631|6660|6663|6664|6665|6667|666f|6780|6784|6788|678a|6798|679a|679b|679e|' .
-	'679f|6800|6801|6802|6806|6808|6809|6810|6811|6816|6817|6818|6819|6820|6821|' .
-	'6822|6823|6825|6826|6827|6828|6829|682a|682b|682c|682d|682f|6835|6837|683d|' .
-	'683f',
+	'6631|6660|6663|6664|6665|6666|6667|666f|6780|6784|6788|678a|6798|6799|679a|' .
+	'679b|679e|679f|6800|6801|6802|6806|6808|6809|6810|6811|6816|6817|6818|6819|' .
+	'6820|6821|6822|6823|6825|6826|6827|6828|6829|682a|682b|682c|682d|682f|6830|' .
+	'6831|6835|6837|683d|683f|684c',
 	'code' => 'Southern Islands',
 	'process' => 'TSMC 28nm',
 	'years' => '2011-20',
 	},
+	# process: both TSMC and GlobalFoundries
 	{'arch' => 'GCN-2',
 	'ids' => '1304|1305|1306|1307|1309|130a|130b|130c|130d|130e|130f|1310|1311|' .
 	'1312|1313|1315|1316|1317|1318|131b|131c|131d|6640|6641|6646|6647|6649|664d|' .
 	'6650|6651|6658|665c|665d|665f|67a0|67a1|67a2|67a8|67a9|67aa|67b0|67b1|67b8|' .
 	'67b9|67be|9830|9831|9832|9833|9834|9835|9836|9837|9838|9839|983d|9850|9851|' .
-	'9852|9853|9854|9855|9856|9857|9858|9859|985a|985b|985c|985d|985e|985f|98e4|' .
-	'9920',
+	'9852|9853|9854|9855|9856|9857|9858|9859|985a|985b|985c|985d|985e|985f|9920',
 	'code' => 'Sea Islands',
-	'process' => 'GF/TSMC 16-28nm', # both TSMC and GlobalFoundries
+	'process' => 'GF/TSMC 16-28nm',
 	'years' => '2013-17',
 	},
 	{'arch' => 'GCN-3',
-	'ids' => '6900|6901|6907|6920|6921|6929|692b|6938|6939|693b|7300|9874',
+	'ids' => '6900|6901|6902|6907|6920|6921|6929|692b|692f|6930|6938|6939|693b|' .
+	'7300|730f|9874|98e4',
 	'code' => 'Volcanic Islands',
 	'process' => 'TSMC 28nm',
 	'years' => '2014-19',
 	},
 	{'arch' => 'GCN-4',
-	'ids' => '154e|1551|1552|1561|67c0|67c2|67c4|67c7|67ca|67cc|67cf|67d0|67d4|' .
-	'67d7|67df|67e0|67e1|67e3|67e8|67e9|67eb|67ef|67ff|694c|694e|694f|6980|6981|' .
-	'6985|6986|6987|698f|6995|699f|6fdf|9924|9925',
+	'ids' => '154e|1551|1552|1561|67c0|67c1|67c2|67c4|67c7|67ca|67cc|67cf|67d0|' .
+	'67d4|67d7|67df|67e0|67e1|67e3|67e8|67e9|67eb|67ef|67ff|694c|694e|694f|6980|' .
+	'6981|6984|6985|6986|6987|698f|6995|6997|699f|6fdf|9924|9925',
 	'code' => 'Arctic Islands',
 	'process' => 'GF 14nm',
 	'years' => '2016-20',
 	},
 	{'arch' => 'GCN-5.1',
-	'ids' => '15df|1636|1638|164c|66a0|66a1|66a2|66a3|66a7|66af|69af',
+	'ids' => '15d8|15dd|15df|15e7|1636|1638|164c|66a0|66a1|66a2|66a3|66a7|66af|' .
+	'69af',
 	'code' => 'Vega-2',
-	'process' =>  'TSMC n7 (7nm)',
-	'years' => '2018-21',
+	'process' => 'TSMC n7 (7nm)',
+	'years' => '2018-22+',
 	},
 	{'arch' => 'GCN-5',
-	'ids' => '15d8|15dd|15ff|6860|6861|6862|6863|6864|6867|6868|6869|686a|686b|' .
-	'686c|686d|686e|687f|69a0|69a1|69a2|69a3',
+	'ids' => '15d8|15d9|15dd|15e7|15ff|1636|1638|164c|66a0|66a1|66a2|66a3|66a4|' .
+	'66a7|66af|6860|6861|6862|6863|6864|6867|6868|6869|686a|686b|686c|686d|686e|' .
+	'687f|69a0|69a1|69a2|69a3|69af',
 	'code' => 'Vega',
-	'process' =>  'GF 14nm',
+	'process' => 'GF 14nm',
 	'years' => '2017-20',
 	},
 	{'arch' => 'RDNA-1',
-	'ids' => '13e9|13fe|1478|1479|1607|7310|7312|731f|7340|7341|7347|734f|7360|' .
-	'7362',
-	'code' => 'Navi',
+	'ids' => '13e9|13f9|13fe|1478|1479|1607|7310|7312|7318|7319|731a|731b|731e|' .
+	'731f|7340|7341|7343|7347|734f|7360|7362',
+	'code' => 'Navi-1x',
 	'process' => 'TSMC n7 (7nm)',
 	'years' => '2019-20',
 	},
 	{'arch' => 'RDNA-2',
-	'ids' => '13f9|1506|15e7|163f|164d|164e|1681|73a1|73a2|73a3|73a5|73ab|73ae|' .
-	'73af|73bf|73c3|73ce|73df|73e0|73e1|73e3|73ef|73ff|7421|7422|7423|7424|743f',
+	'ids' => '1506|163f|164d|164e|1681|73a0|73a1|73a2|73a3|73a5|73ab|73ae|73af|' .
+	'73bf|73c0|73c1|73c3|73ce|73df|73e0|73e1|73e3|73ef|73ff|7420|7421|7422|7423|' .
+	'7424|743f',
 	'code' => 'Navi-2x',
 	'process' => 'TSMC n7 (7nm)',
 	'years' => '2020-22',
 	},
 	{'arch' => 'RDNA-3',
-	'ids' => '15bf|164f|744c',
+	'ids' => '15bf|164f|73a8|7448|744c|745e',
 	'code' => 'Navi-3x',
 	'process' => 'TSMC n5 (5nm)',
 	'years' => '2022+',
@@ -16424,56 +16476,64 @@ sub set_intel_data {
 	'years' => '2012-13',
 	},
 	{'arch' => 'Gen-6',
-	'ids' => '0102|0106|010b|010e|0112|0116|0122|0126|08cf',
-	'code' => '',
+	'ids' => '0102|0106|010a|010b|010e|0112|0116|0122|0126|08cf',
+	'code' => 'Sandybridge',
 	'process' => 'Intel 32nm',
 	'years' => '2011',
 	},
-	{'arch' => 'Gen-7',
-	'ids' => '0152|0156|015a|015e|0162|0166|016a|0172|0176',
-	'code' => '',
-	'process' => 'Intel 22nm',
-	'years' => '2012-13',
-	},
 	{'arch' => 'Gen-7.5',
-	'ids' => '0406|041e|0a06|0a16|0a22|0a26|0a2a|0a2e',
+	'ids' => '0402|0406|040a|040b|040e|0412|0416|041a|041b|041e|0422|0426|042a|' .
+	'042b|042e|0a02|0a06|0a0a|0a0b|0a0e|0a12|0a16|0a1a|0a1b|0a1e|0a22|0a26|0a2a|' .
+	'0a2b|0a2e|0c02|0c06|0c0a|0c0b|0c0e|0c12|0c16|0c1a|0c1b|0c1e|0c22|0c26|0c2a|' .
+	'0c2b|0c2e|0d02|0d06|0d0a|0d0b|0d0e|0d12|0d16|0d1a|0d1b|0d1e|0d22|0d26|0d2a|' .
+	'0d2b|0d2e',
 	'code' => '',
 	'process' => 'Intel 22nm',
 	'years' => '2013',
 	},
+	{'arch' => 'Gen-7',
+	'ids' => '0152|0155|0156|0157|015a|015e|0162|0166|016a|0172|0176|0f31|0f32|' .
+	'0f33',
+	'code' => '',
+	'process' => 'Intel 22nm',
+	'years' => '2012-13',
+	},
 	{'arch' => 'Gen-8',
-	'ids' => '1602|160a|160b|160d|160e|1612|1616|161a|161b|161d|161e|1622|1626|' .
-	'162a|162b|162d|162e|1632|1636|163a|163b|163d|163e|22b0|22b1',
+	'ids' => '1602|1606|160a|160b|160d|160e|1612|1616|161a|161b|161d|161e|1622|' .
+	'1626|162a|162b|162d|162e|1632|1636|163a|163b|163d|163e|22b0|22b1|22b2|22b3',
 	'code' => '',
 	'process' => 'Intel 14nm',
 	'years' => '2014-15',
 	},
-	{'arch' => 'Gen-9',
-	'ids' => '1902|1906|190b|1912|1916|191b|191d|191e|1921|1923|1926|1927|192b|' .
-	'192d|1932|193a|193b|193d|5a84|5a85',
-	'code' => '',
-	'process' => 'Intel 14n',
-	'years' => '2015-16',
-	},
 	{'arch' => 'Gen-9.5',
-	'ids' => '3184|3185|3e90|3e91|3e92|3e93|3e94|3e96|3e98|3e9a|3e9b|3e9c|3ea0|' .
-	'3ea1|3ea5|3ea6|3ea8|3ea9|5902|5906|590b|5912|5916|5917|591b|591c|591d|591e|' .
-	'5921|5923|5926|5927|87c0|87ca|9b21|9b41|9ba4|9ba8|9baa|9bac|9bc4|9bc5|9bc6|' .
-	'9bc8|9bca|9bcc|9be6|9bf6',
+	'ids' => '3184|3185|3e90|3e91|3e92|3e93|3e94|3e96|3e98|3e99|3e9a|3e9b|3e9c|' .
+	'3ea0|3ea1|3ea2|3ea3|3ea4|3ea5|3ea6|3ea7|3ea8|3ea9|5902|5906|5908|590a|590b|' .
+	'590e|5912|5913|5915|5916|5917|591a|591b|591c|591d|591e|5921|5923|5926|5927|' .
+	'593b|87c0|87ca|9b21|9b41|9ba0|9ba2|9ba4|9ba5|9ba8|9baa|9bab|9bac|9bc0|9bc2|' .
+	'9bc4|9bc5|9bc6|9bc8|9bca|9bcb|9bcc|9be6|9bf6',
 	'code' => '',
 	'process' => 'Intel 14nm',
 	'years' => '2016-20',
 	},
+	{'arch' => 'Gen-9',
+	'ids' => '0a84|1902|1906|190a|190b|190e|1912|1913|1915|1916|1917|191a|191b|' .
+	'191d|191e|1921|1923|1926|1927|192a|192b|192d|1932|193a|193b|193d|1a84|1a85|' .
+	'3184|3185|5a84|5a85',
+	'code' => '',
+	'process' => 'Intel 14n',
+	'years' => '2015-16',
+	},
 	# gen10 was cancelled., 
 	{'arch' => 'Gen-11',
-	'ids' => '0d16|0d26|0d36|4555|4571|4e55|4e61|4e71|8a51|8a52|8a53|8a56|8a58|' .
-	'8a5a|8a5c|9840|9841',
+	'ids' => '0d16|0d26|0d36|4555|4571|4e55|4e61|4e71|8a50|8a51|8a52|8a53|8a54|' .
+	'8a56|8a57|8a58|8a59|8a5a|8a5b|8a5c|8a5d|8a71|9840|9841',
 	'code' => '',
 	'process' => 'Intel 10nm',
 	'years' => '2019-21',
 	},
 	{'arch' => 'Gen-12.1',
-	'ids' => '4905|4908|4c8a|4c8b|4c90|4c9a|9a40|9a49|9a60|9a68|9a70|9a78',
+	'ids' => '4905|4908|4c8a|4c8b|4c8c|4c90|4c9a|9a40|9a49|9a60|9a68|9a70|9a78|' .
+	'9ac0|9ac9|9ad9|9af8',
 	'code' => '',
 	'process' => 'Intel 10nm',
 	'years' => '2020-21',
@@ -16494,9 +16554,14 @@ sub set_intel_data {
 	},
 	# Jupiter Sound cancelled?
 	{'arch' => 'Gen-12.7',
-	'ids' => '',
+	'ids' => '5690|5691|5692|5693|5694|56a0|56a1|56a5|56a6',
 	'code' => 'Alchemist',
-	'pattern' => 'Alchemist|DG2|Arc A\d{3}M?',
+	'process' => 'TSMC n6 (7nm)',
+	'years' => '2022+',
+	},
+	{'arch' => 'Gen-12.7',
+	'ids' => '56c0|56c1',
+	'code' => 'XeHPG',
 	'process' => 'TSMC n6 (7nm)',
 	'years' => '2022+',
 	},
@@ -17183,6 +17248,7 @@ sub map_monitor_ids {
 	# s: DVI-I-1 d: DVI0; s: VGA-1 d: VGA1; s: DP-1-1; d: DP-1-1;
 	# s: eDP-1 d: eDP-1-1 (yes, reversed from normal deviation!); s: eDP-1 d: eDP
 	# worst: s: DP-6 d: DP-2-3 (2 banks of 3 according to X); s: eDP-1 d: DP-4;
+	# s: DP-3 d: DP-1-1; s: DP-4 d: DP-1-2
 	# s: DP-3 d: DP-4 [yes, +1, not -]; 
 	my ($d_1,$d_2,$d_m,$s_1,$s_2,$s_m);
 	my $b_single = (scalar @sys_ids == 1) ? 1 : 0;
@@ -17281,9 +17347,9 @@ sub get_compositors {
 		my @compositors = qw(budgie-wm compiz compton enlightenment gnome-shell 
 		kwin_wayland kwin_x11 kwinft marco muffin mutter);
 		# these are more obscure, so check for them after primary common ones
-		push (@compositors,qw(3dwm dcompmgr gala kmscon metisse mir moblin 
-		monsterwm picom ukwm unagi unity-system-compositor xcompmgr xfwm4 
-		xfwm5 xfwm));
+		push (@compositors,qw(3dwm cosmic-comp dcompmgr gala kmscon 
+		metisse mir moblin monsterwm picom ukwm unagi unity-system-compositor 
+		xcompmgr xfwm4 xfwm5 xfwm));
 		my $matches = join('|',@compositors) . $wl_compositors;
 		foreach my $psg (@ps_gui){
 			if ($psg =~ /^($matches)$/){
@@ -20202,7 +20268,7 @@ sub cpu_processes {
 		main::key($num++,1,3,'command') => $command->[0],
 		});
 		if ($command->[1]){
-			$rows->[$j]{main::key($num++,0,4,'started by')} = $command->[1];
+			$rows->[$j]{main::key($num++,0,4,'started-by')} = $command->[1];
 		}
 		$pid = (defined $pid_col)? $row[$pid_col] : 'N/A';
 		$rows->[$j]{main::key($num++,0,3,'pid')} = $pid;
@@ -20265,7 +20331,7 @@ sub mem_processes {
 		main::key($num++,1,3,'command') => $command->[0],
 		});
 		if ($command->[1]){
-			$rows->[$j]{main::key($num++,0,4,'started by')} = $command->[1];
+			$rows->[$j]{main::key($num++,0,4,'started-by')} = $command->[1];
 		}
 		$pid = (defined $pid_col)? $row[$pid_col] : 'N/A';
 		$rows->[$j]{main::key($num++,0,3,'pid')} = $pid;
@@ -23022,7 +23088,7 @@ sub get_repos_linux {
 				# get the repo
 				$repo = $2;
 				push(@$rows, 
-				{main::key($num++,1,1,'urpmq repo') => $repo},
+				{main::key($num++,1,1,'urpm repo') => $repo},
 				[@content],
 				);
 				@content = ();
@@ -25600,6 +25666,7 @@ sub get {
 	my $num = 0;
 	my $location = [];
 	location_data($location);
+	# print Data::Dumper::Dumper $location;exit;
 	if (!$location->[0]){
 		@$rows = ({
 		main::key($num++,0,1,'Message') => main::message('weather-null','current location')
@@ -27630,27 +27697,27 @@ sub pci_grabber {
 		# 2.2.8 lspci did not support -k, added in 2.2.9, but -v turned on -k 
 		$args = ' -nnv';
 		$path = $alerts{'lspci'}->{'path'};
-		$pattern = qr/^[0-9a-f]+:/;
+		$pattern = q/^[0-9a-f]+:/; # i only added perl 5.14, don't use qr/
 	}
 	elsif ($program eq 'pciconf'){
 		$args = ' -lv';
 		$path = $alerts{'pciconf'}->{'path'};
-		$pattern = qr/^([^@]+)\@pci/;
+		$pattern = q/^([^@]+)\@pci/; # i only added perl 5.14, don't use qr/
 	}
 	elsif ($program eq 'pcidump'){
 		$args = ' -v';
 		$path = $alerts{'pcidump'}->{'path'};
-		$pattern = qr/^[0-9a-f]+:/;
+		$pattern = q/^[0-9a-f]+:/; # i only added perl 5.14, don't use qr/
 	}
 	elsif ($program eq 'pcictl'){
 		$args = ' pci0 list -N';
 		$path = $alerts{'pcictl'}->{'path'};
-		$pattern = qr/^[0-9a-f:]+:/;
+		$pattern = q/^[0-9a-f:]+:/; # i only added perl 5.14, don't use qr/
 	}
 	elsif ($program eq 'pcictl-n'){
 		$args = ' pci0 list -n';
 		$path = $alerts{'pcictl'}->{'path'};
-		$pattern = qr/^[0-9a-f:]+:/;
+		$pattern = q/^[0-9a-f:]+:/; # i only added perl 5.14, don't use
 	}
 	if ($fake{'lspci'} || $fake{'pciconf'} || $fake{'pcictl'} || $fake{'pcidump'}){
 		# my $file = "$fake_data_dir/pciconf/pci-freebsd-8.2-2";
@@ -28771,11 +28838,13 @@ sub system_base_bsd {
 
 sub system_base {
 	eval $start if $b_log;
+	# Need data on these Arch derived: CachyOS
 	my $base_distro_arch = 'anarchy|antergos|arch(bang|craft|labs|man|strike)|arco|artix';
 	# note: arch linux derived distro page claims kaos as arch derived but it is NOT
-	$base_distro_arch .= '|blackarch|bluestar|chakra|ctios|endeavour|garuda|hyperbola|linhes';
-	$base_distro_arch .= '|mabox|manjaro|mysys2|netrunner\s?rolling|ninja|obarun|parabola';
-	$base_distro_arch .= '|puppyrus-?a|reborn|snal|steamos|talkingarch|ubos';
+	$base_distro_arch .= '|blackarch|bluestar|cachyos|chakra|ctios';
+	$base_distro_arch .= '|endeavour|garuda|hyperbola|linhes';
+	$base_distro_arch .= '|mabox|manjaro|mysys2|netrunner\s?rolling|ninja|obarun';
+	$base_distro_arch .= '|parabola|puppyrus-?a|reborn|snal|steamos|talkingarch|ubos';
 	my $base_file_debian_version = 'sidux';
 	# detect debian steamos before arch steamos
 	my $base_osr_debian_version = '\belive|lmde|neptune|parrot|pureos|rescatux|';
@@ -31295,8 +31364,8 @@ sub set_ps_gui {
 	# compositors (for wayland these are also the server, note.
 	# for wayland always show, so always load these
 	if ($show{'graphic'}){
-		@temp=qw(3dwm budgie-wm cairo compiz compton deepin-wm dcompmgr enlightenment 
-		gala gnome-shell kmscon kwin_wayland kwin_x11 kwinft kwin
+		@temp=qw(3dwm budgie-wm cairo compiz compton cosmic-comp deepin-wm dcompmgr 
+		enlightenment gala gnome-shell kmscon kwin_wayland kwin_x11 kwinft kwin
 		marco metisse mir moblin muffin mutter picom steamcompmgr 
 		ukwm unagi unity-system-compositor wayland xcompmgr xfwm[45]?);
 		push(@match,@temp);
@@ -31318,7 +31387,7 @@ sub set_ps_gui {
 		weston wio\+? wxr[cd] xuake));
 		$matches .= $wl_compositors;
 	}
-	$matches = qr/$matches/;
+	$matches = qr/$matches/; # remember qr/../i only added perl 5.014
 	foreach (@ps_cmd){
 		if (/^(|[\S]*\/)($matches)(\/|\s|$)/){
 			$working = $2;
