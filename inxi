@@ -48,8 +48,8 @@ use POSIX qw(ceil uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.3.25';
-my $self_date='2023-02-07';
+my $self_version='3.3.26';
+my $self_date='2023-03-28';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -1679,9 +1679,17 @@ sub audio_data {
 	print "Collecting audio data...\n";
 	my @cmds = (
 	['aplay', '--version'], # alsa
-	['aplay', '-l'], # alsa
+	['aplay', '-l'], # alsa devices
+	['aplay', '-L'], # alsa list of features, can detect active sound server
 	['pactl', '--version'], # pulseaudio
+	['pactl', 'info'], # pulseaudio, check if running as server: Server Name:
 	['pactl', 'list'], # pulseaudio
+	['pipewire', '--version'], # pipewire
+	['pipewire-alsa', '--version'], # pipewire-alsa - just config files
+	['pipewire-pulse', '--version'], # pipewire-pulse
+	['pw-jack', '--version'], # pipewire-jack
+	['pw-cli', 'ls'], # pipewire, check if running as server
+	['pw-cli', 'info all'],
 	);
 	run_commands(\@cmds,'audio');
 	@files = main::globber('/proc/asound/card*/codec*');
@@ -1716,8 +1724,8 @@ sub bluetooth_data {
 		['bt-adapter','--list'], # no version
 		['bt-adapter','--info'],
 		['bluetoothctl','--version'],
-		['bluetoothctl','-- list'],
-		['bluetoothctl','-- show']
+		['bluetoothctl','--list'],
+		['bluetoothctl','--show']
 		);
 	}
 	run_commands(\@cmds,'bluetooth');
@@ -5663,7 +5671,7 @@ sub show_options {
 	Additional Options and Advanced Options for less common situations."],
 	['0', '', '', $line ],
 	['0', '', '', "Main Feature Options:"],
-	['1', '-A', '--audio', "Audio/sound devices(s), driver, running sound 
+	['1', '-A', '--audio', "Audio/sound devices(s), driver; active sound APIs and 
 	servers."],
 	['1', '-b', '--basic', "Basic output, short form. Same as $self_name^-v^2."],
 	['1', '-B', '--battery', "System battery info, including charge, condition
@@ -5847,7 +5855,7 @@ sub show_options {
 	verbose or line output, not short form):"],
 	['2', '-A', '', "Specific vendor/product information (if relevant); 
 	PCI/USB ID of device; Version/port(s)/driver version (if available);
-	non-running sound servers."],
+	inactive sound servers/APIs."],
 	['2', '-B', '', "Current/minimum voltage, vendor/model, status (if available); 
 	attached devices (e.g. wireless mouse, keyboard, if present)."],
 	['2', '-C', '', "L1/L3 cache (if most Linux, or if root and dmidecode 
@@ -5904,7 +5912,7 @@ sub show_options {
 	['1', '-xx', '--extra 2', "Show extra, extra data (only works with verbose 
 	or line output, not short form):"],
 	['2', '-A', '', "Chip vendor:product ID for each audio device; PCIe speed,
-	lanes (if found)."],
+	lanes (if found); sound server/api helper daemons/plugins."],
 	['2', '-B', '', "Serial number."],
 	['2', '-D', '', "Disk transfer speed; NVMe lanes; Disk serial number; LVM 
 	volume group free space (if available); disk duid (some BSDs)."],
@@ -5987,7 +5995,8 @@ sub show_options {
 	verbose or line output, not short form); check man page for explanations!; 
 	also sets --extra=3:"],
 	['2', '-A', '', "If available: list of alternate kernel modules/drivers 
-	for device(s); PCIe lanes-max: gen, speed, lanes (if relevant)."],
+	for device(s); PCIe lanes-max: gen, speed, lanes (if relevant); list of 
+	installed tools for servers."],
 	['2', '-C', '', "If available:  microarchitecture level (64 bit AMD/Intel 
 	only).CPU generation, process node, built years; CPU socket type, base/boost 
 	speeds (dmidecode+root/sudo/doas required); Full topology line, with cores, 
@@ -6810,6 +6819,10 @@ sub message {
 	$id ||= '';
 	my %message = (
 	'arm-cpu-f' => 'Use -f option to see features',
+	'audio-server-on-pipewire-pulse' => 'off (using pipewire-pulse)',
+	'audio-server-process-on' => 'active (process)',
+	'audio-server-root-na' => 'n/a (root, process)',
+	'audio-server-root-on' => 'active (root, process)',
 	'battery-data' => 'No system battery data found. Is one present?',
 	'battery-data-bsd' => 'No battery data found. Try with --dmidecode',
 	'battery-data-sys' => 'No /sys data found.',
@@ -7258,7 +7271,7 @@ sub print_data {
 		'Monitor' => 1,
 		'Optical' => 1,
 		'Screen' => 1,
-		'Sound Server' => 1,
+		'Server' => 1, # was 'Sound Server'
 		'variant' => 1, # arm > 1 cpu type
 		);
 		foreach my $val1 (@{$data->{$key1}}){
@@ -7491,7 +7504,6 @@ sub print_line {
 ## AudioItem 
 {
 package AudioItem;
-
 sub get {
 	eval $start if $b_log;
 	my $rows = [];
@@ -7519,11 +7531,10 @@ sub get {
 		}
 		@$rows = ({main::key($num++,0,1,$key) => main::message($type,'')});
 	}
-	sound_server_output($rows);
+	sound_output($rows);
 	eval $end if $b_log;
 	return $rows;
 }
-
 sub device_output {
 	eval $start if $b_log;
 	return if !$devices{'audio'};
@@ -7649,95 +7660,352 @@ sub usb_output {
 	}
 	eval $end if $b_log;
 }
-sub sound_server_output {
+sub sound_output {
 	eval $start if $b_log;
 	my $rows = $_[0];
-	my ($program);
+	my ($key,$program,$value);
 	my ($j,$num) = (0,0);
-	foreach my $server (@{sound_server_data()}){
-		next if $extra < 1 && (!$server->[3] || $server->[3] ne 'yes');
+	foreach my $server (@{sound_data()}){
+		next if $extra < 1 && (!$server->[3] || $server->[3] !~ /^(active|.*api)/);
 		$j = scalar @$rows;
 		$server->[2] ||= 'N/A';
 		$server->[3] ||= 'N/A';
 		push(@$rows, {
 		main::key($num++,1,1,$server->[0]) => $server->[1],
 		main::key($num++,0,2,'v') => $server->[2],
-		main::key($num++,0,2,'running') => $server->[3],
+		main::key($num++,0,2,'status') => $server->[3],
 		});
+		if ($extra > 1 && defined $server->[4] && ref $server->[4] eq 'ARRAY'){
+			my $b_multi = (scalar @{$server->[4]} > 1) ? 1: 0;
+			my $b_start;
+			my $k = 0;
+			foreach my $item (@{$server->[4]}){
+				if ($item->[2] eq 'daemon'){
+					$key = 'status';
+					$value = $item->[3];
+				}
+				else {
+					$key = 'type';
+					$value = $item->[2];
+				}
+				if (!$b_multi){
+					$rows->[$j]{main::key($num++,1,2,$item->[0])} = $item->[1];
+					$rows->[$j]{main::key($num++,0,3,$key)} = $value;
+				}
+				else {
+					$rows->[$j]{main::key($num++,1,2,$item->[0])} = '' if !$b_start;
+					$b_start = 1;
+					$k++;
+					$rows->[$j]{main::key($num++,1,3,$k)} = $item->[1];
+					$rows->[$j]{main::key($num++,0,4,$key)} = $value;
+				}
+			}
+		}
+		if ($b_admin){
+			# Let long lines wrap for high tool counts, but best avoid too many tools
+			my $join = (defined $server->[5] && length(join(',',@{$server->[5]})) > 40) ? ', ': ',';
+			my $val = (defined $server->[5]) ? join($join,@{$server->[5]}) : 'N/A';
+			$rows->[$j]{main::key($num++,0,2,'tools')} = $val;
+		}
 	}
 	eval $end if $b_log;
 }
-sub sound_server_data {
+# see docs/inxi-audio.txt for unused or alternate helpers/tools
+sub sound_data {
 	eval $start if $b_log;
-	my ($program,$running,$server,$type,$version);
-	my $servers = [];
+	my ($helpers,$name,$program,$status,$test,$tools,$type,$version);
+	my $data = [];
+	## API Types ##
 	if (my $file = $system_files{'asound-version'}){
+		$name = 'ALSA';
+		$status = 'kernel-api';
+		$type = 'API';
 		# avoid possible second line if compiled by user
 		my $content = main::reader($file,'',0);
-		# some alsa strings have the build date in (...)
-		$version = (split(/\s+/, $content))[-1];
-		$version =~ s/\.$//; # trim off period
-		$server = 'ALSA';
-		$type = 'Sound API';
-		$running = 'yes';
+		# we want the string after driver version for old and new ALSA
+		# some alsa strings have the build date in (...) after Version
+		if ($content =~ /Driver Version (\S+)(\s|\.|$)/){
+			$version = $1;
+			$version =~ s/\.$//; # trim off period
+		}
+		if ($extra > 1){
+			$test = [['osspd','daemon'],['aoss','oss-emulator'],
+			['apulse','pulse-emulator'],];
+			$helpers = sound_helpers($test);
+		}
+		if ($b_admin){
+			$test = [qw(alsamixer alsamixergui amixer)];
+			$tools = sound_tools($test);
+		}
 		# not needed I think, if asound is there, it's running, but if that's
 		# not correct, can use one of the info/list/stat tests for aplay
 		# if (main::check_program('aplay') && main::grabber('aplay -l 2>/dev/null')){
-		# 	$running = 'yes';
+		# 	$status = 'running';
 		# }
-		push(@$servers, [$type,$server,$version,$running]);
-		($running,$version) = ('','');
+		push(@$data,[$type,$name,$version,$status,$helpers,$tools]);
+		($status,$version,$helpers,$tools) = ('','',undef,undef);
 	}
-	# sndstat file may be removed in linux oss
-	if (-e '/dev/sndstat' || ($program = main::check_program('ossinfo'))){
-		$server = 'OSS';
-		$type = 'Sound API';
-		#$version = main::program_version('oss','\S',2);
-		$version = (grep {/^hw.snd.version:/} @{$sysctl{'audio'}})[0] if $sysctl{'audio'};
-		$version = (split(/:\s*/,$version),1)[1] if $version;
-		$version =~ s|/.*$|| if $version;
-		# not a great test, but ok for now
-		$running = (-e '/dev/sndstat') ? 'yes' : 'no?';
-		push(@$servers, [$type,$server,$version,$running]);
-		($running,$version) = ('','');
+	# sndstat file may be removed in linux oss, but ossinfo part of oss4-base
+	# alsa oss compat driver will create /dev/sndstat in linux however
+	if ((-e '/dev/sndstat' && !$system_files{'asound-version'}) || 
+	main::check_program('ossinfo')){
+		$name = 'OSS';
+		# not a great test, but ok for now, check on current Linux, seems unlikely 
+		# to find OSS on OpenBSD in general.
+		if ($bsd_type){
+			$status = (-e '/dev/sndstat') ? 'kernel-api' : 'kernel-api (inactive)';
+		}
+		else {
+			$status = (-e '/dev/sndstat') ? 'active' : 'off?';
+		}
+		$type = 'API'; # not strictly an API on linux, but almost nobody uses it.
+		# not certain to be cross distro, Debian/Ubuntu at least.
+		if (-e '/etc/oss4/version.dat'){
+			$version = main::reader('/etc/oss4/version.dat','',0);
+		}
+		elsif ($sysctl{'audio'}){
+			$version = (grep {/^hw.snd.version:/} @{$sysctl{'audio'}})[0];
+			$version = (split(/:\s*/,$version),1)[1] if $version;
+			$version =~ s|/.*$|| if $version;
+		}
+		if ($extra > 1){
+			# virtual_oss freebsd, not verified; osspd-alsa/pulseaudio no path exec
+			$test = [['virtual_oss','daemon'],['virtual_equalizer','plugin']];
+			$helpers = sound_helpers($test);
+		}
+		if ($b_admin){
+			# *mixer are FreeBSD tools
+			$test = [qw(dsbmixer mixer ossinfo ossmix ossxmix vmixctl)];
+			$tools = sound_tools($test);
+		}
+		push(@$data,[$type,$name,$version,$status,$helpers,$tools]);
+		($status,$version,$helpers,$tools) = ('','',undef,undef);
 	}
 	if ($program = main::check_program('sndiod')){
-		$server = 'sndio';
-		$type = 'Sound Interface';
-		#$version = main::program_version('sndio','\S',2);
-		$running = (grep {/sndiod/} @ps_cmd) ? 'yes': 'no';
-		push(@$servers, [$type,$server,$version,$running]);
-		($running,$version) = ('','');
+		if ($bsd_type){
+			push(@$data, ['API','sndio',undef,'sound-api',undef,undef]);
+		}
+		$name = 'sndiod';
+		# verified: accurate
+		$status = (grep {/sndiod/} @ps_cmd) ? 'active': 'off';
+		$type = 'Server';
+		# $version: no known method
+		if ($b_admin){
+			$test = [qw(aucat midicat mixerctl sndioctl)];
+			$tools = sound_tools($test);
+		}
+		push(@$data,[$type,$name,$version,$status,$helpers,$tools]);
+		($status,$version,$helpers,$tools) = ('','',undef,undef);
 	}
+	## Servers ##
 	if ($program = main::check_program('jackd')){
-		$server = 'JACK';
-		$type = 'Sound Server';
+		$name = 'JACK';
+		$status = jack_status();
+		$type = 'Server';
 		$version = main::program_version($program,'^jackd',3,'--version',1);
-		$running = (grep {/jackd/} @ps_cmd) ? 'yes':'no' ;
-		push(@$servers, [$type,$server,$version,$running]);
-		($running,$version) = ('','');
+		if ($extra > 1){
+			$test = [['a2jmidid','daemon']];
+			$helpers = sound_helpers($test);
+		}
+		if ($b_admin){
+			$test = [qw(cadence jack_control jack_mixer qjackctl)];
+			$tools = sound_tools($test);
+		}
+		push(@$data,[$type,$name,$version,$status,$helpers,$tools]);
+		($status,$version,$helpers,$tools) = ('','',undef,undef);
 	}
-	# note: pactl info/list/stat could be used
-	if ($program = main::check_program('pactl')){
-		$server = 'PulseAudio';
-		$type = 'Sound Server';
-		$version = main::program_version($program,'^pactl',2,'--version',1);
-		$running = (grep {m|/pulseaudiod?\b|} @ps_cmd) ? 'yes':'no' ;
-		push(@$servers, [$type,$server,$version,$running]);
-		($running,$version) = ('','');
+	if ($program = main::check_program('nasd')){
+		$name = 'NAS';
+		$status = (grep {/(^|\/)nasd/} @ps_cmd) ? 'active': 'off';
+		$type = 'Server';
+		$version = main::program_version($program,'^Network Audio',5,'-V',1);
+		if ($b_admin){
+			$test = [qw(auctl auinfo)];
+			$tools = sound_tools($test);
+		}
+		push(@$data,[$type,$name,$version,$status,$helpers,$tools]);
+		($status,$version,$helpers,$tools) = ('','',undef,undef);
 	}
 	if ($program = main::check_program('pipewire')){
-		$server = 'PipeWire';
-		$type = 'Sound Server';
+		$name = 'PipeWire';
+		$status = pipewire_status();
+		$type = 'Server';
 		$version = main::program_version($program,'^Compiled with libpipe',4,'--version',1);
-		$running = (grep {/pipewire/} @ps_cmd) ? 'yes':'no' ;
-		push(@$servers, [$type,$server,$version,$running]);
-		($running,$version) = ('','');
+		if ($extra > 1){
+			# pipewire-alsa is a plugin, but is just some config files
+			$test = [['pipewire-pulse','daemon'],['pipewire-media-session','daemon'],
+			['wireplumber','daemon'],
+			['pipewire-alsa','plugin','/etc/alsa/conf.d/*-pipewire-default.conf'],
+			['pw-jack','plugin']];
+			$helpers = sound_helpers($test);
+		}
+		if ($b_admin){
+			$test = [qw(pw-cat pw-cli wpctl)];
+			# note: pactl can be used w/pipewire-pulse;
+			if (!main::check_program('pulseaudio') && 
+			main::check_program('pipewire-pulse')){
+				splice(@$test,0,0,'pactl');
+			}
+			$tools = sound_tools($test);
+		}
+		push(@$data,[$type,$name,$version,$status,$helpers,$tools]);
+		($status,$version,$helpers,$tools) = ('','',undef,undef);
 	}
-	main::log_data('dump','sound servers: @$servers',$servers) if $b_log;
-	print Data::Dumper::Dumper $servers if $dbg[26];
+		# note: pactl info/list/stat could be used
+	if ($program = main::check_program('pulseaudio')){
+		$name = 'PulseAudio';
+		$status = pulse_status($program);
+		$type = 'Server';
+		$version = main::program_version($program,'^pulseaudio',2,'--version',1);
+		if ($extra > 1){
+			$test = [['pulseaudio-dlna','daemon'],
+			['pulseaudio-jack','module','/usr/lib/pulse*/modules/module-jack-sink.so']];
+			$helpers = sound_helpers($test);
+		}
+		if ($b_admin){
+			$test = [qw(pacat pactl pamix pamixer pavucontrol pulsemixer)];
+			$tools = sound_tools($test);
+		}
+		push(@$data,[$type,$name,$version,$status,$helpers,$tools]);
+		($status,$version,$helpers,$tools) = ('','',undef,undef);
+	}
+	if ($program = main::check_program('roard')){
+		$name = 'RoarAudio';
+		$status = (grep {/roard/} @ps_cmd) ? 'active': 'off';
+		$type = 'Server';
+		# no version so far
+		if ($extra > 1){
+			$test = [['roarplaylistd','daemon'],['roarify','pulse/viff-emulation']];
+			$helpers = sound_helpers($test);
+		}
+		if ($b_admin){
+			$test = [qw(roarcat roarctl)];
+			$tools = sound_tools($test);
+		}
+		push(@$data,[$type,$name,$version,$status,$helpers,$tools]);
+		($status,$version,$helpers,$tools) = ('','',undef,undef);
+	}
+	main::log_data('dump','sound data: @$data',$data) if $b_log;
+	print 'Sound data: ',  Data::Dumper::Dumper $data if $dbg[26];
 	eval $end if $b_log;
-	return $servers;
+	return $data;
+}
+# assume if jackd running we have active jack, update if required
+sub jack_status {
+	eval $start if $b_log;
+	my $status;
+	if (grep {/jackd/} @ps_cmd){
+		if (my $program = main::check_program('jack_control')){
+			system("$program status > /dev/null 2>&1");
+			# 0 means running, always, else 1.
+			if ($? == 0){
+				$status = 'active';
+			}
+			else {
+				$status = ($b_root) ? main::message('audio-server-root-na') : 'off';
+			}
+		}
+		$status = main::message('audio-server-process-on') if !$status;
+	}
+	else {
+		$status = 'off';
+	}
+	eval $end if $b_log;
+	return $status;
+}
+# pipewire is complicated, it can be there and running without being active server
+# This is NOT verified as valid true/yes case!!
+sub pipewire_status {
+	eval $start if $b_log;
+	my ($b_process,$program,$status,@data);
+	if (grep {/(^|\/)pipewire(d|\s|:|$)/} @ps_cmd){
+		# note: if pipewire was stopped but not masked, pw-cli can start service so
+		# only use if pipewire process already running
+		if ($program = main::check_program('pw-cli')){
+			@data = qx($program ls 2>/dev/null);
+			main::log_data('dump','pw-cli @data', \@data) if $b_log;
+			print 'pw-cli: ', Data::Dumper::Dumper \@data if $dbg[52];
+			if (@data){
+				$status = (grep {/media\.class\s*=\s*"(Audio|Midi)/i} @data) ? 'active' : 'off';
+			}
+			elsif ($b_root){
+				$status = main::message('audio-server-root-na');
+			}
+		}
+		$status = main::message('audio-server-process-on') if !$status;
+	}
+	else {
+		$status = 'off';
+	}
+	eval $end if $b_log;
+	return $status;
+}
+# pulse might be running through pipewire
+sub pulse_status {
+	eval $start if $b_log;
+	my $program = $_[0];
+	my ($status,@data);
+	if (grep {/(^|\/)pulseaudiod?\b/} @ps_cmd){
+		# this is almost certainly not needed, but keep for now
+		system("$program --check > /dev/null 2>&1");
+		# 0 means running, always, other could be an error.
+		if ($? == 0){
+			$status = 'active';
+		}
+		else {
+			$status = ($b_root) ? main::message('audio-server-root-on') : 'off';
+		}
+	}
+	else {
+		# can't use pactl info test because starts pulseaudio/pipewire if unmasked
+		if (main::check_program('pipewire-pulse') && 
+		(grep {/(^|\/)pipewire-pulse/} @ps_cmd)){
+			$status = main::message('audio-server-on-pipewire-pulse');
+		}
+		else {
+			$status = 'off';
+		}
+	}
+	eval $end if $b_log;
+	return $status;
+}
+sub sound_helpers {
+	eval $start if $b_log;
+	my $test = $_[0];
+	my ($helpers,$name,$status,$key);
+	foreach my $item (@$test){
+		if (main::check_program($item->[0]) || 
+		(defined $item->[2] && main::globber($item->[2]))){
+			$name = $item->[0];
+			$key = 'with';
+			# these are active/off daemons unless not a daemon
+			if ($item->[1] eq 'daemon'){
+				$status = (grep {/$item->[0]/} @ps_cmd) ? 'active':'off' ;
+			}
+			else {
+				$status = $item->[1];
+			}
+			push(@$helpers,[$key,$name,$item->[1],$status]);
+		}
+	}
+	# push(@$helpers, ['with','pipewire-pulse','daemon','active'],['with','pw-jack','plugin']);
+	# push(@$helpers, ['with','pipewire-pulse','daemon','active']);
+	eval $end if $b_log;
+	# print Data::Dumper::Dumper $helpers;
+	return $helpers;
+}
+sub sound_tools {
+	eval $start if $b_log;
+	my $test = $_[0];
+	my $tools;
+	foreach my $item (@$test){
+		if (main::check_program($item)){
+			push(@$tools,$item);
+		}
+	}
+	eval $end if $b_log;
+	# print Data::Dumper::Dumper $tools;
+	return $tools;
 }
 }
 
@@ -11107,13 +11375,20 @@ sub cp_cpu_arch {
 			$process = 'GF 14nm';
 			$year = '';}
 		elsif ($family eq '19'){ # AF
-			# ext model 6,7, but no base models yet
+			# zen 4 raphael, phoenix 1 use n5 I believe
+			# Epyc Bergamo zen4c 4nm, only few full model IDs, update when appear
+			if ($model =~ /^(78)$/){
+				$arch = 'Zen 4c';
+				$gen = '5';
+				$process = 'TSMC n4 (4nm)';
+				$year = '2023+';}
+			# ext model 6,7, base models trickling in
 			# 10 engineering sample
-			if ($model =~ /^(1.|6.|7.|A.)$/){
+			elsif ($model =~ /^(1.|6.|7.|A.)$/){
 				$arch = 'Zen 4';
 				$gen = '5';
-				$process = 'TSMC n5 (5nm)'; # Epyc Bergamo 4nm, no model IDs yet
-				$year = '2022';}
+				$process = 'TSMC n5 (5nm)';
+				$year = '2022+';}
 			# double check 40, 44; 21 confirmed
 			elsif ($model =~ /^(21|4.)$/){
 				$arch = 'Zen 3+';
@@ -11617,6 +11892,10 @@ sub cp_cpu_arch {
 				$arch = 'Raptor Lake'; # 13 gen, socket LG 1700,1800
 				$process = 'Intel 7 (10nm)';
 				$year = '2022+';}
+			elsif ($model =~ /^(BD)$/){
+				$arch = 'Lunar Lake'; # 16 gn
+				$process = 'Intel 18a (1.8nm)';
+				$year = '2024+';} # check when actually in production
 			elsif ($model =~ /^(CF)$/){
 				$arch = 'Emerald Rapids'; # 5th gen xeon
 				$process = 'Intel 7 (10nm)';
@@ -11629,7 +11908,7 @@ sub cp_cpu_arch {
 			# Raptor Lake: 13 gen, Intel 7 (10nm), 2022
 			# Meteor Lake: 14 gen, Intel 4 (7nm+)
 			# Arrow Lake - 15 gen, Intel 20A (2nm), 2024
-			# Lunar Lake - 16 gen, Intel 18A (1.8nm), 2025
+			# Lunar Lake - 16 gen, Intel 18A (1.8nm), 2024-5
 			# Nova Lake - 17 gen, Intel 18A (1.8nm), 2026
 		}
 		# itanium 1 family 7 all recalled
@@ -13475,7 +13754,7 @@ sub set_disk_vendors {
 	['(^DX[1-9])','^(HP\b|SANDDISK)','Sandisk/HP',''], # ssd drive, must come before seagate ST test
 	# real, SSEAGATE Backup+; XP1600HE30002 | 024 HN (spinpoint) ; possible usb: 24AS
 	# ST[numbers] excludes other ST starting devices
-	['([S]?SEAGATE|^((Barra|Fire)Cuda|BUP|Expansion|(ATA\s|HDD\s)?ST\d{2}|5AS|X[AFP])|Expansion Desk|FreeAgent|GoFlex|INIC|Backup(\+|\s?Plus)\s?(Hub)?|OneTouch|Slim\s?BK)','[S]?SEAGATE','Seagate',''], 
+	['([S]?SEAGATE|^((Barra|Fire)Cuda|BUP|EM\d{3}|Expansion|(ATA\s|HDD\s)?ST\d{2}|5AS|X[AFP])|Expansion Desk|FreeAgent|GoFlex|INIC|Backup(\+|\s?Plus)\s?(Hub)?|OneTouch|Slim\s?BK)','[S]?SEAGATE','Seagate',''], 
 	['^(WD|WL[0]9]|Western Digital|My (Book|Passport)|\d*LPCX|Elements|easystore|EA[A-Z]S|EARX|EFRX|EZRX|\d*EAVS|G[\s-]Drive|i HTS|0JD|JP[CV]|MD0|M000|\d+(BEV|(00)?AAK|AAV|AZL|EA[CD]S)|PC\sSN|SPZX|3200[AB]|2500[BJ]|20G2|5000[AB]|6400[AB]|7500[AB]|00[ABL][A-Z]{2}|SSC\b)','(^WDC|Western\s?Digital)','Western Digital',''],
 	# rare cases WDC is in middle of string
 	['(\bWDC\b|1002FAEX)','','Western Digital',''],
@@ -13522,6 +13801,7 @@ sub set_disk_vendors {
 	['^Acasis','^Acasis','Acasis (hub)',''],
 	['^Acclamator','^Acclamator','Acclamator',''],
 	['^(Actions|HS USB Flash|10d6)','^(Actions|10d6)','Actions',''],
+	['^(A-?DATA|ED\d{3}|NH01|Swordfish|SU\d{3}|SX\d{3}|XM\d{2})','^A-?DATA','ADATA',''],
 	['^Addlink','^Addlink','Addlink',''],
 	['^(ADplus|SuperVer\b)','^ADplus','ADplus',''],
 	['^ADTRON','^ADTRON','Adtron',''],
@@ -13603,6 +13883,7 @@ sub set_disk_vendors {
 	['^Dikom','^Dikom','Dikom',''],
 	['^DINGGE','^DINGGE','DINGGE',''],
 	['^Disain','^Disain','Disain',''],
+	['^(Disco|Go-Infinity)','^Disco','Disco',''],
 	['^(Disney|PIX[\s]?JR)','^Disney','Disney',''],
 	['^(Doggo|DQ-|Sendisk|Shenchu)','^(doggo|Sendisk(.?Shenchu)?|Shenchu(.?Sendisk)?)','Doggo (SENDISK/Shenchu)',''],
 	['^(Dogfish|M\.2 2242|Shark)','^Dogfish(\s*Technology)?','Dogfish Technology',''],
@@ -13638,6 +13919,7 @@ sub set_disk_vendors {
 	['^FASTDISK','^FASTDISK','FASTDISK',''],
 	['^Festtive','^Festtive','Festtive',''],
 	['^FiiO','^FiiO','FiiO',''],
+	['^(FIKWOT|FS\d{3})','^FIKWOT','Kikwot',''],
 	['^Fordisk','^Fordisk','Fordisk',''],
 	# FK0032CAAZP/FB160C4081 FK or FV can be HP but can be other things
 	['^(FORESEE|B[123]0)|P900F|S900M','^FORESEE','Foresee',''],
@@ -13645,13 +13927,14 @@ sub set_disk_vendors {
 	['^(FOXLINE|FLD)','^FOXLINE','Foxline',''], # russian vendor?
 	['^(GALAX\b|Gamer\s?L|TA\dD|Gamer[\s-]?V)','^GALAX','GALAX',''],
 	['^Freecom','^Freecom(\sFreecom)?','Freecom',''],
+	['^(Fuhler|FL-D\d{3})','^Fuhler','Fuhler',''],
 	['^Gaiver','^Gaiver','Gaiver',''],
 	['^Galaxy\b','^Galaxy','Galaxy',''],
 	['^Gamer[_\s-]?Black','^Gamer[_\s-]?Black','Gamer Black',''],
 	['^(Garmin|Fenix|Nuvi|Zumo)','^Garmin','Garmin',''],
 	['^Geil','^Geil','Geil',''],
 	['^GelL','^GelL','GelL',''], # typo for Geil? GelL ZENITH R3 120GB
-	['^(Generic|G1J3|M0S00|SCA128|SLD|UY[67])','^Generic','Generic',''],
+	['^(Generic|G1J3|M0S00|SCA\d{2}|SCY|SLD|S0J\d|UY[567])','^Generic','Generic',''],
 	['^(Genesis(\s?Logic)?|05e3)','(Genesis(\s?Logic)?|05e3)','Genesis Logic',''],
 	['^Geonix','^Geonix','Geonix',''],
 	['^Getrich','^Getrich','Getrich',''],
@@ -13667,11 +13950,13 @@ sub set_disk_vendors {
 	['^(Goldkey|GKP)','^Goldkey','GoldKey',''],
 	# Wilk Elektronik SA, poland
 	['^(Wilk\s*)?(GOODRAM|GOODDRIVE|IR[\s-]?SSD|IRP|SSDPR|Iridium)','^GOODRAM','GOODRAM',''],
+	['^(GreatWall|GW\d{3})','^GreatWall','GreatWall',''],
+	['^(GreenHouse|GH\b)','^GreenHouse','GreenHouse',''],
 	['^Gritronix','^Gritronixx?','Gritronix',''],
 	# supertalent also has FM: |FM
 	['^(G[\.]?SKILL)','^G[\.]?SKILL','G.SKILL',''],
 	['^G[\s-]*Tech','^G[\s-]*Tech(nology)?','G-Technology',''],
-	['^(Gudga|GIM\d+)','^Gudga','Gudga',''],
+	['^(Gudga|GIM\d+|GVR\d)','^Gudga','Gudga',''],
 	['^(Hajaan|HS[1-9])','^Haajan','Haajan',''],
 	['^Haizhide','^Haizhide','Haizhide',''],
 	['^(Hama|FlashPen\s?Fancy)','^Hama','Hama',''],
@@ -13680,10 +13965,12 @@ sub set_disk_vendors {
 	['^HEMA','^HEMA','HEMA',''],
 	['(HEORIADY|^HX-0)','^HEORIADY','HEORIADY',''],
 	['^(Hikvision|HKVSN|HS-SSD)','^Hikvision','Hikvision',''],
+	['^(Hisense|H8G)','^Hisense','Hisense',''],
 	['^Hoodisk','^Hoodisk','Hoodisk',''],
 	['^HUAWEI','^HUAWEI','Huawei',''],
 	['^Hypertec','^Hypertec','Hypertec',''],
 	['^HyperX','^HyperX','HyperX',''],
+	['^(HYSSD|HY-)','^HYSSD','HYSSD',''],
 	['^(Hyundai|Sapphire)','^Hyundai','Hyundai',''],
 	['^(IBM|DT|ESA[1-9]|ServeRaid)','^IBM','IBM',''], # M5110 too common
 	['^IEI Tech','^IEI Tech(\.|nology)?( Corp(\.|oration)?)?','IEI Technology',''],
@@ -13720,6 +14007,7 @@ sub set_disk_vendors {
 	['^JMicron','^JMicron(\s?Tech(nology)?)?','JMicron Tech',''], #JMicron H/W raid
 	['^JSYERA','^JSYERA','Jsyera',''],
 	['^(Jual|RX7)','^Jual','Jual',''], 
+	['^(J\.?ZAO|JZ)','^J\.?ZAO','J.ZAO',''], 
 	['^Kazuk','^Kazuk','Kazuk',''],
 	['(\bKDI\b|^OM3P)','\bKDI\b','KDI',''],
 	['^KEEPDATA','^KEEPDATA','KeepData',''],
@@ -13824,6 +14112,7 @@ sub set_disk_vendors {
 	['^Orico','^Orico','Orico',''],
 	['^Ortial','^Ortial','Ortial',''],
 	['^OSC','^OSC\b','OSC',''],
+	['^(Ovation)','^Ovation','Ovation',''],
 	['^oyunkey','^oyunkey','Oyunkey',''],
 	['^PALIT','PALIT','Palit',''], # ssd 
 	['^Panram','^Panram','Panram',''], # ssd 
@@ -13902,6 +14191,7 @@ sub set_disk_vendors {
 	['^(Super\s*Talent|STT|F[HTZ]M\d|PicoDrive|Teranova)','','Super Talent',''], 
 	['^(SF|Swissbit)','^Swissbit','Swissbit',''],
 	# ['^(SUPERSPEED)','^SUPERSPEED','SuperSpeed',''], # superspeed is a generic term
+	['^(SXMicro|NF8)','^SXMicro','SXMicro',''],
 	['^Taisu','^Taisu','Taisu',''],
 	['^(TakeMS|ColorLine)','^TakeMS','TakeMS',''],
 	['^Tammuz','^Tammuz','Tammuz',''],
@@ -13935,6 +14225,7 @@ sub set_disk_vendors {
 	['^USBTech','^USBTech','USBTech',''],
 	['^(UNIC2)','^UNIC2','UNIC2',''],
 	['^(UG|Unigen)','^Unigen','Unigen',''],
+	['^(UNITEK)','^UNITEK','UNITEK',''],
 	['^(USBest|UT16)','^USBest','USBest',''],
 	['^(OOS[1-9]|Utania)','Utania','Utania',''],
 	['^U-TECH','U-TECH','U-Tech',''],
@@ -13965,6 +14256,7 @@ sub set_disk_vendors {
 	['^XPG','^XPG','XPG',''],
 	['^XrayDisk','^XrayDisk','XrayDisk',''],
 	['^Xstar','^Xstar','Xstar',''],
+	['^(Xtigo)','^Xtigo','Xtigo',''],
 	['^(XUM|HX\d)','^XUM','XUM',''],
 	['^XUNZHE','^XUNZHE','XUNZHE',''],
 	['^(Yangtze|ZhiTai|PC00[5-9]|SC00[1-9])','^Yangtze(\s*Memory)?','Yangtze Memory',''],
@@ -16384,9 +16676,15 @@ sub set_amd_data {
 	'years' => '2020-22',
 	},
 	{'arch' => 'RDNA-3',
-	'ids' => '15bf|164f|73a8|7448|744c|745e',
+	'ids' => '73a8|7448|744c|745e|7480|7483',
 	'code' => 'Navi-3x',
 	'process' => 'TSMC n5 (5nm)',
+	'years' => '2022+',
+	},
+	{'arch' => 'RDNA-3',
+	'ids' => '15bf|15c8|164f',
+	'code' => 'Phoenix',
+	'process' => 'TSMC n4 (4nm)',
 	'years' => '2022+',
 	},
 	{'arch' => 'CDNA-1',
@@ -16398,8 +16696,15 @@ sub set_amd_data {
 	{'arch' => 'CDNA-2',
 	'ids' => '7408|740c|740f',
 	'code' => 'Instinct-MI2xx',
-	'process' => 'TSMC n6 (7nm)',
+	'process' => 'TSMC n6 (6nm)',
 	'years' => '2021-22+',
+	},
+	{'arch' => 'CDNA-3',
+	'ids' => '',
+	'code' => 'Instinct-MI3xx',
+	'pattern' => 'Instinct MI3\d{2}X?',
+	'process' => 'TSMC n5 (5nm)',
+	'years' => '2023+',
 	},
 	];
 }
@@ -16540,7 +16845,7 @@ sub set_intel_data {
 	},
 	{'arch' => 'Gen-12.2',
 	'ids' => '4626|4628|462a|4636|4638|463a|4682|4688|468a|468b|4690|4692|4693|' .
-	'46a3|46a6|46a8|46aa|46b0|46b1|46b3|46b6|46b8|46ba|46c1|46c3',
+	'46a3|46a6|46a8|46aa|46b0|46b1|46b3|46b6|46b8|46ba|46c1|46c3|46d0|46d1|46d2',
 	'code' => '',
 	'process' => 'Intel 10nm',
 	'years' => '2021-22+',
@@ -16566,10 +16871,10 @@ sub set_intel_data {
 	'years' => '2022+',
 	},
 	{'arch' => 'Gen-13',
-	'ids' => 'a780|a781|a782|a783|a788|a789|a78a|a78b',
+	'ids' => 'a720|a721|a780|a781|a782|a783|a788|a789|a78a|a78b|a7a0|a7a1|a7a8|' .
+	'a7a9',
 	'code' => '',
-	'pattern' => 'Raptor Lake',
-	'process' => 'Intel 7 (10nm)', 
+	'process' => 'Intel 7 (10nm)',
 	'years' => '2022+',
 	},
 	];
@@ -16785,7 +17090,7 @@ sub set_nv_data {
 	'legacy' => 0,
 	'process' => 'TSMC 28nm',
 	'release' => '',
-	'series' => '525.xx+',
+	'series' => '530.xx+',
 	'status' => $status_current,
 	'xorg' => '',
 	'years' => '2014-19',
@@ -16802,20 +17107,20 @@ sub set_nv_data {
 	'legacy' => 0,
 	'process' => 'TSMC 16nm',
 	'release' => '',
-	'series' => '525.xx+',
+	'series' => '530.xx+',
 	'status' => $status_current,
 	'xorg' => '',
 	'years' => '2016-21',
 	},
 	{'arch' => 'Volta',
 	'ids' => '1d81|1db1|1db3|1db4|1db5|1db6|1db7|1db8|1dba|1df0|1df2|1df6|1fb0|' .
-	'20b0|20b3|20b6',
+	'20b0|20b6',
 	'code' => 'GV1xx',
 	'kernel' => '',
 	'legacy' => 0,
 	'process' => 'TSMC 12nm',
 	'release' => '',
-	'series' => '525.xx+',
+	'series' => '530.xx+',
 	'status' => $status_current,
 	'xorg' => '',
 	'years' => '2017-20',
@@ -16826,59 +17131,60 @@ sub set_nv_data {
 	'1f07|1f08|1f0a|1f0b|1f10|1f11|1f12|1f14|1f15|1f36|1f42|1f47|1f50|1f51|1f54|' .
 	'1f55|1f76|1f82|1f83|1f91|1f95|1f96|1f97|1f98|1f99|1f9c|1f9d|1f9f|1fa0|1fb0|' .
 	'1fb1|1fb2|1fb6|1fb7|1fb8|1fb9|1fba|1fbb|1fbc|1fdd|1ff0|1ff2|1ff9|2182|2184|' .
-	'2187|2188|2189|2191|2192|21c4|21d1|25a6|25a7|25a9|25aa',
+	'2187|2188|2189|2191|2192|21c4|21d1|25a6|25a7|25a9|25aa|25ad|25ed',
 	'code' => 'TUxxx',
 	'kernel' => '',
 	'legacy' => 0,
 	'process' => 'TSMC 12nm FF',
 	'release' => '',
-	'series' => '525.xx+',
+	'series' => '530.xx+',
 	'status' => $status_current,
 	'xorg' => '',
 	'years' => '2018-22',
 	},
 	{'arch' => 'Ampere',
-	'ids' => '20b0|20b2|20b5|20b7|20f1|20f3|20f5|2203|2204|2206|2207|2208|220a|' .
-	'220d|2216|2230|2231|2232|2233|2235|2236|2237|2238|2414|2420|2438|2460|2482|' .
-	'2484|2486|2487|2488|2489|248a|249c|249d|24a0|24b0|24b1|24b6|24b7|24b8|24b9|' .
-	'24ba|24bb|24c9|24dc|24dd|24e0|24fa|2503|2504|2507|2508|2520|2521|2523|2531|' .
-	'2544|2560|2563|2571|25a0|25a2|25a5|25b6|25b8|25b9|25ba|25bb|25e0|25e2|25e5|' .
-	'25f9|25fa|25fb',
+	'ids' => '20b0|20b2|20b3|20b5|20b7|20f1|20f3|20f5|2203|2204|2206|2207|2208|' .
+	'220a|220d|2216|2230|2231|2232|2233|2235|2236|2237|2238|2414|2420|2438|2460|' .
+	'2482|2484|2486|2487|2488|2489|248a|249c|249d|24a0|24b0|24b1|24b6|24b7|24b8|' .
+	'24b9|24ba|24bb|24c9|24dc|24dd|24e0|24fa|2503|2504|2507|2508|2520|2521|2523|' .
+	'2531|2544|2560|2563|2571|2582|25a0|25a2|25a5|25ab|25ac|25b6|25b8|25b9|25ba|' .
+	'25bb|25e0|25e2|25e5|25ec|25f9|25fa|25fb',
 	'code' => 'GAxxx',
 	'kernel' => '',
 	'legacy' => 0,
 	'process' => 'TSMC n7 (7nm)',
 	'release' => '',
-	'series' => '525.xx+',
+	'series' => '530.xx+',
 	'status' => $status_current,
 	'xorg' => '',
 	'years' => '2020-22',
 	},
 	{'arch' => 'Hopper',
-	'ids' => '2331',
+	'ids' => '2330|2331|2339',
 	'code' => 'GH1xx',
 	'kernel' => '',
 	'legacy' => 0,
 	'process' => 'TSMC n4 (5nm)',
 	'release' => '',
-	'series' => '525.xx+',
+	'series' => '530.xx+',
 	'status' => $status_current,
 	'xorg' => '',
 	'years' => '2022+',
 	},
 	{'arch' => 'Lovelace',
-	'ids' => '2684|26b1|26b5|2704',
+	'ids' => '2684|26b1|26b5|2704|2717|2757|2782|27a0|27b8|27e0|2820|2860|28a0|' .
+	'28a1|28e0|28e1',
 	'code' => 'AD1xx',
 	'kernel' => '',
 	'legacy' => 0,
 	'process' => 'TSMC n4 (5nm)',
 	'release' => '',
-	'series' => '525.xx+',
+	'series' => '530.xx+',
 	'status' => $status_current,
 	'xorg' => '',
 	'years' => '2022-23+',
 	},
-	];
+	],
 }
 sub gpu_data {
 	eval $start if $b_log;
@@ -22587,9 +22893,8 @@ sub ram_vendor {
 ## RepoItem
 {
 package RepoItem;
-
 # easier to keep these package global, but undef after done
-my (@dbg_files,$debugger_dir);
+my (@dbg_files,$debugger_dir,%repo_keys);
 my $num = 0;
 sub get {
 	eval $start if $b_log;
@@ -22613,6 +22918,7 @@ sub get {
 		@$rows = @dbg_files;
 		undef @dbg_files;
 		undef $debugger_dir;
+		undef %repo_keys;
 	}
 	else {
 		if ($start == scalar @$rows){
@@ -23005,10 +23311,20 @@ sub get_repos_linux {
 			}
 		}
 	}
-	# Alpine linux
-	if (-f $apk){
-		$data = repo_builder($apk,'apk','^\s*[^#]+');
-		push(@$rows,@$data);
+	# Alpine linux/Chimera
+	if (-f $apk || -d "$apk.d"){
+		@files = main::globber("$apk.d/*.list");
+		push(@files, $apk);
+		# prefilter list for logging
+		@files = grep {-f $_} @files; # may not have $apk file.
+		main::log_data('data',"apk repo files:\n" . main::joiner(\@files, "\n", 'unset')) if $b_log;
+		foreach (sort @files){
+			# -r to be on safe side
+			if (-r $_){
+				$data = repo_builder($_,'apk','^\s*[^#]+');
+				push(@$rows,@$data);
+			}
+		}
 	}
 	# Venom
 	if (-f $scratchpkg){
@@ -23308,10 +23624,9 @@ sub get_repos_bsd {
 	}
 	eval $start if $b_log;
 }
-sub repo_data {
+sub set_repo_keys {
 	eval $start if $b_log;
-	my ($status,$type) = @_;
-	my %keys = (
+	%repo_keys = (
 	'apk-active' => 'APK repo',
 	'apk-missing' => 'No active APK repos in',
 	'apt-active' => 'Active apt repos in',
@@ -23369,7 +23684,13 @@ sub repo_data {
 	'zypp-missing' => 'No active zypp repos in',
 	);
 	eval $end if $b_log;
-	return $keys{$type . '-' . $status};
+}
+sub repo_data {
+	eval $start if $b_log;
+	my ($status,$type) = @_;
+	set_repo_keys() if !%repo_keys;
+	eval $end if $b_log;
+	return $repo_keys{$type . '-' . $status};
 }
 sub repo_builder {
 	eval $start if $b_log;
@@ -26475,8 +26796,9 @@ sub version_proc {
 			# $result='Linux version 5.9.0-5-amd64 (debian-kernel@lists.debian.org) (gcc-10 (Debian 10.2.1-1) 10.2.1 20201207, GNU ld (GNU Binutils for Debian) 2.35.1) #1 SMP Debian 5.9.15-1 (2020-12-17)';
 			# $result='Linux version 2.6.1 (GNU 0.9 GNU-Mach 1.8+git20201007-486/Hurd-0.9 i686-AT386)';
 			# $result='NetBSD version 9.1 (netbsd@localhost) (gcc version 7.5.0) NetBSD 9.1 (GENERIC) #0: Sun Oct 18 19:24:30 UTC 2020';
+			# $result='Linux version 6.0.8-0-generic (chimera@chimera) (clang version 15.0.4, LLD 15.0.4) #1 SMP PREEMPT_DYNAMIC Fri Nov 11 13:45:29 UTC 2022';
 		}
-		if ($result =~ /(gcc|clang).*version\s([^\s\)]+)/){
+		if ($result =~ /(gcc|clang).*version\s([^,\s\)]+)/){
 			$version = $2;
 			$version ||= 'N/A'; 
 			@$compiler = ($1,$version);
@@ -28844,7 +29166,8 @@ sub system_base {
 	$base_distro_arch .= '|blackarch|bluestar|cachyos|chakra|ctios';
 	$base_distro_arch .= '|endeavour|garuda|hyperbola|linhes';
 	$base_distro_arch .= '|mabox|manjaro|mysys2|netrunner\s?rolling|ninja|obarun';
-	$base_distro_arch .= '|parabola|puppyrus-?a|reborn|snal|steamos|talkingarch|ubos';
+	$base_distro_arch .= '|parabola|puppyrus-?a|reborn|snal|steamos|talkingarch';
+	$base_distro_arch .= '|ubos|xero';
 	my $base_file_debian_version = 'sidux';
 	# detect debian steamos before arch steamos
 	my $base_osr_debian_version = '\belive|lmde|neptune|parrot|pureos|rescatux|';
@@ -28861,8 +29184,8 @@ sub system_base {
 	my $base_osr_issue = 'grml|linux lite|openmediavault'; 
 	# osr has distro name but has fedora centos redhat ID_LIKE and VERSION_ID same
 	my $base_osr_redhat = 'almalinux|centos|rocky'; 
-	# osr has distro name but has ubuntu ID_LIKE/UBUNTU_CODENAME
-	my $base_osr_ubuntu = 'mint|neon|nitrux|pop!_os|tuxedo|zinc|zorin'; 
+	# osr has distro name but has ubuntu (or debian) ID_LIKE/UBUNTU_CODENAME
+	my $base_osr_ubuntu = 'feren|mint|neon|nitrux|pop!?_os|tuxedo|zinc|zorin'; 
 	my $base_upstream_lsb = '/etc/upstream-release/lsb-release';
 	my $base_upstream_osr = '/etc/upstream-release/os-release';
 	# these id as themselves, but system base is version file
@@ -28949,7 +29272,7 @@ sub get_lsb_release {
 	eval $start if $b_log;
 	my ($lsb_file) = @_;
 	$lsb_file ||= '/etc/lsb-release';
-	my ($distro,$id,$release,$codename,$description) = ('','','','','');
+	my ($distro_lsb,$id,$release,$codename,$description) = ('','','','','');
 	my @content = main::reader($lsb_file);
 	main::log_data('dump','@content',\@content) if $b_log;
 	@content = map {s/,|\*|\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} @content if @content;
@@ -28982,28 +29305,27 @@ sub get_lsb_release {
 		}
 	}
 	if (!$id && !$release && !$codename && $description){
-		$distro = $description;
+		$distro_lsb = $description;
 	}
 	else {
 		# avoid duplicates
-		$distro = $id;
-		$distro .= " $release" if $release && $distro !~ /$release/;
+		$distro_lsb = $id;
+		$distro_lsb .= " $release" if $release && $distro_lsb !~ /$release/;
 		# eg: release: 9 codename: mga9
-		if ($codename && $distro !~ /$codename/i && 
+		if ($codename && $distro_lsb !~ /$codename/i && 
 		(!$release || $codename !~ /$release/)){
-			$distro .= " $codename";
+			$distro_lsb .= " $codename";
 		}
-		$distro =~ s/^\s+|\s\s+|\s+$//g; # get rid of double and trailing spaces 
+		$distro_lsb =~ s/^\s+|\s\s+|\s+$//g; # get rid of double and trailing spaces 
 	}
 	eval $end if $b_log;
-	return $distro;
+	return $distro_lsb;
 }
 sub get_os_release {
 	eval $start if $b_log;
 	my ($b_osr_pretty,$base_type) = @_;
-	my ($base_id,$base_name,$base_version,$distro,$distro_name,
-	$name,$name_lc,$name_pretty,
-	$version_codename,$version_name,$version_id) = ('','','','','','','','','','','');
+	my ($base_id,$base_name,$base_version,$distro_osr,$name,$name_lc,$name_pretty,
+	$version_codename,$version_name,$version_id) = ('','','','','','','','','','');
 	my @content = @osr;
 	main::log_data('dump','@content',\@content) if $b_log;
 	@content = map {s/\\||\"|[:\47]|^\s+|\s+$|n\/a//ig; $_} @content if @content;
@@ -29032,9 +29354,9 @@ sub get_os_release {
 		if ($base_type){
 			if ($working[0] eq 'ID_LIKE' && $working[1]){
 				if ($base_type eq 'ubuntu'){
-					# popos shows debian
+					# feren,popos shows debian, feren ID ubuntu
 					$working[1] =~ s/^(debian|ubuntu\sdebian|debian\subuntu)/ubuntu/; 
-					$working[1] = 'ubuntu' if $working[1] eq 'debian';
+					$base_name = $working[1];
 				}
 				if ($base_type eq 'rhel' && $working[1] =~ /$base_type/i){
 					$base_name = 'RHEL';
@@ -29060,55 +29382,62 @@ sub get_os_release {
 	# are doing pretty name wrong, and just putting in the NAME value there
 	if (!$base_type){
 		if ((!$b_osr_pretty || !$name_pretty) && $name && $version_name){
-			$distro = $name;
-			$distro = 'Arco Linux' if $name_lc =~ /^arco/;
+			$distro_osr = $name;
+			$distro_osr = 'Arco Linux' if $name_lc =~ /^arco/;
 			if ($version_id && $version_name !~ /$version_id/){
-				$distro .= ' ' . $version_id;
+				$distro_osr .= ' ' . $version_id;
 			}
-			$distro .= " $version_name";
+			$distro_osr .= " $version_name";
 		}
 		elsif ($name_pretty && ($name_pretty !~ /tumbleweed/i && $name_lc ne 'arcolinux')){
-			$distro = $name_pretty;
+			$distro_osr = $name_pretty;
 		}
 		elsif ($name){
-			$distro = $name;
+			$distro_osr = $name;
 			if ($version_id){
-				$distro .= ' ' . $version_id;
+				$distro_osr .= ' ' . $version_id;
 			}
 		}
-		if ($version_codename && $distro !~ /$version_codename/i){
-			$distro .= " $version_codename";
+		if ($version_codename && $distro_osr !~ /$version_codename/i){
+			$distro_osr .= " $version_codename";
 		}
 	}
 	# note: mint has varying formats here, some have ubuntu as name, 17 and earlier
 	else {
+		# incoherent feren use of version, id, etc
+		if ($base_type eq 'ubuntu' && !$base_version && $version_codename && 
+		$name =~ /feren/i){
+			$base_version = ucfirst($version_codename);
+			$distro =~ s/ $version_codename//;
+		}
 		# mint 17 used ubuntu os-release, so won't have $base_version, steamos holo
 		if ($base_name && $base_type eq 'rhel'){
-			$distro = $base_name;
-			$distro .= ' ' . $version_id if $version_id; 
+			$distro_osr = $base_name;
+			$distro_osr .= ' ' . $version_id if $version_id; 
 		}
 		elsif ($base_name && $base_type eq 'arch'){
-			$distro = $base_name;
+			$distro_osr = $base_name;
 		}
 		elsif ($base_name && $base_version){
 			$base_id = ubuntu_id($base_version) if $base_type eq 'ubuntu' && $base_version;
 			$base_id = '' if $base_id && "$base_name$base_version" =~ /$base_id/;
 			$base_id .= ' ' if $base_id;
-			$distro = "$base_name $base_id$base_version";
+			$distro_osr = "$base_name $base_id$base_version";
 		}
 		elsif ($base_type eq 'default' && ($name_pretty || ($name && $version_name))){
-			$distro = ($name && $version_name) ? "$name $version_name" : $name_pretty;
+			$distro_osr = ($name && $version_name) ? "$name $version_name" : $name_pretty;
 		}
 		# LMDE 2 has only limited data in os-release, no _LIKE values. 3 has like and debian_codename
-		elsif ($base_type eq 'ubuntu' && $name_lc =~ /^(debian|ubuntu)/ && ($name_pretty || ($name && $version_name))){
-			$distro = ($name && $version_name) ? "$name $version_name": $name_pretty;
+		elsif ($base_type eq 'ubuntu' && $name_lc =~ /^(debian|ubuntu)/ && 
+		($name_pretty || ($name && $version_name))){
+			$distro_osr = ($name && $version_name) ? "$name $version_name": $name_pretty;
 		}
 		elsif ($base_type eq 'debian' && $base_version){
-			$distro = debian_id($base_version);
+			$distro_osr = debian_id($base_version);
 		}
 	}
 	eval $end if $b_log;
-	return $distro;
+	return $distro_osr;
 }
 # arg: 1 - optional: debian codename
 sub debian_id {
@@ -29282,7 +29611,8 @@ sub get_driver_modules {
 	my @mods = split(/,\s+/, $modules);
 	if ($driver){
 		@mods = grep {!/^$driver$/} @mods;
-		$modules = join(',', @mods);
+		my $join = (length(join(',', @mods)) > 40) ? ', ' : ',';
+		$modules = join($join, @mods);
 	}
 	log_data('data','$modules',$modules) if $b_log;
 	eval $end if $b_log;
@@ -29317,7 +29647,7 @@ sub get_gcc_data {
 			}
 		}
 	}
-	unshift(@$gccs, $gcc);
+	unshift(@$gccs, $gcc) if $gcc;
 	log_data('dump','@gccs',$gccs) if $b_log;
 	eval $end if $b_log;
 	return $gccs;
@@ -33223,8 +33553,8 @@ sub info_item {
 			$gcc_alt = join('/', @$gccs);
 		}
 		$b_gcc = 1;
+		$gcc ||= 'N/A'; # should not be needed after fix but leave in case undef
 	}
-	$gcc ||= 'N/A';
 	my $data = {
 	$data_name => [{
 	main::key($num++,0,1,'Processes') => scalar @ps_aux, 
