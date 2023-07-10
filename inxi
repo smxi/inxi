@@ -40,6 +40,7 @@ use Getopt::Long qw(GetOptions);
 Getopt::Long::Configure ('bundling', 'no_ignore_case', 
 'no_getopt_compat', 'no_auto_abbrev','pass_through');
 use POSIX qw(ceil uname strftime ttyname);
+# use bigint qw/hex/; # to handle large hex number warnings, but Perl 5.010 and later.
 # use Benchmark qw(:all);_
 # use Devel::Size qw(size total_size);
 # use feature qw(say state); # 5.10 or newer Perl
@@ -48,8 +49,8 @@ use POSIX qw(ceil uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.3.27';
-my $self_date='2023-05-07';
+my $self_version='3.3.28';
+my $self_date='2023-07-10';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -196,11 +197,11 @@ sub main {
 #### -------------------------------------------------------------------
 
 sub initialize {
-	set_os();
 	set_path();
 	set_user_paths();
 	set_basics();
 	set_system_files();
+	set_os();
 	Configs::set();
 	# set_downloader();
 	set_display_size();
@@ -549,6 +550,11 @@ sub set_os {
 		else {
 			$bsd_type = $os;
 		}
+	}
+	elsif (!$b_android && !$bsd_type && $system_files{'proc-version'} && 
+	-r $system_files{'proc-version'} &&
+	reader($system_files{'proc-version'},'',0) =~ /\b[rf]ed[ho][ar][at]\S{0,6}\.[co]/){
+		$show{'rf'} = 1;
 	}
 }
 
@@ -2149,6 +2155,8 @@ sub system_data {
 	['ipmitool','-V'],# version
 	['ipmitool','sensor'],
 	['lscpu',''],# part of util-linux
+	['lsmem',''],
+	['lsmem','--all'],
 	['lspci','--version'],
 	['lspci',''],
 	['lspci','-k'],
@@ -2226,6 +2234,7 @@ sub system_files {
 	'/proc/1/comm',
 	'/proc/cmdline',
 	'/proc/cpuinfo',
+	'/proc/iomem',
 	'/proc/meminfo',
 	'/proc/modules',
 	'/proc/net/arp',
@@ -5342,11 +5351,11 @@ sub get {
 	'fake:s' => sub {
 		my ($opt,$arg) = @_;
 		if ($arg){
-			my $wl = 'bluetooth|compiler|cpu|dboot|dmidecode|elbrus|ipmi|logical|lspci|';
-			$wl .= 'partitions|pciconf|pcictl|pcidump|raid-btrfs|raid-hw|raid-lvm|';
-			$wl .= 'raid-md|raid-soft|raid-zfs|sensors|sensors-sys|swaymsg|sysctl|';
-			$wl .= 'uptime|usbconfig|usbdevs|vmstat|wl-info|wlr-randr|';
-			$wl .= 'xdpyinfo|xorg-log|xrandr';
+			my $wl = 'bluetooth|compiler|cpu|dboot|dmidecode|elbrus|iomem|ipmi|';
+			$wl .= 'logical|lspci|partitions|pciconf|pcictl|pcidump|';
+			$wl .= 'raid-btrfs|raid-hw|raid-lvm|raid-md|raid-soft|raid-zfs|';
+			$wl .= 'sensors|sensors-sys|swaymsg|sys-mem|sysctl|uptime|usbconfig|';
+			$wl .= 'usbdevs|vmstat|wl-info|wlr-randr|xdpyinfo|xorg-log|xrandr';
 			for (split(',',$arg)){
 				if ($_ =~ /\b($wl)\b/){
 					$fake{lc($1)} = 1;
@@ -5788,7 +5797,7 @@ sub show_options {
 	['1', '-m', '--memory', "Memory (RAM) data. Requires root. Numbers of 
 	devices (slots) supported and individual memory devices (sticks of memory etc). 
 	For devices, shows device locator, type (e.g. DDR3), size, speed. Also shows
-	System RAM available/used, and removes Memory report from -I or -tm."],
+	System RAM report, and removes Memory report from -I or -tm."],
 	['1', '', '--memory-modules,--mm', "Memory (RAM) data. Exclude empty module slots."],
 	['1', '', '--memory-short,--ms', "Memory (RAM) data. Show only short Memory RAM 
 	report, number of arrays, slots, modules, and RAM type."],
@@ -5992,7 +6001,7 @@ sub show_options {
 	['2', '-A', '', "Chip vendor:product ID for each audio device; PCIe speed,
 	lanes (if found); USB rev, speed, lanes (if found); sound server/api helper 
 	daemons/plugins."],
-	['2', '-B', '', "Serial number."],
+	['2', '-B', '', "Power used, in watts; serial number."],
 	['2', '-D', '', "Disk transfer speed; NVMe lanes; USB rev, speed, lanes (if 
 	found); Disk serial number; LVM volume group free space (if available); disk 
 	duid (some BSDs)."],
@@ -8322,6 +8331,11 @@ sub battery_output {
 		main::key($num++,0,2,'charge') => $charge,
 		main::key($num++,0,2,'condition') => $condition,
 		});
+		if ($extra > 2){
+			if ($battery->{$key}{'power_now'}){
+				$rows->[$j]{main::key($num++,0,2,'power')} = sprintf('%0.1f W',($battery->{$key}{'power_now'}/10**6));
+			}
+		}
 		if ($extra > 0 || ($battery->{$key}{'voltage_now'} && 
 		 $battery->{$key}{'voltage_min_design'} && 
 		 ($battery->{$key}{'voltage_now'} - $battery->{$key}{'voltage_min_design'}) < 0.5)){
@@ -11357,7 +11371,7 @@ sub cp_cpu_arch {
 	$model = '' if !defined $model; # model can be 0
 	my ($arch,$gen,$note,$process,$year);
 	my $check = main::message('note-check');
-	# See: docs/inxi-resources.txt 
+	# See: docs/inxi-cpu.txt 
 	# print "type:$type fam:$family model:$model step:$stepping\n";
 	if ($type eq 'amd'){
 		if ($family eq '3'){
@@ -12113,6 +12127,12 @@ sub cp_cpu_arch {
 				$arch = 'Lunar Lake'; # 16 gn
 				$process = 'Intel 18a (1.8nm)';
 				$year = '2024+';} # check when actually in production
+			# Meteor Lake-S maybe cancelled, replaced by arrow
+			elsif ($model =~ /^(C6)$/){
+				$arch = 'Arrow Lake'; # 15 gn
+				# gfx tile is TSMC 3nm
+				$process = 'Intel 20a (2nm)';# TSMC 3nm (corei3-5)/Intel 20A 2nm (core i5-9)
+				$year = '2024+';} # check when actually in production
 			elsif ($model =~ /^(CF)$/){
 				$arch = 'Emerald Rapids'; # 5th gen xeon
 				$process = 'Intel 7 (10nm)';
@@ -12124,7 +12144,9 @@ sub cp_cpu_arch {
 			# Diamond Rapids: Intel 3 (7nm+), 2025
 			# Raptor Lake: 13 gen, Intel 7 (10nm), 2022
 			# Meteor Lake: 14 gen, Intel 4 (7nm+)
-			# Arrow Lake - 15 gen, Intel 20A (2nm), 2024
+			# Arrow Lake - 15 gen, TSMC 3nm (corei3-5)/Intel 20A 2nm (core i5-9), 2024
+			# Panther Lake - 15 gen, ?
+			# Beast Lake - 15 gen, ?
 			# Lunar Lake - 16 gen, Intel 18A (1.8nm), 2024-5
 			# Nova Lake - 17 gen, Intel 18A (1.8nm), 2026
 		}
@@ -12987,8 +13009,8 @@ sub drive_data {
 	my ($used) = (0);
 	PartitionItem::set_partitions() if !$loaded{'set-partitions'};
 	RaidItem::raid_data() if !$loaded{'raid'};
-	# see docs/inxi-data.txt PARTITION DATA for more on remote/fuse fs
-	my $fs_skip = PartitionItem::fs_excludes('disk-used');
+	# see docs/inxi-partitions.txt > FILE SYSTEMS for more on remote/fuse fs
+	my $fs_skip = PartitionItem::get_filters('fs-exclude');
 	foreach my $row (@partitions){
 		# don't count remote/distributed/union type fs towards used
 		next if ($row->{'fs'} && $row->{'fs'} =~ /^$fs_skip$/);
@@ -13997,7 +14019,7 @@ sub disk_data_by_id {
 }
 
 ## START DISK VENDOR BLOCK ##
-# 0: match pattern; 1: replace pattern; 2: vendor print; 3: serial pattern
+# 0 - match pattern; 1 - replace pattern; 2 - vendor print; 3 - serial pattern
 sub set_disk_vendors {
 	eval $start if $b_log;
 	$vendors = [
@@ -14011,21 +14033,21 @@ sub set_disk_vendors {
 	['(^MKN|Mushkin)','Mushkin','Mushkin',''], # MKNS
 	# MU = Multiple_Flash_Reader too risky: |M[UZ][^L] HD103SI HD start risky
 	# HM320II HM320II HM
-	['(SAMSUNG|^(AWMB|[BC]DS20|[BC]WB|BJ[NT]|[BC]GND|CJN|CUT|[DG]3 Station|DUO\b|DUT|CKT|[GS]2 Portable|GN|HD\d{3}[A-Z]{2}$|(HM|SP)\d{2}|HS\d|M[AB]G\d[FG]|MCC|MCBOE|MCG\d+GC|[CD]JN|MZ|^G[CD][1-9][QS]|P[BM]\d|(SSD\s?)?SM\s?841)|^SSD\s?[89]\d{2}\s(DCT|PRO|QVD|\d+[GT]B)|\bEVO\b|SV\d|[BE][A-Z][1-9]QT|YP\b|[CH]N-M|MMC[QR]E)','SAMSUNG','Samsung',''], # maybe ^SM, ^HM
+	['(SAMSUNG|^(AWMB|[BC]DS20|[BC]WB|BJ[NT]|[BC]GND|CJ[NT]|CUT|[DG]3 Station|DUO\b|DUT|CKT|[GS]2 Portable|GN|HD\d{3}[A-Z]{2}$|(HM|SP)\d{2}|HS\d|M[AB]G\d[FG]|MCC|MCBOE|MCG\d+GC|[CD]JN|MZ|^G[CD][1-9][QS]|P[BM]\d|(SSD\s?)?SM\s?841)|^SSD\s?[89]\d{2}\s(DCT|PRO|QVD|\d+[GT]B)|\bEVO\b|SV\d|[BE][A-Z][1-9]QT|YP\b|[CH]N-M|MMC[QR]E)','SAMSUNG','Samsung',''], # maybe ^SM, ^HM
 	# Android UMS Composite?U1
-	['(SanDisk|0781|^(A[BCD]LC[DE]|AFGCE|D[AB]4|DX[1-9]|Extreme|Firebird|S[CD]\d{2}G|SD(S[S]?[ADQ]|SL\d+G|SU\d)|SDW[1-9]|SE\d{2}|SEM[1-9]|\d[STU]|U(3\b|1\d0))|Clip Sport|Cruzer|iXpand|SSD (Plus|U1[01]0) [1-9]|ULTRA\s(FIT|trek|II)|X[1-6]\d{2})','(SanDisk|0781)','SanDisk',''],
+	['(SanDisk|0781|^(A[BCD]LC[DE]|AFGCE|D[AB]4|DX[1-9]|Extreme|Firebird|S[CD]\d{2}G|SD(S[S]?[ADQ]|SL\d+G|SU\d|\sUltra)|SDW[1-9]|SE\d{2}|SEM[1-9]|\d[STU]|U(3\b|1\d0))|Clip Sport|Cruzer|iXpand|SSD (Plus|U1[01]0) [1-9]|ULTRA\s(FIT|trek|II)|X[1-6]\d{2})','(SanDisk|0781)','SanDisk',''],
 	# these are HP/Sandisk cobranded. DX110064A5xnNMRI ids as HP and Sandisc
 	['(^DX[1-9])','^(HP\b|SANDDISK)','Sandisk/HP',''], # ssd drive, must come before seagate ST test
 	# real, SSEAGATE Backup+; XP1600HE30002 | 024 HN (spinpoint) ; possible usb: 24AS
 	# ST[numbers] excludes other ST starting devices
-	['([S]?SEAGATE|^((Barra|Fire)Cuda|BUP|EM\d{3}|Expansion|(ATA\s|HDD\s)?ST\d{2}|5AS|X[AFP])|Expansion Desk|FreeAgent|GoFlex|INIC|Backup(\+|\s?Plus)\s?(Hub)?|OneTouch|Slim\s?BK)','[S]?SEAGATE','Seagate',''], 
+	['([S]?SEAGATE|^((Barra|Fire)Cuda|BUP|EM\d{3}|Expansion|(ATA\s|HDD\s)?ST\d{2}|5AS|X[AFP])|Backup(\+|\s?Plus)\s?(Hub)?|DS2\d|Expansion Desk|FreeAgent|GoFlex|INIC|IronWolf|OneTouch|Slim\s?BK)','[S]?SEAGATE','Seagate',''], 
 	['^(WD|WL[0]9]|Western Digital|My (Book|Passport)|\d*LPCX|Elements|easystore|EA[A-Z]S|EARX|EFRX|EZRX|\d*EAVS|G[\s-]Drive|i HTS|0JD|JP[CV]|MD0|M000|\d+(BEV|(00)?AAK|AAV|AZL|EA[CD]S)|PC\sSN|SPZX|3200[AB]|2500[BJ]|20G2|5000[AB]|6400[AB]|7500[AB]|00[ABL][A-Z]{2}|SSC\b)','(^WDC|Western\s?Digital)','Western Digital',''],
 	# rare cases WDC is in middle of string
 	['(\bWDC\b|1002FAEX)','','Western Digital',''],
 	## THEN BETTER KNOWN ONESs ##
 	['^Acer','^Acer','Acer',''],
 	# A-Data can be in middle of string
-	['^(.*\bA-?DATA|ASP\d|AX[MN]|CH11|HV[1-9]|IM2|HD[1-9]|HDD\s?CH|IUM|SX\d|Swordfish)','A-?DATA','A-Data',''],
+	['^(.*\bA-?DATA|ASP\d|AX[MN]|CH11|FX63|HV[1-9]|IM2|HD[1-9]|HDD\s?CH|IUM|SX\d|Swordfish)','A-?DATA','A-Data',''],
 	['^(ASUS|ROG)','^ASUS','ASUS',''], # ROG ESD-S1C
 	# ATCS05 can be hitachi travelstar but not sure
 	['^ATP','^ATP\b','ATP',''],
@@ -14038,7 +14060,7 @@ sub set_disk_vendors {
 	['^(DKR|HGST|Touro|54[15]0|7250|HC[CT]\d)','^HGST','HGST (Hitachi)',''], # HGST HUA
 	['^((ATA\s)?Hitachi|HCS|HD[PST]|DK\d|IC|(HDD\s)?HT|HU|HMS|HDE|0G\d|IHAT)','Hitachi','Hitachi',''], 
 	# vb: VB0250EAVER but clashes with vbox; HP_SSD_S700_120G ;GB0500EAFYL GB starter too generic?
-	['^(HP\b|[MV]B[0-6]|G[BJ]\d|DF\d|F[BK]|0-9]|MM\d{4}|PSS|XR\d{4}|c350|v\d{3}[bgorw]$|x\d{3}[w]$|VK0|HC[CPY]\d|EX9\d\d|VO0)','^HP','HP',''], 
+	['^(HP\b|c350|DF\d|EG0\d{3}|EX9\d\d|G[BJ]\d|F[BK]|0-9]|HC[CPY]\d|MM\d{4}|[MV]B[0-6]|PSS|VO0|VK0|v\d{3}[bgorw]$|x\d{3}[w]$|XR\d{4})','^HP','HP',''], 
 	['^(Lexar|LSD|JumpDrive|JD\s?Firefly|LX\d|WorkFlow)','^Lexar','Lexar',''], # mmc-LEXAR_0xb016546c; JD Firefly;
 	# these must come before maxtor because STM
 	['^STmagic','^STmagic','STmagic',''],
@@ -14093,6 +14115,7 @@ sub set_disk_vendors {
 	['^Asgard','^Asgard','Asgard',''],
 	['^(ASM|2115)','^ASM','ASMedia',''],#asm1153e
 	['^ASolid','^ASolid','ASolid',''],
+	# ASTC (Advanced Storage Technology Consortium)
 	['^(AVEXIR|AVSSD)','^AVEXIR','Avexir',''],
 	['^Axiom','^Axiom','Axiom',''],
 	['^(Baititon|BT\d)','^Baititon','Baititon',''],
@@ -14132,6 +14155,7 @@ sub set_disk_vendors {
 	['^(Dane-?Elec|Z Mate)','^Dane-?Elec','DaneElec',''],
 	['^DATABAR','^DATABAR','DataBar',''],
 	# Daplink vfs is an ARM software thing
+	['^(Data\s?Memory\s?Systems|DMS)','^Data\s?Memory\s?Systems','Data Memory Systems',''],
 	['^Dataram','^Dataram','Dataram',''],
 	['^DELAIHE','^DELAIHE','DELAIHE',''],
 	# DataStation can be Trekstore or I/O gear
@@ -14191,6 +14215,7 @@ sub set_disk_vendors {
 	['^(FOXLINE|FLD)','^FOXLINE','Foxline',''], # russian vendor?
 	['^(GALAX\b|Gamer\s?L|TA\dD|Gamer[\s-]?V)','^GALAX','GALAX',''],
 	['^Freecom','^Freecom(\sFreecom)?','Freecom',''],
+	['^(FronTech)','^FronTech','Frontech',''],
 	['^(Fuhler|FL-D\d{3})','^Fuhler','Fuhler',''],
 	['^Gaiver','^Gaiver','Gaiver',''],
 	['^Galaxy\b','^Galaxy','Galaxy',''],
@@ -14198,7 +14223,7 @@ sub set_disk_vendors {
 	['^(Garmin|Fenix|Nuvi|Zumo)','^Garmin','Garmin',''],
 	['^Geil','^Geil','Geil',''],
 	['^GelL','^GelL','GelL',''], # typo for Geil? GelL ZENITH R3 120GB
-	['^(Generic|G1J3|M0S00|SCA\d{2}|SCY|SLD|S0J\d|UY[567])','^Generic','Generic',''],
+	['^(Generic|A3A|G1J3|M0S00|SCA\d{2}|SCY|SLD|S0J\d|UY[567])','^Generic','Generic',''],
 	['^(Genesis(\s?Logic)?|05e3)','(Genesis(\s?Logic)?|05e3)','Genesis Logic',''],
 	['^Geonix','^Geonix','Geonix',''],
 	['^Getrich','^Getrich','Getrich',''],
@@ -14212,6 +14237,7 @@ sub set_disk_vendors {
 	['^(Goldkey|GKH\d)','^Goldkey','Goldkey',''],
 	['^Golden[\s_-]?Memory','^Golden[\s_-]?Memory','Golden Memory',''],
 	['^(Goldkey|GKP)','^Goldkey','GoldKey',''],
+	['^(Goline)','^Goline','Goline',''],
 	# Wilk Elektronik SA, poland
 	['^(Wilk\s*)?(GOODRAM|GOODDRIVE|IR[\s-]?SSD|IRP|SSDPR|Iridium)','^GOODRAM','GOODRAM',''],
 	['^(GreatWall|GW\d{3})','^GreatWall','GreatWall',''],
@@ -14224,6 +14250,7 @@ sub set_disk_vendors {
 	['^(Hajaan|HS[1-9])','^Haajan','Haajan',''],
 	['^Haizhide','^Haizhide','Haizhide',''],
 	['^(Hama|FlashPen\s?Fancy)','^Hama','Hama',''],
+	['^(Hanye|Q60)','^Hanye','Hanye',''],
 	['^HDC','^HDC\b','HDC',''],
 	['^Hectron','^Hectron','Hectron',''],
 	['^HEMA','^HEMA','HEMA',''],
@@ -14235,7 +14262,7 @@ sub set_disk_vendors {
 	['^Hypertec','^Hypertec','Hypertec',''],
 	['^HyperX','^HyperX','HyperX',''],
 	['^(HYSSD|HY-)','^HYSSD','HYSSD',''],
-	['^(Hyundai|Sapphire)','^Hyundai','Hyundai',''],
+	['^(Hyundai|C2S\d|Sapphire)','^Hyundai','Hyundai',''],
 	['^(IBM|DT|ESA[1-9]|ServeRaid)','^IBM','IBM',''], # M5110 too common
 	['^IEI Tech','^IEI Tech(\.|nology)?( Corp(\.|oration)?)?','IEI Technology',''],
 	['^(IGEL|UD Pocket)','^IGEL','IGEL',''],
@@ -14248,7 +14275,7 @@ sub set_disk_vendors {
 	['^(Infokit)','^Infokit','Infokit',''],
 	# note: Initio default controller, means master/slave jumper is off/wrong, not a vendor
 	['^Inland','^Inland','Inland',''],
-	['^(InnoDisk|Innolite|SATA\s?Slim|DRPS)','^InnoDisk( Corp.)?','InnoDisk',''],
+	['^(InnoDisk|DEM\d|Innolite|SATA\s?Slim|DRPS)','^InnoDisk( Corp.)?','InnoDisk',''],
 	['(Innostor|1f75)','(Innostor|1f75)','Innostor',''],
 	['(^Innovation|Innovation\s?IT)','Innovation(\s*IT)?','Innovation IT',''],
 	['^Innovera','^Innovera','Innovera',''],
@@ -14295,7 +14322,7 @@ sub set_disk_vendors {
 	['^KLLISRE','^KLLISRE','KLLISRE',''],
 	['(KIOXIA|^K[BX]G\d)','KIOXIA','KIOXIA',''], # company name comes after product ID
 	['^(KLEVV|NEO\sN|CRAS)','^KLEVV','KLEVV',''],
-	['^Kodak','^Kodak','Kodak',''],
+	['^(Kodak|Memory\s?Saver)','^Kodak','Kodak',''],
 	['^(KOOTION)','^KOOTION','KOOTION',''],
 	['^(KUAIKAI|MSAM)','^KUAIKAI','KuaKai',''],
 	['(KUIJIA|DAHUA)','^KUIJIA','KUIJIA',''],
@@ -14312,6 +14339,7 @@ sub set_disk_vendors {
 	['^RPFT','','Lenovo O.E.M.',''],
 	# JAJS300M120C JAJM600M256C JAJS600M1024C JAJS600M256C JAJMS600M128G 
 	['^(Leven|JAJ[MS])','^Leven','Leven',''],
+	['^(LEQIXIANG)','^LEQIXIANG','Leqixiang',''],
 	['^(LG\b|Xtick)','^LG','LG',''],
 	['(LITE[-\s]?ON[\s-]?IT)','LITE[-]?ON[\s-]?IT','LITE-ON IT',''], # LITEONIT_LSS-24L6G
 	# PH6-CE240-L; CL1-3D256-Q11 NVMe LITEON 256GB
@@ -14389,6 +14417,7 @@ sub set_disk_vendors {
 	['^Pioneer','Pioneer','Pioneer',''],
 	['^Platinet','Platinet','Platinet',''],
 	['^(PLEXTOR|PX-)','^PLEXTOR','Plextor',''],
+	['^(Polion)','^Polion','Polion',''],
 	['^(PQI|Intelligent\s?Stick|Cool\s?Drive)','^PQI','PQI',''],
 	['^(Premiertek|QSSD|Quaroni)','^Premiertek','Premiertek',''],
 	['^(-?Pretec|UltimateGuard)','-?Pretec','Pretec',''],
@@ -14397,6 +14426,7 @@ sub set_disk_vendors {
 	['^PUSKILL','^PUSKILL','Puskill',''],
 	['QEMU','^\d*QEMU( QEMU)?','QEMU',''], # 0QUEMU QEMU HARDDISK
 	['(^Quantum|Fireball)','^Quantum','Quantum',''],
+	['(^QOOTEC|QMT)','^QOOTEC','QOOTEC',''],
 	['^QUMO','^QUMO','Qumo',''],
 	['^Qunion','^Qunion','Qunion',''],
 	['^(R[3-9]|AMD\s?(RADEON)?|Radeon)','AMD\s?(RADEON)?','AMD Radeon',''], # ssd 
@@ -14465,11 +14495,13 @@ sub set_disk_vendors {
 	['^TEAC','^TEAC','TEAC',''],
 	['^(TEAM|T[\s-]?Create|L\d\s?Lite|T\d{3,}[A-Z]|TM\d|(Dark\s?)?L3\b|T[\s-]?Force)','^TEAM(\s*Group)?','TeamGroup',''],
 	['^(Teclast|CoolFlash)','^Teclast','Teclast',''],
+	['^(tecmiyo)','^tecmiyo','TECMIYO',''],
 	['^Teelkoou','^Teelkoou','Teelkoou',''],
 	['^Tele2','^Tele2','Tele2',''],
 	['^Teleplan','^Teleplan','Teleplan',''],
 	['^TEUTONS','^TEUTONS','TEUTONS',''],
 	['^(Textorm)','^Textorm','Textorm',''], # B5 too short
+	['^(T(&|\s?and\s?)?G\d{3})','^T&G\b','T&G',''],
 	['^THU','^THU','THU',''],
 	['^Tiger[\s_-]?Jet','^Tiger[\s_-]?Jet','TigerJet',''],
 	['^Tigo','^Tigo','Tigo',''],
@@ -14493,6 +14525,7 @@ sub set_disk_vendors {
 	['^(USBest|UT16)','^USBest','USBest',''],
 	['^(OOS[1-9]|Utania)','Utania','Utania',''],
 	['^U-TECH','U-TECH','U-Tech',''],
+	['^(Value\s?Tech|VTP\d)','^Value\s?Tech','ValueTech',''],
 	['^VBOX','','VirtualBox',''],
 	['^(Veno|Scorp)','^Veno','Veno',''],
 	['^(Verbatim|STORE\s?\'?N\'?\s?(FLIP|GO)|Vi[1-9]|OTG\s?Tiny)','^Verbatim','Verbatim',''],
@@ -14512,6 +14545,7 @@ sub set_disk_vendors {
 	['^Wilk','^Wilk','Wilk',''],
 	['^(WinMemory|SWG\d)','^WinMemory','WinMemory',''],
 	['^(Winton|WT\d{2})','^Winton','Winton',''],
+	['^(WISE)','^WISE','WISE',''],
 	['^WPC','^WPC','WPC',''], # WPC-240GB
 	['^(Wortmann(\sAG)?|Terra\s?US)','^Wortmann(\sAG)?','Wortmann AG',''],
 	['^(XDisk|X9\b)','^XDisk','XDisk',''],
@@ -14555,7 +14589,7 @@ sub disk_vendor {
 	# 0 - match pattern; 1 - replace pattern; 2 - vendor print; 3 - serial pattern
 	# Data URLs: inxi-resources.txt Section: DriveItem device_vendor()
 	# $model = 'H10 HBRPEKNX0202A NVMe INTEL 512GB';
-	# $model = 'Patriot Memory';
+	# $model = 'SD Ultra 3D 1TB';
 	set_disk_vendors() if !$vendors;
 	# prefilter this one, some usb enclosurs and wrong master/slave hdd show default
 	$model =~ s/^Initio[\s_]//i;
@@ -16977,7 +17011,7 @@ sub set_amd_data {
 	'years' => '2020-22',
 	},
 	{'arch' => 'RDNA-3',
-	'ids' => '73a8|7448|744c|745e|7480|7483',
+	'ids' => '73a8|73f0|7448|744c|745e|7480|7483|7489',
 	'code' => 'Navi-3x',
 	'process' => 'TSMC n5 (5nm)',
 	'years' => '2022+',
@@ -17161,7 +17195,8 @@ sub set_intel_data {
 	},
 	# Jupiter Sound cancelled?
 	{'arch' => 'Gen-12.7',
-	'ids' => '5690|5691|5692|5693|5694|56a0|56a1|56a5|56a6',
+	'ids' => '5690|5691|5692|5693|5694|5698|56a0|56a1|56a3|56a4|56a5|56a6|56a7|' .
+	'56a8|56a9',
 	'code' => 'Alchemist',
 	'process' => 'TSMC n6 (7nm)',
 	'years' => '2022+',
@@ -17179,6 +17214,13 @@ sub set_intel_data {
 	'process' => 'Intel 7 (10nm)',
 	'years' => '2022+',
 	},
+	{'arch' => 'Gen-14',
+	'ids' => '7d40|7d45|7d55|7d60|7dd5',
+	'code' => '',
+	'process' => 'Intel 4 (7nm+)',
+	'years' => '2023+',
+	},
+
 	];
 }
 
@@ -17393,7 +17435,7 @@ sub set_nv_data {
 	'legacy' => 0,
 	'process' => 'TSMC 28nm',
 	'release' => '',
-	'series' => '530.xx+',
+	'series' => '535.xx+',
 	'status' => $status_current,
 	'xorg' => '',
 	'years' => '2014-19',
@@ -17410,7 +17452,7 @@ sub set_nv_data {
 	'legacy' => 0,
 	'process' => 'TSMC 16nm',
 	'release' => '',
-	'series' => '530.xx+',
+	'series' => '535.xx+',
 	'status' => $status_current,
 	'xorg' => '',
 	'years' => '2016-21',
@@ -17423,7 +17465,7 @@ sub set_nv_data {
 	'legacy' => 0,
 	'process' => 'TSMC 12nm',
 	'release' => '',
-	'series' => '530.xx+',
+	'series' => '535.xx+',
 	'status' => $status_current,
 	'xorg' => '',
 	'years' => '2017-20',
@@ -17434,13 +17476,13 @@ sub set_nv_data {
 	'1f07|1f08|1f0a|1f0b|1f10|1f11|1f12|1f14|1f15|1f36|1f42|1f47|1f50|1f51|1f54|' .
 	'1f55|1f76|1f82|1f83|1f91|1f95|1f96|1f97|1f98|1f99|1f9c|1f9d|1f9f|1fa0|1fb0|' .
 	'1fb1|1fb2|1fb6|1fb7|1fb8|1fb9|1fba|1fbb|1fbc|1fdd|1ff0|1ff2|1ff9|2182|2184|' .
-	'2187|2188|2189|2191|2192|21c4|21d1|25a6|25a7|25a9|25aa|25ad|25ed',
+	'2187|2188|2189|2191|2192|21c4|21d1|25a6|25a7|25a9|25aa|25ad|25ed|28b8',
 	'code' => 'TUxxx',
 	'kernel' => '',
 	'legacy' => 0,
 	'process' => 'TSMC 12nm FF',
 	'release' => '',
-	'series' => '530.xx+',
+	'series' => '535.xx+',
 	'status' => $status_current,
 	'xorg' => '',
 	'years' => '2018-22',
@@ -17449,15 +17491,15 @@ sub set_nv_data {
 	'ids' => '20b0|20b2|20b3|20b5|20b7|20f1|20f3|20f5|2203|2204|2206|2207|2208|' .
 	'220a|220d|2216|2230|2231|2232|2233|2235|2236|2237|2238|2414|2420|2438|2460|' .
 	'2482|2484|2486|2487|2488|2489|248a|249c|249d|24a0|24b0|24b1|24b6|24b7|24b8|' .
-	'24b9|24ba|24bb|24c9|24dc|24dd|24e0|24fa|2503|2504|2507|2508|2520|2521|2523|' .
-	'2531|2544|2560|2563|2571|2582|25a0|25a2|25a5|25ab|25ac|25b6|25b8|25b9|25ba|' .
-	'25bb|25e0|25e2|25e5|25ec|25f9|25fa|25fb',
+	'24b9|24ba|24bb|24c7|24c9|24dc|24dd|24e0|24fa|2503|2504|2507|2508|2520|2521|' .
+	'2523|2531|2544|2560|2563|2571|2582|25a0|25a2|25a5|25ab|25ac|25b6|25b8|25b9|' .
+	'25ba|25bb|25bc|25bd|25e0|25e2|25e5|25ec|25f9|25fa|25fb|2838',
 	'code' => 'GAxxx',
 	'kernel' => '',
 	'legacy' => 0,
 	'process' => 'TSMC n7 (7nm)',
 	'release' => '',
-	'series' => '530.xx+',
+	'series' => '535.xx+',
 	'status' => $status_current,
 	'xorg' => '',
 	'years' => '2020-22',
@@ -17469,20 +17511,20 @@ sub set_nv_data {
 	'legacy' => 0,
 	'process' => 'TSMC n4 (5nm)',
 	'release' => '',
-	'series' => '530.xx+',
+	'series' => '535.xx+',
 	'status' => $status_current,
 	'xorg' => '',
 	'years' => '2022+',
 	},
 	{'arch' => 'Lovelace',
-	'ids' => '2684|26b1|26b5|2704|2717|2757|2782|27a0|27b8|27e0|2820|2860|28a0|' .
-	'28a1|28e0|28e1',
+	'ids' => '2684|26b1|26b5|2704|2717|2757|2782|2786|27a0|27b8|27e0|2803|2820|' .
+	'2860|28a0|28a1|28e0|28e1',
 	'code' => 'AD1xx',
 	'kernel' => '',
 	'legacy' => 0,
 	'process' => 'TSMC n4 (5nm)',
 	'release' => '',
-	'series' => '530.xx+',
+	'series' => '535.xx+',
 	'status' => $status_current,
 	'xorg' => '',
 	'years' => '2022-23+',
@@ -18375,7 +18417,9 @@ sub component_recursive_data {
 }
 
 ## MachineItem
+# Public: get(), is_vm()
 {
+my $b_vm;
 package MachineItem;
 
 sub get {
@@ -18454,6 +18498,10 @@ sub get {
 	}
 	eval $end if $b_log;
 	return $rows;
+}
+
+sub is_vm {
+	return $b_vm;
 }
 
 ## keys for machine data are:
@@ -18719,7 +18767,7 @@ sub machine_data_sys {
 	}
 	if ($data->{'chassis_type'}){
 		if ($data->{'chassis_type'} == 1){
-			$data->{'device'} = get_device_vm($data->{'sys_vendor'},$data->{'product_name'});
+			$data->{'device'} = check_vm($data->{'sys_vendor'},$data->{'product_name'});
 			$data->{'device'} ||= 'other-vm?';
 		}
 		else {
@@ -18933,6 +18981,7 @@ sub machine_data_dmi {
 			if (!$data->{'device'}){
 				if (grep {/hypervisor/i} @$row){
 					$data->{'device'} = 'virtual-machine';
+					$b_vm = 1;
 				}
 			}
 			last;
@@ -18942,7 +18991,7 @@ sub machine_data_dmi {
 		}
 	}
 	if (!$data->{'device'}){
-		$data->{'device'} = get_device_vm($data->{'sys_vendor'},$data->{'product_name'});
+		$data->{'device'} = check_vm($data->{'sys_vendor'},$data->{'product_name'});
 		$data->{'device'} ||= 'other-vm?';
 	}
 	#	print "dmi:\n";
@@ -19030,7 +19079,7 @@ sub machine_data_sysctl {
 		$product = $data->{'board_name'} if !$product;
 	}
 	# detections can be from other sources.
-	$data->{'device'} = get_device_vm($vendor,$product);
+	$data->{'device'} = check_vm($vendor,$product);
 	print Data::Dumper::Dumper $data if $dbg[28];
 	main::log_data('dump','%data',$data) if $b_log;
 	eval $end if $b_log;
@@ -19086,7 +19135,7 @@ sub get_device_sys {
 	return $device;
 }
 
-sub get_device_vm {
+sub check_vm {
 	eval $start if $b_log;
 	my ($manufacturer,$product_name) = @_;
 	$manufacturer ||= '';
@@ -19175,6 +19224,7 @@ sub get_device_vm {
 	if (!$vm && $manufacturer && $manufacturer eq 'Xen'){
 		$vm = 'xen';
 	}
+	$b_vm = 1 if $vm;
 	eval $end if $b_log;
 	return $vm;
 }
@@ -20081,6 +20131,8 @@ sub drive_data_linux {
 
 ## PartitionItem
 {
+# these will be globally accessible via PartitionItem::filters()
+my ($fs_exclude,$fs_skip,$part_filter);
 package PartitionItem;
 
 sub get {
@@ -20089,7 +20141,7 @@ sub get {
 	my $rows = [];
 	my $num = 0;
 	set_partitions() if !$loaded{'set-partitions'};
-	# fails in corner case with zram but no other mounted filesystems
+	# Fails in corner case with zram but no other mounted filesystems
  	if (!@partitions){
 		$key1 = 'Message';
 		#$val1 = ($bsd_type && $bsd_type eq 'darwin') ? 
@@ -20117,7 +20169,7 @@ sub create_output {
 	else {
 		@partitions = sort { $a->{$show{'partition-sort'}} <=> $b->{$show{'partition-sort'}} } @partitions;
 	}
-	my $fs_skip = fs_excludes('label-uuid');
+	my $fs_skip = get_filters('fs-skip');
 	foreach my $row (@partitions){
 		$num = 1;
 		next if $row->{'type'} eq 'secondary' && $show{'partition'};
@@ -20163,8 +20215,8 @@ sub create_output {
 		}
 		if ($b_admin && $row->{'block-size'}){
 			$rows->[$j]{main::key($num++,0,2,'block-size')} = $row->{'block-size'} . ' B';;
-			#$rows->[$j]{main::key($num++,0,2,'physical')} = $row->{'block-size'} . ' B';
-			#$rows->[$j]{main::key($num++,0,2,'logical')} = $row->{'block-logical'} . ' B';
+			# $rows->[$j]{main::key($num++,0,2,'physical')} = $row->{'block-size'} . ' B';
+			# $rows->[$j]{main::key($num++,0,2,'logical')} = $row->{'block-logical'} . ' B';
 		}
 		$rows->[$j]{main::key($num++,1,2,$dev_type)} = $dev;
 		if ($b_admin && $row->{'maj-min'}){
@@ -20192,7 +20244,7 @@ sub create_output {
 			}
 		}
 	}
-	# corner case, no partitions, but zram swap
+	# Corner case, no partitions, but zram swap.
 	if (!@$rows){
 		@$rows = ({main::key($num++,0,1,'Message') => main::message('partition-data')});
 	}
@@ -20201,7 +20253,7 @@ sub create_output {
 
 sub set_partitions {
 	eval $start if $b_log;
-	#return if $bsd_type && $bsd_type eq 'darwin'; # darwin has muated output, of course
+	# return if $bsd_type && $bsd_type eq 'darwin'; # darwin has mutated output
 	my (@data,@rows,@mount,@partitions_working,$part,@working);
 	my ($back_size,$back_used,$b_fs,$cols) = (4,3,1,6);
 	my ($b_dfp,$b_fake_map,$b_load,$b_logical,$b_space,);
@@ -20210,18 +20262,22 @@ sub set_partitions {
 	$type,$uuid,$used);
 	$loaded{'set-partitions'} = 1;
 	if ($b_admin){
-		# for partition block size
+		# For partition block size
 		$blockdev = $alerts{'blockdev'}->{'path'} if $alerts{'blockdev'}->{'path'};
 	}
-	# for raw partition sizes, maj_min
-	PartitionData::set() if !$bsd_type && !$loaded{'partition-data'};
-	DiskDataBSD::set() if $bsd_type && !$loaded{'disk-data-bsd'};
-	LsblkData::set() if !$bsd_type && !$loaded{'lsblk'};
+	# For raw partition sizes, maj_min
+	if ($bsd_type){
+		DiskDataBSD::set() if !$loaded{'disk-data-bsd'};
+	}
+	else {
+		PartitionData::set() if !$loaded{'partition-data'};
+		LsblkData::set() if !$loaded{'lsblk'};
+	}
 	# set @labels, @uuid
 	if (!$bsd_type){
 		set_label_uuid() if !$loaded{'label-uuid'};
 	}
-	# most current OS support -T and -k, but -P means different things
+	# Most current OS support -T and -k, but -P means different things
 	# in freebsd. However since most use is from linux, we make that default
 	# android 7 no -T support
 	if (!$fake{'partitions'}){
@@ -20230,9 +20286,9 @@ sub set_partitions {
 			$b_dfp = 1;
 		}
 		elsif (@partitions_working = main::grabber("df -T -k 2>/dev/null")){
-			# fine, it worked, could be bsd or linux
+			# Fine, it worked, could be bsd or linux
 		}
-		# busybox supports -k and -P, older openbsd, darwin, solaris don't have -P
+		# Busybox supports -k and -P, older openbsd, darwin, solaris don't have -P
 		else {
 			if (@partitions_working = main::grabber("df -k -P 2>/dev/null")){
 				$b_dfp = 1;
@@ -20253,7 +20309,7 @@ sub set_partitions {
 		 @partitions_working = main::reader($file);
 	}
 	# print Data::Dumper::Dumper \@partitions_working;
-	# determine positions
+	# Determine positions
 	if (@partitions_working){
 		my $row1 = shift @partitions_working;
 		$row1 =~ s/Mounted on/Mounted-on/i;
@@ -20279,9 +20335,10 @@ sub set_partitions {
 		@partitions_working = @part_temp;
 	}
 	if (!$bsd_type){
-		# new kernels/df have rootfs and / repeated, creating two entries for the same partition
-		# so check for two string endings of / then slice out the rootfs one, I could check for it
-		# before slicing it out, but doing that would require the same action twice re code execution
+		# New kernels/df have rootfs and / repeated, creating two entries for the 
+		# same partition so check for two string endings of / then slice out the 
+		# rootfs one, I could check for it before slicing it out, but doing that 
+		# would require the same action twice re code execution.
 		my $roots = 0;
 		foreach (@partitions_working){
 			$roots++ if /\s\/$/;
@@ -20298,7 +20355,12 @@ sub set_partitions {
 			($back_size,$back_used) = (7,6);
 		}
 	}
-	my $filters = partition_filters();
+	my $filters = get_filters('partition');
+	# These are local, not remote, iso, or overlay types: 
+	my $fuse_fs = 'adb|apfs(-?fuse)?|archive(mount)?|gphoto|gv|gzip|ifuse|';
+	$fuse_fs .= '[^\.]*mtp|ntfs-?3g|[^\.]*ptp|vdfuse|vram|wim(mount)?|xb|xml';
+	# Just the common ones desktops might have
+	my $remote_fs = 'curlftp|gmail|g(oogle-?)?drive|pnfs|\bnfs|rclone|s3fs|smb|ssh';
 	# push @partitions_working, '//mafreebox.freebox.fr/Disque dur cifs         239216096  206434016  20607496      91% /freebox/Disque dur';
 	# push @partitions_working, '//mafreebox.freebox.fr/AllPG      cifs         436616192  316339304 120276888      73% /freebox/AllPG';
 	# push(@partitions_working,'/dev/loop0p1                  iso9660         3424256   3424256           0     100% /media/jason/d-live nf 11.3.0 gn 6555 9555 amd64');
@@ -20328,7 +20390,7 @@ sub set_partitions {
 		# print Data::Dumper::Dumper \@row;
 		$row[0] =~ s/\^\^/ /g if $b_space; # reset spaces in > 1 word fs name
 		# autofs is a bsd thing, has size 0
-		if ($row[0] =~ /^($filters)$/ || $row[0] =~ /^ROOT/i || 
+		if ($row[0] =~ /^$filters$/ || $row[0] =~ /^ROOT/i || 
 		($b_fs && ($row[2] == 0 || $row[1] =~ /^(autofs|devtmpfs|iso9660|tmpfs)$/))){
 			next;
 		}
@@ -20442,19 +20504,26 @@ sub set_partitions {
 					$dev_base = $1;
 				}
 				# note: possible: sshfs path: beta:data/; remote: fuse.rclone
-				elsif ($dev_base =~ /^\/\/|:\// || ($fs && $fs =~ /(rclone)/)){
+				elsif ($dev_base =~ /^\/\/|:\// || ($fs && $fs =~ /($remote_fs)/i)){
 					$dev_type = 'remote';
 					$dev_base = $row[0] if !$dev_base; # only trips in fs test case
 				}
 				# a slice bsd system, zfs can't be detected this easily
-				elsif ($b_logical && $fs && $fs =~ /^(null(fs)?)$/){
+				elsif ($b_logical && $fs && $fs =~ /^null(fs)?$/){
 					$dev_type = 'logical';
 					$dev_base = $row[0] if !$dev_base;
 				}
-				# an error has occurred almost for sure
 				elsif (!$dev_base){
-					$dev_type = 'source';
-					$dev_base = main::message('unknown-dev');
+					if ($fs && $fs =~ /^(fuse[\._-]?)?($fuse_fs)(fs)?/i){
+						$dev_base = $2;
+						$dev_type = 'fuse';
+					}
+					# Check dm-crypt, that may be real partition type, but no data.
+					# We've hit something inxi doesn't know about, or error has occured
+					else {
+						$dev_type = 'source';
+						$dev_base = main::message('unknown-dev');
+					}
 				}
 				else {
 					$dev_type = 'dev';
@@ -20642,12 +20711,12 @@ sub swap_advanced_data {
 sub check_partition_data {
 	eval $start if $b_log;
 	my ($b_found,$dev_mapped,$temp);
-	my $filters = partition_filters();
+	my $filters = get_filters('partition');
 	foreach my $row (@lsblk){
 		$b_found = 0;
 		$dev_mapped = '';
 		if (!$row->{'name'} || !$row->{'mount'} || !$row->{'type'} || 
-		 ($row->{'fs'} && $row->{'fs'} =~ /^($filters)$/) ||
+		 ($row->{'fs'} && $row->{'fs'} =~ /^$filters$/) ||
 		 ($row->{'type'} =~ /^(disk|loop|rom)$/)){
 			next;
 		}
@@ -20692,38 +20761,72 @@ sub check_partition_data {
 	eval $end if $b_log;
 }
 
-# NOTE: Was forgetting to update one or the other so put them
-# all here for: subs partitiion_data(), check_partition_data()
-# note: p_d filters 'filesystem', and c_p_d filters against fs
-sub partition_filters {
-	# snap mounts with squashfs; appimage/flatpak mount?
-	# swap is set in swap_data(); cgmfs is in ram, like devfs, sysfs; 
-	# union fs types: aufs, lofs, overlayfs, unionfs, mergerfs
-	my $filters = 'aufs|cgroup.*|cgmfs|configfs|debugfs|\/dev|dev|\/dev\/loop[0-9]*|';
-	$filters .= 'devfs|devtmpfs|efivarfs|fdescfs|hugetlbfs|iso9660|kernfs|';
-	$filters .= 'linprocfs|linsysfs|lofs|mergerfs|none|overla(id|y)(fs)?|procfs|';
-	$filters .= 'ptyfs|/run(\/.*)?|run|securityfs|shm|squashfs|swap|';
-	$filters .= 'sys|\/sys\/.*|sysfs|tmpfs|tracefs|type|udev|unionfs|vartmp';
-	return $filters
+# fs-exclude: Excludes fs size from disk used total; 
+# fs-skip: do not display label/uuid fields from partition/unmounted/swap.
+# partition: do not use this partition in -p output.
+# args: 0: [fs-exclude|fs-skip|partition]
+sub get_filters {
+	set_filters() if !$fs_exclude;
+	if ($_[0] eq 'fs-exclude'){
+		return $fs_exclude;
+	}
+	elsif ($_[0] eq 'fs-skip'){
+		return $fs_skip;
+	}
+	elsif ($_[0] eq 'partition'){
+		return $part_filter;
+	}
 }
 
-# Used to exclude disk used, partition/unmounted/swap label/uuid, unmounted label/uuid
-# see docs/inxi-data.txt PARTITION DATA for more on remote/fuse fs
-sub fs_excludes {
-	my ($source) = @_;
-	# panfs is parallel NAS volume manager, need more data
-	# null is hammer fs slice; nfs/nfs3/nfs4; some can be fuse mounts: fuse.sshfs
-	# afs aufs avfs cifs ffs gfs\d{0,2} hdfs ipfs k(osmos)?fs .*lafs lofs mhddfs
-	# mergerfs nfs\d{0,2} null ocfs\d{0,2} openafs orangefs overla(id|y)(fs)?
-	# panfs pvfs\d{0,2} s3fs squashfs sshfs smbfs unionfs vmfs
-	my $excludes = '(fuse(blk)?[\._-]?)?(';
-	$excludes .= 'f|' if $source eq 'label-uuid'; # ffs not remote, but no u/l
-	$excludes .= 'a|archivemount|au|av|ceph|ci|g|gluster|gmail|hd|ip|';
-	$excludes .= 'iso9660|k(osmos)?|lo|.*la|mhdd|merger|moose|n|null|oc|opena|';
-	$excludes .= 'orange|overla(id|y)|pan|pv|s3|rclone|sheepdog|squash|ssh|';
-	$excludes .= 'smb|union|vm';
-	$excludes .= ')(fs)?(\d{0,2})?';
-	return $excludes;
+# See docs/inxi-partitions.txt FILE SYSTEMS for specific fs info.
+# The filter string must match /^[regex]$/ exactly.
+sub set_filters {
+	# Notes: appimage/flatpak mount?; astreamfs reads remote http urls; 
+	#  avfs == fuse; cgmfs,vramfs in ram, like devfs, sysfs; gfs = googlefs; 
+	#  hdfs == hadoop; ifs == integrated fs; pvfs == orangefs; smb == cifs; 
+	#  null == hammer fs slice; kfs/kosmosfs == CloudStore; 
+	#  snap mounts with squashfs; swap is set in swap_data(); vdfs != vdfuse; 
+	#  vramfs == like zram except gpu ram;
+	#  Some can be fuse mounts: fuse.sshfs.
+	# Distributed/Remote: 9p, (open-)?afs, alluxio, astreamfs, beegfs, 
+	#  cephfs, cfs, chironfs, cifs, cloudstore, dfs, davfs, dce,
+	#  gdrivefs, gfarm, gfs\d{0,2}, gitfs, glusterfs, gmailfs, gpfs,
+	#  hdfs, httpdirfs, hubicfuse, ipfs, juice, k(osmos)?fs, .*lafs, lizardfs,
+	#  lustre, magma, mapr, moosefs, nfs[34], objective, ocfs\d{0,2}, onefs, 
+	#  orangefs, panfs, pnfs, pvfs\d{0,2}, rclone, restic, rozofs, s3fs, scality,
+	#  sfs, sheepdogfs, spfs, sshfs, smbfs, v9fs, vdfs, vmfs, xtreemfs
+	# Stackable/Union: aufs, e?cryptfs, encfs, erofs, gocryptfs, ifs, lofs, 
+	#  mergerfs, mhddfs, overla(id|y)(fs)?, squashfs, unionfs;
+	# ISO/Archive: archive(mount)?, atlas, avfs. borg, erofs, fuse-archive, 
+	#  fuseiso, gzipfs, iso9660, lofs, vdfuse, wimmountfs, xbfuse
+	# FUSE: adbfs, apfs-fuse, gvfs, gvfs-mtp, ifuse, jmtpfs, mtpfs, ptpfs,
+	#  simple-mtpfs, vramfs, xmlfs
+	# System fs: cgmfs, configfs, debugfs, devfs, devtmpfs, efivarfs, fdescfs, 
+	#  hugetlbfs, kernfs, linprocfs, linsysfs, lxcfs, procfs, ptyfs, run, 
+	#  securityfs, shm, swap, sys, sysfs, tmpfs, tracefs, type, udev, vartmp
+	# System dir: /dev, /dev/loop[0-9]+, /run(/.*)?, /sys/.*
+	
+	## These are global, all filters use these. ISO, encrypted/stacked
+	my @all = qw%au av e?crypt enc ero gocrypt i (fuse-?)?iso iso9660 lo merger 
+	mhdd overla(id|y) splitview(-?fuse)? squash union xbfuse%;
+	## These are fuse/archive/distributed/remote/clustered mostly
+	my @exclude = (@all,qw%9p (open-?)?a adb archive(mount)? astream atlas 
+	beeg borg c ceph chiron ci cloudstore curlftp d dav dce 
+	g gdrive gfarm git gluster gmail gocrypt google-drive-ocaml gp gphoto gv gzip
+	hd httpd hubic ip juice k(osmos)? .*la lizard lustre magma mapr moose .*mtp 
+	null p?n objective oc one orange pan .*ptp pv rclone restic rozo 
+	s s3 scality sheepdog sp ssh smb v9 vd vm vram wim(mount)? xb xml xtreem%);
+	# Various RAM based system FS
+	my @partition = (@all,qw%cgroup.* cgm config debug dev devtmp efivar fdesc 
+	hugetlb kern linproc linsys lxc none proc pty run security shm swap sys 
+	tmp trace type udev vartmp%);
+	my $start = '(fuse(blk)?[\._-]?)?(';
+	my $end = ')([\._-]?fuse)?(fs)?\d{0,2}';
+	$fs_exclude = $start . join('|',@exclude) . $end;
+	$fs_skip = $start . join('|',@exclude,'f') . $end; # apfs?; BSD ffs has no u/l
+	$part_filter = '((' . join('|',@partition) . ')(fs)?|';
+	$part_filter .= '\/dev|\/dev\/loop[0-9]+|\/run(\/.*)?|\/sys\/.*)'; 
+	# print "$part_filter\n";
 }
 
 sub get_mounts_fs {
@@ -20971,7 +21074,12 @@ sub mem_processes {
 	}
 	@ps_rows = splice(@ps_rows,0,$count);
 	# print Data::Dumper::Dumper \@rows;
-	push(@$rows,main::MemoryData::row('process')) if !$loaded{'memory'};
+	if (!$loaded{'memory'}){
+		my $row = {};
+		main::MemoryData::row('process',$row,\$num,1);
+		push(@$rows,$row);
+		$num = 0;
+	}
 	$j = scalar @$rows;
 	my $throttled = throttled($ps_count,$count,$j);
 	#$cpu_mem = ' - CPU: % used' if $extra > 0;
@@ -22295,12 +22403,11 @@ sub check_zfs_status {
 {
 package RamItem;
 my ($vendors,$vendor_ids);
-
+my $ram_total = 0;
 sub get {
 	my ($key1,$ram,$val1);
 	my $rows = [];
 	my $num = 0;
-	push(@$rows, MemoryData::row('ram')) if !$loaded{'memory'};
 	if ($bsd_type && !$force{'dmidecode'} && ($dboot{'ram'} || $fake{'dboot'})){
 		$ram = dboot_data();
 		if (@$ram){
@@ -22337,9 +22444,20 @@ sub get {
 		main::key($num++,0,2,$key1) => $val1,
 		});
 	}
+	# we want the real installed RAM total if detected so add this after.
+	if (!$loaded{'memory'}){
+		$num = 0;
+		my $system_ram = {};
+		MemoryData::row('ram',$system_ram,\$num,1);
+		unshift(@$rows,$system_ram);
+	}
 	($vendors,$vendor_ids) = ();
 	eval $end if $b_log;
 	return $rows;
+}
+
+sub ram_total {
+	return $ram_total;
 }
 
 sub ram_output {
@@ -22367,11 +22485,16 @@ sub ram_output {
 			if ($item->{'cap-qualifier'}){
 				$rows->[$j]{main::key($num++,0,3,'note')} = $item->{'cap-qualifier'};
 			}
+			# show if > 1 array otherwise shows in System RAM line.
+			if (scalar @$ram > 1){
+				$rows->[$j]{main::key($num++,0,2,'installed')} = process_size($item->{'used-capacity'});
+			}
 			$rows->[$j]{main::key($num++,0,2,'use')} = $item->{'use'} if $b_non_system;
 			$rows->[$j]{main::key($num++,1,2,'slots')} = $item->{'slots'};
 			if ($item->{'slots-qualifier'}){
 				$rows->[$j]{main::key($num++,0,3,'note')} = $item->{'slots-qualifier'};
 			}
+			$rows->[$j]{main::key($num++,0,2,'modules')} = $item->{'slots-active'};
 			$item->{'eec'} ||= 'N/A';
 			$rows->[$j]{main::key($num++,0,2,'EC')} = $item->{'eec'};
 			if ($extra > 0 && (!$b_non_system || 
@@ -22521,7 +22644,8 @@ sub ram_output {
 sub dmidecode_data {
 	eval $start if $b_log;
 	my ($b_5,$handle,@temp);
-	my ($derived_module_size,$max_cap_5,$max_cap_16,$max_module_size) = (0,0,0,0);
+	my ($derived_module_size,$max_cap_5,$max_cap_16,$max_module_size,
+	$slots_active) = (0,0,0,0,0);
 	my ($i,$j,$k) = (0,0,0);
 	my $ram = [];
 	my $check = main::message('note-check');
@@ -22530,6 +22654,7 @@ sub dmidecode_data {
 		## Note: do NOT reset these values, that causes failures
 		# ($derived_module_size,$max_cap_5,$max_cap_16,$max_module_size) = (0,0,0,0);
 		if ($entry->[0] == 5){
+			$slots_active = 0;
 			foreach my $item (@$entry){
 				@temp = split(/:\s*/, $item, 2);
 				next if !$temp[1];
@@ -22575,6 +22700,7 @@ sub dmidecode_data {
 					$temp[1] =~ s/ Connection\)?//;
 					$temp[1] =~ s/^[0-9]+\s*[KkMGTP]B\s*\(?//;
 					$type = lc($temp[1]);
+					$slots_active++;
 				}
 				elsif ($temp[0] eq 'Current Speed'){
 					$speed = main::clean_dmi($temp[1]);
@@ -22614,6 +22740,7 @@ sub dmidecode_data {
 			$handle = $entry->[1];
 			$ram->[$handle] = $ram->[$k] if $ram->[$k];
 			$ram->[$k] = undef;
+			$slots_active = 0;
 			# ($derived_module_size,$max_cap_16) = (0,0);
 			foreach my $item (@$entry){
 				@temp = split(/:\s*/, $item, 2);
@@ -22678,6 +22805,7 @@ sub dmidecode_data {
 						$derived_module_size = calculate_size($temp[1],$derived_module_size);
 						$working_size = calculate_size($temp[1],0);
 						$device_size = $working_size;
+						$slots_active++;
 					}
 					else {
 						$device_size = $temp[1];
@@ -22781,6 +22909,7 @@ sub dmidecode_data {
 				}
 			}
 			$ram->[$handle]{'derived-module-size'} = $derived_module_size;
+			$ram->[$handle]{'slots-active'} = $slots_active;
 			$ram->[$handle]{'modules'}[$i]{'configured-clock-speed'} = $configured_speed;
 			$ram->[$handle]{'modules'}[$i]{'configured-note'} = $configured_note if $configured_note;
 			$ram->[$handle]{'modules'}[$i]{'data-width'} = $data_width;
@@ -22808,11 +22937,11 @@ sub dmidecode_data {
 			last;
 		}
 	}
-	print Data::Dumper::Dumper $ram if $dbg[36];
+	print 'dmidecode pre process_data: ', Data::Dumper::Dumper $ram if $dbg[36];
 	main::log_data('dump','@$ram',$ram) if $b_log;
 	process_data($ram) if @$ram;
 	main::log_data('dump','@$ram',$ram) if $b_log;
-	print Data::Dumper::Dumper $ram if $dbg[36];
+	print 'dmidecode post process_data: ', Data::Dumper::Dumper $ram if $dbg[36];
 	eval $end if $b_log;
 	return $ram;
 }
@@ -22821,7 +22950,7 @@ sub dboot_data {
 	eval $start if $b_log;
 	my $ram = [];
 	my $est = main::message('note-est');
-	my ($arr,$derived_module_size,$subtract) = (0,0,0);
+	my ($arr,$derived_module_size,$slots_active,$subtract) = (0,0,0,0);
 	my ($holder);
 	foreach (@{$dboot{'ram'}}){
 		my ($addr,$detail,$device_detail,$ecc,$iic,$locator,$size,$speed,$type);
@@ -22839,6 +22968,7 @@ sub dboot_data {
 				# Then since we are on a new iic device, assume new ram array.
 				# This needs more data to confirm this guess.
 				$arr++; 
+				$slots_active = 0;
 			}
 			if ($5){
 				$addr = hex($5);
@@ -22863,21 +22993,24 @@ sub dboot_data {
 			}
 			# We want to avoid netbsd trying to complete @ram without real data.
 			if (/:(\d+[MGT])B?\s(DDR[0-9]*)\b/){
-				$size = main::translate_size($1)/1024;
+				$size = main::translate_size($1); # mbfix: /1024
 				$type = $2;
+				$slots_active++;
 				if ($addr){
 					$ram->[$arr]{'slots-16'} = $addr - 80 + 1 - $subtract;
 					$locator = 'Slot-' . $ram->[$arr]{'slots-16'};
 				}
+				$derived_module_size = $size if $size > $derived_module_size;
 				$ram->[$arr]{'device-count-found'}++;
 				# Build up actual capacity found for override tests
 				$ram->[$arr]{'max-capacity-16'} += $size;
 				$ram->[$arr]{'max-cap-qualifier'} = $est;
 				$ram->[$arr]{'slots-16'}++ if !$addr;
-				$derived_module_size = $size if $size > $derived_module_size;
+				$ram->[$arr]{'slots-active'} = $slots_active;
 				$ram->[$arr]{'slots-qualifier'} = $est;
 				$ram->[$arr]{'eec'} = $ecc;
 				$ram->[$arr]{'derived-module-size'} = $derived_module_size;
+				$ram->[$arr]{'used-capacity'} += $size;
 				push(@{$ram->[$arr]{'modules'}},{
 				'device-type'  => $type,
 				'device-type-detail'  => $detail,
@@ -22895,11 +23028,11 @@ sub dboot_data {
 			$ram->[$i]{'slots'}++;
 		}
 	}
-	print Data::Dumper::Dumper $ram if $dbg[36];
+	print 'dboot pre process_data: ', Data::Dumper::Dumper $ram if $dbg[36];
 	main::log_data('dump','@$ram',$ram) if $b_log;
 	process_data($ram) if @$ram;
 	main::log_data('dump','@$ram',$ram) if $b_log;
-	print Data::Dumper::Dumper $ram if $dbg[36];
+	print 'dboot post process_data: ', Data::Dumper::Dumper $ram if $dbg[36];
 	eval $end if $b_log;
 	return $ram;
 }
@@ -22922,6 +23055,7 @@ sub process_data {
 		# Make sure they are integers not string if empty.
 		$item->{'slots-5'} ||= 0; 
 		$item->{'slots-16'} ||= 0; 
+		$item->{'slots-active'} ||= 0; 
 		$item->{'device-count-found'} ||= 0;
 		$item->{'max-capacity-5'} ||= 0;
 		$item->{'max-module-size'} ||= 0;
@@ -22929,14 +23063,16 @@ sub process_data {
 		# $item->{'max-module-size'} = 0;# debugger
 		# 1: If max cap 1 is null, and max cap 2 not null, use 2
 		if ($b_debug){
-			print "1: mms: $item->{'max-module-size'} :dms: $item->{'derived-module-size'} :mc: $max_cap :uc: $item->{'used-capacity'}\n";
+			print "1: mms: $item->{'max-module-size'} :dms: $item->{'derived-module-size'} ";
+			print ":mc: $max_cap :uc: $item->{'used-capacity'}\n";
 			print "1a: s5: $item->{'slots-5'} s16: $item->{'slots-16'}\n";
 		}
 		if (!$max_cap && $item->{'max-capacity-5'}){
 			$max_cap = $item->{'max-capacity-5'};
 		}
 		if ($b_debug){
-			print "2: mms: $item->{'max-module-size'} :dms: $item->{'derived-module-size'} :mc: $max_cap :uc: $item->{'used-capacity'}\n";
+			print "2: mms: $item->{'max-module-size'} :dms: $item->{'derived-module-size'} ";
+			print ":mc: $max_cap :uc: $item->{'used-capacity'}\n";
 		}
 		# 2: Now check to see if actually found module sizes are > than listed 
 		# max module, replace if >
@@ -22946,7 +23082,8 @@ sub process_data {
 			$est_mod = $est;
 		}
 		if ($b_debug){
-			print "3: dcf: $item->{'device-count-found'} :dms: $item->{'derived-module-size'} :mc: $max_cap :uc: $item->{'used-capacity'}\n";
+			print "3: dcf: $item->{'device-count-found'} :dms: $item->{'derived-module-size'} ";
+			print ":mc: $max_cap :uc: $item->{'used-capacity'}\n";
 		}
 		# Note: some cases memory capacity == max module size, so one stick will 
 		# fill it but I think only with cases of 2 slots does this happen, so 
@@ -23006,7 +23143,8 @@ sub process_data {
 				
 			}
 			if ($b_debug){
-				print "4: mms: $item->{'max-module-size'} :dms: $item->{'derived-module-size'} :mc: $max_cap :uc: $item->{'used-capacity'}\n";
+				print "4: mms: $item->{'max-module-size'} :dms: $item->{'derived-module-size'} ";
+				print ":mc: $max_cap :uc: $item->{'used-capacity'}\n";
 			}
 			# Some cases of type 5 have too big module max size, just dump the data 
 			# then since we cannot know if it is valid or not, and a guess can be 
@@ -23069,6 +23207,7 @@ sub process_data {
 			$est_slots = $item->{'slots-qualifier'};
 			$est_cap = $est;
 		}
+		$ram_total += $item->{'used-capacity'};
 		push(@result, {
 		'capacity' => $max_cap,
 		'cap-qualifier' => $est_cap,
@@ -23078,8 +23217,10 @@ sub process_data {
 		'mod-qualifier' => $est_mod,
 		'modules' => $item->{'modules'},
 		'slots' => $item->{'slots-16'},
+		'slots-active' => $item->{'slots-active'},
 		'slots-qualifier' => $est_slots,
 		'use' => $item->{'use'},
+		'used-capacity' => $item->{'used-capacity'},
 		'voltage-config' => $item->{'voltage-config'},
 		'voltage-max' => $item->{'voltage-max'},
 		'voltage-min' => $item->{'voltage-min'},
@@ -23105,30 +23246,26 @@ sub process_speed {
 	return [$speed,$speed_note];
 }
 
-# This should be fixed, but for now, size in RAM is in MiB, not 
-# KiB like the rest of inxi.
-# args: 0: size in MiB
+# args: 0: size in KiB
 sub process_size {
 	my ($size) = @_;
 	my ($b_trim,$unit) = (0,'');
 	# print "size0: $size\n";
 	return 'N/A' if !$size;
-	#return $size if $size =~ /\D/;
+	# we're going to preserve the bad data for output
 	return $size if !main::is_numeric($size);
 	# print "size: $size\n";
-	# We only want a max 2 decimal places, and only when it's 
-	# a unit > 1 GiB.
-	$b_trim = 1 if $size > 1024;
-	# Switch it back to KiB for tool
-	($size,$unit) = main::get_size($size*1024);
+	# We only want max 2 decimal places, and only when it's a unit > 1 GiB.
+	$b_trim = 1 if $size > 1024**2;
+	($size,$unit) = main::get_size($size);
 	$size = sprintf("%.2f",$size) if $b_trim;
 	$size =~ s/\.[0]+$//;
 	$size = "$size $unit";
 	return $size;
 }
 
-# Note that even though MB should be 1000^x it's actually MiB etc. As with 
-# process_size, this uses MiB not KiB.
+# arg: 0: size string; 1: working size. If calculated result > $size, uses new
+# value. If $data not valid, returns 0.
 sub calculate_size {
 	my ($data, $size) = @_;
 	# Technically k is KiB, K is KB but can't trust that.
@@ -23136,8 +23273,6 @@ sub calculate_size {
 		my $working = $1;
 		# This converts it to KiB
 		my $working_size = main::translate_size($working);
-		# But we want it back in MiB for RAM, that should get fixed
-		$working_size = $working_size/1024 if $working_size;
 		# print "ws-a: $working_size s-1: $size\n";
 		if (main::is_numeric($working_size) && $working_size > $size){
 			$size = $working_size;
@@ -26217,7 +26352,7 @@ sub create_output {
 	my ($fs);
 	my ($j,$num) = (0,0);
 	@$unmounted = sort { $a->{'dev-base'} cmp $b->{'dev-base'} } @$unmounted;
-	my $fs_skip = PartitionItem::fs_excludes('label-uuid');
+	my $fs_skip = PartitionItem::get_filters('fs-skip');
 	foreach my $row (@$unmounted){
 		$num = 1;
 		my $size = ($row->{'size'}) ? main::get_size($row->{'size'},'string') : 'N/A';
@@ -27374,21 +27509,22 @@ package CompilerVersion;
 
 sub get {
 	eval $start if $b_log;
-	my $compiler = [];
+	my $compiler;
 	if (my $file = $system_files{'proc-version'}){
-		version_proc($compiler,$file);
+		version_proc(\$compiler,$file);
 	}
 	elsif ($bsd_type){
-		version_bsd($compiler);
+		version_bsd(\$compiler);
 	}
+	$compiler ||= []; # we want an array ref to return if not set
 	eval $end if $b_log;
 	return $compiler;
 }
 
+# args: 0: compiler by ref
 sub version_bsd {
 	eval $start if $b_log;
 	my $compiler = $_[0];
-	my (@working);
 	if ($alerts{'sysctl'}->{'action'} && $alerts{'sysctl'}->{'action'} eq 'use'){
 		if ($sysctl{'kernel'}){
 			my @working;
@@ -27399,7 +27535,7 @@ sub version_bsd {
 				if (/^kern.compiler_version/){
 					@working = split(/:\s*/, $_);
 					$working[1] =~ /.*(gcc|clang)\sversion\s([\S]+)\s.*/;
-					@$compiler = ($1,$2);
+					$$compiler = [$1,$2];
 					last;
 				}
 			}
@@ -27417,13 +27553,12 @@ sub version_bsd {
 	eval $end if $b_log;
 }
 
+# args: 0: compiler by ref; 1: proc file name
 sub version_proc {
 	eval $start if $b_log;
 	my ($compiler,$file) = @_;
-	my ($version);
-	my @data = main::reader($file);
-	my $result = $data[0] if @data;
-	if ($result){
+	if (my $result = main::reader($file,'',0)){
+		my $version;
 		if ($fake{'compiler'}){
 			# $result = $result =~ /\*(gcc|clang)\*eval\*/;
 			# $result='Linux version 5.4.0-rc1 (sourav@archlinux-pc) (clang version 9.0.0 (tags/RELEASE_900/final)) #1 SMP PREEMPT Sun Oct 6 18:02:41 IST 2019';
@@ -27439,12 +27574,12 @@ sub version_proc {
 		if ($result =~ /(gcc|clang).*version\s([^,\s\)]+)/){
 			$version = $2;
 			$version ||= 'N/A'; 
-			@$compiler = ($1,$version);
+			$$compiler = [$1,$version];
 		}
 		elsif ($result =~ /\((gcc|clang)[^\(]*\([^\)]+\)\s+([0-9\.]+)(\s[^.]*)?,\s*/){
 			$version = $2;
 			$version ||= 'N/A'; 
-			@$compiler = ($1,$version);
+			$$compiler = [$1,$version];
 		}
 	}
 	main::log_data('dump','@$compiler',$compiler) if $b_log;
@@ -29589,10 +29724,11 @@ sub get_linux_distro {
 	$os_release_good_s .= 'pclinuxos-release|rpi-issue|SuSE-release';
 	# We need these empirically verified one by one as they appear, but always remember
 	# that stuff changes, legacy, deprecated, but these ideally are going to be right
-	my $osr_good = 'manjaro|antergos|chakra|guix|mageia|pclinuxos|porteux|';
+	my $osr_good = 'antergos|chakra|guix|mageia|manjaro|oracle|pclinuxos|porteux|';
 	$osr_good .= 'raspberry pi os|slint|zorin';
 	# Force use of pretty name because that's only location of derived distro name
 	my $osr_pretty = 'zinc';
+	
  	my ($b_issue,$b_lsb,$b_osr_pretty,$b_skip_issue,$b_skip_osr);
 	my ($issue,$lsb_release) = ('/etc/issue','/etc/lsb-release');
 	$b_issue = 1 if -f $issue;
@@ -29883,7 +30019,8 @@ sub system_base {
 	# osr base, distro id in issue
 	my $base_osr_issue = 'grml|linux lite|openmediavault'; 
 	# osr has distro name but has fedora centos redhat ID_LIKE and VERSION_ID same
-	my $base_osr_redhat = 'almalinux|centos|rocky'; 
+	my $base_osr_redhat = 'almalinux|centos|eurolinux|oracle|puias|rocky|';
+	$base_osr_redhat .= 'scientific|springdale'; 
 	# osr has distro name but has ubuntu (or debian) ID_LIKE/UBUNTU_CODENAME
 	my $base_osr_ubuntu = 'feren|mint|neon|nitrux|pop!?_os|tuxedo|zinc|zorin'; 
 	my $base_upstream_lsb = '/etc/upstream-release/lsb-release';
@@ -30059,7 +30196,8 @@ sub get_os_release {
 					$working[1] =~ s/^(debian|ubuntu\sdebian|debian\subuntu)/ubuntu/; 
 					$base_name = $working[1];
 				}
-				if ($base_type eq 'rhel' && $working[1] =~ /$base_type/i){
+				# oracle ID_LIKE="fedora". Why? who knows.
+				if ($base_type eq 'rhel' && $working[1] =~ /rhel|fedora/i){
 					$base_name = 'RHEL';
 					$base_version = $version_id if $version_id;
 				}
@@ -30162,7 +30300,8 @@ sub debian_id {
 	'10' => 'buster',
 	'11' => 'bullseye',
 	'12' => 'bookworm', 
-	'13' => 'trixie', 
+	'13' => 'trixie',
+	'14' => 'forky',
 	);
 	if (main::is_numeric($debian_version)){
 		$id .= " $debian_version " . $debians{int($debian_version)};
@@ -30191,8 +30330,9 @@ sub ubuntu_id {
 	my ($id) = ('');
 	# xx.04, xx.10
 	my %codenames = (
+	# '??' => '24.10',
 	# '??' => '24.04 LTS',
-	# '??' => '23.10',
+	'mantic' => '23.10',
 	'lunar' => '23.04',
 	'kinetic' => '22.10',
 	'jammy' => '22.04 LTS',
@@ -30360,9 +30500,10 @@ sub get_gcc_data {
 	if ($extra > 1){
 		# glob /usr/bin for gccs, strip out all non numeric values
 		@temp = globber('/usr/bin/gcc-*');
+		# usually like gcc-11 but sometimes gcc-11.2.0
 		foreach (@temp){
 			if (/\/gcc-([0-9.]+)$/){
-				push(@$gccs, $1);
+				push(@$gccs, $1) if !$gcc || $1 ne $gcc;
 			}
 		}
 	}
@@ -31014,7 +31155,7 @@ sub get {
 	# netbsd 8.0 uses meminfo, but it uses it in a weird way
 	if (!$force{'vmstat'} && (!$bsd_type || ($force{'meminfo'} && $bsd_type)) && 
 	(my $file = $system_files{'proc-meminfo'})){
-		$memory = meminfo_data($type,$file);
+		$memory = linux_data($type,$file);
 	}
 	else {
 		$memory = bsd_data($type);
@@ -31023,42 +31164,69 @@ sub get {
 	return $memory;
 }
 
+# $memory:
+# 0: available (not reserved or iGPU)
+# 1: used (of available)
+# 2: used %
+# 3: gpu (raspberry pi only)
+# Linux only, but could be extended if anyone wants to do the work for BSDs
+# 4: array ref: sys_memory [total, blocks, block-size, count factor]
+# 5: array ref: proc/iomem [total, reserved, gpu]
+#
+# args: 0: source, the caller; 1: $row hash ref; 2: $num ref; 3: indent
 sub row {
 	eval $start if $b_log;
-	my ($source) = @_;
+	my ($source,$row,$num,$indent) = @_;
 	$loaded{'memory'} = 1;
-	my $num = 0;
-	my $row = {};
-	my ($gpu_ram,$percent,$available,$used) = (0,'','N/A','N/A');
+	my ($available,$gpu_ram,$note,$total,$used);
 	my $memory = get('full');
 	if ($memory){
-		$gpu_ram = $memory->[3] if $memory->[3];
-		$available = main::get_size($memory->[0],'string') if $memory->[0];
-		$used = main::get_size($memory->[1],'string') if $memory->[1];
-		$used .= " ($memory->[2]%)" if $memory->[2];
+		# print Data::Dumper::Dumper $memory;
+		if ($memory->[3]){
+			$gpu_ram = $memory->[3];
+		}
+		elsif ($memory->[5] && $memory->[5][2]){
+			$gpu_ram = $memory->[5][2];
+		}
+		# Great, we have the real RAM data.
+		if ($show{'ram'} && ($total = RamItem::ram_total())){
+			$total = main::get_size($total,'string');
+		}
+		elsif ($memory->[4] || $memory->[5]){
+			process_total($memory,\$total,\$note);
+		}
 		if ($gpu_ram){
 			$gpu_ram = main::get_size($gpu_ram,'string');
 		}
+		$available = main::get_size($memory->[0],'string') if $memory->[0];
+		$used = main::get_size($memory->[1],'string') if $memory->[1];
+		$used .= " ($memory->[2]%)" if $memory->[2];
 	}
-	$row->{main::key($num++,1,1,'System RAM')} = '';
-	$row->{main::key($num++,0,2,'available')} = $available;
-	$row->{main::key($num++,0,2,'used')} = $used;
-	$row->{main::key($num++,0,2,'gpu')} = $gpu_ram if $gpu_ram;
+	my $field = ($source eq 'info') ? 'Memory' : 'System RAM';
+	$available ||= 'N/A';
+	$total ||= 'N/A';
+	$used ||= 'N/A';
+	$row->{main::key($$num++,1,$indent,$field)} = '';
+	$row->{main::key($$num++,1,$indent+1,'total')} = $total;
+	$row->{main::key($$num++,0,$indent+2,'note')} = $note if $note;
+	$row->{main::key($$num++,0,$indent+1,'available')} = $available;
+	$row->{main::key($$num++,0,$indent+1,'used')} = $used;
+	$row->{main::key($$num++,0,$indent+1,'igpu')} = $gpu_ram if $gpu_ram;
 	eval $end if $b_log;
-	return $row;
 }
 
-sub meminfo_data {
+## LINUX DATA ##
+sub linux_data {
 	eval $start if $b_log;
 	my ($type,$file) = @_;
-	my ($available,$buffers,$cached,$free,$gpu,$not_used,$total) = (0,0,0,0,0,0,0);
-	my $memory;
+	my ($available,$buffers,$cached,$free,$gpu,$not_used,$total_avail) = (0,0,0,0,0,0,0);
+	my ($iomem,$memory,$sys_memory,$total);
 	my @data = main::reader($file);
 	# Note: units kB should mean 1000x8 bits, but actually means KiB! Confusing
 	foreach (@data){
 		# Not actual total, it's total physical minus reserved/kernel/system.
 		if ($_ =~ /^MemTotal:/){
-			$total = main::get_piece($_,2);
+			$total_avail = main::get_piece($_,2);
 		}
 		elsif ($_ =~ /^MemFree:/){
 			$free = main::get_piece($_,2); 
@@ -31074,39 +31242,380 @@ sub meminfo_data {
 		}
 	}
 	$gpu = gpu_ram_arm() if $risc{'arm'};
+	if ($type ne 'short' && ($fake{'sys-mem'} || -d '/sys/devices/system/memory')){
+		sys_memory(\$sys_memory);
+	}
+	if ($type ne 'short' && ($fake{'iomem'} || ($b_root && -r '/proc/iomem'))){
+		proc_iomem(\$iomem);
+	}
 	# $gpu = main::translate_size('128M');
-	# $total += $gpu; # not using because this ram is not available to system
+	# $total_avail += $gpu; # not using because this ram is not available to system
 	if ($available){
 		$not_used = $available;
 	}
 	# Seen fringe cases, where total - free+buff+cach < 0
 	# The idea is that the OS must be using 10MiB of ram or more
-	elsif (($total - ($free + $buffers + $cached)) > 10000){
+	elsif (($total_avail - ($free + $buffers + $cached)) > 10000){
 		$not_used = ($free + $buffers + $cached);
 	}
 	# Netbsd goes < 0, but it's wrong, so dump the cache
-	elsif (($total - ($free + $buffers)) > 10000){
+	elsif (($total_avail - ($free + $buffers)) > 10000){
 		$not_used = ($free + $buffers);
 	}
 	else {
 		$not_used = $free;
 	}
-	my $used = ($total - $not_used);
-	my $percent = ($used && $total) ? sprintf("%.1f", ($used/$total)*100) : '';
+	my $used = ($total_avail - $not_used);
+	my $percent = ($used && $total_avail) ? sprintf("%.1f", ($used/$total_avail)*100) : '';
 	if ($type eq 'short'){
-		$percent = " ($percent%)" if $percent;
-		$memory = [sprintf("%.1f/%.1f MiB", $used/1024, $total/1024) . $percent];
+		$memory = short_data($total_avail,$used,$percent);
 	}
 	else {
 		# raw return in KiB
-		$memory = [$total,$used,$percent,$gpu];
+		$memory = [$total_avail,$used,$percent,$gpu,$sys_memory,$iomem];
 	}
-	# print "$total, $used, $percent, $gpu\n";
+	# print "$total_avail, $used, $percent, $gpu\n";
+	# print Data::Dumper::Dumper $memory;
 	main::log_data('data',"memory ref: $memory") if $b_log;
 	eval $end if $b_log;
 	return $memory;
 }
 
+# All values 0 if not root, but it is readable.
+# See inxi-perl/dev/code-snippets.pl for original attempt, with pci/reserved
+# args: 0: $iomem by ref
+sub proc_iomem {
+	eval $start if $b_log;
+	my $file = '/proc/iomem';
+	my ($buffer,$gpu,$pci,$reserved,$rom,$system) = (0,0,0,0,0,0);
+	my $b_reserved;
+	no warnings 'portable';
+	if ($fake{'iomem'}){
+		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/memory/proc-iomem-128gb-1.txt";
+		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/memory/proc-iomem-544mb-igpu.txt";
+		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/memory/proc-iomem-64mb-vram-stolen.txt";
+		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/memory/proc-iomem-rh-1-matrox.txt";
+		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/memory/proc-iomem-2-vram.txt";
+		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/memory/proc-iomem-512mb-1.txt";
+		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/memory/proc-iomem-518mb-reserved-1.txt";
+		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/memory/proc-iomem-512mb-2-onboardgpu-active.txt";
+		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/memory/proc-iomem-512mb-system-1.txt";
+		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/memory/proc-iomem-257.18gb-system-1.txt";
+		# $file = "$ENV{'HOME'}/bin/scripts/inxi/data/memory/proc-iomem-192gb-system-1.txt";
+		 $file = "$ENV{'HOME'}/bin/scripts/inxi/data/memory/proc-iomem-1012mb-igpu.txt";
+	}
+	foreach ((main::reader($file),'EOF')){
+		if ($dbg[54]){
+			if (/^\s*([0-9a-f]+)-([^\s]+) : /){
+				print $_,"\n",'        size: ';
+				print main::get_size(((hex($2) - hex($1) + 1)/1024),'string'), "\n";
+			}
+		}
+		# Get everythign solidly System RAM
+		if (/^([0-9a-f]+)-([^\s]+) : (System RAM)$/i){
+			$system += hex($2) - hex($1) + 1;
+		}
+		elsif (/^([0-9a-f]+)-([^\s]+) : (Ram buffer)$/i){
+			$buffer += hex($2) - hex($1) + 1;
+		}
+		# Sometimes primary Reserved block contains PCI and other non RAM devices,
+		# but also can contain non RAM addresses, maybe NVMe?
+		elsif (/^([0-9a-f]+)-([^\s]+) : (Reserved)$/i){
+			$reserved += hex($2) - hex($1) + 1;
+		}
+		# Legacy System ROM not in a Reserved block, primary item.
+		elsif (/^\s*([0-9a-f]+)-([^\s]+) : (System ROM)$/i){
+			$rom += hex($2) - hex($1) + 1;
+		}
+		elsif (/^([0-9a-f]+)-([^\s]+) : (ACPI Tables)$/i){
+			$rom += hex($2) - hex($1) + 1;
+		}
+		# Incomplete because sometimes Reserved blocks contain PCI etc devices
+		elsif (/^([0-9a-f]+)-([^\s]+) : (PCI .*)$/){
+			$pci += hex($2) - hex($1) + 1;
+		}
+		# Graphics stolen memory/Video RAM area, but legacy had inside PCI blocks,
+		# not reserved, or as primary. That behavior seems to have changed.
+		if (/^\s*([0-9a-f]+)-([^\s]+) : (?:(Video RAM|Graphics).*)$/i){
+			$gpu += hex($2) - hex($1) + 1;
+		}
+	}
+	if ($dbg[54] || $b_log){
+		my $d = ['iomem:','System: ' . main::get_size(($system/1024),'string'),
+		'Reserved: ' . main::get_size(($reserved/1024),'string'), 
+		'Buffer: ' . main::get_size(($buffer/1024),'string'),
+		'iGPU: ' . main::get_size(($gpu/1024),'string'),
+		'ROM: ' . main::get_size(($rom/1024),'string'),
+		'System+iGPU+buffer+rom: ' . main::get_size((($system+$gpu+$buffer+$rom)/1024),'string'), 
+		'  Raw GiB: ' . ($system+$gpu+$buffer+$rom)/1024**3, 
+		'System+reserved: ' . main::get_size((($system+$reserved)/1024),'string'), 
+		'  Raw GiB: ' . ($system+$reserved)/1024**3,
+		'System+reserved+buffer: ' . main::get_size((($system+$reserved+$buffer)/1024),'string'), 
+		'  Raw GiB: ' . ($system+$reserved+$buffer)/1024**3,
+		'Reserved-iGPU: ' . main::get_size((($reserved-$gpu)/1024),'string'),
+		'PCI Bus: ' . main::get_size(($pci/1024),'string')];
+		main::log_data('dump','$d iomem',$d) if $b_log;
+		print "\n",join("\n",@$d),"\n\n" if $dbg[54];
+	}
+	if ($gpu || $system || $reserved){
+		# This combination seems to provide the bwest overall result
+		$system += $gpu + $rom + $buffer;
+		${$_[0]} = [$system/1024,$reserved/1024,$gpu/1024];
+	}
+	main::log_data('dump','$iomem',$_[0]) if $b_log;
+	print 'proc/iomem: ', Data::Dumper::Dumper $_[0] if $dbg[53];
+	eval $end if $b_log;
+}
+
+# Note: seen case where actual 128 GiB, result here 130, 65x2GiB. Also cases
+# where blocks under expected total, this may be related to active onboard gpu.
+sub sys_memory {
+	eval $start if $b_log;
+	return if !$fake{'sys-mem'} && ! -r '/sys/devices/system/memory/block_size_bytes';
+	my ($count,$factor,$size,$total) = (0,1,0,0);
+	# state = off,online; online = 1/0
+	foreach my $online (main::globber('/sys/devices/system/memory/memory*/online')){
+		$count++ if main::reader($online,'',0); # content 1/0, so will read as t/f
+	}
+	if ($count){
+		$size = main::reader('/sys/devices/system/memory/block_size_bytes','',0);
+		if ($size){
+			$size = hex($size)/1024; # back to integer KiB
+			$total = $count * $size;
+		}
+	}
+	if ($fake{'sys-mem'}){
+		# ($total,$count,$size) = (,,); # 
+		# ($total,$count,$size) = (4194304,32,131072); # 4gb
+		# ($total,$count,$size) = (7864320,60,131072); # 7.5 gb, -4 blocks
+		# ($total,$count,$size) = (136314880,65,2097152); # 130 gb, +1 block
+		# ($total,$count,$size) = (8126464,62,131072); # 7.75 gb, -2 blocks, vram?
+		# ($total,$count,$size) = (33554432,256,131072); # 32 gb
+		# ($total,$count,$size) = (8388608,64,131072); # 8gb
+		# ($total,$count,$size) = (270532608,129,2097152); # 258 gb, +1 block
+		# ($total,$count,$size) = (17563648,134,131072); # 16.75 gb, +6 block
+		# ($total,$count,$size) = (3801088,29,131072); # 3.62 gb, -3 blocks 
+		# ($total,$count,$size) = (67108864,32,2097152); # 64 gb
+		# ($total,$count,$size) = (524288,4,131072); # 512 mb, maybe -4 blocks, vm
+	}
+	# Max stick size assumed: 64 blocks: 8 GiB/128 GiB min module: 2 GiB/32 GiB
+	# 128 blocks: 16 GiB/256 GiB min module: 4 GiB/64 GiB but no way to know
+	# Note: 128 MiB blocks; > 32 GiB, 2 GiB blocks, I think.
+	# 64: 8 GiB/256 GiB, min module: 2 GiB/32 GiB
+	if ($count > 32){ 
+		$factor = 16;}
+	# 32: 4 GiB/64 GiB, min module: 1 GiB/16 GiB
+	elsif ($count > 16){
+		$factor = 8;}
+	# 16: 2 GiB, min module: 512 MiB
+	elsif ($count > 8){
+		$factor = 4;}
+	# 8: 1 GiB, min module: 256 MiB
+	elsif ($count > 4){
+		$factor = 2;}
+	# 4: 512 MiB, min module: 128 MiB
+	else {
+		$factor = 1;}
+	if ($total || $count || $size){
+		${$_[0]} = [$total,$count,$size,$factor];
+	}
+	if ($dbg[54] || $b_log){
+		my $d = ['/sys:','Total: ' . main::get_size($total,'string'),
+		'Blocks: ' . $count, 
+		'Block-size: ' . main::get_size($size,'string'),
+		"Count-factor: $count % $factor: " . $count % $factor];
+		main::log_data('dump','$d sys-mem',$d) if $b_log;
+		print "\n",join("\n",@$d),"\n\n" if $dbg[54];
+	}
+	main::log_data('dump','$sys_memory',$_[0]) if $b_log;
+	print 'sys memory: ', Data::Dumper::Dumper $_[0] if $dbg[53];
+	eval $end if $b_log;
+}
+
+# These are hacks since the phy ram real data is not available in clear form
+# args: 0: memory array ref; 1: $total ref; 2: $note ref.
+sub process_total {
+	eval $start if $b_log;
+	my ($memory,$total,$note) = @_;
+	my ($d,$b_vm,@info);
+	my $src = '';
+	$b_vm = MachineItem::is_vm() if $show{'machine'};
+	# Seen case where actual 128 GiB, result here 130, 65x2GiB. Maybe nvme?
+	# This can be over or under phys ram
+	if ($memory->[4] && $memory->[4][0]){
+		@info = main::get_size($memory->[4][0]);
+		# We want to show note for probably wrong results
+		if ((!$fake{'sys-mem'} && $memory->[0] && $memory->[4][0] < $memory->[0]) || 
+		(!$b_vm && $memory->[4][1] % $memory->[4][3] != 0)){
+			$$note = main::message('note-check');
+		}
+		$src = 'sys';
+	}
+	# Note: this is a touch under the real ram amount, varies, igpu/vram can eat it.
+	# This working total will only be under phys ram.
+	if ($memory->[5] && $memory->[5][0] && 
+	(!$memory->[4] || !$memory->[4][0] || ($memory->[4][0] != $memory->[5][0]))){
+		@info = main::get_size($memory->[5][0]);
+		$src = 'iomem';
+	}
+	if (@info){
+		$$note = '';
+		if (!$b_vm){
+			# $info[0] = 384;
+			# $info[1] = 'MiB';
+			my ($factor,$factor2) = (1,0.5);
+			# For M, assume smallest is 128, anything older won't even work probably.
+			# For T RAM, the system ram is going to be 99.9% of physical because the 
+			# reserved stuff is going to be tiny, I believe. We will see.
+			# T array stick sizes: 128/256/512/1024 G
+			# Note: samsung ships 1T modules (2024?), 512G (2023).
+			if ($info[0] > 512){
+				$factor = ($info[1] eq 'MiB') ? 256 : 64;
+			}
+			elsif ($info[0] > 256){
+				$factor =  ($info[1] eq 'MiB') ? 128 : 32;
+			}
+			elsif ($info[0] > 128){
+				$factor = ($info[1] eq 'MiB') ? 64 : 16;
+			}
+			elsif ($info[0] > 64){
+				$factor = 8;
+			}
+			elsif ($info[0] > 16){
+				$factor = 4;
+			}
+			elsif ($info[0] > 8){
+				$factor = 4;
+			}
+			elsif ($info[0] > 4){
+				$factor = 2;
+			}
+			elsif ($info[0] > 3){
+				$factor = 1;
+			}
+			elsif ($info[0] > 2){
+				$factor = ($info[1] eq 'TiB') ? 0.25 : 0.5;
+			}
+			# Note: get_size returns 1 as 1024, so we never actually see 1
+			elsif ($info[0] > 1){
+				$factor = ($info[1] eq 'TiB') ? 0.125 : 0.25;
+			}
+			my $result = $info[0] / $factor;
+			my $mod = ((100 * $result) % 100);
+			if ($b_log || $dbg[54]){
+				push(@$d,"src: $src result: $info[0] / $factor: $result math-modulus: $mod");
+			}
+			if ($mod > 0){
+				my ($check,$working) = (0,0);
+				# Sometimes Perl generates a tiny value over 0.1: 0.100000000000023
+				# but also we want to be a little loose here. Note that when high 
+				# numbers, like 1012 M, we want the math much looser.
+				# Within ~ 5% 
+				if ($info[1] eq 'MiB'){
+					if ($info[0] > 768){
+						$check = 64;
+					}
+					elsif ($info[0] > 512){
+						$check = 32;
+					}
+					elsif ($info[0] > 256){
+						$check = 16;
+					}
+					else {
+						$check = 4;
+					}
+				}
+				# Within ~ 1%
+				elsif ($info[1] eq 'GiB'){
+					if ($info[0] > 512){
+						$check = 4;
+					}
+					elsif ($info[0] > 256){
+						$check = 2;
+					}
+					elsif ($info[0] > 3){
+						$check = 0.25;
+					}
+					else {
+						$check = 0.1;
+					}
+				}
+				# Will need to verify this T assumption on real data one day, but keep 
+				# in mind how much reserved ram this would be!
+				elsif ($info[1] eq 'TiB'){
+					if ($info[0] > 16){
+						$check = 0.25;
+					}
+					elsif ($info[0] > 8){
+						$check = 0.15;
+					}
+					elsif ($info[0] > 2){
+						$check = 0.1;
+					}
+					else {
+						$check = 0.05;
+					}
+				}
+				# iomem is always under, sys can be over or under. we want fractional
+				# corresponding value over or under result.
+				# sys has block sizes: 128M, 2G, 32G, so sizes will always be divisible
+				if ($src eq 'sys'){
+					if ($info[0] > 64){
+						$factor2 = 0.25;
+					}
+				}
+				if ($src eq 'sys' && int($result + $factor2) == int($result)){
+					$working = int($result) * $factor;
+				}
+				else {
+					$working = POSIX::ceil($result) * $factor;
+				}
+				if ($b_log || $dbg[54]){
+					push(@$d, "factor2: $factor2 floor_res+fact2: " . int($result + $factor2),
+					"ceil_result * factor: " . (POSIX::ceil($result) * $factor),
+					"floor_result * factor: " . (int($result) * $factor));
+				}
+				if (abs(($working - $info[0])) < $check){
+					if ($src eq 'sys' && $info[0] != $working){
+						$$note = main::message('note-est');
+					}
+					if ($b_log || $dbg[54]){
+						push(@$d,"check less: ($working - $info[0]) < $check: ",
+						"result: inside ceil < $check, clean");
+					}
+				}
+				else {
+					if ($b_log || $dbg[54]){
+						push(@$d,"check not less: ($working - $info[0]) < $check: ",
+						"set: $info[0] = $working");
+					}
+					$$note = main::message('note-est');
+				}
+				$info[0] = $working;
+			}
+			else {
+				if ($b_log || $dbg[54]){
+					push(@$d,"result: clean match, no change: $info[0] $info[1]");
+				}
+			}
+		}
+		else {
+			my $dec = ($info[1] eq 'MiB') ? 1: 2;
+			$info[0] = sprintf("%0.${dec}f",$info[0]) + 0;
+			if ($b_log || $dbg[54]){
+				push(@$d,"result: vm, using size: $info[0] $info[1]");
+			}
+		}
+		$$total = $info[0] . ' ' . $info[1];
+	}
+	if ($b_log || $dbg[54]){
+		main::log_data('dump','debugger',$d) if $b_log;
+		print Data::Dumper::Dumper $d if $dbg[54];
+	}
+	eval $end if $b_log;
+}
+
+## BSD DATA ##
 ## openbsd/linux
 # procs    memory       page                    disks    traps          cpu
 # r b w    avm     fre  flt  re  pi  po  fr  sr wd0 wd1  int   sys   cs us sy id
@@ -31131,7 +31640,7 @@ sub bsd_data {
 	my (@data,$memory,$message);
 	# my $arg = ($bsd_type ne 'openbsd' && $bsd_type ne 'dragonfly') ? '-H' : '';
 	if (my $program = main::check_program('vmstat')){
-		# see above, it's the last line. -H makes it hopefully all in kB so no need 
+		# See above, it's the last line. -H makes it hopefully all in kB so no need 
 		# for K/M/G tests, note that -H not consistently supported, so don't use.
 		my @vmstat = main::grabber("vmstat 2>/dev/null",'\n','strip');
 		main::log_data('dump','@vmstat',\@vmstat) if $b_log;
@@ -31145,14 +31654,14 @@ sub bsd_data {
 		my $row = $vmstat[-1];
 		if ($row){
 			@data = split(/\s+/, $row);
-			# openbsd 6.3, dragonfly 5.x introduced an M / G character, sigh.
+			# Openbsd 6.3, dragonfly 5.x introduced an M / G character, sigh.
 			if ($avm > 0 && $data[$avm] && $data[$avm] =~ /^([0-9\.]+[KGMT])(iB|B)?$/){
 				$data[$avm] = main::translate_size($1);
 			}
 			if ($fre > 0 && $data[$fre] && $data[$fre] =~ /^([0-9\.]+[KGMT])(iB|B)?$/){
 				$data[$fre] = main::translate_size($1);
 			}
-			# dragonfly can have 0 avg, or no avm, sigh, but they may fix that so make test dynamic
+			# Dragonfly can have 0 avg, or no avm, sigh, but they may fix that so make test dynamic
 			if ($avm > 0 && $data[$avm] != 0){
 				$av_pages = ($bsd_type !~ /^(net|open)bsd$/) ? sprintf('%.1f',$data[$avm]/1024) : $data[$avm];
 			}
@@ -31161,13 +31670,13 @@ sub bsd_data {
 			}
 		}
 	}
-	## code to get total goes here:
+	# Code to get total goes here:
 	if ($alerts{'sysctl'}->{'action'} eq 'use'){
-		# for dragonfly, we will use free mem, not used because free is 0
+		# For dragonfly, we will use free mem, not used because free is 0
 		my @working;
 		if ($sysctl{'memory'}){
 			foreach (@{$sysctl{'memory'}}){
-				# freebsd seems to use bytes here
+				# Freebsd seems to use bytes here
 				if (!$real_mem && /^hw.physmem:/){
 					@working = split(/:\s*/, $_);
 					# if ($working[1]){
@@ -31177,7 +31686,7 @@ sub bsd_data {
 					last if $free_mem;
 				}
 				# But, it uses K here. Openbsd/Dragonfly do not seem to have this item
-				# this can be either: Free Memory OR Free Memory Pages
+				# This can be either: Free Memory OR Free Memory Pages
 				elsif (/^Free Memory:/){
 					@working = split(/:\s*/, $_);
 					$working[1] =~ s/[^0-9]+//g;
@@ -31190,27 +31699,25 @@ sub bsd_data {
 	else {
 		$message = "sysctl $alerts{'sysctl'}->{'action'}"
 	}
-	# not using, but leave in place for a bit in case we want it
+	# Not using, but leave in place for a bit in case we want it
 	# my $type = ($free_mem) ? ' free':'' ;
-	# hack: temp fix for openbsd/darwin: in case no free mem was detected but we have physmem
+	# Hack: temp fix for openbsd/darwin: in case no free mem was detected but we have physmem
 	if (($av_pages || $free_mem) && !$real_mem){
 		my $error = ($message) ? $message: 'total N/A';
 		my $used = (!$free_mem) ? $av_pages : $real_mem - $free_mem;
 		if ($type eq 'short'){
-			$used = sprintf("%.1f",$used/1024);
-			$memory = ["$used/($error) MiB"];
+			$memory = short_data($error,$used);
 		}
 		else {
 			$memory = [$error,$used,undef];
 		}
 	}
-	# use openbsd/dragonfly avail mem data if available
+	# Use openbsd/dragonfly avail mem data if available
 	elsif (($av_pages || $free_mem) && $real_mem){
 		my $used = (!$free_mem) ? $av_pages : $real_mem - $free_mem;
 		my $percent = ($used && $real_mem) ? sprintf("%.1f", ($used/$real_mem)*100) : '';
 		if ($type eq 'short'){
-			$percent = " ($percent)" if $percent;
-			$memory = [sprintf("%.1f/%.1f MiB", $used/1024, $real_mem/1024) . $percent];
+			$memory = short_data($real_mem,$used,$percent);
 		}
 		else {
 			$memory = [$real_mem,$used,$percent,0];
@@ -31220,7 +31727,29 @@ sub bsd_data {
 	return $memory;
 }
 
-# raspberry pi only
+## TOOLS ##
+# args: 0: avail memory; 1: used memory; 2: percent used
+sub short_data {
+	# some BSDs, no available
+	my @avail = (main::is_numeric($_[0])) ? main::get_size($_[0]) : ($_[0]);
+	my @used = main::get_size($_[1]);
+	my $string = '';
+	if ($avail[1] && $used[1]){
+		if ( $avail[1] eq $used[1]){
+			$string = "$used[0]/$avail[0] $used[1]";
+		}
+		else {
+			$string = "$used[0] $used[1]/$avail[0] $avail[1]";
+		}
+	}
+	elsif ($used[1]){
+		$string = "$used[0]/[$avail[0]] $used[1]";
+	}
+	$string .= " ($_[2]%)" if $_[2];
+	return $string;
+}
+
+# Raspberry pi only
 sub gpu_ram_arm {
 	eval $start if $b_log;
 	my ($gpu_ram) = (0);
@@ -31232,13 +31761,6 @@ sub gpu_ram_arm {
 		$gpu_ram = main::translate_size($working) if $working;
 	}
 	main::log_data('data',"gpu ram: $gpu_ram") if $b_log;
-	eval $end if $b_log;
-	return $gpu_ram;
-}
-# standard systems, not used currently, but maybe one day?
-sub get_gpu_ram {
-	eval $start if $b_log;
-	my ($gpu_ram) = (0);
 	eval $end if $b_log;
 	return $gpu_ram;
 }
@@ -34548,7 +35070,7 @@ sub short_output {
 		}
 	}
 	my $memory = MemoryData::get('short');
-	@$memory = ('N/A') if !$memory || !@$memory || !$memory->[0]; 
+	$memory = 'N/A' if !$memory; 
  	# print join('; ', @cpu), " sleep: $cpu_sleep\n";
  	if (!$loaded{'shell-data'} && $ppid && (!$b_irc || !$client{'name-print'})){
 		ShellData::set();
@@ -34563,7 +35085,7 @@ sub short_output {
 	main::key($num++,0,0,$speed_key) => $speed,
 	main::key($num++,0,0,$kernel_os) => join(' ', @{main::get_kernel_data()}),
 	main::key($num++,0,0,'Up') => main::get_uptime(),
-	main::key($num++,0,0,'Mem') => $memory->[0],
+	main::key($num++,0,0,'Mem') => $memory,
 	main::key($num++,0,0,'Storage') => $disk_string,
 	# could make -1 for ps aux itself, -2 for ps aux and self
 	main::key($num++,0,0,'Procs') => scalar @ps_aux,
@@ -34583,7 +35105,7 @@ sub info_item {
 	my $running_in = '';
 	my $data_name = main::key($prefix++,1,0,'Info');
 	my ($b_gcc,$gcc,$index);
-	my ($gpu_ram,$parent,$percent,$total,$used) = (0,'','','','');
+	my ($available,$gpu_ram,$parent,$percent,$used) = ('',0,'','','');
 	my $gccs = main::get_gcc_data();
 	if (@$gccs){
 		$gcc = shift @$gccs;
@@ -34605,19 +35127,8 @@ sub info_item {
 		$data->{$data_name}[$index]{main::key($num++,0,2,'wakeups')} = $wakeups if defined $wakeups;
 	}
 	if (!$loaded{'memory'}){
-		my $memory = MemoryData::get('full');
-		if ($memory && @$memory){
-			$gpu_ram = $memory->[3] if $memory->[3];
-			$total = ($memory->[0]) ? main::get_size($memory->[0],'string') : 'N/A';
-			$used = ($memory->[1]) ? main::get_size($memory->[1],'string') : 'N/A';
-			$used .= " ($memory->[2]%)" if $memory->[2];
-			if ($gpu_ram){
-				$gpu_ram = main::get_size($gpu_ram,'string');
-			}
-		}
-		$data->{$data_name}[$index]{main::key($num++,1,1,'Memory')} = '';
-		$data->{$data_name}[$index]{main::key($num++,0,2,'available')} = $total;
-		$data->{$data_name}[$index]{main::key($num++,0,2,'used')} = $used;
+		my $row = {};
+		main::MemoryData::row('info',$data->{$data_name}[$index],\$num,1);
 	}
 	if ($gpu_ram){
 		$data->{$data_name}[$index]{main::key($num++,0,2,'gpu')} = $gpu_ram;
