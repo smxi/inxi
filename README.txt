@@ -123,6 +123,19 @@ If your distribution has blocked -U self updater and you want a newer version:
 Open /etc/inxi.conf and change false to true: B_ALLOW_UPDATE=true
 
 --------------------------------------------------------------------------------
+
+SPECIAL NOTE FOR LEGACY OPERATING SYSTEMS WITH NO TLS 1.2 OR GREATER:
+Modern web servers are dropping support for TLS 1.0, 1.1, and so has smxi.org,
+this means to install inxi onto an older system with only OpenSSL 1.1 available,
+you will need to do this to install inxi onto the old system:
+
+wget -O /usr/local/bin/inxi ftp://ftp.smxi.org/outgoing/inxi
+then update inxi/man pages after that with inxi -U 4, which uses FTP, not HTTP,
+to download the file.
+
+For pinxi, just change inxi to pinxi above, and it will work the same.
+
+--------------------------------------------------------------------------------
 DEVELOPMENT BRANCH
 --------------------------------------------------------------------------------
 
@@ -144,6 +157,9 @@ is copied to inxi in the master branch.
 
 It's a good idea to check with pinxi if you want to make sure your issue has not 
 been corrected, since pinxi is always equal to or ahead of inxi.
+
+See SPECIAL NOTE FOR LEGACY OPERATING SYSTEMS above to install pinxi on very old 
+operating systems with out of date TLS version.
 
 --------------------------------------------------------------------------------
 LEGACY INXI (in inxi-legacy repo)
