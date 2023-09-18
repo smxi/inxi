@@ -99,32 +99,37 @@ See BSD/UNIX below for qualifications re BSDs, and OSX in particular.
 SOURCE VERSION CONTROL
 --------------------------------------------------------------------------------
 
+inxi:
 https://codeberg.org/smxi/inxi
 MAIN BRANCH: master
-DEVELOPMENT BRANCHES: inxi-perl, one, two
+DEVELOPMENT BRANCHES [not used]: one, two
 
-inxi-perl is the dev branch, the others are rarely if ever used. inxi itself has 
-the built in feature to be able to update itself from anywhere, including these 
-branches, which is very useful for development and debugging on various user 
-systems.
+pinxi:
+https://codeberg.org/smxi/pinxi
+
+pinxi is the standalone development repo, the others are rarely if ever used. 
+inxi has the built in feature to be able to update itself from anywhere, 
+including these branches, which is very useful for development and debugging on 
+various user systems.
 
 PULL REQUESTS: Please talk to me before starting to work on patches of any 
 reasonable complexity. inxi is hard to work on, and you have to understand how 
 it works before submitting patches, unless it's a trivial bug fix. Please: NEVER 
 even think about looking at or using previous inxi commits, previous to the 
 current master version, as a base for a patch. If you do, your patch / pull 
-request will probably be rejected. Developers, get your version from the 
-inxi-perl branch, pinxi, otherwise you may not be current to actual development 
-versions. inxi-perl pinxi is always equal to or ahead of master branch inxi.
+request will probably be rejected. Developers, get your version from the pinxi 
+repo, master branch, otherwise you may not be current to actual development 
+versions. pinxi is always equal to or ahead of master branch inxi.
 
 Man page updates, doc page updates, etc, of course, are easy and will probably 
 be accepted, as long as they are properly formatted and logically coherent. 
 
-When under active development, inxi releases early, and releases often. 
+When under active development, pinxi releases early, and releases often. inxi
+is stable and is generally only updated when a new tagged version is completed.
 
 PACKAGERS: inxi has one and only one 'release', and that is the current 
-commit/version in the master branch (plus pinxi inxi-perl branch, of course, but 
-those should never be packaged). 
+commit/version in the master branch (plus pinxi repo, of course, but those 
+should never be packaged). 
 
 --------------------------------------------------------------------------------
 MASTER BRANCH
@@ -145,9 +150,9 @@ OR easy to remember shortcut (which redirects to codeberg.org):
 wget -O inxi https://smxi.org/inxi
 wget -O inxi smxi.org/inxi
 
-NOTE: Just because codeberg.org calls tagged commits 'Releases' does not mean they are 
-releases! I can't change the words on the tag page. They are tagged commits, 
-period. A tag is a pointer to a commit, and has no further meaning. 
+NOTE: There are no 'Releases' per se. There are only tagged commits, period. A 
+tag is a pointer to a commit, and has no further meaning. A tagged commit 
+however is the target for packagers.
 
 If your distribution has blocked -U self updater and you want a newer version:
 
@@ -167,16 +172,16 @@ to download the file.
 For pinxi, just change inxi to pinxi above, and it will work the same.
 
 --------------------------------------------------------------------------------
-DEVELOPMENT BRANCH
+DEVELOPMENT VERSION (in pinxi repo)
 --------------------------------------------------------------------------------
 
-All active development is now done on the inxi-perl branch (pinxi):
+All active development is done in the pinxi repo master branch.:
 
-git clone https://codeberg.org/smxi/inxi --branch inxi-perl --single-branch
+git clone https://codeberg.org/smxi/pinxi
 
 OR direct fast and easy install:
 
-wget -O pinxi https://codeberg.org/smxi/inxi/raw/inxi-perl/pinxi
+wget -O pinxi https://codeberg.org/smxi/pinxi/raw/master/pinxi
 
 OR easy to remember shortcut (which redirects to codeberg.org):
 
@@ -364,10 +369,14 @@ SUPPORTED VERSIONS / DISTRO VERSIONS
 Important: the only version of inxi that is supported is the latest current 
 master branch version/commit. No issue reports or bug reports will be accepted 
 for anything other than current master branch. No merges, attempts to patch old 
-code from old versions, will be considered or accepted. If you are not updated 
-to the latest inxi, do not file a bug report since it's probably been fixed ages 
-ago. If your distro isn't packaging a current inxi, then file a bug report with 
-your packager, not here. 
+code from old versions, will be considered or accepted on the master branch of 
+inxi. If you are not updated to the latest inxi, do not file a bug report since 
+it's probably been fixed ages ago. If your distro isn't packaging a current 
+inxi, then file a bug report with your packager, not here. 
+
+The development branch inxi-perl/pinxi has been moved to its own standalone 
+repo, pinxi, at https://codeberg.org/smxi/pinxi - this is the only place 
+development happens.
 
 inxi is 'rolling release' software, just like Debian Sid, Gentoo, or Arch Linux 
 are rolling release GNU/Linux distributions, with no 'release points'.
