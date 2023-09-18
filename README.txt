@@ -14,21 +14,30 @@ CODEBERG SOURCE REPO
 
 Packagers: Make sure to change your package URLs and repos to use codeberg.org.
 
-For inxi, after version 3.3.30 is released (probably in later September, 2023),
-it's unlikely any further updates will be mirrored to github because I plan on
-redoing the structure of the inxi repo fundamentally, probably into separate
-repos for each unrelated branch like inxi-docs, inxi-perl (aka pinxi), and so 
-on.
+The previous inxi-perl, tarballs, and docs branches are now standalone repos
+on codeberg.org:
+
+docs      > https://codeberg.org/smxi/inxi-docs master
+inxi-perl > https://codeberg.org/smxi/pinxi master
+master    > https://codeberg.org/smxi/inxi master
+tarballs  > https://codeberg.org/smxi/inxi-tarballs master
+
+inxi-perl has been rebuilt and now only contains the pinxi, pinxi.1 files, plus
+a minimal README.txt for github users. docs and tarballs have been deleted. The
+inxi-perl branch should not be used, and exists only so that current pinxi users 
+can update from there to get the new version with new URLs.
+
+inxi master and inxi-perl/pinxi will be mirrored until late 2023, then they will
+no longer get updates.
+
+The inxi repo only contains master, plus the one, two branches, which are 
+obsolete.
 
 --------------------------------------------------------------------------------
 
 Please file issue reports or feature requests at:
 
 https://codeberg.org/smxi/inxi
-
-The Codeberg repos will be mirrored to Github until the inxi repo refactor is 
-done, after that, no updates to github repos will be made. Some time after that, 
-the code will be removed.
 
 Please take the time to read this helpful article from the Software Freedom
 Conservancy:
@@ -100,36 +109,40 @@ SOURCE VERSION CONTROL
 --------------------------------------------------------------------------------
 
 inxi:
-https://codeberg.org/smxi/inxi
+REPO: https://codeberg.org/smxi/inxi
 MAIN BRANCH: master
 DEVELOPMENT BRANCHES [not used]: one, two
 
-pinxi:
-https://codeberg.org/smxi/pinxi
+pinxi [development version for inxi]:
+REPO: https://codeberg.org/smxi/pinxi
+MAIN BRANCH: master
 
-pinxi is the standalone development repo, the others are rarely if ever used. 
-inxi has the built in feature to be able to update itself from anywhere, 
-including these branches, which is very useful for development and debugging on 
-various user systems.
+pinxi is the standalone development version of inxi. inxi branches one, two are 
+rarely if ever used. inxi has the built in feature to be able to update itself 
+from anywhere, including these branches, which is very useful for development 
+and debugging on various user systems.
+
+Please: NEVER even think about looking at or using previous inxi commits, 
+previous to the current master version, as a base for a patch. If you do, your 
+patch / pull request will probably be rejected.
 
 PULL REQUESTS: Please talk to me before starting to work on patches of any 
 reasonable complexity. inxi is hard to work on, and you have to understand how 
-it works before submitting patches, unless it's a trivial bug fix. Please: NEVER 
-even think about looking at or using previous inxi commits, previous to the 
-current master version, as a base for a patch. If you do, your patch / pull 
-request will probably be rejected. Developers, get your version from the pinxi 
-repo, master branch, otherwise you may not be current to actual development 
-versions. pinxi is always equal to or ahead of master branch inxi.
+it works before submitting patches, unless it's a trivial bug fix. Never work 
+with inxi master, always work with pinxi master, since it can be quite far ahead 
+of inxi. inxi master has only one purpose, to get updated to next inxi when 
+pinxi is ready to be copied over to inxi. pinxi is always equal to or ahead of 
+master branch inxi.
 
-Man page updates, doc page updates, etc, of course, are easy and will probably 
+Man page updates, doc pages updates, etc, of course, are easy and will probably 
 be accepted, as long as they are properly formatted and logically coherent. 
 
 When under active development, pinxi releases early, and releases often. inxi
 is stable and is generally only updated when a new tagged version is completed.
 
-PACKAGERS: inxi has one and only one 'release', and that is the current 
-commit/version in the master branch (plus pinxi repo, of course, but those 
-should never be packaged). 
+PACKAGERS: inxi has one and only one 'release', and that is the current tagged 
+version in the master branch (plus pinxi repo, of course, but pinxi should in 
+general not be packaged). 
 
 --------------------------------------------------------------------------------
 MASTER BRANCH
@@ -160,16 +173,18 @@ Open /etc/inxi.conf and change false to true: B_ALLOW_UPDATE=true
 
 --------------------------------------------------------------------------------
 
-SPECIAL NOTE FOR LEGACY OPERATING SYSTEMS WITH NO TLS 1.2 OR GREATER:
-Modern web servers are dropping support for TLS 1.0, 1.1, and so has smxi.org,
-this means to install inxi onto an older system with only OpenSSL 1.1 available,
-you will need to do this to install inxi onto the old system:
+SPECIAL NOTE FOR LEGACY OPERATING SYSTEMS WITH NO TLS 1.2 OR GREATER: Modern web 
+servers are dropping support for TLS 1.0, 1.1, and so has smxi.org, this means 
+to install inxi onto an older system with only TLS 1.0 or 1.1 available, you 
+will need to do this to install inxi onto the old system:
 
 wget -O /usr/local/bin/inxi ftp://ftp.smxi.org/outgoing/inxi
+
 then update inxi/man pages after that with inxi -U 4, which uses FTP, not HTTP,
 to download the file.
 
-For pinxi, just change inxi to pinxi above, and it will work the same.
+For pinxi, just change inxi to pinxi above (add --man to get the man page), and 
+it will work the same.
 
 --------------------------------------------------------------------------------
 DEVELOPMENT VERSION (in pinxi repo)
@@ -189,7 +204,7 @@ wget -O pinxi https://smxi.org/pinxi
 wget -O pinxi smxi.org/pinxi
 
 Once new features have been debugged, tested, and are reasonably stable, pinxi 
-is copied to inxi in the master branch.
+is copied to inxi in the inxi master branch.
 
 It's a good idea to check with pinxi if you want to make sure your issue has not 
 been corrected, since pinxi is always equal to or ahead of inxi.
@@ -236,7 +251,7 @@ https://smxi.org/docs/inxi.htm
 (smxi.org/docs/ is easier to remember, and is one click away from inxi.htm). The 
 one page wiki on codeberg.org is only a pointer to the real resources.
 
-https://codeberg.org/smxi/inxi/tree/inxi-perl/docs
+https://codeberg.org/smxi/pinxi/src/branch/master/docs
 
 Contains specific Perl inxi documentation, of interest mostly to developers. 
 Includes internal inxi tools, values, configuration items. Also has useful 
@@ -256,14 +271,16 @@ https://codeberg.org/smxi/inxi/wiki
 
 This is simply a page with links to actual inxi resources, which can be useful 
 for developers and people with technical questions. No attempt will be made to 
-reproduce those external resources here on codeberg.org. You'll find stuff like 
+reproduce those external resources on codeberg.org. You'll find stuff like 
 how to export to json/xml there, and basic core philosophies, etc. 
 
 --------------------------------------------------------------------------------
 IRC
 --------------------------------------------------------------------------------
 
-You can go to: irc.oftc.net or irc.libera.chat channel #smxi 
+You can go to: 
+
+irc.oftc.net or irc.libera.chat channel #smxi 
 
 but be prepared to wait around for a while to get a response. Generally it's 
 better to use codeberg.org issues.
@@ -273,6 +290,7 @@ ISSUES
 --------------------------------------------------------------------------------
 
 https://codeberg.org/smxi/inxi/issues
+
 No issues accepted for non current inxi versions. See below for more on that. 
 Unfortunately as of 2.9, no support or issues can be accepted for older inxi's 
 because inxi 2.9 (Perl) and newer is a full rewrite, and legacy inxi is not 
@@ -374,7 +392,7 @@ inxi. If you are not updated to the latest inxi, do not file a bug report since
 it's probably been fixed ages ago. If your distro isn't packaging a current 
 inxi, then file a bug report with your packager, not here. 
 
-The development branch inxi-perl/pinxi has been moved to its own standalone 
+The development branch inxi-perl/pinxi  has been moved to its own standalone 
 repo, pinxi, at https://codeberg.org/smxi/pinxi - this is the only place 
 development happens.
 
