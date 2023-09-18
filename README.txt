@@ -1,0 +1,63 @@
+================================================================================
+README for inxi-perl development branch: pinxi
+================================================================================
+FILE:    README.txt
+VERSION: 1,0
+DATE:    2022-09-18
+
+--------------------------------------------------------------------------------
+CODEBERG SOURCE REPO
+--------------------------------------------------------------------------------
+
+Packagers: Make sure to change your package URLs and repos to use codeberg.org.
+
+DO NOT USE THIS BRANCH! It is here only to allow pinxi versions to get updated
+one time to get the new codeberg.org/smxi/pinxi download URLs.
+
+This branch will remain static after the end of 2023, again, merely to allow 
+pinxi -U to update one time to get the new codeberg updating URLs.
+
+--------------------------------------------------------------------------------
+
+Remember that is is NOT the master branch of inxi, this is the master branch of
+pinxi, the development version of inxi, aka, next inxi, and as such, this should
+only be used by expert users.
+
+Please file issue reports or feature requests at:
+
+https://codeberg.org/smxi/pinxi
+
+or if you prefer the master inxi repo:
+
+https://codeberg.org/smxi/inxi
+
+The Codeberg inxi branch inxi-perl will be mirrored to Github until the inxi 
+repo refactor is done, after that, no updates to github repos will be made. Some 
+time after that, the code will be removed.
+
+Please take the time to read this helpful article from the Software Freedom
+Conservancy:
+
+https://sfconservancy.org/GiveUpGitHub/
+
+Any use of this project's code by GitHub Copilot, past or present, is done 
+without my permission. I do not consent to GitHub's use of this project's code 
+in Copilot.
+
+================================================================================
+
+Clone pinxi:
+
+git clone https://codeberg.org/smxi/pinxi
+
+Install pinxi for testing. Note that the -U option works the same as the inxi 
+main repo master branch, so only the initial install is required:
+
+wget -O pinxi https://codeberg.org/smxi/pinxi/raw/master/pinxi
+
+Shortcut download path for codeberg.org (easier to remember and type):
+wget -O pinxi smxi.org/pinxi
+
+pinxi -U --man also installs the man page from pinxi, which is the development 
+branch for the master man page.
+
