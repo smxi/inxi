@@ -14,7 +14,7 @@ CODEBERG SOURCE REPO
 
 Packagers: Make sure to change your package URLs and repos to use codeberg.org.
 
-For inxi, after version 3.3.30 is released (probably in later September, 2023,
+For inxi, after version 3.3.30 is released (probably in later September, 2023),
 it's unlikely any further updates will be mirrored to github because I plan on
 redoing the structure of the inxi repo fundamentally, probably into separate
 repos for each unrelated branch like inxi-docs, inxi-perl (aka pinxi), and so 
