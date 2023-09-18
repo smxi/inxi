@@ -9,6 +9,37 @@ issue reports. The code in pre 2.9 versions literally no longer exists in inxi
 the pre 2.9 and the 2.9 and later versions are completely different internally.
 
 --------------------------------------------------------------------------------
+CODEBERG SOURCE REPO
+--------------------------------------------------------------------------------
+
+Packagers: Make sure to change your package URLs and repos to use codeberg.org.
+
+For inxi, after version 3.3.30 is released (probably in later September, 2023,
+it's unlikely any further updates will be mirrored to github because I plan on
+redoing the structure of the inxi repo fundamentally, probably into separate
+repos for each unrelated branch like inxi-docs, inxi-perl (aka pinxi), and so 
+on.
+
+--------------------------------------------------------------------------------
+
+Please file issue reports or feature requests at:
+
+https://codeberg.org/smxi/inxi
+
+The Codeberg repos will be mirrored to Github until the inxi repo refactor is 
+done, after that, no updates to github repos will be made. Some time after that, 
+the code will be removed.
+
+Please take the time to read this helpful article from the Software Freedom
+Conservancy:
+
+https://sfconservancy.org/GiveUpGitHub/
+
+Any use of this project's code by GitHub Copilot, past or present, is done 
+without my permission. I do not consent to GitHub's use of this project's code 
+in Copilot.
+
+--------------------------------------------------------------------------------
 DONATE
 --------------------------------------------------------------------------------
 
@@ -68,7 +99,7 @@ See BSD/UNIX below for qualifications re BSDs, and OSX in particular.
 SOURCE VERSION CONTROL
 --------------------------------------------------------------------------------
 
-https://github.com/smxi/inxi
+https://codeberg.org/smxi/inxi
 MAIN BRANCH: master
 DEVELOPMENT BRANCHES: inxi-perl, one, two
 
@@ -103,18 +134,18 @@ This is the only supported branch, and the current latest commit/version is the
 only supported 'release'. There are no 'releases' of inxi beyond the current 
 commit/version in master. All past versions are not supported. 
 
-git clone https://github.com/smxi/inxi --branch master --single-branch
+git clone https://codeberg.org/smxi/inxi --branch master --single-branch
 
 OR direct fast and easy install:
 
-wget -O inxi https://github.com/smxi/inxi/raw/master/inxi
+wget -O inxi https://codeberg.org/smxi/inxi/raw/master/inxi
 
-OR easy to remember shortcut (which redirects to github):
+OR easy to remember shortcut (which redirects to codeberg.org):
 
 wget -O inxi https://smxi.org/inxi
 wget -O inxi smxi.org/inxi
 
-NOTE: Just because github calls tagged commits 'Releases' does not mean they are 
+NOTE: Just because codeberg.org calls tagged commits 'Releases' does not mean they are 
 releases! I can't change the words on the tag page. They are tagged commits, 
 period. A tag is a pointer to a commit, and has no further meaning. 
 
@@ -141,13 +172,13 @@ DEVELOPMENT BRANCH
 
 All active development is now done on the inxi-perl branch (pinxi):
 
-git clone https://github.com/smxi/inxi --branch inxi-perl --single-branch
+git clone https://codeberg.org/smxi/inxi --branch inxi-perl --single-branch
 
 OR direct fast and easy install:
 
-wget -O pinxi https://github.com/smxi/inxi/raw/inxi-perl/pinxi
+wget -O pinxi https://codeberg.org/smxi/inxi/raw/inxi-perl/pinxi
 
-OR easy to remember shortcut (which redirects to github):
+OR easy to remember shortcut (which redirects to codeberg.org):
 
 wget -O pinxi https://smxi.org/pinxi
 wget -O pinxi smxi.org/pinxi
@@ -170,9 +201,9 @@ inxi-legacy repo, as binxi in the /inxi-legacy directory:
 
 Direct fast and easy install:
 
-wget -O binxi https://github.com/smxi/inxi-legacy/raw/master/inxi-legacy/binxi
+wget -O binxi https://codeberg.org/smxi/inxi-legacy/raw/master/binxi
 
-OR easy to remember shortcut (which redirects to github):
+OR easy to remember shortcut (which redirects to codeberg.org):
 
 wget -O binxi https://smxi.org/binxi
 
@@ -198,9 +229,9 @@ DOCUMENTATION
 
 https://smxi.org/docs/inxi.htm 
 (smxi.org/docs/ is easier to remember, and is one click away from inxi.htm). The 
-one page wiki on github is only a pointer to the real resources.
+one page wiki on codeberg.org is only a pointer to the real resources.
 
-https://github.com/smxi/inxi/tree/inxi-perl/docs
+https://codeberg.org/smxi/inxi/tree/inxi-perl/docs
 
 Contains specific Perl inxi documentation, of interest mostly to developers. 
 Includes internal inxi tools, values, configuration items. Also has useful 
@@ -216,11 +247,11 @@ NOTE: Check the inxi version number on each doc page to see which version will
 support the options listed. The man and options page also link to a legacy 
 version, pre 2.9.
 
-https://github.com/smxi/inxi/wiki
+https://codeberg.org/smxi/inxi/wiki
 
 This is simply a page with links to actual inxi resources, which can be useful 
-for developers and people with technical questions. No attempt will be made 
-to reproduce those external resources here on github. You'll find stuff like 
+for developers and people with technical questions. No attempt will be made to 
+reproduce those external resources here on codeberg.org. You'll find stuff like 
 how to export to json/xml there, and basic core philosophies, etc. 
 
 --------------------------------------------------------------------------------
@@ -230,13 +261,13 @@ IRC
 You can go to: irc.oftc.net or irc.libera.chat channel #smxi 
 
 but be prepared to wait around for a while to get a response. Generally it's 
-better to use github issues.
+better to use codeberg.org issues.
 
 --------------------------------------------------------------------------------
 ISSUES
 --------------------------------------------------------------------------------
 
-https://github.com/smxi/inxi/issues
+https://codeberg.org/smxi/inxi/issues
 No issues accepted for non current inxi versions. See below for more on that. 
 Unfortunately as of 2.9, no support or issues can be accepted for older inxi's 
 because inxi 2.9 (Perl) and newer is a full rewrite, and legacy inxi is not 
