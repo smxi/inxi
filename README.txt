@@ -2,8 +2,8 @@
 README for inxi-perl development branch: pinxi
 ================================================================================
 FILE:    README.txt
-VERSION: 1,0
-DATE:    2022-09-18
+VERSION: 1,1
+DATE:    2022-09-21
 
 --------------------------------------------------------------------------------
 CODEBERG SOURCE REPO
@@ -19,9 +19,10 @@ pinxi -U to update one time to get the new codeberg updating URLs.
 
 --------------------------------------------------------------------------------
 
-Remember that is is NOT the master branch of inxi, this is the master branch of
-pinxi, the development version of inxi, aka, next inxi, and as such, this should
-only be used by expert users.
+Remember that is is NOT the master branch of inxi, this is the old inxi-perl 
+branch of pinxi, the development version of inxi, aka, next inxi, and as such, 
+this should only be used by expert users. pinxi how has its own repo at 
+codeberg.
 
 Please file issue reports or feature requests at:
 
@@ -31,9 +32,9 @@ or if you prefer the master inxi repo:
 
 https://codeberg.org/smxi/inxi
 
-The Codeberg inxi branch inxi-perl will be mirrored to Github until the inxi 
-repo refactor is done, after that, no updates to github repos will be made. Some 
-time after that, the code will be removed.
+The github inxi-perl branch will be retained so users can update from it, but
+it should not be used for any other purpose, so if you are here, go to codeberg
+and start over!
 
 Please take the time to read this helpful article from the Software Freedom
 Conservancy:
