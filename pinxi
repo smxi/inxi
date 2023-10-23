@@ -50,8 +50,8 @@ use POSIX qw(ceil uname strftime ttyname);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='3.3.30';
-my $self_date='2023-10-19';
-my $self_patch='08';
+my $self_date='2023-10-23';
+my $self_patch='09';
 ## END INXI INFO ##
 
 my ($b_pledge,@pledges);
@@ -111,7 +111,7 @@ my ($wan_url,$wl_compositors) = ('','');
 my ($bits_sys,$cpu_arch,$ppid);
 my ($cpu_sleep,$dl_timeout,$limit,$ps_cols,$ps_count) = (0.35,4,10,0,5);
 my $sensors_cpu_nu = 0;
-my ($dl_ua,$weather_source,$weather_unit) = ('s-tools/' . $self_name  . '-',100,'mi');
+my ($weather_source,$weather_unit) = (100,'mi');
 
 ## Tools
 my ($display,$ftp_alt);
@@ -424,9 +424,9 @@ sub set_basics {
 	$b_root = $< == 0; # root UID 0, all others > 0
 	$dl{'dl'} = 'curl';
 	$dl{'curl'} = 1;
+	$dl{'fetch'} = 1;
 	$dl{'tiny'} = 1; # note: two modules needed, tested for in set_downloader
 	$dl{'wget'} = 1;
-	$dl{'fetch'} = 1;
 	$client{'console-irc'} = 0;
 	$client{'dcop'} = (check_program('dcop')) ? 1 : 0;
 	$client{'qdbus'} = (check_program('qdbus')) ? 1 : 0;
@@ -2654,6 +2654,7 @@ sub ram_use {
 #### DOWNLOADER
 #### -------------------------------------------------------------------
 
+# args: 0: download type; 1: url; 2: file; 3: [ua type string]
 sub download_file {
 	my ($type, $url, $file,$ua) = @_;
 	my ($cmd,$args,$timeout) = ('','','');
@@ -2675,7 +2676,7 @@ sub download_file {
 	## NOTE: 1 is success, 0 false for Perl
 	if ($dl{'dl'} eq 'tiny'){
 		$cmd = "Using tiny: type: $type \nurl: $url \nfile: $file";
-		$result = get_file_tiny_http($type, $url, $file);
+		$result = get_file_http_tiny($type,$url,$file,$ua);
 		$debug_data = ($type ne 'stdout') ? $result : 'Success: stdout data not null.';
 	}
 	# But: 0 is success, and 1 is false for these
@@ -2707,9 +2708,11 @@ sub download_file {
 	return $result;
 }
 
-sub get_file_tiny_http {
-	my ($type, $url, $file) = @_;
-	my $tiny = HTTP::Tiny->new;
+sub get_file_http_tiny {
+	my ($type,$url,$file,$ua) = @_;
+	$ua = ($ua && $dl{'ua'}) ? $dl{'ua'} . $ua:  '';
+	my %headers = ($ua) ? ('agent' => $ua) : undef;
+	my $tiny = HTTP::Tiny->new(%headers);
 	# note: default is no verify, so default here actually is to verify unless overridden
 	$tiny->verify_SSL => 1 if !$use{'no-ssl'};
 	my $response = $tiny->get($url);
@@ -2756,6 +2759,7 @@ sub get_file_tiny_http {
 sub set_downloader {
 	eval $start if $b_log;
 	my $quiet = '';
+	my $ua_raw = 's-tools/' . $self_name  . '-';
 	$dl{'no-ssl'} = '';
 	$dl{'null'} = '';
 	$dl{'spider'} = '';
@@ -2782,6 +2786,7 @@ sub set_downloader {
 		$dl{'file'} = '';
 		$dl{'stdout'} = '';
 		$dl{'timeout'} = '';
+		$dl{'ua'} = $ua_raw;
 	}
 	elsif ($dl{'curl'} && check_program('curl')){
 		$quiet = '-s ' if !$dbg[1];
@@ -2790,7 +2795,7 @@ sub set_downloader {
 		$dl{'no-ssl'} = ' --insecure';
 		$dl{'stdout'} = " -L ${quiet}";
 		$dl{'timeout'} = ' -y ';
-		$dl{'ua'} = ' -A ' . $dl_ua;
+		$dl{'ua'} = ' -A ' . $ua_raw;
 	}
 	elsif ($dl{'wget'} && check_program('wget')){
 		$quiet = '-q ' if !$dbg[1];
@@ -2800,7 +2805,7 @@ sub set_downloader {
 		$dl{'spider'} = " ${quiet}--spider";
 		$dl{'stdout'} = " $quiet -O -";
 		$dl{'timeout'} = ' -T ';
-		$dl{'ua'} = ' -U ' . $dl_ua;
+		$dl{'ua'} = ' -U ' . $ua_raw;
 	}
 	elsif ($dl{'fetch'} && check_program('fetch')){
 		$quiet = '-q ' if !$dbg[1];
@@ -2809,6 +2814,7 @@ sub set_downloader {
 		$dl{'no-ssl'} = ' --no-verify-peer';
 		$dl{'stdout'} = " ${quiet}-o -";
 		$dl{'timeout'} = ' -T ';
+		$dl{'ua'} = ' --user-agent=' . $ua_raw;
 	}
 	# at least openbsd/netbsd
 	elsif ($bsd_type && check_program('ftp')){
@@ -2817,6 +2823,7 @@ sub set_downloader {
 		$dl{'null'} = ' 2>/dev/null';
 		$dl{'stdout'} = ' -o - ';
 		$dl{'timeout'} = '';
+		$dl{'ua'} = ' -U ' . $ua_raw;
 	}
 	else {
 		$dl{'dl'} = '';
@@ -6260,7 +6267,7 @@ sub show_options {
 	(Linux only)."],
 	['1', '', '--wan-ip-url', "[URL] Skips dig, uses supplied URL for WAN IP (-i). 
 	URL output must end in the IP address. See man. 
-	Example:^$self_name^-i^--wan-ip-url^https://yoursite.com/ip.php"],
+	Example:^$self_name^-i^--wan-ip-url^https://yoursite.com/remote-ip"],
 	['1', '', '--wm', "Force wm: to use wmctrl as data source. Default uses ps."],
 	['0', '', '', $line ],
 	['0', '', '', "Debugging Options:"],
@@ -16123,9 +16130,10 @@ sub gl_data {
 			# $file = "$fake_data_dir/graphics/glxinfo/glxinfo-partial-intel-5500-1.txt";
 			# $file = "$fake_data_dir/graphics/glxinfo/glxinfo-vbox-debian-etch-1.txt";
 			 $file = "$fake_data_dir/graphics/glxinfo/glxinfo-x11-neomagic-lenny-1.txt";
-			 $file = "$fake_data_dir/graphics/glxinfo/glxinfo-nvidia-gl4.6-chr.txt";
-			 $file = "$fake_data_dir/graphics/glxinfo/glxinfo-intel-atom-dell_studio-bm.txt";
-			 $file = "$fake_data_dir/graphics/glxinfo/glxinfo-asus_1025c-atom-bm.txt";
+			# $file = "$fake_data_dir/graphics/glxinfo/glxinfo-nvidia-gl4.6-chr.txt";
+			# $file = "$fake_data_dir/graphics/glxinfo/glxinfo-intel-atom-dell_studio-bm.txt";
+			# $file = "$fake_data_dir/graphics/glxinfo/glxinfo-asus_1025c-atom-bm.txt";
+			# $file = "$fake_data_dir/graphics/glxinfo/glxinfo-2011-nvidia-glx1.4.txt";
 			$gl_data= main::reader($file,'','ref');
 		}
 	}
@@ -20811,16 +20819,18 @@ sub wan_ip {
 		if (!defined $dl{'no-ssl'}){
 			main::set_downloader();
 		}
-		# note: tests: akamai: 0.055 - 0.065 icanhazip.com: 0.177 0.164
-		# smxi: 0.525, so almost 10x slower. Dig is fast too
+		# note: tests: akamai: 0.015 - 0.025 icanhazip.com: 0.020 0.030
+		# smxi: 0.230, so ~10x slower. Dig is not as fast as you'd expect
+		# dig: 0.167s 0.156s
 		# leaving smxi as last test because I know it will always be up.
 		# --wan-ip-url replaces values with user supplied arg
-		# 0.059s: http://whatismyip.akamai.com/
-		# 0.255s: https://get.geojs.io/v1/ip
-		# 0.371s: http://icanhazip.com/
-		# 0.430s: https://smxi.org/opt/ip.php
+		# 0.020s: http://whatismyip.akamai.com/
+		# 0.136s: https://get.geojs.io/v1/ip
+		# 0.024s: http://icanhazip.com/
+		# 0.230s: https://smxi.org/opt/ip.php
+		# http://whatismyip.akamai.com/  http://icanhazip.com/
 		my @urls = (!$wan_url) ? qw(http://whatismyip.akamai.com/ 
-		 http://icanhazip.com/ https://smxi.org/opt/ip.php) : ($wan_url);
+		http://icanhazip.com/ https://smxi.org/opt/ip.php) : ($wan_url);
 		foreach (@urls){
 			$ua = 'ip' if $_ =~ /smxi/;
 			$ip = main::download_file('stdout',$_,'',$ua);
