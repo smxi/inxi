@@ -49,8 +49,8 @@ use POSIX qw(ceil uname strftime ttyname);
 
 ## INXI INFO ##
 my $self_name='inxi';
-my $self_version='3.3.30';
-my $self_date='2023-09-25';
+my $self_version='3.3.31';
+my $self_date='2023-10-31';
 my $self_patch='00';
 ## END INXI INFO ##
 
@@ -111,7 +111,7 @@ my ($wan_url,$wl_compositors) = ('','');
 my ($bits_sys,$cpu_arch,$ppid);
 my ($cpu_sleep,$dl_timeout,$limit,$ps_cols,$ps_count) = (0.35,4,10,0,5);
 my $sensors_cpu_nu = 0;
-my ($dl_ua,$weather_source,$weather_unit) = ('s-tools/' . $self_name  . '-',100,'mi');
+my ($weather_source,$weather_unit) = (100,'mi');
 
 ## Tools
 my ($display,$ftp_alt);
@@ -424,9 +424,9 @@ sub set_basics {
 	$b_root = $< == 0; # root UID 0, all others > 0
 	$dl{'dl'} = 'curl';
 	$dl{'curl'} = 1;
+	$dl{'fetch'} = 1;
 	$dl{'tiny'} = 1; # note: two modules needed, tested for in set_downloader
 	$dl{'wget'} = 1;
-	$dl{'fetch'} = 1;
 	$client{'console-irc'} = 0;
 	$client{'dcop'} = (check_program('dcop')) ? 1 : 0;
 	$client{'qdbus'} = (check_program('qdbus')) ? 1 : 0;
@@ -2654,6 +2654,7 @@ sub ram_use {
 #### DOWNLOADER
 #### -------------------------------------------------------------------
 
+# args: 0: download type; 1: url; 2: file; 3: [ua type string]
 sub download_file {
 	my ($type, $url, $file,$ua) = @_;
 	my ($cmd,$args,$timeout) = ('','','');
@@ -2675,7 +2676,7 @@ sub download_file {
 	## NOTE: 1 is success, 0 false for Perl
 	if ($dl{'dl'} eq 'tiny'){
 		$cmd = "Using tiny: type: $type \nurl: $url \nfile: $file";
-		$result = get_file_tiny_http($type, $url, $file);
+		$result = get_file_http_tiny($type,$url,$file,$ua);
 		$debug_data = ($type ne 'stdout') ? $result : 'Success: stdout data not null.';
 	}
 	# But: 0 is success, and 1 is false for these
@@ -2707,9 +2708,11 @@ sub download_file {
 	return $result;
 }
 
-sub get_file_tiny_http {
-	my ($type, $url, $file) = @_;
-	my $tiny = HTTP::Tiny->new;
+sub get_file_http_tiny {
+	my ($type,$url,$file,$ua) = @_;
+	$ua = ($ua && $dl{'ua'}) ? $dl{'ua'} . $ua:  '';
+	my %headers = ($ua) ? ('agent' => $ua) : undef;
+	my $tiny = HTTP::Tiny->new(%headers);
 	# note: default is no verify, so default here actually is to verify unless overridden
 	$tiny->verify_SSL => 1 if !$use{'no-ssl'};
 	my $response = $tiny->get($url);
@@ -2756,6 +2759,7 @@ sub get_file_tiny_http {
 sub set_downloader {
 	eval $start if $b_log;
 	my $quiet = '';
+	my $ua_raw = 's-tools/' . $self_name  . '-';
 	$dl{'no-ssl'} = '';
 	$dl{'null'} = '';
 	$dl{'spider'} = '';
@@ -2782,6 +2786,7 @@ sub set_downloader {
 		$dl{'file'} = '';
 		$dl{'stdout'} = '';
 		$dl{'timeout'} = '';
+		$dl{'ua'} = $ua_raw;
 	}
 	elsif ($dl{'curl'} && check_program('curl')){
 		$quiet = '-s ' if !$dbg[1];
@@ -2790,7 +2795,7 @@ sub set_downloader {
 		$dl{'no-ssl'} = ' --insecure';
 		$dl{'stdout'} = " -L ${quiet}";
 		$dl{'timeout'} = ' -y ';
-		$dl{'ua'} = ' -A ' . $dl_ua;
+		$dl{'ua'} = ' -A ' . $ua_raw;
 	}
 	elsif ($dl{'wget'} && check_program('wget')){
 		$quiet = '-q ' if !$dbg[1];
@@ -2800,7 +2805,7 @@ sub set_downloader {
 		$dl{'spider'} = " ${quiet}--spider";
 		$dl{'stdout'} = " $quiet -O -";
 		$dl{'timeout'} = ' -T ';
-		$dl{'ua'} = ' -U ' . $dl_ua;
+		$dl{'ua'} = ' -U ' . $ua_raw;
 	}
 	elsif ($dl{'fetch'} && check_program('fetch')){
 		$quiet = '-q ' if !$dbg[1];
@@ -2809,6 +2814,7 @@ sub set_downloader {
 		$dl{'no-ssl'} = ' --no-verify-peer';
 		$dl{'stdout'} = " ${quiet}-o -";
 		$dl{'timeout'} = ' -T ';
+		$dl{'ua'} = ' --user-agent=' . $ua_raw;
 	}
 	# at least openbsd/netbsd
 	elsif ($bsd_type && check_program('ftp')){
@@ -2817,6 +2823,7 @@ sub set_downloader {
 		$dl{'null'} = ' 2>/dev/null';
 		$dl{'stdout'} = ' -o - ';
 		$dl{'timeout'} = '';
+		$dl{'ua'} = ' -U ' . $ua_raw;
 	}
 	else {
 		$dl{'dl'} = '';
@@ -6260,7 +6267,7 @@ sub show_options {
 	(Linux only)."],
 	['1', '', '--wan-ip-url', "[URL] Skips dig, uses supplied URL for WAN IP (-i). 
 	URL output must end in the IP address. See man. 
-	Example:^$self_name^-i^--wan-ip-url^https://yoursite.com/ip.php"],
+	Example:^$self_name^-i^--wan-ip-url^https://yoursite.com/remote-ip"],
 	['1', '', '--wm', "Force wm: to use wmctrl as data source. Default uses ps."],
 	['0', '', '', $line ],
 	['0', '', '', "Debugging Options:"],
@@ -6951,9 +6958,11 @@ sub make_line {
 	return $line;
 }
 
+# args: 0: type; 1: info [optional]; 2: info [optional]
 sub message {
-	my ($type,$id) = @_;
+	my ($type,$id,$id2) = @_;
 	$id ||= '';
+	$id2 ||= '';
 	my %message = (
 	'arm-cpu-f' => 'Use -f option to see features',
 	'audio-server-on-pipewire-pulse' => 'off (using pipewire-pulse)',
@@ -7018,8 +7027,9 @@ sub message {
 	'note-est' => 'est.',
 	'note-not-reliable' => 'not reliable',
 	'nv-current' => "current (as of $id)",
+	'nv-current-eol' => "current (as of $id; EOL~$id2)",
 	'nv-legacy-active' => "legacy-active (EOL~$id)", 
-	'nv-legacy-eol' => 'legacy (EOL)',
+	'nv-legacy-eol' => "legacy (EOL~$id)",
 	'optical-data' => 'No optical or floppy data found.',
 	'optical-data-bsd' => 'No optical or floppy data found.',
 	'output-control' => "-:: 'Enter' to continue to next block. Any key + 'Enter' to exit:",
@@ -16120,9 +16130,10 @@ sub gl_data {
 			# $file = "$fake_data_dir/graphics/glxinfo/glxinfo-partial-intel-5500-1.txt";
 			# $file = "$fake_data_dir/graphics/glxinfo/glxinfo-vbox-debian-etch-1.txt";
 			 $file = "$fake_data_dir/graphics/glxinfo/glxinfo-x11-neomagic-lenny-1.txt";
-			 $file = "$fake_data_dir/graphics/glxinfo/glxinfo-nvidia-gl4.6-chr.txt";
-			 $file = "$fake_data_dir/graphics/glxinfo/glxinfo-intel-atom-dell_studio-bm.txt";
-			 $file = "$fake_data_dir/graphics/glxinfo/glxinfo-asus_1025c-atom-bm.txt";
+			# $file = "$fake_data_dir/graphics/glxinfo/glxinfo-nvidia-gl4.6-chr.txt";
+			# $file = "$fake_data_dir/graphics/glxinfo/glxinfo-intel-atom-dell_studio-bm.txt";
+			# $file = "$fake_data_dir/graphics/glxinfo/glxinfo-asus_1025c-atom-bm.txt";
+			# $file = "$fake_data_dir/graphics/glxinfo/glxinfo-2011-nvidia-glx1.4.txt";
 			$gl_data= main::reader($file,'','ref');
 		}
 	}
@@ -17984,7 +17995,7 @@ sub set_amd_data {
 	'689b|689c|689d|689e|68a0|68a1|68a8|68a9|68b8|68b9|68ba|68be|68bf|68c0|68c1|' .
 	'68c7|68c8|68c9|68d8|68d9|68da|68de|68e0|68e1|68e4|68e5|68e8|68e9|68f1|68f2|' .
 	'68f8|68f9|68fa|68fe|9640|9641|9642|9643|9644|9645|9647|9648|9649|964a|964b|' .
-	'964c|964e|964f|9802|9803|9804|9805|9806|9807|9808|9809|980a',
+	'964c|964e|964f|9802|9803|9804|9805|9806|9807|9808|9809|980a|9925|9926',
 	'code' => 'Evergreen',
 	'process' => 'TSMC 32-40nm',
 	'years' => '2009-15',
@@ -18014,14 +18025,15 @@ sub set_amd_data {
 	'1312|1313|1315|1316|1317|1318|131b|131c|131d|6640|6641|6646|6647|6649|664d|' .
 	'6650|6651|6658|665c|665d|665f|67a0|67a1|67a2|67a8|67a9|67aa|67b0|67b1|67b8|' .
 	'67b9|67be|9830|9831|9832|9833|9834|9835|9836|9837|9838|9839|983d|9850|9851|' .
-	'9852|9853|9854|9855|9856|9857|9858|9859|985a|985b|985c|985d|985e|985f|9920',
+	'9852|9853|9854|9855|9856|9857|9858|9859|985a|985b|985c|985d|985e|985f|991e|' .
+	'9920|9922',
 	'code' => 'Sea Islands',
 	'process' => 'GF/TSMC 16-28nm',
 	'years' => '2013-17',
 	},
 	{'arch' => 'GCN-3',
 	'ids' => '6900|6901|6902|6907|6920|6921|6929|692b|692f|6930|6938|6939|693b|' .
-	'7300|730f|9874|98e4',
+	'7300|730f|9874|98c0|98e4',
 	'code' => 'Volcanic Islands',
 	'process' => 'TSMC 28nm',
 	'years' => '2014-19',
@@ -18065,16 +18077,22 @@ sub set_amd_data {
 	'years' => '2020-22',
 	},
 	{'arch' => 'RDNA-3',
-	'ids' => '73a8|73f0|7448|744c|745e|7480|7483|7489',
+	'ids' => '73a8|73c4|73c5|73c8|7448|744c|745e|7460|7461|7470|7478|747e',
 	'code' => 'Navi-3x',
 	'process' => 'TSMC n5 (5nm)',
 	'years' => '2022+',
 	},
 	{'arch' => 'RDNA-3',
-	'ids' => '15bf|15c8|164f',
+	'ids' => '73f0|7480|7481|7483|7487|7489|748b|749f',
+	'code' => 'Navi-33',
+	'process' => 'TSMC n6 (6nm)',
+	'years' => '2023+',
+	},
+	{'arch' => 'RDNA-3',
+	'ids' => '15bf|15c8|164f|1900|1901',
 	'code' => 'Phoenix',
 	'process' => 'TSMC n4 (4nm)',
-	'years' => '2022+',
+	'years' => '2023+',
 	},
 	{'arch' => 'CDNA-1',
 	'ids' => '7388|738c|738e',
@@ -18220,15 +18238,16 @@ sub set_intel_data {
 	},
 	# gen10 was cancelled., 
 	{'arch' => 'Gen-11',
-	'ids' => '0d16|0d26|0d36|4555|4571|4e55|4e61|4e71|8a50|8a51|8a52|8a53|8a54|' .
-	'8a56|8a57|8a58|8a59|8a5a|8a5b|8a5c|8a5d|8a71|9840|9841',
+	'ids' => '0d16|0d26|0d36|4541|4551|4555|4557|4571|4e51|4e55|4e57|4e61|4e71|' .
+	'8a50|8a51|8a52|8a53|8a54|8a56|8a57|8a58|8a59|8a5a|8a5b|8a5c|8a5d|8a70|8a71|' .
+	'9840|9841',
 	'code' => '',
 	'process' => 'Intel 10nm',
 	'years' => '2019-21',
 	},
 	{'arch' => 'Gen-12.1',
-	'ids' => '4905|4908|4c8a|4c8b|4c8c|4c90|4c9a|9a40|9a49|9a60|9a68|9a70|9a78|' .
-	'9ac0|9ac9|9ad9|9af8',
+	'ids' => '4905|4907|4908|4c80|4c8a|4c8b|4c8c|4c90|4c9a|9a40|9a49|9a59|9a60|' .
+	'9a68|9a70|9a78|9ac0|9ac9|9ad9|9af8',
 	'code' => '',
 	'process' => 'Intel 10nm',
 	'years' => '2020-21',
@@ -18241,29 +18260,28 @@ sub set_intel_data {
 	'years' => '2021-22+',
 	},
 	{'arch' => 'Gen-12.5',
-	'ids' => '',
-	'code' => 'Arctic Sound',
-	'pattern' => 'Arctic',
+	'ids' => '0bd0|0bd5|0bd6|0bd7|0bd9|0bda|0bdb',
+	'code' => '',
 	'process' => 'Intel 10nm',
-	'years' => '2021-22+',
+	'years' => '2021-23+',
 	},
 	# Jupiter Sound cancelled?
 	{'arch' => 'Gen-12.7',
-	'ids' => '5690|5691|5692|5693|5694|5698|56a0|56a1|56a3|56a4|56a5|56a6|56a7|' .
-	'56a8|56a9',
+	'ids' => '5690|5691|5692|5693|5694|5695|5696|5697|5698|56a0|56a1|56a3|56a4|' .
+	'56a5|56a6|56a7|56a8|56a9|56b0|56b1|56b2|56b3',
 	'code' => 'Alchemist',
 	'process' => 'TSMC n6 (7nm)',
 	'years' => '2022+',
 	},
 	{'arch' => 'Gen-12.7',
 	'ids' => '56c0|56c1',
-	'code' => 'XeHPG',
+	'code' => '',
 	'process' => 'TSMC n6 (7nm)',
 	'years' => '2022+',
 	},
 	{'arch' => 'Gen-13',
-	'ids' => 'a720|a721|a780|a781|a782|a783|a788|a789|a78a|a78b|a7a0|a7a1|a7a8|' .
-	'a7a9',
+	'ids' => 'a720|a721|a74d|a780|a781|a782|a783|a788|a789|a78a|a78b|a7a0|a7a1|' .
+	'a7a8|a7a9|a7aa|a7ab|a7ac|a7ad',
 	'code' => '',
 	'process' => 'Intel 7 (10nm)',
 	'years' => '2022+',
@@ -18283,7 +18301,7 @@ sub set_nv_data {
 	# 0008|0009|0010|0018|0019
 	# and these are vendor id: 10de for 73.14
 	# 0020|0028|0029|002c|002d|00a0|0100|0101|0103|0150|0151|0152|0153
-	my $status_eol = main::message('nv-legacy-eol');
+	# generic fallback if we don't have the actual EOL termination date
 	my $date = $self_date;
 	$date =~ s/-\d+$//;
 	my $status_current = main::message('nv-current',$date);
@@ -18299,7 +18317,7 @@ sub set_nv_data {
 	'process' => 'TSMC 220-350nm',
 	'release' => '71.86.15',
 	'series' => '71.86.xx',
-	'status' => $status_eol,
+	'status' => main::message('nv-legacy-eol','2011-08-xx'),
 	'xorg' => '1.7',
 	'years' => '1998-2000',
 	},
@@ -18311,7 +18329,7 @@ sub set_nv_data {
 	'process' => 'TSMC 150-220nm',
 	'release' => '71.86.15',
 	'series' => '71.86.xx',
-	'status' => $status_eol,
+	'status' => main::message('nv-legacy-eol','2011-08-xx'),
 	'xorg' => '1.7',
 	'years' => '1999-2005',
 	},
@@ -18324,7 +18342,7 @@ sub set_nv_data {
 	'process' => 'TSMC 150-220nm',
 	'release' => '96.43.23',
 	'series' => '96.43.xx',
-	'status' => $status_eol,
+	'status' => main::message('nv-legacy-eol','2012-09-xx'),
 	'xorg' => '1.12',
 	'years' => '1999-2005',
 	},
@@ -18332,17 +18350,18 @@ sub set_nv_data {
 	'ids' => '0170|0171|0172|0173|0174|0175|0176|0177|0178|0179|017a|017c|017d|' .
 	'0181|0182|0183|0185|0188|018a|018b|018c|01f0|0200|0201|0202|0203|0250|0251|' .
 	'0253|0258|0259|025b|0280|0281|0282|0286|0288|0289|028c',
-	'code' => 'NV[12]x',
+	'code' => 'NV2x',
 	'kernel' => '3.6',
 	'legacy' => 1,
 	'process' => 'TSMC 150nm',
 	'release' => '96.43.23',
 	'series' => '96.43.xx',
-	'status' => $status_eol,
+	'status' => main::message('nv-legacy-eol','2012-09-xx'),
 	'xorg' => '1.12',
-	'years' => '2001-03',
+	'years' => '2001-2003',
 	},
 	## Legacy 173.14.xx
+	# process: IBM 130, TSMC 130-150
 	{'arch' => 'Rankine',
 	'ids' => '00fa|00fb|00fc|00fd|00fe|0301|0302|0308|0309|0311|0312|0314|031a|' .
 	'031b|031c|0320|0321|0322|0323|0324|0325|0326|0327|0328|032a|032b|032c|032d|' .
@@ -18350,14 +18369,16 @@ sub set_nv_data {
 	'code' => 'NV3x',
 	'kernel' => '3.12',
 	'legacy' => 1,
-	'process' => '130-150nm', # IBM 130, TSMC 130-150
+	'process' => '130-150nm',
 	'release' => '173.14.39',
 	'series' => '173.14.xx',
-	'status' => $status_eol,
+	'status' => main::message('nv-legacy-eol','2013-12-xx'),
 	'xorg' => '1.15',
-	'years' => '2003-05',
+	'years' => '2003-2005',
 	},
 	## Legacy 304.xx
+	# code: hard to get these, roughly MCP[567]x/NV4x/G7x
+	# process: IBM 130, TSMC 90-110
 	{'arch' => 'Curie',
 	'ids' => '0040|0041|0042|0043|0044|0045|0046|0047|0048|004e|0090|0091|0092|' .
 	'0093|0095|0098|0099|009d|00c0|00c1|00c2|00c3|00c8|00c9|00cc|00cd|00ce|00f1|' .
@@ -18368,18 +18389,20 @@ sub set_nv_data {
 	'0292|0293|0294|0295|0297|0298|0299|029a|029b|029c|029d|029e|029f|02e0|02e1|' .
 	'02e2|02e3|02e4|038b|0390|0391|0392|0393|0394|0395|0397|0398|0399|039c|039e|' .
 	'03d0|03d1|03d2|03d5|03d6|0531|0533|053a|053b|053e|07e0|07e1|07e2|07e3|07e5',
-	'code' => '', # hard to get these, roughly MCP[567]x/NV4x/G7x
+	'code' => '', 
 	'kernel' => '4.13',
 	'legacy' => 1,
-	'process' => '90-130nm', # IBM 130, TSMC 90-110
+	'process' => '90-130nm', 
 	'release' => '304.137',
 	'series' => '304.xx',
-	'status' => $status_eol,
+	'status' => main::message('nv-legacy-eol','2017-09-xx'),
 	'xorg' => '1.19',
-	'years' => '2003-13',
+	'years' => '2003-2013',
 	},
 	## Legacy 340.xx
 	# these are both Tesla and Tesla 2.0
+	# code: not clear, 8800/GT2xx/maybe G7x
+	# years: 2006-2010 Tesla 2007-2013 Tesla 2.0
 	{'arch' => 'Tesla',
 	'ids' => '0191|0193|0194|0197|019d|019e|0400|0401|0402|0403|0404|0405|0406|' .
 	'0407|0408|0409|040a|040b|040c|040d|040e|040f|0410|0420|0421|0422|0423|0424|' .
@@ -18398,28 +18421,28 @@ sub set_nv_data {
 	'0a65|0a66|0a67|0a68|0a69|0a6a|0a6c|0a6e|0a6f|0a70|0a71|0a72|0a73|0a74|0a75|' .
 	'0a76|0a78|0a7a|0a7c|0ca0|0ca2|0ca3|0ca4|0ca5|0ca7|0ca8|0ca9|0cac|0caf|0cb0|' .
 	'0cb1|0cbc|10c0|10c3|10c5|10d8',
-	'code' => '', # not clear, 8800/GT2xx/maybe G7x
+	'code' => '', 
 	'kernel' => '5.4',
 	'legacy' => 1,
 	'process' => '40-80nm',
 	'release' => '340.108',
 	'series' => '340.xx',
-	'status' => $status_eol,
+	'status' => main::message('nv-legacy-eol','2019-12-xx'),
 	'xorg' => '1.20',
-	'years' => '2006-13',
+	'years' => '2006-2013',
 	},
 	## Legacy 367.xx
 	{'arch' => 'Kepler',
 	'ids' => '0fef|0ff2|11bf',
 	'code' => 'GKxxx',
-	'kernel' => '',
+	'kernel' => '5.4',
 	'legacy' => 1,
 	'process' => 'TSMC 28nm',
 	'release' => '',
 	'series' => '367.xx',
-	'status' => main::message('nv-legacy-active','late 2022'),
-	'xorg' => '',
-	'years' => '2012-18',
+	'status' => main::message('nv-legacy-eol','2017'),
+	'xorg' => '1.20',
+	'years' => '2012-2018',
 	},
 	## Legacy 390.xx
 	# this is Fermi, Fermi 2.0
@@ -18434,14 +18457,14 @@ sub set_nv_data {
 	'1207|1208|1210|1211|1212|1213|1241|1243|1244|1245|1246|1247|1248|1249|124b|' .
 	'124d|1251',
 	'code' => 'GF1xx',
-	'kernel' => '',
+	'kernel' => '6.0',
 	'legacy' => 1,
 	'process' => '40/28nm',
-	'release' => '',
+	'release' => '390.157',
 	'series' => '390.xx+',
-	'status' => main::message('nv-legacy-active','late 2022'),
-	'xorg' => '',
-	'years' => '2010-16',
+	'status' => main::message('nv-legacy-eol','2022-11-22'),
+	'xorg' => '1.21',
+	'years' => '2010-2016',
 	},
 	## Legacy 470.xx
 	{'arch' => 'Fermi 2',
@@ -18452,10 +18475,12 @@ sub set_nv_data {
 	'process' => 'TSMC 28nm',
 	'release' => '',
 	'series' => '470.xx+',
-	'status' => main::message('nv-legacy-active','2023/24'),
+	'status' => main::message('nv-legacy-active','2024-09-xx'),
 	'xorg' => '',
-	'years' => '2010-16',
+	'years' => '2010-2016',
 	},
+	# GT 720M and 805A/810A are the same cpu id.
+	# years: 2012-2018 Kepler 2013-2015 Kepler 2.0
 	{'arch' => 'Kepler',
 	'ids' => '0fc6|0fc8|0fc9|0fcd|0fce|0fd1|0fd2|0fd3|0fd4|0fd5|0fd8|0fd9|0fdf|' .
 	'0fe0|0fe1|0fe2|0fe3|0fe4|0fe9|0fea|0fed|0fee|0ff6|0ff8|0ff9|0ffa|0ffb|0ffc|' .
@@ -18471,9 +18496,9 @@ sub set_nv_data {
 	'process' => 'TSMC 28nm',
 	'release' => '',
 	'series' => '470.xx+',
-	'status' => main::message('nv-legacy-active','2023/24'),
+	'status' => main::message('nv-legacy-active','2024-09-xx'),
 	'xorg' => '',
-	'years' => '2012-18',
+	'years' => '2012-2018',
 	},
 	## Current Active Series
 	# load microarch data, as stuff goes legacy, these will form new legacy items.
@@ -18482,47 +18507,45 @@ sub set_nv_data {
 	'1380|1381|1382|1390|1391|1392|1393|1398|1399|139a|139b|139c|139d|13b0|13b1|' .
 	'13b2|13b3|13b4|13b6|13b9|13ba|13bb|13bc|13c0|13c2|13d7|13d8|13d9|13da|13f0|' .
 	'13f1|13f2|13f3|13f8|13f9|13fa|13fb|1401|1402|1406|1407|1427|1430|1431|1436|' .
-	'1617|1618|1619|161a|1667|174d|174e|179c|17c8|17f0|17f1|17fd|1c8c|1c8d|1c90|' .
-	'1c91|1d10|1d12|1e91|1ed1|1ed3|1f14|1f54',
+	'1617|1618|1619|161a|1667|174d|174e|179c|17c8|17f0|17f1|17fd|1c90|1d10|1d12',
 	'code' => 'GMxxx',
 	'kernel' => '',
 	'legacy' => 0,
 	'process' => 'TSMC 28nm',
 	'release' => '',
-	'series' => '535.xx+',
-	'status' => $status_current,
+	'series' => '545.xx+',
+	'status' => main::message('nv-current-eol',$date,'2026-12-xx'),
 	'xorg' => '',
-	'years' => '2014-19',
+	'years' => '2014-2019',
 	},
 	{'arch' => 'Pascal',
 	'ids' => '15f0|15f7|15f8|15f9|17c2|1b00|1b02|1b06|1b30|1b38|1b80|1b81|1b82|' .
-	'1b83|1b84|1b87|1ba0|1ba1|1ba2|1bb0|1bb1|1bb4|1bb5|1bb6|1bb7|1bb8|1bb9|1bbb|' .
-	'1bc7|1be0|1be1|1c02|1c03|1c04|1c06|1c07|1c09|1c20|1c21|1c22|1c23|1c30|1c31|' .
-	'1c60|1c61|1c62|1c81|1c82|1c83|1c8c|1c8d|1c8f|1c90|1c91|1c92|1c94|1c96|1cb1|' .
-	'1cb2|1cb3|1cb6|1cba|1cbb|1cbc|1cbd|1cfa|1cfb|1d01|1d02|1d11|1d13|1d16|1d33|' .
-	'1d34|1d52',
+	'1b83|1b84|1b87|1ba0|1ba1|1ba2|1bb0|1bb1|1bb3|1bb4|1bb5|1bb6|1bb7|1bb8|1bb9|' .
+	'1bbb|1bc7|1be0|1be1|1c02|1c03|1c04|1c06|1c07|1c09|1c20|1c21|1c22|1c23|1c30|' .
+	'1c31|1c60|1c61|1c62|1c81|1c82|1c83|1c8c|1c8d|1c8f|1c90|1c91|1c92|1c94|1c96|' .
+	'1cb1|1cb2|1cb3|1cb6|1cba|1cbb|1cbc|1cbd|1cfa|1cfb|1d01|1d02|1d11|1d13|1d16|' .
+	'1d33|1d34|1d52',
 	'code' => 'GP10x',
 	'kernel' => '',
 	'legacy' => 0,
 	'process' => 'TSMC 16nm',
 	'release' => '',
-	'series' => '535.xx+',
-	'status' => $status_current,
+	'series' => '545.xx+',
+	'status' => main::message('nv-current-eol',$date,'2026-12-xx'),
 	'xorg' => '',
-	'years' => '2016-21',
+	'years' => '2016-2021',
 	},
 	{'arch' => 'Volta',
-	'ids' => '1d81|1db1|1db3|1db4|1db5|1db6|1db7|1db8|1dba|1df0|1df2|1df6|1fb0|' .
-	'20b0|20b6',
+	'ids' => '1d81|1db1|1db3|1db4|1db5|1db6|1db7|1db8|1dba|1df0|1df2|1df6|1fb0',
 	'code' => 'GV1xx',
 	'kernel' => '',
 	'legacy' => 0,
 	'process' => 'TSMC 12nm',
 	'release' => '',
-	'series' => '535.xx+',
-	'status' => $status_current,
+	'series' => '545.xx+',
+	'status' => main::message('nv-current-eol',$date,'2026-12-xx'),
 	'xorg' => '',
-	'years' => '2017-20',
+	'years' => '2017-2020',
 	},
 	{'arch' => 'Turing',
 	'ids' => '1e02|1e04|1e07|1e09|1e30|1e36|1e78|1e81|1e82|1e84|1e87|1e89|1e90|' .
@@ -18536,53 +18559,55 @@ sub set_nv_data {
 	'legacy' => 0,
 	'process' => 'TSMC 12nm FF',
 	'release' => '',
-	'series' => '535.xx+',
-	'status' => $status_current,
+	'series' => '545.xx+',
+	'status' => main::message('nv-current-eol',$date,'2026-12-xx'),
 	'xorg' => '',
-	'years' => '2018-22',
+	'years' => '2018-2022',
 	},
 	{'arch' => 'Ampere',
-	'ids' => '20b0|20b2|20b3|20b5|20b7|20bd|20f1|20f3|20f5|20f6|2203|2204|2206|' .
-	'2207|2208|220a|220d|2216|2230|2231|2232|2233|2235|2236|2237|2238|2414|2420|' .
-	'2438|2460|2482|2484|2486|2487|2488|2489|248a|249c|249d|24a0|24b0|24b1|24b6|' .
-	'24b7|24b8|24b9|24ba|24bb|24c7|24c9|24dc|24dd|24e0|24fa|2503|2504|2507|2508|' .
-	'2520|2521|2523|2531|2544|2560|2563|2571|2582|25a0|25a2|25a5|25ab|25ac|25b6|' .
-	'25b8|25b9|25ba|25bb|25bc|25bd|25e0|25e2|25e5|25ec|25f9|25fa|25fb|2838',
+	'ids' => '20b0|20b2|20b3|20b5|20b6|20b7|20bd|20f1|20f3|20f5|20f6|2203|2204|' .
+	'2206|2207|2208|220a|220d|2216|2230|2231|2232|2233|2235|2236|2237|2238|2414|' .
+	'2420|2438|2460|2482|2484|2486|2487|2488|2489|248a|249c|249d|24a0|24b0|24b1|' .
+	'24b6|24b7|24b8|24b9|24ba|24bb|24c7|24c9|24dc|24dd|24e0|24fa|2503|2504|2507|' .
+	'2508|2520|2521|2523|2531|2544|2560|2563|2571|2582|25a0|25a2|25a5|25ab|25ac|' .
+	'25b6|25b8|25b9|25ba|25bb|25bc|25bd|25e0|25e2|25e5|25ec|25f9|25fa|25fb|2838',
 	'code' => 'GAxxx',
 	'kernel' => '',
 	'legacy' => 0,
 	'process' => 'TSMC n7 (7nm)',
 	'release' => '',
-	'series' => '535.xx+',
-	'status' => $status_current,
+	'series' => '545.xx+',
+	'status' => main::message('nv-current-eol',$date,'2026-12-xx'),
 	'xorg' => '',
-	'years' => '2020-23',
+	'years' => '2020-2023',
 	},
 	{'arch' => 'Hopper',
-	'ids' => '2321|2330|2331|2339',
+	'ids' => '2321|2322|2324|2330|2331|2339|233a',
 	'code' => 'GH1xx',
 	'kernel' => '',
 	'legacy' => 0,
 	'process' => 'TSMC n4 (5nm)',
 	'release' => '',
-	'series' => '535.xx+',
+	'series' => '545.xx+',
 	'status' => $status_current,
 	'xorg' => '',
 	'years' => '2022+',
 	},
 	{'arch' => 'Lovelace',
-	'ids' => '2684|26b1|26b5|2704|2717|2757|2782|2786|27a0|27b8|27e0|2803|2805|' .
-	'2820|2860|2882|28a0|28a1|28e0|28e1',
+	'ids' => '2684|26b1|26b2|26b5|26b9|2704|2717|2730|2757|2770|2782|2786|27a0|' .
+	'27b0|27b1|27b2|27b8|27ba|27bb|27e0|27fb|2803|2805|2820|2860|2882|28a0|28a1|' .
+	'28e0|28e1',
 	'code' => 'AD1xx',
 	'kernel' => '',
 	'legacy' => 0,
 	'process' => 'TSMC n4 (5nm)',
 	'release' => '',
-	'series' => '535.xx+',
+	'series' => '545.xx+',
 	'status' => $status_current,
 	'xorg' => '',
-	'years' => '2022-23+',
+	'years' => '2022+',
 	},
+
 	],
 }
 
@@ -20778,15 +20803,16 @@ sub wan_ip {
 	my ($b_dig,$b_html,$ip,$ua);
 	my $num = 0;
 	# time: 0.06 - 0.07 seconds
-	# cisco opendns.com may be terminating supporting this one, sometimes works, sometimes not: 
-	# use -4/6 to force ipv 4 or 6, but generally we want the 'natural' native
-	# ip returned.
-	# dig +short +time=1 +tries=1 myip.opendns.com @resolver1.opendns.com 
-	# dig +short @ns1-1.akamaitech.net ANY whoami.akamai.net
-	# this one can take forever, and sometimes requires explicit -4 or -6
-	# dig -4 TXT +short o-o.myaddr.l.google.com @ns1.google.com
+	# Cisco opendns.com may be terminating supporting this one, sometimes works, sometimes not: 
+	# use -4/6 to force ipv 4 or 6, but generally we want the 'natural' native ip returned.
+	# dig +short +time=1 +tries=1 myip.opendns.com @resolver1.opendns.com :: 0.021s
+	# Works but is slow:
+	# dig +short @ns1-1.akamaitech.net ANY whoami.akamai.net :: 0.156s
+	# This one can take forever, and sometimes requires explicit -4 or -6
+	# dig -4 TXT +short o-o.myaddr.l.google.com @ns1.google.com :: 0.026s; 1.087ss
 	if (!$force{'no-dig'} && (my $program = main::check_program('dig'))){
 		$ip = (main::grabber("$program +short +time=1 +tries=1 \@ns1-1.akamaitech.net ANY whoami.akamai.net 2>/dev/null"))[0];
+		$ip =~ s/"//g if $ip; # some return IP in quotes, when using TXT
 		$b_dig = 1;
 	}
 	if (!$ip && !$force{'no-html-wan'}){
@@ -20794,16 +20820,19 @@ sub wan_ip {
 		if (!defined $dl{'no-ssl'}){
 			main::set_downloader();
 		}
-		# note: tests: akamai: 0.055 - 0.065 icanhazip.com: 0.177 0.164
-		# smxi: 0.525, so almost 10x slower. Dig is fast too
+		# note: tests: akamai: 0.015 - 0.025 icanhazip.com: 0.020 0.030
+		# smxi: 0.230, so ~10x slower. Dig is not as fast as you'd expect
+		# dig: 0.167s 0.156s
 		# leaving smxi as last test because I know it will always be up.
 		# --wan-ip-url replaces values with user supplied arg
-		# 0.059s: http://whatismyip.akamai.com/
-		# 0.255s: https://get.geojs.io/v1/ip
-		# 0.371s: http://icanhazip.com/
-		# 0.430s: https://smxi.org/opt/ip.php
+		# 0.020s: http://whatismyip.akamai.com/
+		# 0.136s: https://get.geojs.io/v1/ip
+		# 0.024s: http://icanhazip.com/
+		# 0.027s: ifconfig.io
+		# 0.230s: https://smxi.org/opt/ip.php
+		# 0.023s: https://api.ipify.org :: NOTE: hangs, widely variable times, don't use
 		my @urls = (!$wan_url) ? qw(http://whatismyip.akamai.com/ 
-		 http://icanhazip.com/ https://smxi.org/opt/ip.php) : ($wan_url);
+		http://icanhazip.com/ https://smxi.org/opt/ip.php) : ($wan_url);
 		foreach (@urls){
 			$ua = 'ip' if $_ =~ /smxi/;
 			$ip = main::download_file('stdout',$_,'',$ua);
@@ -21904,8 +21933,8 @@ sub set_filters {
 	#  mergerfs, mhddfs, overla(id|y)(fs)?, squashfs, unionfs;
 	# ISO/Archive: archive(mount)?, atlas, avfs. borg, erofs, fuse-archive, 
 	#  fuseiso, gzipfs, iso9660, lofs, vdfuse, wimmountfs, xbfuse
-	# FUSE: adbfs, apfs-fuse, gvfs, gvfs-mtp, ifuse, jmtpfs, mtpfs, ptpfs,
-	#  simple-mtpfs, vramfs, xmlfs
+	# FUSE: adbfs, apfs-fuse, atomfs, gvfs, gvfs-mtp, ifuse, jmtpfs, mtpfs, ptpfs, 
+	#  puzzlefs, simple-mtpfs, vramfs, xmlfs
 	# System fs: cgmfs, configfs, debugfs, devfs, devtmpfs, efivarfs, fdescfs, 
 	#  hugetlbfs, kernfs, linprocfs, linsysfs, lxcfs, procfs, ptyfs, run, 
 	#  securityfs, shm, swap, sys, sysfs, tmpfs, tracefs, type, udev, vartmp
@@ -21915,11 +21944,11 @@ sub set_filters {
 	my @all = qw%au av e?crypt enc ero gocrypt i (fuse-?)?iso iso9660 lo merger 
 	mhdd overla(id|y) splitview(-?fuse)? squash union xbfuse%;
 	## These are fuse/archive/distributed/remote/clustered mostly
-	my @exclude = (@all,qw%9p (open-?)?a adb archive(mount)? astream atlas 
+	my @exclude = (@all,qw%9p (open-?)?a adb archive(mount)? astream atlas atom
 	beeg borg c ceph chiron ci cloudstore curlftp d dav dce 
 	g gdrive gfarm git gluster gmail gocrypt google-drive-ocaml gp gphoto gv gzip
 	hd httpd hubic ip juice k(osmos)? .*la lizard lustre magma mapr moose .*mtp 
-	null p?n objective oc one orange pan .*ptp pv rclone restic rozo 
+	null p?n objective oc one orange pan .*ptp puzzle pv rclone restic rozo 
 	s s3 scality sheepdog sp ssh smb v9 vd vm vram weka wim(mount)? xb xml 
 	xtreem%);
 	# Various RAM based system FS
@@ -36041,12 +36070,16 @@ sub process_power {
 }
 }
 
-# note: seen instance in android where reading file hangs endlessly!!!
+# note: seen android instance where reading file wakeup_count hangs endlessly.
+# Some systems also report > 1 wakeup events per wakeup with 
+# /sys/power/wakeup_count, thus, we are using /sys/power/suspend_stats/success 
+# which does not appear to have that issue.
 sub get_wakeups {
 	eval $start if $b_log;
 	return if %risc;
-	my ($wakeups);
-	my $path = '/sys/power/wakeup_count';
+	my ($path,$wakeups);
+	# this increments on suspend, but you can't see it until wake, numbers work.
+	$path = '/sys/power/suspend_stats/success';
 	$wakeups = reader($path,'strip',0) if -r $path;
 	eval $end if $b_log;
 	return $wakeups;
