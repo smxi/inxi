@@ -51,7 +51,7 @@ use POSIX qw(ceil uname strftime ttyname);
 my $self_name='pinxi';
 my $self_version='3.3.31';
 my $self_date='2023-11-06';
-my $self_patch='04';
+my $self_patch='06';
 ## END INXI INFO ##
 
 my ($b_pledge,@pledges);
@@ -17417,10 +17417,21 @@ sub xrandr_data {
 	my ($diagonal,$diagonal_m,$dpi,$monitor_id,$pos_x,$pos_y,$primary);
 	my ($res_x,$res_x_max,$res_y,$res_y_max);
 	my ($screen_id,$set_as,$size_x,$size_x_i,$size_y,$size_y_i);
-	my (@ids,%monitors,@xrandr_screens,$xrandr);
-	# note:  --prop support added v 1.2, ~2009 in distros
+	my (@ids,%monitors,@xrandr,@xrandr_screens);
 	if (!$fake{'xrandr'}){
-		$xrandr = main::grabber("$program $display_opt 2>/dev/null",'','strip','ref');
+		# @xrandr = main::grabber("$program $display_opt 2>/dev/null",'','strip','arr');
+		# note:  --prop support added v 1.2, ~2009 in distros
+		@xrandr = qx($program --prop $display_opt 2>&1);
+		if ($? > 0){
+			# we only want to rerun if unsupported option
+			if (grep {/unrecognized/} @xrandr){
+				@xrandr = qx($program $display_opt 2>/dev/null);
+			}
+			else {
+				@xrandr = ();
+			}
+		}
+		chomp(@xrandr) if @xrandr;
 	}
 	else {
 		# my $file;
@@ -17429,13 +17440,13 @@ sub xrandr_data {
 		# $file = "$ENV{HOME}/bin/scripts/inxi/data/xrandr/xrandr-test-1.txt";
 		# $file = "$ENV{HOME}/bin/scripts/inxi/data/xrandr/xrandr-test-2.txt";
 		# $file = "$ENV{HOME}/bin/scripts/inxi/data/xrandr/xrandr-1-screen-2-in-inxi.txt";
-		# $xrandr = main::reader($file,'strip','ref');
+		# @xrandr = main::reader($file,'strip','arr');
 	}
 	# $graphics{'dimensions'} = (\@dimensions);
 	# we get a bit more info from xrandr than xdpyinfo, but xrandr fails to handle
 	# multiple screens from different video cards
 	# $graphics{'screens'} = undef;
-	foreach (@$xrandr){
+	foreach (@xrandr){
 		# note: no mm as with xdpyinfo
 		# Screen 0: minimum 320 x 200, current 2560 x 1024, maximum 8192 x 8192
 		if (/^Screen ([0-9]+):/){
@@ -17494,7 +17505,7 @@ sub xrandr_data {
 				($res_x,$res_y,$pos_x,$pos_y,$size_x,$size_x_i,$size_y,$size_y_i,$dpi,$diagonal,$diagonal_m) = ()
 			}
 			undef $primary;
-			push(@ids,$monitor_id);
+			push(@ids,[$monitor_id]);
 			if ($set_as){
 				$primary = $monitor_id;
 				$set_as =~ s/\s$//;
@@ -17520,17 +17531,30 @@ sub xrandr_data {
 			# print "x:$size_x y:$size_y rx:$res_x ry:$res_y dpi:$dpi\n";
 			($res_x,$res_y,$size_x,$size_x_i,$size_y,$size_y_i,$set_as) = (0,0,0,0,0,0,0,0,undef);
 		}
-		my @working = split(/\s+/,$_);
-		# this is the monitor current dimensions
-		#  5120x1440     59.98*   29.98  
-		if ($working[1] =~ /\*/){
-			$working[1] =~ s/\*|\+//g;
-			$working[1] = sprintf("%.0f",$working[1]);
-			if ($monitor_id && %monitors){
-				$monitors{$monitor_id}->{'hz'} = $working[1];
+		else {
+			my @working = split(/\s+/,$_);
+			# this is the monitor current dimensions
+			#  5120x1440     59.98*   29.98  
+			# print Data::Dumper::Dumper \@working;
+			next if !$working[2];
+			if ($working[2] =~ /\*/){
+				# print "$working[1] :: $working[2]\n";
+				$working[2] =~ s/\*|\+//g;
+				$working[2] = sprintf("%.0f",$working[2]);
+				if ($monitor_id && %monitors){
+					$monitors{$monitor_id}->{'hz'} = $working[2];
+				}
+				($diagonal,$dpi) = ('','');
+				# print Data::Dumper::Dumper \@monitors;
 			}
-			($diagonal,$dpi) = ('','');
-			# print Data::Dumper::Dumper \@monitors;
+			#	\tCONNECTOR_ID: 52
+			elsif ($working[1] eq 'CONNECTOR_ID:'){
+				# print "$working[1] :: $working[2]\n";
+				if ($monitor_id && %monitors){
+					push(@{$ids[$#ids]},$working[2]);
+					$monitors{$monitor_id}->{'connector-id'} = $working[2];
+				}
+			}
 		}
 	}
 	if (%monitors){
@@ -18780,8 +18804,12 @@ sub monitor_edid_data {
 		$monitor_ids->{$port}{'ratio'} = join(', ', @{$edid->{'ratios'}});
 	}
 	if ($edid->{'detailed_timings'}){
-		$monitor_ids->{$port}{'res-x'} = $edid->{'detailed_timings'}[0]{'horizontal_active'};
-		$monitor_ids->{$port}{'res-y'} = $edid->{'detailed_timings'}[0]{'vertical_active'};
+		if ($edid->{'detailed_timings'}[0]{'horizontal_active'}){
+			$monitor_ids->{$port}{'res-x'} = $edid->{'detailed_timings'}[0]{'horizontal_active'};
+		}
+		if ($edid->{'detailed_timings'}[0]{'vertical_active'}){
+			$monitor_ids->{$port}{'res-y'} = $edid->{'detailed_timings'}[0]{'vertical_active'};
+		}
 		if ($edid->{'detailed_timings'}[0]{'horizontal_image_size'}){
 			$monitor_ids->{$port}{'size-x'} = $edid->{'detailed_timings'}[0]{'horizontal_image_size'};
 			$monitor_ids->{$port}{'size-x-i'} = $edid->{'detailed_timings'}[0]{'horizontal_image_size_i'};
@@ -18968,15 +18996,20 @@ sub set_monitor_layouts {
 
 # This is required to resolve the situation where some xorg drivers change 
 # the kernel ID for the port to something slightly different, amdgpu in particular.
+# Note: connector_id if available from xrandr and /sys allow for matching.
 sub map_monitor_ids {
 	eval $start if $b_log;
 	my ($display_ids) = @_;
 	return if !$monitor_ids;
 	my (@sys_ids,@unmatched_display,@unmatched_sys);
-	@unmatched_display = @$display_ids = sort { lc($a) cmp lc($b) } @$display_ids;
+	@$display_ids = sort {lc($a->[0]) cmp lc($b->[0])} @$display_ids;
+	foreach my $d_id (@$display_ids){
+		push(@unmatched_display,$d_id->[0]);
+	}
 	foreach my $key (keys %$monitor_ids){
 		if ($monitor_ids->{$key}{'status'} eq 'connected'){
-			push(@sys_ids,$key);
+			push(@sys_ids,[$key,$monitor_ids->{$key}{'connector-id'}]);
+			push(@unmatched_sys,$key);
 		}
 	}
 	# @sys_ids = ('DVI-I-1','eDP-1','VGA-1');
@@ -18985,7 +19018,8 @@ sub map_monitor_ids {
 	print 'sys: ', Data::Dumper::Dumper \@sys_ids if $dbg[45];
 	print 'display: ', Data::Dumper::Dumper $display_ids if $dbg[45];
 	return if scalar @sys_ids != scalar @$display_ids;
-	@unmatched_sys = @sys_ids = sort { lc($a) cmp lc($b) } @sys_ids;
+	@sys_ids = sort {lc($a->[0]) cmp lc($b->[0])} @sys_ids;
+	@unmatched_sys = sort {lc($a) cmp lc($b)} @unmatched_sys;
 	$monitor_map = {};
 	# known patterns: s: DP-1 d: DisplayPort-0; s: DP-1 d: DP1-1; s: DP-2 d: DP1-2;
 	# s: HDMI-A-2 d: HDMI-A-1; s: HDMI-A-2 d: HDMI-2; s: DVI-1 d: DVI1; s: HDMI-1 d: HDMI1 
@@ -18998,16 +19032,26 @@ sub map_monitor_ids {
 	my $b_single = (scalar @sys_ids == 1) ? 1 : 0;
 	my $pattern = '([A-Z]+)(-[A-Z]-\d+-\d+|-[A-Z]-\d+|-?\d+-\d+|-?\d+|)';
 	for (my $i=0; $i < scalar @$display_ids; $i++){
-		print "s: $sys_ids[$i] d: $display_ids->[$i]\n" if $dbg[45];
+		print "s: $sys_ids[$i]->[0] d: $display_ids->[$i][0]\n" if $dbg[45];
+		my $b_match;
+		# we're going for the connector match first
+		if ($display_ids->[$i][1] && $sys_ids[$i]->[1]){
+			if ($sys_ids[$i]->[1] == $display_ids->[$i][1]){
+				$b_match = 1;
+				$monitor_map->{$display_ids->[$i][0]} = $sys_ids[$i]->[0];
+				@unmatched_display = grep {$_ ne $display_ids->[$i][0]} @unmatched_display;
+				@unmatched_sys = grep {$_ ne $sys_ids[$i]->[0]} @unmatched_sys;
+			}
+		}
 		# try 1: /^([A-Z]+)(-[AB]|-[ADI]|-[ADI]-\d+?|-\d+?)?(-)?(\d+)$/i
-		if ($display_ids->[$i] =~ /^$pattern$/i){
+		if (!$b_match && $display_ids->[$i][0] =~ /^$pattern$/i){
 			$d_1 = $1;
 			$d_2 = ($2) ? $2 : '';
 			$d_2 =~ /(\d+)?$/;
 			$d_m = ($1) ? $1 : 0;
 			$d_1 =~ s/^DisplayPort/DP/i; # amdgpu...
 			print " d1: $d_1 d2: $d_2 d3: $d_m\n" if $dbg[45];
-			if ($sys_ids[$i] =~ /^$pattern$/i){
+			if ($sys_ids[$i]->[0] =~ /^$pattern$/i){
 				$s_1 = $1;
 				$s_2 = ($2) ? $2 : '';
 				$s_2 =~ /(\d+)?$/;
@@ -19015,21 +19059,21 @@ sub map_monitor_ids {
 				$d_1 = $s_1 if uc($d_1) eq 'XWAYLAND';
 				print " d1: $d_1 s1: $s_1 dm: $d_m sm: $s_m \n" if $dbg[45];
 				if ($d_1 eq $s_1 && ($d_m == $s_m || $d_m == ($s_m - 1))){
-					$monitor_map->{$display_ids->[$i]} = $sys_ids[$i];
-					@unmatched_display = grep {$_ ne $display_ids->[$i]} @unmatched_display;
-					@unmatched_sys = grep {$_ ne $sys_ids[$i]} @unmatched_sys;
+					$monitor_map->{$display_ids->[$i][0]} = $sys_ids[$i]->[0];
+					@unmatched_display = grep {$_ ne $display_ids->[$i][0]} @unmatched_display;
+					@unmatched_sys = grep {$_ ne $sys_ids[$i]->[0]} @unmatched_sys;
 				}
 			}
 		}
 		# in case of one unmatched, we'll dump this, and use the actual unmatched
-		if (!$monitor_map->{$display_ids->[$i]}){
+		if (!$b_match && !$monitor_map->{$display_ids->[$i][0]}){
 			# we're not even going to try, if there's 1 sys and 1 display, just use it!
 			if ($b_single){
-				$monitor_map->{$display_ids->[$i]} = $sys_ids[$i];
+				$monitor_map->{$display_ids->[$i][0]} = $sys_ids[$i]->[0];
 				(@unmatched_display,@unmatched_sys) = ();
 			}
 			else {
-				$monitor_map->{$display_ids->[$i]} = main::message('monitor-id');
+				$monitor_map->{$display_ids->[$i][0]} = main::message('monitor-id');
 			}
 		}
 	}
@@ -19039,7 +19083,7 @@ sub map_monitor_ids {
 	# obviously, if one of the matches was wrong, this will also be wrong, but 
 	# thats' life when dealing with irrational data. DP is a particular problem.
 	if (scalar @unmatched_sys == 1){
-		$monitor_map->{$unmatched_display[0]} = $unmatched_sys[0];
+		$monitor_map->{$unmatched_display[0]} = $unmatched_sys[0]->[0];
 	}
 	main::log_data('dump','$monitor_map ref',$monitor_map) if $b_log;
 	print Data::Dumper::Dumper $monitor_map if $dbg[45];
