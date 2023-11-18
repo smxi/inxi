@@ -50,8 +50,8 @@ use POSIX qw(ceil uname strftime ttyname);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='3.3.31';
-my $self_date='2023-11-17';
-my $self_patch='11';
+my $self_date='2023-11-18';
+my $self_patch='12';
 ## END INXI INFO ##
 
 my ($b_pledge,@pledges);
@@ -31300,10 +31300,10 @@ sub system_base {
 		}
 		# must go before base_osr_arch,ubuntu tests. For steamos, use fallback arch
 		elsif (grep {/($base_osr_debian_version)/i} @osr){
-			$system_base = debian_id();
+			$system_base = debian_id('debian');
 		}
 		elsif (grep {/($base_osr_devuan_version)/i} @osr){
-			$system_base = devuan_id();
+			$system_base = debian_id('devuan');
 		}
 		elsif (grep {/($base_osr_redhat)/i} @osr){
 			$base_type = 'rhel';
@@ -31322,7 +31322,7 @@ sub system_base {
 	}
 	if (!$system_base && @distro_files && 
 	 (grep {/($base_file_debian_version)/i} @distro_files)){
-		$system_base = debian_id();
+		$system_base = debian_id('debian');
 	}
 	if (!$system_base && $lc_issue && $lc_issue =~ /($base_manual)/){
 		my $id = $1;
@@ -31494,7 +31494,12 @@ sub get_os_release {
 			}
 		}
 		if ($version_codename && $distro_osr !~ /$version_codename/i){
-			$distro_osr .= " $version_codename";
+			my @temp = split(/\s*[\/\s]\s*/, $version_codename);
+			foreach (@temp){
+				if ($distro_osr !~ /\b$_\b/i){
+					$distro_osr .= " $_";
+				}
+			}
 		}
 	}
 	# note: mint has varying formats here, some have ubuntu as name, 17 and earlier
@@ -31528,10 +31533,10 @@ sub get_os_release {
 			$distro_osr = ($name && $version_name) ? "$name $version_name": $name_pretty;
 		}
 		elsif ($base_type eq 'debian' && $base_version){
-			$distro_osr = debian_id($base_version);
+			$distro_osr = debian_id('debian',$base_version);
 		}
 		elsif ($base_type eq 'devuan' && $base_version){
-			$distro_osr = devuan_id($base_version);
+			$distro_osr = debian_id('devuan',$base_version);
 		}
 	}
 	eval $end if $b_log;
@@ -31573,76 +31578,69 @@ sub distro_spin {
 	return $name;
 }
 
-# args: 0: optional: debian codename
+# args: 0: $type [debian|devuan]; 1: optional: debian codename
 sub debian_id {
 	eval $start if $b_log;
-	my ($codename) = @_;
-	my ($debian_version,$id);
-	if (-r '/etc/debian_version'){
-		$debian_version = main::reader('/etc/debian_version','strip',0);
+	my ($type,$codename) = @_;
+	my ($id,$file_value,%releases,$version);
+	if (-r "/etc/${type}_version"){
+		$file_value = main::reader("/etc/${type}_version",'strip',0);
 	}
-	$id = 'Debian';
-	return if !$debian_version && !$codename;
-	# note, 3.0, woody, 3.1, sarge, but after it's integer per version
-	my %debians = (
-	'4' => 'etch',
-	'5' => 'lenny',
-	'6' => 'squeeze',
-	'7' => 'wheezy',
-	'8' => 'jessie',
-	'9' => 'stretch',
-	'10' => 'buster',
-	'11' => 'bullseye',
-	'12' => 'bookworm', 
-	'13' => 'trixie',
-	'14' => 'forky',
-	);
-	if (main::is_numeric($debian_version)){
-		$id .= " $debian_version " . $debians{int($debian_version)};
+	return if !$file_value && !$codename;
+	if ($type eq 'debian'){
+		$id = 'Debian';
+		# note, 3.0, woody, 3.1, sarge, but after it's integer per version
+		%releases = (
+		'4' => 'etch',
+		'5' => 'lenny',
+		'6' => 'squeeze',
+		'7' => 'wheezy',
+		'8' => 'jessie',
+		'9' => 'stretch',
+		'10' => 'buster',
+		'11' => 'bullseye',
+		'12' => 'bookworm', 
+		'13' => 'trixie',
+		'14' => 'forky',
+		);
 	}
-	elsif ($codename){
-		my %by_value = reverse %debians;
-		my $version = (main::is_numeric($debian_version)) ? "$debian_version $codename": $debian_version;
-		$id .= " $version";
+	else {
+		$id = 'Devuan';
+		%releases = (
+		'1' => 'jesse',    # jesse
+		'2' => 'ascii',    # stretch
+		'3' => 'beowolf',  # buster
+		'4' => 'chimaera', # bullseye
+		'5' => 'daedalus', # bookworm
+		'6' => 'excalibur',# trixie
+		'7' => 'freia',    # forky
+		# '' => 'ceres/daedalus',    # sid/unstable
+		);
 	}
-	# like buster/sid
-	elsif ($debian_version){
-		$id .= " $debian_version";
+	# debian often numeric, devuan usually not
+	# like trixie/sid; daedalus; ceres/daedalus; 12.0
+	if (main::is_numeric($file_value)){
+		$version = $file_value . ' ' . $releases{int($file_value)};
 	}
-	eval $end if $b_log;
-	return $id;
-}
-
-# args: 0: optional: debian codename
-sub devuan_id {
-	my ($codename) = @_;
-	my ($devuan_version,$id);
-	if (-r '/etc/devuan_version'){
-		$devuan_version = main::reader('/etc/devuan_version','strip',0);
+	else {
+		my %releases_r = reverse %releases;
+		if ($codename){
+			$version = ($releases_r{$codename}) ? "$releases_r{$codename} $codename": $codename;
+		}
+		elsif ($releases_r{$file_value}) {
+			$version = "$releases_r{$file_value} $file_value";
+		}
+		else {
+			$version = $file_value;
+		}
 	}
-	$id = 'Devuan';
-	return if !$devuan_version && !$codename;
-	my %devuans = (
-	'1' => 'jesse',    # jesse
-	'2' => 'ascii',    # stretch
-	'3' => 'beowolf',  # buster
-	'4' => 'chimaera', # bullseye
-	'5' => 'daedalus', # bookworm
-	'6' => 'excalibur',# trixie
-	'7' => 'freia',    # forky
-	# '' => 'ceres',    # sid/unstable
-	);
-	if (main::is_numeric($devuan_version)){
-		$id .= " $devuan_version " . $devuans{int($devuan_version)};
-	}
-	elsif ($codename){
-		my %by_value = reverse %devuans;
-		my $version = (main::is_numeric($devuan_version)) ? "$devuan_version $codename": $devuan_version;
-		$id .= " $version";
-	}
-	# like ceres/unstable
-	elsif ($devuan_version){
-		$id .= " $devuan_version";
+	if ($version){
+		my @temp = split(/\s*[\/\s]\s*/, $version);
+		foreach (@temp){
+			if ($distro !~ /\b$_\b/i){
+				$id .= " $_";
+			}
+		}
 	}
 	eval $end if $b_log;
 	return $id;
