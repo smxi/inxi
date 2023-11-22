@@ -51,7 +51,7 @@ use POSIX qw(ceil uname strftime ttyname);
 my $self_name='pinxi';
 my $self_version='3.3.31';
 my $self_date='2023-11-21';
-my $self_patch='14';
+my $self_patch='15';
 ## END INXI INFO ##
 
 my ($b_pledge,@pledges);
@@ -28999,6 +28999,8 @@ sub set_dboot_data {
 # 4: info extra desktop data
 # 5: wm
 # 6: wm version
+# 7: screensavers/lockers: running
+# 8: screensavers/lockers: all not running, installed
 {
 package DesktopEnvironment;
 my ($b_gtk,$b_qt,$b_xprop,$desktop_session,$gdmsession,$kde_session_version,
@@ -29027,6 +29029,7 @@ sub get {
 	}
 	if ($extra > 2 && @$desktop){
 		set_info_data();
+		set_screensaver_data(); # and lockers
 	}
 	if ($b_display && !$force{'display'} && $extra > 1){
 		get_wm();
@@ -29034,6 +29037,7 @@ sub get {
 	set_gtk_data() if $b_gtk && $extra > 1;
 	set_qt_data() if $b_qt && $extra > 1;
 	main::log_data('dump','@$desktop', $desktop) if $b_log;
+	print Data::Dumper::Dumper $desktop if $dbg[59];
 	# ($b_xprop,$kde_session_version,$xdg_desktop,@data,@xprop) = ();
 	eval $end if $b_log;
 	return $desktop;
@@ -29643,6 +29647,34 @@ sub set_info_data {
 	if (@info){
 		main::uniq(\@info);
 		$desktop->[4] = join(', ', @info);
+	}
+	eval $end if $b_log;
+}
+
+sub set_screensaver_data {
+	eval $start if $b_log;
+	my (@installed,@running);
+	# make sure these are the same as in set_ps_gui() list.
+	my @items = qw(away boinc-screensaver cinnamon-screensaver gnome-screensaver 
+	i3lock kscreenlocker light-locker lxlock mate-screensaver nwg-lock 
+	lockscreen-manager physlock rss-glx slock swaylock ukui-screensaver 
+	unicode-screensaver xautolock xfce4-screensaver xlock xlockmore xscreensaver 
+	xsecurelock xss-lock xtrlock);
+	foreach my $item (@items){
+		if (grep {$_ eq $item} @ps_gui){
+			push(@running,$item);
+		}
+		elsif ($b_admin && main::check_program($item)){
+			push(@installed,$item);
+		}
+	}
+	if (@running){
+		main::uniq(\@running);
+		$desktop->[7] = join(',', @running);
+	}
+	if (@installed){
+		main::uniq(\@installed);
+		$desktop->[8] = join(',', @installed);
 	}
 	eval $end if $b_log;
 }
@@ -34270,13 +34302,13 @@ my $power = {};
 # args: 0: $power by ref
 sub get {
 	eval $start if $b_log;
-	power_data();
+	sys_data();
 	eval $end if $b_log;
 	return $power;
 }
 
 # note: currently Linux only, if we ever find BSD sources, take another look.
-sub power_data {
+sub sys_data {
 	eval $start if $b_log;
 	# Some systems also report > 1 wakeup events per wakeup with 
 	# /sys/power/wakeup_count, thus, we are using /sys/power/suspend_stats/success 
@@ -34412,6 +34444,13 @@ sub set_ps_gui {
 		sfwbar stalonetray swaybar taskbar tint2 trayer
 		ukui-panel vala-panel wapanel waybar wbar wharf wingpanel witray 
 		xfce[45]?-panel xmobar yambar yabar);
+		push(@match,@temp);
+		# then the screensavers/lockers. Note that many lockers may not be services
+		@temp=qw(away boinc-screensaver cinnamon-screensaver gnome-screensaver 
+		i3lock kscreenlocker light-locker lxlock mate-screensaver nwg-lock 
+		lockscreen-manager physlock rss-glx slock swaylock ukui-screensaver 
+		unicode-screensaver xautolock xfce4-screensaver xlock xlockmore xscreensaver 
+		xsecurelock xss-lock xtrlock);
 		push(@match,@temp);
 	}
 	# compositors (for wayland these are also the server, note).
@@ -36710,7 +36749,8 @@ sub system_item {
 	my ($index);
 	my $data_name = main::key($prefix++,1,0,'System');
 	my ($desktop,$desktop_info,$desktop_key,$dm_key,$toolkit,$wm) = ('','','Desktop','dm','','');
-	my (@desktop_data,$cs_curr,$cs_avail,$desktop_version,$tk_version,$wm_version);
+	my (@desktop_data,$cs_curr,$cs_avail,$desktop_version,
+	$screensaver_running,$screensaver_avail,$tk_version,$wm_version);
 	my $data = {
 	$data_name => [{}],
 	};
@@ -36767,6 +36807,12 @@ sub system_item {
 		if ($extra > 2 && $desktop_data->[4]){
 			$desktop_info = $desktop_data->[4];
 		}
+		if ($extra > 2 && $desktop_data->[7]){
+			$screensaver_running = $desktop_data->[7];
+		}
+		if ($b_admin && $desktop_data->[8]){
+			$screensaver_avail = $desktop_data->[8];
+		}
 		# don't print the desktop if it's a wm and the same
 		if ($extra > 1 && $desktop_data->[5] && 
 		(!$desktop_data->[0] || $desktop_data->[5] =~ /^(deepin.+|gnome[\s_-]shell|budgie.+)$/i || 
@@ -36822,6 +36868,15 @@ sub system_item {
 			$data->{$data_name}[$index]{main::key($num++,1,2,'wm')} = $wm;
 			if ($wm_version){
 				$data->{$data_name}[$index]{main::key($num++,0,3,'v')} = $wm_version;
+			}
+		}
+		if ($extra > 2){
+			if ($screensaver_running || $screensaver_avail){
+				$screensaver_running ||= '';
+				$data->{$data_name}[$index]{main::key($num++,1,2,'tools')} = $screensaver_running;
+				if ($screensaver_avail){
+					$data->{$data_name}[$index]{main::key($num++,0,3,'avail')} = $screensaver_avail;
+				}
 			}
 		}
 		if ($extra > 2 && $b_display && defined $ENV{'XDG_VTNR'}){
