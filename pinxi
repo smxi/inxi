@@ -50,8 +50,8 @@ use POSIX qw(ceil uname strftime ttyname);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='3.3.31';
-my $self_date='2023-11-20';
-my $self_patch='13';
+my $self_date='2023-11-21';
+my $self_patch='14';
 ## END INXI INFO ##
 
 my ($b_pledge,@pledges);
@@ -6052,10 +6052,11 @@ sub show_options {
 	ID, position (if > 1), resolution, dpi, model, diagonal; APIs: EGL: per 
 	platform report; OpenGL: ES version, device-ID, display-ID (if not found in 
 	Display line); Vulkan: per device report."], 
-	['2', '-I', '', "Other detected installed gcc versions (if present). System 
-	default target/runlevel. Adds parent program (or pty/tty) for shell info if 
-	not in IRC. Adds Init version number, RC (if found). Adds per package manager
-	installed package counts (if not -r)."],
+	['2', '-I', '', "Adds wakeups: (from suspend) to Uptime; other detected 
+	installed gcc versions (if present). System default target/runlevel. Adds 
+	parent program (or pty/tty) for shell info if not in IRC. Adds Init version 
+	number, RC (if found). Adds per package manager installed package counts (if 
+	not -r)."],
 	['2', '-j,-p,-P', '', "Swap priority."],
 	['2', '-J', '', "Vendor:chip-ID; lanes (Linux only)."],
 	['2', '-L', '', "Show internal LVM volumes, like raid image/meta volumes;
@@ -6099,7 +6100,7 @@ sub show_options {
 	driver info; Vulkan: layer count, device hardware vendor."],
 	['2', '-I', '', "For 'Shell:' adds ([doas|su|sudo|login]) to shell name if 
 	present; adds default shell+version if different; for 'running in:' adds (SSH)
-	if SSH session; adds wakeups: (from suspend) to Uptime."],
+	if SSH session."],
 	['2', '-J', '', "If present: Devices: serial number, interface count, max 
 	power."],
 	['2', '-m,--memory-modules', '', "Width of memory bus, data and total (if 
@@ -34260,6 +34261,70 @@ sub get_pcie_data {
 	eval $end if $b_log;
 }
 
+## PowerData
+{
+package PowerData;
+my $power = {};
+
+# No BSD support currently. Test by !$bsd_type.
+# args: 0: $power by ref
+sub get {
+	eval $start if $b_log;
+	power_data();
+	eval $end if $b_log;
+	return $power;
+}
+
+# note: currently Linux only, if we ever find BSD sources, take another look.
+sub power_data {
+	eval $start if $b_log;
+	# Some systems also report > 1 wakeup events per wakeup with 
+	# /sys/power/wakeup_count, thus, we are using /sys/power/suspend_stats/success 
+	# which does not appear to have that issue.  There is more info in suspend_stats
+	# which we might think of using, particularly fail events, which can be useful.
+	# this increments on suspend, but you can't see it until wake, numbers work.
+	# note: seen android instance where reading file wakeup_count hangs endlessly.
+	my %files = ('suspend-resumes' => '/sys/power/suspend_stats/success');
+	if ($extra > 2){
+		$files{'hibernate'} = '/sys/power/disk';
+		$files{'hibernate-image-size'} = '/sys/power/image_size';
+		$files{'suspend'} = '/sys/power/mem_sleep';
+		$files{'suspend-fails'} = '/sys/power/suspend_stats/fail';
+		$files{'states-avail'} = '/sys/power/state';
+	}
+	foreach (sort keys %files){
+		if (-r $files{$_}){
+			$power->{$_} = main::reader($files{$_}, 'strip', 0);
+			if ($_ eq 'states-avail'){
+				$power->{$_} =~ s/\s+/,/g if $power->{$_};
+			}
+			# seen: s2idle [deep] OR [s2idle] deep OR s2idle shallow [deep]
+			elsif ($_ eq 'hibernate' || $_ eq 'suspend'){
+				# [item] is currently selected/active option
+				if ($power->{$_}){
+					if ($power->{$_} =~ /\[([^\]]+)\]/){
+						$power->{$_ . '-active'} = $1;
+						$power->{$_} =~ s/\[$1\]//;
+						$power->{$_} =~ s/^\s+|\s+$//g;
+					}
+					if ($power->{$_}){
+						$power->{$_} =~ s/\s+/,/g;
+						$power->{$_ . '-avail'} = $power->{$_};
+					}
+				}
+			}
+			# size is in bytes
+			elsif ($_ eq 'hibernate-image-size'){
+				$power->{$_} = main::get_size(($power->{$_}/1024),'string') if defined $power->{$_};
+			}
+		}
+	}
+	print 'power: ', Data::Dumper::Dumper $power if $dbg[58];
+	main::log_data('dump','$power',$power) if $b_log;
+	eval $end if $b_log;
+}
+}
+
 sub set_ps_aux {
 	eval $start if $b_log;
 	my ($header,$ps,@temp);
@@ -36230,21 +36295,6 @@ sub process_power {
 }
 }
 
-# note: seen android instance where reading file wakeup_count hangs endlessly.
-# Some systems also report > 1 wakeup events per wakeup with 
-# /sys/power/wakeup_count, thus, we are using /sys/power/suspend_stats/success 
-# which does not appear to have that issue.
-sub get_wakeups {
-	eval $start if $b_log;
-	return if %risc;
-	my ($path,$wakeups);
-	# this increments on suspend, but you can't see it until wake, numbers work.
-	$path = '/sys/power/suspend_stats/success';
-	$wakeups = reader($path,'strip',0) if -r $path;
-	eval $end if $b_log;
-	return $wakeups;
-}
-
 ########################################################################
 #### GENERATE OUTPUT
 ########################################################################
@@ -36491,26 +36541,51 @@ sub info_item {
 	$index = 0;
 	if (!$loaded{'memory'}){
 		main::MemoryData::row('info',$data->{$data_name}[$index],\$num,1);
+		if ($gpu_ram){
+			$data->{$data_name}[$index]{main::key($num++,0,2,'gpu')} = $gpu_ram;
+		}
+		$index++;
 	}
-	$index++;
 	$data->{$data_name}[$index]{main::key($num++,0,1,'Processes')} = scalar @ps_aux;
-	$data->{$data_name}[$index]{main::key($num++,1,1,'Uptime')} = main::get_uptime();
-# 	$data = {
-# 	$data_name => [{
-# 	main::key($num++,0,1,'Processes') => scalar @ps_aux, 
-# 	main::key($num++,1,1,'Uptime') => main::get_uptime(),
-# 	},],
-# 	};
- # 	$index = scalar(@{$data->{$data_name}});
-	if ($extra > 2){
-		my $wakeups = main::get_wakeups();
-		$data->{$data_name}[$index]{main::key($num++,0,2,'wakeups')} = $wakeups if defined $wakeups;
+	my $uptime = main::get_uptime();
+	if ($bsd_type || $extra < 2){
+		$data->{$data_name}[$index]{main::key($num++,1,1,'Uptime')} = $uptime;
 	}
-	if (!$loaded{'memory'}){
-		main::MemoryData::row('info',$data->{$data_name}[$index],\$num,1);
-	}
-	if ($gpu_ram){
-		$data->{$data_name}[$index]{main::key($num++,0,2,'gpu')} = $gpu_ram;
+	if (!$bsd_type && $extra > 1){
+		my $power = PowerData::get();
+		$data->{$data_name}[$index]{main::key($num++,1,1,'Power')} = '';
+		$data->{$data_name}[$index]{main::key($num++,0,2,'uptime')} = $uptime;
+		if ($power->{'states-avail'}){
+			$data->{$data_name}[$index]{main::key($num++,0,2,'states')} = $power->{'states-avail'};
+		}
+		my $resumes = (defined $power->{'suspend-resumes'}) ? $power->{'suspend-resumes'} : undef;
+		if ($extra > 2){
+			my $suspend = (defined $power->{'suspend-active'}) ? $power->{'suspend-active'} : '';
+			$data->{$data_name}[$index]{main::key($num++,1,2,'suspend')} = $suspend;
+			if ($b_admin && $power->{'suspend-avail'}){
+				$data->{$data_name}[$index]{main::key($num++,0,3,'avail')} = $power->{'suspend-avail'};
+			}
+			if (defined $resumes){
+				$data->{$data_name}[$index]{main::key($num++,0,3,'wakeups')} = $resumes;
+				if ($b_admin && $power->{'suspend-fails'}){
+					$data->{$data_name}[$index]{main::key($num++,0,3,'fails')} = $power->{'suspend-fails'};
+				}
+			}
+			if (defined $power->{'hibernate-active'}){
+				$data->{$data_name}[$index]{main::key($num++,1,2,'hibernate')} = $power->{'hibernate-active'};
+				if ($b_admin && $power->{'hibernate-avail'}){
+					$data->{$data_name}[$index]{main::key($num++,0,3,'avail')} = $power->{'hibernate-avail'};
+				}
+				if ($b_admin && $power->{'hibernate-image-size'}){
+					$data->{$data_name}[$index]{main::key($num++,0,3,'image')} = $power->{'hibernate-image-size'};
+				}
+			}
+		}
+		else {
+			if (defined $resumes){
+				$data->{$data_name}[$index]{main::key($num++,0,2,'wakeups')} = $resumes;
+			}
+		}
 	}
 	if ((!$b_display || $force{'display'}) || $extra > 0){
 		my $init = InitData::get();
