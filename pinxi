@@ -2002,6 +2002,7 @@ sub display_data {
 	['wlr-randr',''],
 	['xdpyinfo',''],
 	['xdriinfo',''],
+	['Xfbdev','-version'],
 	['Xorg','-version'],
 	['xprop','-root'],
 	['xrandr',''],
@@ -7062,7 +7063,7 @@ sub message {
 	'root-required' => '<superuser required>',
 	'root-suggested' => 'try sudo/root',# gdm only
 	'screen-wayland' => 'no compositor data',
-	'screen-xvesa' => 'no Xvesa data',
+	'screen-tinyx' => "no X$id data",
 	'sensor-data-bsd' => "$id sensor data found but not usable.",
 	'sensor-data-bsd-ok' => 'No sensor data found. Are data sources present?',
 	'sensor-data-bsd-unsupported' => 'Sensor data not available. Unsupported BSD variant.',
@@ -15383,8 +15384,8 @@ sub display_output(){
 					}
 				}
 			}
-			# if xvesa, will always have display-driver set
-			if ($graphics{'xvesa'} && $graphics{'display-driver'}){
+			# if TinyX, will always have display-driver set
+			if ($graphics{'tinyx'} && $graphics{'display-driver'}){
 				$rows->[$j]{main::key($num++,0,2,'driver')} = join(',',@{$graphics{'display-driver'}});
 			}
 			else {
@@ -15445,8 +15446,9 @@ sub display_output(){
 				$rows->[$j]{main::key($num++,0,2,'default screen')} = $graphics{'display-default-screen'};
 			}
 		}
+		# TinyX may pack actual resolution data into no-screens if it was found
 		if ($graphics{'no-screens'}){
-			my $res = (!$show{'graphic-basic'} && $extra > 1 && !$graphics{'xvesa'}) ? 'note' : 'resolution';
+			my $res = (!$show{'graphic-basic'} && $extra > 1 && !$graphics{'tinyx'}) ? 'note' : 'resolution';
 			$rows->[$j]{main::key($num++,0,2,$res)} = $graphics{'no-screens'};
 		}
 		elsif ($graphics{'screens'}){
@@ -17632,7 +17634,7 @@ sub check_screens {
 # Xwayland version, or Xvesa data.
 sub display_server_data {
 	eval $start if $b_log;
-	my ($program);
+	my ($program,$tinyx);
 	# load the extra X paths, it's important that these are first, because
 	# later Xorg versions show error if run in console or ssh if the true path 
 	# is not used.
@@ -17648,13 +17650,31 @@ sub display_server_data {
 			@data = main::grabber("$program -version 2>&1",'','strip');
 			$server = 'X.org';
 		}
-		elsif ($program = main::check_program('Xvesa')){
-			@data = main::grabber("$program -version 2>&1",'','strip');
-			$server = 'Xvesa';
-			$graphics{'display-driver'} = ['vesa'];
-			$graphics{'xvesa'} = $program;
-			if (!$graphics{'screens'}){
-				$graphics{'no-screens'} = main::message('screen-xvesa');
+		else {
+			# ordered by likelihood
+			my @tinies = qw(vesa fbdev chips i810 igs ipaq mach64 savage sis530
+			trident trio ts300);
+			foreach my $driver (@tinies){
+				if ($program = main::check_program('X' . $driver)){
+					$tinyx = $graphics{'tinyx'} = 'X' . $driver;
+					$server = "TinyX $tinyx";
+					@data = main::grabber("$program -version 2>&1",'','strip');
+					$graphics{'display-driver'} = [$driver];
+					$graphics{'xvesa'} = $program if $driver eq 'vesa';
+					if (!$graphics{'screens'}){
+						if (-d '/sys/devices/platform/'){
+							my @size = main::globber('/sys/devices/platform/*/graphics/*/virtual_size');
+							if (@size && (my $vsize = main::reader($size[0],'strip',0))){
+								$vsize =~ s/,/x/g;
+								$graphics{'no-screens'} = $vsize;
+							}
+						}
+						if (!$graphics{'no-screens'}){
+							$graphics{'no-screens'} = main::message('screen-tinyx',$driver);
+						}
+					}
+					last;
+				}
 			}
 		}
 		# print join('^ ', @paths), " :: $program\n";
@@ -17670,9 +17690,8 @@ sub display_server_data {
 			elsif ($data[0] =~ /X Window System Version (\S+)/i){
 				$version = $1;
 			}
-			elsif ($data[0] =~ /Xvesa from tinyx (\S+)/i){
+			elsif ($tinyx && $data[0] =~ /$tinyx from tinyx (\S+)/i){
 				$version = $1;
-				$server = 'TinyX Xvesa';
 			}
 		}
 		$graphics{'x-server'} = [[$server,$version]] if $server;
@@ -17788,10 +17807,10 @@ sub display_drivers_x {
 		my $list = join('|', qw(amdgpu apm ark armsoc atimisc
 		chips cirrus cyrix etnaviv fbdev fbturbo fglrx geode glide glint 
 		i128 i740 i810-dec100 i810e i810 i815 i830 i845 i855 i865 i915 i945 i965 
-		iftv imstt intel ivtv mach64 mesa mga m68k modesetting neomagic newport 
-		nouveau nsc nvidia nv openchrome r128 radeonhd radeon rendition 
-		s3virge s3 savage siliconmotion sisimedia sisusb sis 
-		sunbw2 suncg14 suncg3 suncg6 sunffb sunleo suntcx tdfx tga trident tseng 
+		iftv igs imstt intel ipaq ivtv mach64 mesa mga m68k modesetting neomagic 
+		newport nouveau nsc nvidia nv openchrome r128 radeonhd radeon rendition 
+		s3virge s3 savage siliconmotion sisimedia sisusb sis sis530 sunbw2 suncg14 
+		suncg3 suncg6 sunffb sunleo suntcx tdfx tga trident trio ts300 tseng 
 		unichrome v4l vboxvideo vesa vga via vmware vmwgfx voodoo));
 		# $list = qr/$list/i; # qr/../i only added perl 5.14, fails on older perls
 		my ($b_use_dri,$dri,$driver,%drivers);
@@ -17883,6 +17902,7 @@ sub display_drivers_x {
 	# print 'source: ', Data::Dumper::Dumper $driver_data;
 	return $driver_data;
 }
+
 sub set_mesa_drivers {
 	%mesa_drivers = (
 	'anv' => 'intel',
@@ -18638,7 +18658,6 @@ sub set_nv_data {
 	'xorg' => '',
 	'years' => '2022+',
 	},
-
 	],
 }
 
@@ -19137,7 +19156,7 @@ sub get_compositors {
 	my $found = [];
 	main::set_ps_gui() if !$loaded{'ps-gui'};
 	if (@ps_gui){
-		# ORDER MATTES!
+		# ORDER MATTERS!
 		# notes: compiz: debian package compiz-core; 
 		# enlightenment: as of version 20 wayland compositor
 		my @compositors = qw(budgie-wm compiz compton enlightenment gnome-shell 
@@ -29655,9 +29674,10 @@ sub set_screensaver_data {
 	eval $start if $b_log;
 	my (@installed,@running);
 	# make sure these are the same as in set_ps_gui() list.
-	my @items = qw(away boinc-screensaver cinnamon-screensaver gnome-screensaver 
-	i3lock kscreenlocker light-locker lockscreen lxlock mate-screensaver nwg-lock 
-	physlock rss-glx slock swaylock ukui-screensaver unicode-screensaver 
+	my @items = qw(away boinc-screensaver budgie-screensaver cinnamon-screensaver 
+	gnome-screensaver gsd-screensaver-proxy i3lock kscreenlocker 
+	light-locker lockscreen lxlock mate-screensaver nwg-lock physlock 
+	rss-glx slock swaylock ukui-screensaver unicode-screensaver 
 	xautolock xfce4-screensaver xlock xlockmore xscreensaver xsecurelock 
 	xss-lock xtrlock);
 	foreach my $item (@items){
@@ -31295,6 +31315,8 @@ sub system_base {
 	my $base_osr = 'aptosid|bodhi|grml|q4os|siduction|slax|zenwalk'; 
 	# osr base, distro id in issue
 	my $base_osr_issue = 'grml|linux lite|openmediavault'; 
+	# same as rhel re VERSION_ID but likely only ID_LIKE=fedora
+	my $base_osr_fedora = 'ultramarine';
 	# osr has distro name but has fedora centos redhat ID_LIKE and VERSION_ID same
 	my $base_osr_redhat = 'almalinux|centos|eurolinux|oracle|puias|rocky|';
 	$base_osr_redhat .= 'scientific|springdale'; 
@@ -31319,6 +31341,7 @@ sub system_base {
 			(@osr_temp,@osr_working) = ();
 		}
 	}
+	# note: ultramarine trips this one but uses os-release field names, sigh, ignore
 	elsif (-r $base_upstream_lsb){
 		$system_base = get_lsb_release($base_upstream_lsb);
 	}
@@ -31338,6 +31361,9 @@ sub system_base {
 		}
 		elsif (grep {/($base_osr_devuan_version)/i} @osr){
 			$system_base = debian_id('devuan');
+		}
+		elsif (grep {/($base_osr_fedora)/i} @osr){
+			$base_type = 'fedora';
 		}
 		elsif (grep {/($base_osr_redhat)/i} @osr){
 			$base_type = 'rhel';
@@ -31492,8 +31518,12 @@ sub get_os_release {
 					$working[1] =~ s/^(debian|ubuntu\sdebian|debian\subuntu)/ubuntu/; 
 					$base_name = $working[1];
 				}
+				elsif ($base_type eq 'fedora' && $working[1] =~ /fedora/i){
+					$base_name = 'Fedora';
+					$base_version = $version_id if $version_id;
+				}
 				# oracle ID_LIKE="fedora". Why? who knows.
-				if ($base_type eq 'rhel' && $working[1] =~ /rhel|fedora/i){
+				elsif ($base_type eq 'rhel' && $working[1] =~ /rhel|fedora/i){
 					$base_name = 'RHEL';
 					$base_version = $version_id if $version_id;
 				}
@@ -31551,7 +31581,7 @@ sub get_os_release {
 			$distro =~ s/ $version_codename//;
 		}
 		# mint 17 used ubuntu os-release, so won't have $base_version, steamos holo
-		if ($base_name && $base_type eq 'rhel'){
+		if ($base_name && ($base_type eq 'fedora' || $base_type eq 'rhel')){
 			$distro_osr = $base_name;
 			$distro_osr .= ' ' . $version_id if $version_id; 
 		}
@@ -34446,9 +34476,10 @@ sub set_ps_gui {
 		xfce[45]?-panel xmobar yambar yabar);
 		push(@match,@temp);
 		# then the screensavers/lockers. Note that many lockers may not be services
-		@temp=qw(away boinc-screensaver cinnamon-screensaver gnome-screensaver 
-		i3lock kscreenlocker light-locker lockscreen lxlock mate-screensaver nwg-lock 
-		physlock rss-glx slock swaylock ukui-screensaver unicode-screensaver 
+		@temp=qw(away boinc-screensaver budgie-screensaver cinnamon-screensaver 
+		gnome-screensaver gsd-screensaver-proxy i3lock kscreenlocker 
+		light-locker lockscreen lxlock mate-screensaver nwg-lock physlock 
+		rss-glx slock swaylock ukui-screensaver unicode-screensaver 
 		xautolock xfce4-screensaver xlock xlockmore xscreensaver xsecurelock 
 		xss-lock xtrlock);
 		push(@match,@temp);
