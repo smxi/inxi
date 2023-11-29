@@ -56,7 +56,7 @@ Help support the project with a one time or a sustaining donation.
 
 Paypal: https://www.paypal.com/donate/?hosted_button_id=77DQVM6A4L5E2
 
-Open Collective: https://opencollective.com/inxi
+LiberaPay (sustaining donations): https://liberapay.com/smxi/
 
 ================================================================================
 DEVELOPMENT AND ISSUES
