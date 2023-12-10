@@ -50,8 +50,8 @@ use POSIX qw(ceil uname strftime ttyname);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='3.3.31';
-my $self_date='2023-12-06';
-my $self_patch='22';
+my $self_date='2023-12-09';
+my $self_patch='23';
 ## END INXI INFO ##
 
 my ($b_pledge,@pledges);
@@ -103,7 +103,7 @@ if (eval {require Time::HiRes}){
 @t0 = eval 'Time::HiRes::gettimeofday()' if $b_hires; # let's start it right away
 
 ## Booleans [busybox_ps not used actively]
-my ($b_admin,$b_android,$b_busybox_ps,$b_display,$b_irc,$b_root);
+my ($b_admin,$b_android,$b_display,$b_irc,$b_root);
 
 ## System
 my ($bsd_type,$device_vm,$language,$os,$pci_tool) = ('','','','','');
@@ -5864,7 +5864,7 @@ sub show_options {
 	['1', '-r', '--repos', "Distro repository data. Supported repo types: APK, 
 	APT, CARDS, EOPKG, NETPKG, NIX, PACMAN, PACMAN-G2, PISI, PKG (BSDs), PORTAGE, 
 	PORTS (BSDs), SBOPKG, SBOUI, SCRATCHPKG, SLACKPKG, SLAPT_GET, SLPKG, TCE, 
-	URPMQ, XBPS, YUM/ZYPP."],
+	TAZPKG, URPMQ, XBPS, YUM/ZYPP."],
 	['1', '-R', '--raid', "RAID data. Shows RAID devices, states, levels, array 
 	sizes, and components. md-raid: If device is resyncing, also shows resync
 	progress line."],
@@ -17643,7 +17643,7 @@ sub check_screens {
 # Xwayland version, or Xvesa data.
 sub display_server_data {
 	eval $start if $b_log;
-	my ($program,$tinyx);
+	my ($program);
 	# load the extra X paths, it's important that these are first, because
 	# later Xorg versions show error if run in console or ssh if the true path 
 	# is not used.
@@ -17660,31 +17660,7 @@ sub display_server_data {
 			$server = 'X.org';
 		}
 		else {
-			# ordered by likelihood
-			my @tinies = qw(vesa fbdev chips i810 igs ipaq mach64 savage sis530
-			trident trio ts300);
-			foreach my $driver (@tinies){
-				if ($program = main::check_program('X' . $driver)){
-					$tinyx = $graphics{'tinyx'} = 'X' . $driver;
-					$server = "TinyX $tinyx";
-					@data = main::grabber("$program -version 2>&1",'','strip');
-					$graphics{'display-driver'} = [$driver];
-					$graphics{'xvesa'} = $program if $driver eq 'vesa';
-					if (!$graphics{'screens'}){
-						if (-d '/sys/devices/platform/'){
-							my @size = main::globber('/sys/devices/platform/*/graphics/*/virtual_size');
-							if (@size && (my $vsize = main::reader($size[0],'strip',0))){
-								$vsize =~ s/,/x/g;
-								$graphics{'no-screens'} = $vsize;
-							}
-						}
-						if (!$graphics{'no-screens'}){
-							$graphics{'no-screens'} = main::message('screen-tinyx',$driver);
-						}
-					}
-					last;
-				}
-			}
+			tinyx_data(\$server,\$version);
 		}
 		# print join('^ ', @paths), " :: $program\n";
 		# print Data::Dumper::Dumper \@data;
@@ -17697,9 +17673,6 @@ sub display_server_data {
 				$server = 'XFree86';
 			}
 			elsif ($data[0] =~ /X Window System Version (\S+)/i){
-				$version = $1;
-			}
-			elsif ($tinyx && $data[0] =~ /$tinyx from tinyx (\S+)/i){
 				$version = $1;
 			}
 		}
@@ -17719,6 +17692,55 @@ sub display_server_data {
 	}
 	# remove extra X paths from global @paths
 	@paths = grep { !/^\/usr\/lib|xorg|libexec/ } @paths;
+	eval $end if $b_log;
+}
+# args: 0: $server; 1: $version - both by ref
+sub tinyx_data {
+	eval $start if $b_log;
+	my ($server,$version) = @_;
+	# ordered by likelihood, Xmodesetting proposted by tinycore. Others were 
+	# supported by DSL. Existed: Xigs Xipaq Xneomagic Xmga
+	my $tinies = 'vesa|fbdev|modesetting|chips|i810|igs|ipaq|mach64|mga|';
+	$tinies .= 'neomagic|savage|sis530|trident|trio|ts300';
+	# these run as a process, and sometimes also have screen resolution 
+	if (my @result = (grep {/^(|\/\S+\/)X($tinies)\b/i} @ps_cmd)){
+		if ($result[0] =~ /^(|\/\S+\/)X($tinies)\b/i){
+			my $driver = $2;
+			my $vsize;
+			if ($result[0] =~ /\s-screen\s+(\d+(x\d+){1,})\s/){
+				$vsize = $1;
+			}
+			my $tinyx = $graphics{'tinyx'} = 'X' . $driver;
+			$$server = "TinyX $tinyx";
+			$graphics{'display-driver'} = [$driver];
+			# not all tinyx had -version, DSL did not.
+			if (my $program = main::check_program($tinyx)){
+				$graphics{'xvesa'} = $program if $driver eq 'vesa';
+				my @data = main::grabber("$program -version 2>&1",'','strip');
+				if (@data && $data[0] =~ /$tinyx from tinyx (\S+)/i){
+					$$version = $1;
+				}
+			}
+			# should never happen but just in case
+			if (!$graphics{'screens'}){
+				if ($vsize){
+					$graphics{'no-screens'} = $vsize;
+				}
+				else {
+					if (-d '/sys/devices/platform/'){
+						my @size = main::globber('/sys/devices/platform/*/graphics/*/virtual_size');
+						if (@size && (my $vsize = main::reader($size[0],'strip',0))){
+							$vsize =~ s/,/x/g;
+							$graphics{'no-screens'} = $vsize;
+						}
+					}
+					if (!$graphics{'no-screens'}){
+						$graphics{'no-screens'} = main::message('screen-tinyx',$driver);
+					}
+				}
+			}
+		}
+	}
 	eval $end if $b_log;
 }
 
@@ -20981,7 +21003,7 @@ package OpticalItem;
 sub get {
 	eval $start if $b_log;
 	my $rows = $_[0];
-	my $start = scalar @$rows;
+	my $rows_start = scalar @$rows;
 	my ($data,$val1);
 	my $num = 0;
 	if ($bsd_type){
@@ -21006,7 +21028,7 @@ sub get {
 		drive_output($rows,$data) if %$data;
 	}
 	# if none of the above increased the row count, show the error message
-	if ($start == scalar @$rows){
+	if ($rows_start == scalar @$rows){
 		push(@$rows,{main::key($num++,0,1,'Message') => $val1});
 	}
 	eval $end if $b_log;
@@ -22039,10 +22061,10 @@ sub set_filters {
 	my @partition = (@all,qw%cgroup.* cgm config debug dev devtmp efivar fdesc 
 	hugetlb kern linproc linsys lxc none proc pty run security shm swap sys 
 	tmp trace type udev vartmp%);
-	my $start = '(fuse(blk)?[\._-]?)?(';
+	my $begin = '(fuse(blk)?[\._-]?)?(';
 	my $end = ')([\._-]?fuse)?(fs)?\d{0,2}';
-	$fs_exclude = $start . join('|',@exclude) . $end;
-	$fs_skip = $start . join('|',@exclude,'f') . $end; # apfs?; BSD ffs has no u/l
+	$fs_exclude = $begin . join('|',@exclude) . $end;
+	$fs_skip = $begin . join('|',@exclude,'f') . $end; # apfs?; BSD ffs has no u/l
 	$part_filter = '((' . join('|',@partition) . ')(fs)?|';
 	$part_filter .= '\/dev|\/dev\/(block\/)?loop[0-9]+|\/run(\/.*)?|\/sys\/.*)'; 
 	# print "$part_filter\n";
@@ -24694,7 +24716,7 @@ sub get {
 			$rows->[0]{$_} = $packages->{$_};
 		}
 	}
-	my $start = scalar @$rows; # to test if we found more rows after
+	my $rows_start = scalar @$rows; # to test if we found more rows after
 	$num = 0;
 	if ($bsd_type){
 		get_repos_bsd($rows);
@@ -24709,7 +24731,7 @@ sub get {
 		undef %repo_keys;
 	}
 	else {
-		if ($start == scalar @$rows){
+		if ($rows_start == scalar @$rows){
 			my $pm_missing;
 			if ($bsd_type){
 				$pm_missing = main::message('repo-data-bsd',$uname[0]);
@@ -24752,6 +24774,8 @@ sub get_repos_linux {
 	my $slackpkg_plus = '/etc/slackpkg/slackpkgplus.conf';
 	my $slapt_get = '/etc/slapt-get/';
 	my $slpkg = '/etc/slpkg/repositories.toml';
+	my $tazpkg = '/etc/slitaz/tazpkg.conf';
+	my $tazpkg_mirror = '/var/lib/tazpkg/mirror';
 	my $tce_app = '/usr/bin/tce';
 	my $tce_file = '/opt/tcemirror';
 	my $tce_file2 = '/opt/localmirrors';
@@ -25270,7 +25294,7 @@ sub get_repos_linux {
 				push(@content, "$1 ~ $type");
 			}
 		}
-		if (! @content){
+		if (!@content){
 			$key = repo_data('missing','cards');
 		}
 		else {
@@ -25282,6 +25306,11 @@ sub get_repos_linux {
 		[@content],
 		);
 		@content = ();
+	}
+	## tazpkg: Slitaz
+	if (-e $tazpkg || -e $tazpkg_mirror){
+		$data = repo_builder($tazpkg_mirror,'tazpkg','^\s*[^#]+');
+		push(@$rows,@$data);
 	}
 	## tce: TinyCore 
 	if (-e $tce_app || -f $tce_file || -f $tce_file2){
@@ -25615,6 +25644,8 @@ sub set_repo_keys {
 	'slaptget-missing' => 'No active slapt-get repos in',
 	'slpkg-active' => 'Active slpkg repos in',
 	'slpkg-missing' => 'No active slpkg repos in',
+	'tazpkg-active' => 'tazpkg mirrors in',
+	'tazpkg-missing' => 'No tazpkg mirrors in',
 	'tce-active' => 'tce mirrors in',
 	'tce-missing' => 'No tce mirrors in',
 	'xbps-active' => 'Active xbps repos in',
@@ -28813,28 +28844,34 @@ sub version_proc {
 			# $result='Linux version 5.9.0-5-amd64 (debian-kernel@lists.debian.org) (gcc-10 (Debian 10.2.1-1) 10.2.1 20201207, GNU ld (GNU Binutils for Debian) 2.35.1) #1 SMP Debian 5.9.15-1 (2020-12-17)';
 			# $result='Linux version 2.6.1 (GNU 0.9 GNU-Mach 1.8+git20201007-486/Hurd-0.9 i686-AT386)';
 			# $result='NetBSD version 9.1 (netbsd@localhost) (gcc version 7.5.0) NetBSD 9.1 (GENERIC) #0: Sun Oct 18 19:24:30 UTC 2020';
-			# $result='Linux version 6.0.8-0-generic (chimera@chimera) (clang version 15.0.4, LLD 15.0.4) #1 SMP PREEMPT_DYNAMIC Fri Nov 11 13:45:29 UTC 2022';
+			 #$result='Linux version 6.0.8-0-generic (chimera@chimera) (clang version 15.0.4, LLD 15.0.4) #1 SMP PREEMPT_DYNAMIC Fri Nov 11 13:45:29 UTC 2022';
 			# 2023 ubuntu, sigh..
 			# $result='Linux version 6.5.8-1-liquorix-amd64 (steven@liquorix.net) (gcc (Debian 13.2.0-4) 13.2.0, GNU ld (GNU Binutils for Debian) 2.41) #1 ZEN SMP PREEMPT liquorix 6.5-9.1~trixie (2023-10-19)';
 			# $result='Linux version 6.5.0-9-generic (buildd@bos03-amd64-043) (x86_64-linux-gnu-gcc-13 (Ubuntu 13.2.0-4ubuntu3) 13.2.0, GNU ld (GNU Binutils for Ubuntu) 2.41) #9-Ubuntu SMP PREEMPT_DYNAMIC Sat Oct  7 01:35:40 UTC 2023';
-			 $result='Linux version 6.5.13-un-def-alt1 (builder@localhost.localdomain) (gcc-13 (GCC) 13.2.1 20230817 (ALT Sisyphus 13.2.1-alt2), GNU ld (GNU Binutils) 2.41.0.20230826) #1 SMP PREEMPT_DYNAMIC Wed Nov 29 15:54:38 UTC 2023';
+			# $result='Linux version 6.5.13-un-def-alt1 (builder@localhost.localdomain) (gcc-13 (GCC) 13.2.1 20230817 (ALT Sisyphus 13.2.1-alt2), GNU ld (GNU Binutils) 2.41.0.20230826) #1 SMP PREEMPT_DYNAMIC Wed Nov 29 15:54:38 UTC 2023';
 		}
 		# 'clang version 9.0.0 ('; 'gcc version 7.5.0'
-		if ($result =~ /(gcc|clang).*version\s([^,\s\)]+)/){
+		if ($result =~ /(gcc|clang).*?version\s([^,\s\)]+)/){
 			$version = $2;
 			$version ||= 'N/A'; 
 			@$compiler = ($1,$version);
 		}
-		elsif ($result =~ /\((gcc|clang)[^\(]*\([^\)]+\)\s+([0-9\.]+)(\s[^.]*)?,\s*/){
-			$version = $2;
-			$version ||= 'N/A'; 
-			@$compiler = ($1,$version);
+		elsif ($result =~ /(gcc|clang).*?\s(\d+(\.\d+){2,4})[)\s,_-]/){
+			@$compiler = ($1,$2);
 		}
-		elsif ($result =~ /\((\S+\s*)(gcc|clang)[^\(]*\([^\)]+\)\s+([0-9\.]+)(\s[^.]*)?,\s*/){
-			$version = $3;
-			$version ||= 'N/A'; 
-			@$compiler = ($2,$version);
+		elsif ($result =~ /(gcc|clang)/){
+			@$compiler = ($1,'N/A');
 		}
+# 		elsif ($result =~ /\((gcc|clang)[^\(]*\([^\)]+\)\s+([0-9\.]+)(\s[^.]*)?,\s*/){
+# 			$version = $2;
+# 			$version ||= 'N/A'; 
+# 			@$compiler = ($1,$version);
+# 		}
+# 		elsif ($result =~ /\((\S+\s*)(gcc|clang)[^\(]*\([^\)]+\)\s+([0-9\.]+)(\s[^.]*)?,\s*/){
+# 			$version = $3;
+# 			$version ||= 'N/A'; 
+# 			@$compiler = ($2,$version);
+# 		}
 	}
 	main::log_data('dump','@$compiler',$compiler) if $b_log;
 	eval $end if $b_log;
@@ -31022,6 +31059,7 @@ sub get_linux_distro {
 	# Force use of pretty name because that's only location of derived distro name
 	# devuan should catch many devuans spins, which often put their names in pretty
 	my $osr_pretty = 'devuan|slackel|zinc';
+	my $distro_file_name = 'slitaz'; # these may not have the distro name in the file
  	my ($b_issue,$b_lsb,$b_osr_pretty,$b_skip_issue,$b_skip_osr);
 	my ($issue,$lsb_release) = ('/etc/issue','/etc/lsb-release');
 	# Note: OpenSuse Tumbleweed 2018-05 has made /etc/issue created by sym link to /run/issue
@@ -31243,9 +31281,6 @@ sub get_linux_distro {
 			if ($extra == 0){$distro =~ s/Debian\s*GNU\/Linux/Raspberry Pi OS/;}
 			else {$distro = 'Raspberry Pi OS';}
 		}
-		elsif (-d '/etc/salixtools/' && $distro =~ /Slackware/i){
-			$distro =~ s/Slackware/Salix/;
-		}
 		# check for spins, relies on xdg directory name
 		elsif ($distro =~ /^(Ubuntu)/i){
 			my $base = $1;
@@ -31254,6 +31289,13 @@ sub get_linux_distro {
 				$system_base = $base if !$system_base && $extra > 0;
 				$distro = $temp;
 			}
+		}
+		elsif (-d '/etc/salixtools/' && $distro =~ /Slackware/i){
+			$distro =~ s/Slackware/Salix/;
+		}
+		elsif ($distro_file =~ /($distro_file_name)/ && $distro =~ /^[\d\.]+$/){
+			$distro_file =~ s/\/etc\/|[-_]|release|version//g;
+			$distro = ucfirst($distro_file) . ' ' . $distro;
 		}
 	}
 	else {
@@ -32003,6 +32045,7 @@ sub get {
 	my $default = ($extra > 1) ? get_runlevel_default() : '';
 	my ($rc,$rc_version) = ('','');
 	my $comm = (-r '/proc/1/comm') ? main::reader('/proc/1/comm','',0) : '';
+	my $link = readlink('/sbin/init');
 	# this test is pretty solid, if pid 1 is owned by systemd, it is systemd
 	# otherwise that is 'init', which covers the rest of the init systems.
 	# more data may be needed for other init systems. 
@@ -32075,22 +32118,27 @@ sub get {
 		# fallback for some inits that link to /sbin/init
 		elsif ($comm eq 'init'){
 			# shows /sbin/dinit-init but may change
-			if (-e '/sbin/dinit' && readlink('/sbin/init') =~ /dinit/){
+			if (-e '/sbin/dinit' && $link && $link =~ /dinit/){
 				dinit_data();
 			}
-			elsif (-e '/sbin/openrc-init' && readlink('/sbin/init') =~ /openrc/){
+			elsif (-e '/sbin/openrc-init' && $link && $link =~ /openrc/){
 				($init,$init_version) = openrc_data();
 			}
 		}
 	}
 	if (!$init){
-		# output: /sbin/init --version:  init (upstart 1.1)
-		# init (upstart 0.6.3)
-		# openwrt /sbin/init hangs on --version command, I think
-		if (!%risc && 
+		# openwrt/busybox /sbin/init hangs on --version command
+		if (-e '/sbin/init' && $link && $link =~ /busybox/){
+			$init_version = main::program_version('init', 'busybox', '2','--help',1,1);
+			$init = 'BusyBox';
+		}
+		# risky since we don't know which init it is. $comm == 'init'
+		# output: /sbin/init --version: init (upstart 1.1); init (upstart 0.6.3)
+		elsif (!%risc && !$link && main::globber('/{usr/lib,sbin,var/log}/upstart*') &&
 		 ($init_version = main::program_version('init', 'upstart', '3','--version'))){
 			$init = 'Upstart';
 		}
+		# surely more positive way to detect active
 		elsif (main::check_program('launchctl')){
 			$init = 'launchd';
 		}
@@ -33375,6 +33423,7 @@ sub package_counts {
 	# ['slackpkg','pkgtool','slapt-get','slpkg','swaret']],
 	# ['slapt-get','slapt-get','p','--installed',1,0,''],
 	# ['spkg','spkg','p','--installed',1,0,''],
+	['tazpkg','tazpkg','p','list',1,0,'','',['tazpkgbox','tazpanel']],
 	['tce','tce-status','p','-i',1,0,'','',['apps','tce-load']],
 	# note: I believe mageia uses rpm internally but confirm
 	# ['urpmi','urpmq','p','??',1,0,''], 
@@ -34418,10 +34467,13 @@ sub set_ps_aux {
 		@temp = split(/\s+/, $header);
 	}
 	$ps_cols = $#temp; # the indexes, not the scalar count
-	if ($ps_cols < 10){
-		my $version = qx(ps --version 2>&1);
-		$b_busybox_ps = 1 if $version =~ /busybox/i;
-	}
+	# we want more data from ps busybox
+	my $cols_use = ($ps_cols < 4) ? 7 : 2;
+	# not used, $b_busybox_ps was global
+	# if ($ps_cols < 10){
+	#	my $version = qx(ps --version 2>&1);
+	#	$b_busybox_ps = 1 if $version =~ /busybox/i;
+	# }
 	return if !@$ps; # note: mips/openwrt ps has no 'a'
 	for (@$ps){
 		next if !$_;
@@ -34432,7 +34484,7 @@ sub set_ps_aux {
 		# slice out 10th to last elements of ps aux rows
 		my $final = $#split;
 		# some stuff has a lot of data, chrome for example
-		$final = ($final > ($ps_cols + 2)) ? $ps_cols + 2 : $final;
+		$final = ($final > ($ps_cols + $cols_use)) ? $ps_cols + $cols_use : $final;
 		# handle case of ps wrapping lines despite ww unlimited width, which 
 		# should NOT be happening, but is.
 		next if !defined $split[$ps_cols]; 
@@ -34440,8 +34492,8 @@ sub set_ps_aux {
 			push(@ps_cmd,join(' ', @split[$ps_cols .. $final]));
 		}
 	}
-	# never, because ps loaded before option handler
-	# print Dumper \@ps_cmd; # if $dbg[5];
+	# never prints with 5, because ps loaded before option handler
+	# print 'ps main: ', Dumper \@ps_cmd; # if $dbg[5];
 	eval $end if $b_log;
 }
 
@@ -34538,7 +34590,7 @@ sub set_ps_gui {
 	}
 	# print Dumper \@ps_gui if $dbg[5];
 	uniq(\@ps_gui) if @ps_gui;
-	print Dumper \@ps_gui if $dbg[5];
+	print 'ps_gui: ', Dumper \@ps_gui if $dbg[5];
 	log_data('dump','@ps_gui',\@ps_gui) if $b_log;
 	eval $end if $b_log;
 }
