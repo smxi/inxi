@@ -50,8 +50,8 @@ use POSIX qw(ceil uname strftime ttyname);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='3.3.31';
-my $self_date='2023-12-12';
-my $self_patch='25';
+my $self_date='2023-12-13';
+my $self_patch='26';
 ## END INXI INFO ##
 
 my ($b_pledge,@pledges);
@@ -73,9 +73,9 @@ if (eval {require OpenBSD::Pledge}){
 my ($fake_data_dir,$self_path,$user_config_dir,$user_config_file,$user_data_dir);
 
 ## Hashes
-my (%alerts,%build_prop,%client,%colors,,%cpuinfo_machine,%disks_bsd,
-%dboot,%devices,%dl,%dmmapper,%force,%gui,%loaded,%mapper,%program_values,%risc,
-%service_tool,%show,%sysctl,%system_files,%usb,%windows);
+my (%alerts,%build_prop,%client,%colors,,%cpuinfo_machine,%disks_bsd,%dboot,
+%devices,%dl,%dmmapper,%force,%loaded,%mapper,%program_values,%ps_data,
+%risc,%service_tool,%show,%sysctl,%system_files,%usb,%windows);
 
 ## System Arrays
 my (@app,@cpuinfo,@dmi,@ifs,@ifs_bsd,@paths,@ps_aux,@ps_cmd,@ps_gui,
@@ -109,7 +109,7 @@ my ($b_admin,$b_android,$b_display,$b_irc,$b_root);
 my ($bsd_type,$device_vm,$language,$os,$pci_tool) = ('','','','','');
 my ($wan_url) = ('');
 my ($bits_sys,$cpu_arch,$ppid);
-my ($cpu_sleep,$dl_timeout,$limit,$ps_cols,$ps_count) = (0.35,4,10,0,5);
+my ($cpu_sleep,$dl_timeout,$limit,$ps_count) = (0.35,4,10,5);
 my $sensors_cpu_nu = 0;
 my ($weather_source,$weather_unit) = (100,'mi');
 
@@ -6663,8 +6663,9 @@ sub perl_python_client {
 }
 
 # Try to infer the use of Konversation >= 1.2, which shows $PPID improperly
-# no known method of finding Konvi >= 1.2 as parent process, so we look to see if it is running,
-# and all other irc clients are not running. As of 2014-03-25 this isn't used in my cases
+# no known method of finding Konvi >= 1.2 as parent process, so we look to 
+# see if it is running, and all other irc clients are not running. As of 
+# 2014-03-25 this isn't used in my cases
 sub check_modern_konvi {
 	eval $start if $b_log;
 	return 0 if !$client{'qdbus'};
@@ -17710,7 +17711,7 @@ sub tinyx_data {
 		if ($result[0] =~ /^(|\/\S+\/)X($tinies)\b/i){
 			my $driver = $2;
 			my $vsize;
-			if ($result[0] =~ /\s-screen\s+(\d+(x\d+){1,})\s/){
+			if ($result[0] =~ /\s-screen\s+(\d+(x\d+)+)\s/){
 				$vsize = $1;
 			}
 			my $tinyx = $graphics{'tinyx'} = 'X' . $driver;
@@ -19200,7 +19201,7 @@ sub get_compositors {
 		push (@compositors,qw(3dwm cosmic-comp dcompmgr gala kmscon 
 		metisse mir moblin monsterwm picom ukwm unagi unity-system-compositor 
 		xcompmgr xfwm4 xfwm5 xfwm));
-		my $matches = join('|',@compositors) . $gui{'wl-comp'};
+		my $matches = join('|',@compositors) . $ps_data{'wl-comp'};
 		foreach my $psg (@ps_gui){
 			if ($psg =~ /^($matches)$/){
 				push(@$found,$1);
@@ -22221,12 +22222,20 @@ sub get_uuid {
 ## ProcessItem 
 {
 package ProcessItem;
+# header:
+# 0: CMD
+# 1: PID
+# 2: %CPU
+# 3: %MEM
+# 4: RSS
+my $header;
 
 sub get {
 	eval $start if $b_log;
 	my $num = 0;
 	my $rows = [];
 	if (@ps_aux){
+		$header = $ps_data{'header'}; # will always be set if @ps_aux
 		if ($show{'ps-cpu'}){
 			cpu_processes($rows);
 		}
@@ -22248,26 +22257,22 @@ sub cpu_processes {
 	eval $start if $b_log;
 	my $rows = $_[0];
 	my ($j,$num,$cpu,$cpu_mem,$mem,$pid) = (0,0,'','','','');
-	my ($pid_col,@ps_rows);
-	my $count = ($b_irc)? 5: $ps_count;
-	if ($ps_cols >= 10){
+	my (@ps_rows);
+	my $count = ($b_irc)? 5 : $ps_count;
+	if (defined $header->[2]){
 		@ps_rows = sort { 
 		my @a = split(/\s+/, $a); 
 		my @b = split(/\s+/, $b); 
-		$b[2] <=> $a[2] } @ps_aux;
-		$pid_col = 1;
+		$b[$header->[2]] <=> $a[$header->[2]] 
+		} @ps_aux;
 	}
 	else {
 		@ps_rows = @ps_aux;
-		$pid_col = 0 if $ps_cols == 2;
 	}
-	# if there's a count limit, for irc, etc, only use that much of the data
 	@ps_rows = splice(@ps_rows,0,$count);
 	$j = scalar @ps_rows;
-	# $cpu_mem = ' - Memory: MiB / % used' if $extra > 0;
-	my $throttled = throttled($ps_count,$count,$j);
-	# my $header = "CPU  % used - Command - pid$cpu_mem - top";
-	# my $header = "Top $count by CPU";
+	# if there's a count limit, for irc, etc, only use that much of the data
+	my $throttled = throttled($ps_count,$count);
 	push(@$rows,{
 	main::key($num++,1,1,'CPU top') => "$count$throttled" . ' of ' . scalar @ps_aux
 	});
@@ -22276,8 +22281,12 @@ sub cpu_processes {
 		$num = 1;
 		$j = scalar @$rows;
 		my @row = split(/\s+/, $_);
-		my $command = process_starter(scalar @row, $row[$ps_cols],$row[$ps_cols + 1]);
-		$cpu = ($ps_cols >= 10) ? $row[2] . '%': 'N/A';
+		my $command = process_starter(
+			scalar @row, 
+			$row[$header->[0]],
+			$row[$header->[0] + 1]
+		);
+		$cpu = (defined $header->[2]) ? $row[$header->[2]] . '%': 'N/A';
 		push(@$rows,{
 		main::key($num++,1,2,$i++) => '',
 		main::key($num++,0,3,'cpu') => $cpu,
@@ -22286,12 +22295,12 @@ sub cpu_processes {
 		if ($command->[1]){
 			$rows->[$j]{main::key($num++,0,4,'started-by')} = $command->[1];
 		}
-		$pid = (defined $pid_col)? $row[$pid_col] : 'N/A';
+		$pid = (defined $header->[1])? $row[$header->[1]] : 'N/A';
 		$rows->[$j]{main::key($num++,0,3,'pid')} = $pid;
-		if ($extra > 0 && $ps_cols >= 10){
-			my $decimals = ($row[5]/1024 > 10) ? 1 : 2;
-			$mem = (defined $row[5]) ? sprintf("%.${decimals}f", $row[5]/1024) . ' MiB' : 'N/A';
-			$mem .= ' (' . $row[3] . '%)';
+		if ($extra > 0 && defined $header->[4]){
+			my $decimals = ($row[$header->[4]]/1024 > 10) ? 1 : 2;
+			$mem = (defined $row[$header->[4]]) ? sprintf("%.${decimals}f", $row[$header->[4]]/1024) . ' MiB' : 'N/A';
+			$mem .= ' (' . $row[$header->[3]] . '%)';
 			$rows->[$j]{main::key($num++,0,3,'mem')} = $mem;
 		}
 		# print Data::Dumper::Dumper \@processes, "i: $i; j: $j ";
@@ -22303,19 +22312,17 @@ sub mem_processes {
 	eval $start if $b_log;
 	my $rows = $_[0];
 	my ($j,$num,$cpu,$cpu_mem,$mem,$pid) = (0,0,'','','','');
-	my (@data,$pid_col,$memory,@ps_rows);
-	my $count = ($b_irc)? 5: $ps_count;
-	if ($ps_cols >= 10){
+	my (@data,$memory,@ps_rows);
+	my $count = ($b_irc)? 5 : $ps_count;
+	if (defined $header->[4]){
 		@ps_rows = sort { 
 		my @a = split(/\s+/, $a); 
 		my @b = split(/\s+/, $b); 
-		$b[5] <=> $a[5] } @ps_aux; # 5
-		#$a[1] <=> $b[1] } @ps_aux; # 5
-		$pid_col = 1;
+		$b[$header->[4]] <=> $a[$header->[4]] 
+		} @ps_aux;
 	}
 	else {
 		@ps_rows = @ps_aux;
-		$pid_col = 0 if $ps_cols == 2;
 	}
 	@ps_rows = splice(@ps_rows,0,$count);
 	# print Data::Dumper::Dumper \@rows;
@@ -22326,10 +22333,7 @@ sub mem_processes {
 		$num = 0;
 	}
 	$j = scalar @$rows;
-	my $throttled = throttled($ps_count,$count,$j);
-	#$cpu_mem = ' - CPU: % used' if $extra > 0;
-	# my $header = "Memory MiB/% used - Command - pid$cpu_mem - top";
-	# my $header = "Top $count by Memory";
+	my $throttled = throttled($ps_count,$count);
 	push(@$rows, {
 	main::key($num++,1,1,'Memory top') => "$count$throttled" . ' of ' . scalar @ps_aux
 	});
@@ -22338,15 +22342,16 @@ sub mem_processes {
 		$num = 1;
 		$j = scalar @$rows;
 		my @row = split(/\s+/, $_);
-		if ($ps_cols >= 10){
-			my $decimals = ($row[5]/1024 > 10) ? 1 : 2;
-			$mem = (main::is_int($row[5])) ? sprintf("%.${decimals}f", $row[5]/1024) . ' MiB' : 'N/A';
-			$mem .= " (" . $row[3] . "%)"; 
+		if (defined $header->[4]){
+			my $decimals = ($row[$header->[4]]/1024 > 10) ? 1 : 2;
+			$mem = (main::is_int($row[$header->[4]])) ? 
+				sprintf("%.${decimals}f", $row[$header->[4]]/1024) . ' MiB' : 'N/A';
+			$mem .= " (" . $row[$header->[3]] . "%)"; 
 		}
 		else {
 			$mem = 'N/A';
 		}
-		my $command = process_starter(scalar @row, $row[$ps_cols],$row[$ps_cols + 1]);
+		my $command = process_starter(scalar @row, $row[$header->[0]],$row[$header->[0] + 1]);
 		push(@$rows,{
 		main::key($num++,1,2,$i++) => '',
 		main::key($num++,0,3,'mem') => $mem,
@@ -22355,10 +22360,10 @@ sub mem_processes {
 		if ($command->[1]){
 			$rows->[$j]{main::key($num++,0,4,'started-by')} = $command->[1];
 		}
-		$pid = (defined $pid_col)? $row[$pid_col] : 'N/A';
+		$pid = (defined $header->[1])? $row[$header->[1]] : 'N/A';
 		$rows->[$j]{main::key($num++,0,3,'pid')} = $pid;
-		if ($extra > 0 && $ps_cols >= 10){
-			$cpu = $row[2] . '%';
+		if ($extra > 0 && defined $header->[2]){
+			$cpu = $row[$header->[2]] . '%';
 			$rows->[$j]{main::key($num++,0,3,'cpu')} = $cpu;
 		}
 		# print Data::Dumper::Dumper \@processes, "i: $i; j: $j ";
@@ -22370,7 +22375,8 @@ sub process_starter {
 	my ($count, $row10, $row11) = @_;
 	my $return = [];
 	# note: [migration/0] would clear with a simple basename
-	if ($count > ($ps_cols + 1) && $row11 =~ /^\// && $row11 !~ /^\/(tmp|temp)/){
+	if ($count > ($header->[0] + 1) && 
+	$row11 =~ /^\// && $row11 !~ /^\/(tmp|temp)/){
 		$row11 =~ s/^\/.*\///;
 		$return->[0] = $row11;
 		$row10 =~ s/^\/.*\///;
@@ -22384,16 +22390,9 @@ sub process_starter {
 	return $return;
 }
 
+# args: 0: $ps_count; 1: $count
 sub throttled {
-	my ($ps_count,$count,$j) = @_;
-	my $throttled = '';
-	if ($count > $j){
-		$throttled = " ( $j processes)"; # space to avoid emoji in irc
-	}
-	elsif ($count < $ps_count){
-		$throttled = " (throttled from $ps_count)";
-	}
-	return $throttled;
+	return ($_[1] < $_[0]) ? " (throttled from $_[0])" : '';
 }
 }
 
@@ -29524,7 +29523,7 @@ sub get_ps_de_data {
 			nawm notion nscde openbox pekwm penrose qtile qvwm ratpoison 
 			sawfish scrotwm snapwm spectrwm stumpwm tinywm tvtwm twm uwm 
 			windowlab wmfs wmfs2 wingo wmii2 wmii wmx xmonad yeahwm);
-			my $matches = join('|',@wms) . $gui{'wl-comp'};
+			my $matches = join('|',@wms) . $ps_data{'wl-comp'};
 			# note: use my $psg to avoid bizarre return from program_data to ps_gui write
 			foreach my $psg (@ps_gui){
 				# no need to use check program with short list of ps_gui
@@ -29625,7 +29624,7 @@ sub get_wm_main {
 		mvwm mwm nawm notion openbox qtile qvwm penrose ratpoison sawfish scrotwm 
 		snapwm spectrwm stumpwm tinywm tvtwm twm ukwm windowlab WindowMaker wingo 
 		wmfs2? wmii2? wmx xfwm[45]? xmonad yeahwm);
-		my $wms = join('|',@wms) . $gui{'wl-comp'};
+		my $wms = join('|',@wms) . $ps_data{'wl-comp'};
 		foreach my $psg (@ps_gui){
 			if ($psg =~ /^($wms)$/){
 				$working = $1;
@@ -29683,8 +29682,8 @@ sub get_wm_version {
 
 sub set_info_data {
 	eval $start if $b_log;
-	if (@{$gui{'info-active'}}){
-		$desktop->[4] = join(', ', @{$gui{'info-active'}});
+	if (@{$ps_data{'info-active'}}){
+		$desktop->[4] = join(', ', @{$ps_data{'info-active'}});
 	}
 	eval $end if $b_log;
 }
@@ -29692,18 +29691,18 @@ sub set_info_data {
 sub set_tools_data {
 	eval $start if $b_log;
 	# these are running/active
-	if (@{$gui{'tools-active'}}){
-		$desktop->[7] = join(',', @{$gui{'tools-active'}});
+	if (@{$ps_data{'tools-active'}}){
+		$desktop->[7] = join(',', @{$ps_data{'tools-active'}});
 	}
 	# now check if any are available but not running/services
 	if ($b_admin){
 		my (@installed,%test);
 		if ($desktop->[7]){
-			foreach my $tool (@{$gui{'tools-active'}}){
+			foreach my $tool (@{$ps_data{'tools-active'}}){
 				$test{$tool} = 1;
 			}
 		}
-		foreach my $item (@{$gui{'tools-test'}}){
+		foreach my $item (@{$ps_data{'tools-test'}}){
 			next if $test{$item};
 			if (main::check_program($item)){
 				push(@installed,$item);
@@ -30915,18 +30914,18 @@ sub get_display_manager {
 		}
 		push(@$found,[@dm_info]);
 	}
-	if (!@$found && @{$gui{'dm-active'}}){
+	if (!@$found && @{$ps_data{'dm-active'}}){
 		# ly does not have a run/pid file
-		if (grep {$_ eq 'ly'} @{$gui{'dm-active'}}){
+		if (grep {$_ eq 'ly'} @{$ps_data{'dm-active'}}){
 			@data = program_data('ly','ly',3);
 			$dm_info[0] = $data[0];
 			$dm_info[1] = $data[1];
 			$found->[0] = [@dm_info];
 		}
-		elsif (grep {/startx$/} @{$gui{'dm-active'}}){
+		elsif (grep {/startx$/} @{$ps_data{'dm-active'}}){
 			$found->[0] = ['startx'];
 		}
-		elsif (grep {$_ eq 'xinit'} @{$gui{'dm-active'}}){
+		elsif (grep {$_ eq 'xinit'} @{$ps_data{'dm-active'}}){
 			$found->[0] = ['xinit'];
 		}
 	}
@@ -34446,7 +34445,14 @@ sub set_cmd {
 	else {
 		return;
 	}
-	$ps_cols = $#temp; # the indexes, not the scalar count
+	$ps_data{'header'}->[0] = $#temp; # the indexes, not the scalar count
+	for (my $i = 0; $i <= $#temp; $i++){
+		if ($temp[$i] eq 'PID'){$ps_data{'header'}->[1] = $i;}
+		elsif ($temp[$i] eq '%CPU'){$ps_data{'header'}->[2] = $i;}
+		# note: %mem is percent used
+		elsif ($temp[$i] eq '%MEM'){$ps_data{'header'}->[3] = $i;}
+		elsif ($temp[$i] eq 'RSS'){$ps_data{'header'}->[4] = $i;}
+	}
 	# we want more data from ps busybox, to get TinyX screen res
 	my $cols_use = ($b_busybox) ? 7 : 2;
 	for (@$ps){
@@ -34458,12 +34464,13 @@ sub set_cmd {
 		# slice out 10th to last elements of ps aux rows
 		my $final = $#split;
 		# some stuff has a lot of data, chrome for example
-		$final = ($final > ($ps_cols + $cols_use)) ? $ps_cols + $cols_use : $final;
+		$final = ($final > ($ps_data{'header'}->[0] + $cols_use)) ? 
+			$ps_data{'header'}->[0] + $cols_use : $final;
 		# handle case of ps wrapping lines despite ww unlimited width, which 
 		# should NOT be happening, but is.
-		next if !defined $split[$ps_cols]; 
-		if ($split[$ps_cols] !~ /^\[/){
-			push(@ps_cmd,join(' ', @split[$ps_cols .. $final]));
+		next if !defined $split[$ps_data{'header'}->[0]]; 
+		if ($split[$ps_data{'header'}->[0]] !~ /^\[/){
+			push(@ps_cmd,join(' ', @split[$ps_data{'header'}->[0] .. $final]));
 		}
 	}
 	# never prints with 5, because ps loaded before option handler
@@ -34502,11 +34509,11 @@ sub set_gui {
 		ukwm xfwm[45]?);
 		push(@match,@temp);
 		# startx: /bin/sh /usr/bin/startx
-		process_gui(\@{$gui{'dm-active'}},qw(ly startx xinit)); # possible dm values
+		process_gui(\@{$ps_data{'dm-active'}},qw(ly startx xinit)); # possible dm values
 	}
 	# info: NOTE: glx-dock is cairo-dock
 	if ($show{'system'} && $extra > 2){
-		process_gui(\@{$gui{'info-active'}},join('|', qw(
+		process_gui(\@{$ps_data{'info-active'}},join('|', qw(
 		alltray awesomebar awn bar bmpanel bmpanel2 budgie-panel cairo-dock 
 		dde-dock dmenu dockbarx docker docky dzen dzen2 fbpanel fspanel 
 		glx-dock gnome-panel hpanel i3bar i3-status(-rs)? icewmtray kdocker kicker 
@@ -34517,13 +34524,13 @@ sub set_gui {
 		taskbar tint2 trayer ukui-panel vala-panel wapanel waybar wbar wharf 
 		wingpanel witray xfce[45]?-panel xmobar yambar yabar)));
 		# Generate tools: screensavers/lockers. Note that many lockers may not be services
-		@{$gui{'tools-test'}}=qw(away boinc-screensaver budgie-screensaver 
+		@{$ps_data{'tools-test'}}=qw(away boinc-screensaver budgie-screensaver 
 		cinnamon-screensaver gnome-screensaver gsd-screensaver-proxy gtklock i3lock 
 		kscreenlocker light-locker lockscreen lxlock mate-screensaver nwg-lock 
 		physlock rss-glx slock swayidle swaylock ukui-screensaver unicode-screensaver 
 		xautolock xfce4-screensaver xlock xlockmore xscreensaver 
 		xsecurelock xss-lock xtrlock);
-		process_gui(\@{$gui{'tools-active'}},join('|',@{$gui{'tools-test'}}));
+		process_gui(\@{$ps_data{'tools-active'}},join('|',@{$ps_data{'tools-test'}}));
 	}
 	# compositors (for wayland these are also the server, note).
 	# for wayland always show, so always load these
@@ -34540,7 +34547,7 @@ sub set_gui {
 	if ($b_wl){
 		# wayland compositors generally are compositors and wm. 
 		# These will be used globally to avoid having to redo it over and over.
-		$gui{'wl-comp'} = '|' . join('|',qw(asc awc 
+		$ps_data{'wl-comp'} = '|' . join('|',qw(asc awc 
 		cage cagebreak cardboard chameleonwm clayland comfc 
 		dwc dwl epd-wm fireplace feathers fenestra glass gamescope greenfield grefson 
 		hikari hopalong [Hh]yprland inaban japokwm kiwmi labwc laikawm lipstick liri 
@@ -34550,7 +34557,7 @@ sub set_gui {
 		tabby taiwins tinybox tinywl trinkster velox vimway vivarium 
 		wavy waybox way-?cooler wayfire wayhouse waymonad westeros westford 
 		weston wio\+? wxr[cd] xuake));
-		$matches .= $gui{'wl-comp'};
+		$matches .= $ps_data{'wl-comp'};
 	}
 	$matches = qr/$matches/; # remember qr/../i only added perl 5.014
 	process_gui(\@ps_gui,$matches);
@@ -34559,11 +34566,11 @@ sub set_gui {
 	main::uniq(\@ps_gui) if @ps_gui;
 	if ($dbg[5]){
 		print 'ps_gui: ', Data::Dumper::Dumper \@ps_gui;
-		print '%gui: ', Data::Dumper::Dumper \%gui;
+		print '%ps_data: ', Data::Dumper::Dumper \%ps_data;
 	}
 	if ($b_log){
 		main::log_data('dump','@ps_gui',\@ps_gui);
-		main::log_data('dump','%gui',\%gui);
+		main::log_data('dump','%ps_data',\%ps_data);
 	}
 	eval $end if $b_log;
 }
