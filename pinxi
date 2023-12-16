@@ -50,8 +50,8 @@ use POSIX qw(ceil uname strftime ttyname);
 ## INXI INFO ##
 my $self_name='pinxi';
 my $self_version='3.3.31';
-my $self_date='2023-12-15';
-my $self_patch='28';
+my $self_date='2023-12-16';
+my $self_patch='29';
 ## END INXI INFO ##
 
 my ($b_pledge,@pledges);
@@ -1180,7 +1180,7 @@ sub set {
 	# Config files should be passed in an array as a param to this function.
 	# Default intended use: global @CONFIGS;
 	foreach (@config_files){
-		next unless open(my $fh, '<', "$_");
+		next unless -e $_ && open(my $fh, '<', "$_");
 		my $b_configs;
 		$b_files = 1;
 		print "${line1}Configuration file: $_\n" if $b_show;
@@ -28271,6 +28271,37 @@ sub set_build_prop {
 	eval $end if $b_log;
 }
 
+# Return all detected compiler versions
+sub get_compiler_data {
+	eval $start if $b_log;
+	my $compiler = $_[0];
+	my $compiler_version;
+	my $compilers = [];
+	# NOTE: see %program_values for regex used for different gcc syntax
+	if (my $program = check_program($compiler)){
+		(my $name,$compiler_version) = ProgramData::full($compiler,$program);
+	}
+	if ($extra > 1){
+		# glob /usr/bin for gccs, strip out all non numeric values
+		if (my @temp = globber("/usr/{local/,}bin/${compiler}{-,}[0-9]*")){
+			# usually like gcc-11 but sometimes gcc-11.2.0
+			foreach (@temp){
+				if (/\/${compiler}-?(\d+)(\.\d+)?/){
+					# freebsd ships with /usr/local/bin/gcc48, sigh...
+					my $working = ($bsd_type && $1 >= 30) ? $1/10 : $1;
+					push(@$compilers, $working) if (!$compiler_version || $compiler_version !~ /^$working\./);
+				}
+			}
+			@$compilers = sort {$a <=> $b} @$compilers if @$compilers;
+		}
+	}
+	unshift(@$compilers, $compiler_version) if $compiler_version;
+	log_data('dump','@$compilers',$compilers) if $b_log;
+	# print "$compiler\n", Data::Dumper::Dumper $compilers;
+	eval $end if $b_log;
+	return $compilers;
+}
+
 ## CompilerVersion
 {
 package CompilerVersion;
@@ -31391,39 +31422,6 @@ sub get_driver_modules {
 	return $modules;
 }
 
-# Return all detected gcc versions
-sub get_gcc_data {
-	eval $start if $b_log;
-	my ($gcc,@data,@temp);
-	my $gccs = [];
-	# NOTE: We can't use program_version because we don't yet know where
-	# the version number is
-	if (my $program = check_program('gcc')){
-		@data = grabber("$program --version 2>/dev/null");
-		$gcc = awk(\@data,'^gcc');
-	}
-	if ($gcc){
-		# strip out: gcc (Debian 6.3.0-18) 6.3.0 20170516
-		# gcc (GCC) 4.2.2 20070831 prerelease [FreeBSD]
-		$gcc =~ s/\([^\)]*\)//g;
-		$gcc = get_piece($gcc,2);
-	}
-	if ($extra > 1){
-		# glob /usr/bin for gccs, strip out all non numeric values
-		@temp = globber('/usr/bin/gcc-*');
-		# usually like gcc-11 but sometimes gcc-11.2.0
-		foreach (@temp){
-			if (/\/gcc-([0-9.]+)$/){
-				push(@$gccs, $1) if !$gcc || $1 ne $gcc;
-			}
-		}
-	}
-	unshift(@$gccs, $gcc) if $gcc;
-	log_data('dump','@gccs',$gccs) if $b_log;
-	eval $end if $b_log;
-	return $gccs;
-}
-
 ## GlabelData: public methods: set(), get()
 # Used only to get RAID ZFS gptid path standard name, like ada0p1
 {
@@ -33897,20 +33895,21 @@ package ProgramData;
 sub full {
 	eval $start if $b_log;
 	my ($values_id,$version_id,$level) = @_;
-	my (@full,$path);
+	my @full;
 	$level = 0 if !$level;
 	# print "val_id: $values_id ver_id:$version_id lev:$level ex:$extra\n";
+	ProgramData::set_values() if !$loaded{'program-values'};
 	$version_id = $values_id if !$version_id;
-	my @values = ProgramData::values($values_id); # values() is a Perl builtin.
-	if ($values[3]){
-		$full[0] = $values[3];
+	if (my $values = $program_values{$values_id}){
+		$full[0] = $values->[3];
 		# programs that have no version method return 0 0 for index 1 and 2
-		if ($extra >= $level && $values[1] && $values[2]){
-			$full[1] = version($version_id,$values[0],$values[1],$values[2],
-			$values[5],$values[6],$values[7],$values[8]);
+		if ($extra >= $level && $values->[1] && $values->[2]){
+			$full[1] = version($version_id,$values->[0],$values->[1],$values->[2],
+			$values->[5],$values->[6],$values->[7],$values->[8]);
 		}
 	}
-	$full[0] ||= '';
+	# should never trip since program should be whitelist, but mistakes happen!
+	$full[0] ||= $values_id;
 	$full[1] ||= '';
 	eval $end if $b_log;
 	return @full;
@@ -33922,6 +33921,7 @@ sub full {
 # 3: print name; 4: console 0/1; 5: [optional] exit first line 0/1; 
 # 6: [optional] 0/1 stderr output; 7: replace regex; 8: extra data]
 sub set_values {
+	$loaded{'program-values'} = 1;
 	%program_values = (
 	## Clients (IRC,chat) ##
 	'bitchx' => ['bitchx',2,'','BitchX',1,0,0,'',''],# special
@@ -33944,11 +33944,6 @@ sub set_values {
 	'weechat-curses' => ['[0-9.]+',1,'-v','WeeChat',1,0,0,'',''],
 	'xchat-gnome' => ['[0-9.]+',2,'-v','X-Chat-Gnome',1,1,0,'',''],
 	'xchat' => ['[0-9.]+',2,'-v','X-Chat',1,1,0,'',''],
-	## Compilers ##
-	'clang' => ['clang',3,'--version','clang',1,1,0,'',''],
-	'gcc' => ['^gcc',3,'--version','GCC',1,0,0,'',''], # not used due to inconsistent syntax
-	'gcc-apple' => ['Apple[[:space:]]LLVM',2,'--version','LLVM',1,0,0,'',''], # not used
-	'zigcc' => ['zigcc',0,'0','zigcc',1,1,0,'',''], # unverified
 	## Desktops / wm / compositors ##
 	'2bwm' => ['^2bwm',0,'0','2bWM',0,1,0,'',''], # unverified/based on mcwm
 	'3dwm' => ['^3dwm',0,'0','3Dwm',0,1,0,'',''], # unverified
@@ -34215,20 +34210,6 @@ sub set_values {
 	'xdmctl' => ['^xdm',0,'0','XDM',0,1,0,'',''],# opensuse/redhat may use this to start real dm
 	'xenodm' => ['^xenodm',0,'0','xenodm',0,1,0,'',''],
 	'xlogin' => ['^xlogin',0,'-V','xlogin',0,1,0,'',''], # unverified, probably clogin
-	## Init ##
-	'busybox' => ['busybox',2,'--help','BusyBox',0,1,1,'',''],
-	# Dinit version 0.15.1. [ends .]
-	'dinit' => ['^Dinit',3,'--version','Dinit',0,1,0,'',''],
-	# version: Epoch Init System 1.0.1 "Sage"
-	'epoch' => ['^Epoch',4,'version','Epoch',0,1,0,'',''],
-	'finit' => ['^Finit',2,'-v','finit',0,1,0,'',''],
-	# /sbin/openrc --version: openrc (OpenRC) 0.13
-	'openrc' => ['^openrc',3,'--version','OpenRC',0,1,0,'',''],
-	# /sbin/rc --version: rc (OpenRC) 0.11.8 (Gentoo Linux)
-	'rc' => ['^rc',3,'--version','OpenRC',0,1,0,'',''],
-	'shepherd' => ['^shepherd',4,'--version','Shepherd',0,1,0,'',''],
-	'systemd' => ['^systemd',2,'--version','systemd',0,1,0,'',''],
-	'upstart' => ['upstart',3,'--version','Upstart',0,1,0,'',''],
 	## Shells - not checked: ion, eshell ##
 	## See ShellData::shell_test() for unhandled but known shells
 	'ash' => ['',3,'pkg','ash',1,0,0,'',''], # special; dash precursor
@@ -34268,7 +34249,28 @@ sub set_values {
 	'gtk-launch' => ['^\S',1,'--version','GTK',0,1,0,'',''],
 	'qmake' => ['^^Using Qt version',4,'--version','Qt',0,0,0,'',''],
 	'qtdiag' => ['^qt',2,'--version','Qt',0,1,0,'',''],
-	## Tools ##
+	## Tools: Compilers ##
+	'clang' => ['clang',3,'--version','clang',1,1,0,'',''],
+	# gcc (Debian 6.3.0-18) 6.3.0 20170516
+	# gcc (GCC) 4.2.2 20070831 prerelease [FreeBSD]
+	'gcc' => ['^gcc',2,'--version','GCC',1,0,0,'\([^\)]*\)',''],
+	'gcc-apple' => ['Apple[[:space:]]LLVM',2,'--version','LLVM',1,0,0,'',''], # not used
+	'zigcc' => ['zigcc',0,'0','zigcc',1,1,0,'',''], # unverified
+	## Tools: Init ##
+	'busybox' => ['busybox',2,'--help','BusyBox',0,1,1,'',''],
+	# Dinit version 0.15.1. [ends .]
+	'dinit' => ['^Dinit',3,'--version','Dinit',0,1,0,'',''],
+	# version: Epoch Init System 1.0.1 "Sage"
+	'epoch' => ['^Epoch',4,'version','Epoch',0,1,0,'',''],
+	'finit' => ['^Finit',2,'-v','finit',0,1,0,'',''],
+	# /sbin/openrc --version: openrc (OpenRC) 0.13
+	'openrc' => ['^openrc',3,'--version','OpenRC',0,1,0,'',''],
+	# /sbin/rc --version: rc (OpenRC) 0.11.8 (Gentoo Linux)
+	'rc' => ['^rc',3,'--version','OpenRC',0,1,0,'',''],
+	'shepherd' => ['^shepherd',4,'--version','Shepherd',0,1,0,'',''],
+	'systemd' => ['^systemd',2,'--version','systemd',0,1,0,'',''],
+	'upstart' => ['upstart',3,'--version','Upstart',0,1,0,'',''],
+	## Tools: Miscellaneous ##
 	'sudo' => ['^Sudo',3,'-V','Sudo',1,1,0,'',''], # sudo pre 1.7 does not have --version
 	);
 }
@@ -34283,7 +34285,7 @@ sub set_values {
 # args: 0: program lower case name
 sub values {
 	my @values;
-	ProgramData::set_values() if !%program_values;
+	ProgramData::set_values() if !$loaded{'program-values'};
 	if (defined $program_values{$_[0]}){
 		@values = @{$program_values{$_[0]}};
 	}
@@ -36787,29 +36789,35 @@ sub info_item {
 		}
 	}
 	if ($extra > 0){
-		my ($b_gcc,$clang,$clang_version,$gcc,$gcc_alt,$path,$zigcc,$zigcc_version);
-		my $gccs = main::get_gcc_data();
+		my ($clang,$clang_alt,$gcc,$gcc_alt,$path,$zigcc,$zigcc_version);
+		my $clangs = main::get_compiler_data('clang');
+		if (@$clangs){
+			$clang = shift @$clangs;
+			if ($extra > 1 && @$clangs){
+				$clang_alt = join('/', @$clangs);
+			}
+			$clang ||= 'N/A'; # should not be needed after fix but leave in case undef
+		}
+		my $gccs = main::get_compiler_data('gcc');
 		if (@$gccs){
 			$gcc = shift @$gccs;
 			if ($extra > 1 && @$gccs){
 				$gcc_alt = join('/', @$gccs);
 			}
-			$b_gcc = 1;
 			$gcc ||= 'N/A'; # should not be needed after fix but leave in case undef
-		}
-		if ($path = main::check_program('clang')){
-			($clang,$clang_version) = ProgramData::full('clang',$path);
 		}
 		if ($path = main::check_program('zigcc')){
 			($zigcc,$zigcc_version) = ProgramData::full('zigcc',$path);
 		}
-		my $compiler = ($b_gcc || $clang || $zigcc) ? '': 'N/A';
+		my $compiler = ($gcc || $clang || $zigcc) ? '': 'N/A';
 		$data->{$data_name}[$index]{main::key($num++,1,1,'Compilers')} = $compiler;
 		if ($clang){
-			$clang_version ||= 'N/A';
-			$data->{$data_name}[$index]{main::key($num++,0,2,'clang')} = $clang_version;
+			$data->{$data_name}[$index]{main::key($num++,0,2,'clang')} = $clang;
+			if ($extra > 1 && $clang_alt){
+				$data->{$data_name}[$index]{main::key($num++,0,3,'alt')} = $clang_alt;
+			}
 		}
-		if ($b_gcc){
+		if ($gcc){
 			$data->{$data_name}[$index]{main::key($num++,1,2,'gcc')} = $gcc;
 			if ($extra > 1 && $gcc_alt){
 				$data->{$data_name}[$index]{main::key($num++,0,3,'alt')} = $gcc_alt;
