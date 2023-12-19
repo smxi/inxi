@@ -9586,6 +9586,7 @@ sub cpuinfo_data_grabber {
 		# $file = "$fake_data_dir/cpu/sys-ci-pairs/x86-brickwizard-atom-n270~cpuinfo-1.txt";
 		# $file = "$fake_data_dir/cpu/sys-ci-pairs/x86-amd-phenom-chrisretusn-cpuinfo-1.txt";
 		# $file = "$fake_data_dir/cpu/sys-ci-pairs/x86-drgibbon-intel-i7-cpuinfo.txt";
+		 $file = "$fake_data_dir/cpu/sys-ci-pairs/ryzen-threadripper-2x-32-3950x-cpuinfo.txt";
 		## ARM/MIPS
 		# $file = "$fake_data_dir/cpu/arm/arm-4-core-pinebook-1.txt";
 		# $file = "$fake_data_dir/cpu/arm/armv6-single-core-1.txt";
@@ -9845,11 +9846,10 @@ sub cpu_sys_data {
 
 sub sys_data_grabber {
 	eval $start if $b_log;
-	my (@files);
+	my ($file,@files);
 	# this data has to match the data in cpuinfo grabber fake cpu, and remember
 	# to use --arm flag if arm tests
 	if ($fake{'cpu'}){
-		# my $file;
 		## CPU sys/cpuinfo pairs:
 		# $file = "$fake_data_dir/cpu/sys-ci-pairs/android-pocom3-fake-sys.txt";
 		# $file = "$fake_data_dir/cpu/sys-ci-pairs/arm-pine64-sys-1.txt";
@@ -9859,7 +9859,8 @@ sub sys_data_grabber {
 		# $file = "$fake_data_dir/cpu/sys-ci-pairs/x86-brickwizard-atom-n270~sys-1.txt";
 		# $file = "$fake_data_dir/cpu/sys-ci-pairs/x86-amd-phenom-chrisretusn-sys-1.txt";
 		# $file = "$fake_data_dir/cpu/sys-ci-pairs/x86-drgibbon-intel-i7-sys.txt";
-		# @files = main::reader($file);
+		 $file = "$fake_data_dir/cpu/sys-ci-pairs/ryzen-threadripper-2x-32-3950x-sys.txt";
+		 @files = main::reader($file);
 	}
 	# There's a massive time hit reading full globbed set of files, so grab and 
 	# read only what we need.
@@ -30366,22 +30367,33 @@ sub set_gpart_data {
 }
 }
 
-sub get_display_manager {
+## DisplayManager
+# Public method: get()
+# returns hash of array of arrays for dm/lm
+# hash: dm, lm
+# 0: dm/lm print name
+# 1: dm version
+# 2: dm status 
+{
+package DisplayManager;
+my ($found,@glob);
+
+sub get {
 	eval $start if $b_log;
-	my (@glob,$link,$path,@temp);
-	my $found = [];
-	# ldm - LTSP display manager. Note that sddm does not appear to have a .pid 
-	# extension in Arch. Guessing on cdm, qingy. pcdm uses vt, PCDM-vt9.pid
-	# Not verified: qingy emptty; greetd.run verified, but alternate:
-	# greetd-684.sock if no .run seen. Add Ly in case they add run file/directory.
-	# greetd frontends: agreety dlm gtkgreet qtgreet tuigreet wlgreet
-	# mlogin may be mlogind, not verified
-	my @dms = qw(brzdm cdm clogin elogind emptty entranced 
-	gdm gdm3 greetd kdm kdm3 kdmctl ldm lemurs lightdm lxdm ly mdm mlogin nodm 
-	pcdm qingy sddm seatd slim slimski tbsm tdm udm wdm xdm xdmctl xenodm xlogin);
-	# these are the only one I know of so far that have version info. xlogin /
-	# clogin do, -V, brzdm -v, but syntax not verified.
-	my @dms_version = qw(gdm gdm3 lightdm ly slim);
+	set_glob();
+	$found = {};
+	get_dm_lm('dm');
+	if (!$found->{'dm'}){
+		test_ps_dm()
+	}
+	get_dm_lm('lm') if !$found->{'dm'};
+	print 'dm data: ', Data::Dumper::Dumper $found if $dbg[60];
+	main::log_data('dump','display manager: %$found',$found) if $b_log;
+	eval $end if $b_log;
+	return $found;
+}
+
+sub set_glob {
 	my $pattern = '';
 	if (-d '/run'){
 		$pattern .= '/run';
@@ -30398,7 +30410,30 @@ sub get_display_manager {
 	if ($pattern){
 		$pattern = '{' . $pattern . '}/*';
 		# for dm.pid type file or dm directory names, like greetd-684.sock
-		@glob = globber($pattern);
+		@glob = main::globber($pattern);
+		main::uniq(\@glob) if @glob;
+	}
+	print '@glob: ', Data::Dumper::Dumper \@glob if $dbg[60];
+	main::log_data('dump','dm @glob:',\@glob) if $b_log;
+}
+
+# args: 0: dm/lm, first test for dms, then if no dms, test for lms
+sub get_dm_lm {
+	eval $start if $b_log;
+	my $type = $_[0];
+	my (@dms,@glob_working,@temp);
+	# See: docs/inxi-desktops-wm.txt for Display/login manager info.
+	# Guessing on cdm, qingy. pcdm uses vt, PCDM-vt9.pid
+	# Add Ly in case they add run file/directory.
+	if ($type eq 'dm'){
+		@dms = qw(brzdm cdm emptty entranced gdm gdm3 kdm kdm3 kdmctl ldm lemurs 
+		lightdm loginx lxdm ly mdm nodm pcdm qingy sddm slim slimski tdm 
+		udm wdm x3dm xdm xdmctl xenodm);
+	}
+	# greetd frontends: agreety dlm gtkgreet qtgreet tuigreet wlgreet
+	# mlogin may be mlogind, not verified. 
+	else {
+		@dms = qw(elogind greetd mlogin seatd tbsm);
 	}
 	# print Data::Dumper::Dumper \@glob;
 	# used to test for .pid/lock type file or directory, now just see if the 
@@ -30406,57 +30441,50 @@ sub get_display_manager {
 	# if directory existed previously anyway.
 	if (@glob){
 		my $search = join('|',@dms);
-		@glob = grep {/\/($search)\b/} @glob;
-		# $search = join('|',@glob);
-		if (@glob){
-			uniq(\@glob);
-			foreach my $item (@glob){
+		@glob_working = grep {/\/($search)\b/} @glob;
+		if (@glob_working){
+			foreach my $item (@glob_working){
 				my @id = grep {$item =~ /\/$_\b/} @dms;
 				push(@temp,@id) if @id;
 			}
 			# note: there were issues with duplicated dm's, using uniq will handle those
-			uniq(\@temp) if @temp;
+			main::uniq(\@temp) if @temp;
 		}
 	}
 	@dms = @temp;
-	my (@dm_info);
+	my @dm_info;
 	# print Data::Dumper::Dumper \@dms;
 	# we know the files or directories exist so no need for further checks here
 	foreach my $dm (@dms){
-		# do nothing, we just wanted the path
-		if ($extra > 2 && (grep {$dm eq $_} @dms_version) && 
-		 ($path = check_program($dm))){}
-		else {$path = $dm}
-		# print "$path $extra\n";
 		@dm_info = ();
-		($dm_info[0],$dm_info[1]) = ProgramData::full($dm,$path,3);
+		($dm_info[0],$dm_info[1]) = ProgramData::full($dm,'',3);
 		if (scalar @dms > 1 && (my $temp = ServiceData::get('status',$dm))){
-			$dm_info[2] = message('stopped') if $temp && $temp =~ /stopped|disabled/;
+			$dm_info[2] = main::message('stopped') if $temp && $temp =~ /stopped|disabled/;
 		}
-		push(@$found,[@dm_info]);
+		push(@{$found->{$type}},[@dm_info]);
 	}
-	if (!@$found){
-		PsData::set_dm();
-		if (@{$ps_data{'dm-active'}}){
-			# ly does not have a run/pid file
-			if (grep {$_ eq 'ly'} @{$ps_data{'dm-active'}}){
-				($dm_info[0],$dm_info[1]) = ProgramData::full('ly','ly',3);
-				$found->[0] = [@dm_info];
-			}
-			elsif (grep {/startx$/} @{$ps_data{'dm-active'}}){
-				$found->[0] = ['startx'];
-			}
-			elsif (grep {$_ eq 'xinit'} @{$ps_data{'dm-active'}}){
-				$found->[0] = ['xinit'];
-			}
-		}
-	}
-	# might add this in, but the rate of new dm's makes it more likely it's an 
-	# unknown dm, so we'll keep output to N/A
-	print 'dm data: ', Data::Dumper::Dumper $found if $dbg[60];
-	log_data('dump','display manager: @$found',$found) if $b_log;
 	eval $end if $b_log;
-	return $found;
+}
+
+sub test_ps_dm {
+	eval $start if $b_log;
+	PsData::set_dm();
+	if (@{$ps_data{'dm-active'}}){
+		my @dm_info;
+		# ly does not have a run/pid file
+		if (grep {$_ eq 'ly'} @{$ps_data{'dm-active'}}){
+			($dm_info[0],$dm_info[1]) = ProgramData::full('ly','ly',3);
+			$found->{'dm'}[0] = [@dm_info];
+		}
+		elsif (grep {/startx$/} @{$ps_data{'dm-active'}}){
+			$found->{'dm'}[0] = ['startx'];
+		}
+		elsif (grep {$_ eq 'xinit'} @{$ps_data{'dm-active'}}){
+			$found->{'dm'}[0] = ['xinit'];
+		}
+	}
+	eval $end if $b_log;
+}
 }
 
 ## DistroData
@@ -34176,14 +34204,14 @@ sub set_values {
 	'xmonad' => ['^xmonad',2,'--version','XMonad',0,1,0,'',''],
 	'xuake' => ['^xuake',0,'0','xuake',0,1,0,'',''], # unverified
 	'yeahwm' => ['^yeahwm',0,'--version','YeahWM',0,1,0,'',''], # unverified
-	## Display Managers (dm) ##
+	## Display/Login Managers (dm,lm) ##
 	'brzdm' => ['^brzdm version',3,'-v','brzdm',0,1,0,'',''], # unverified, slim fork
 	'cdm' => ['^cdm',0,'0','CDM',0,1,0,'',''],
 	# might be xlogin, unknown output for -V
-	'clogin' => ['^clogin',0,'-V','clogin',0,1,0,'',''], # unverified, maybe xlogin
-	'elogind' => ['^elogind',0,'0','elogind',0,1,0,'',''],
+	'clogin' => ['^clogin',0,'-V','clogin',0,1,0,'',''], # unverified, cysco router
+	'elogind' => ['^elogind',0,'0','elogind',0,1,0,'',''], # no version
 	'emptty' => ['^emptty',0,'0','EMPTTY',0,1,0,'',''], # unverified
-	'entrance' => ['^entrance',0,'0','Entrance',0,1,0,'',''],
+	'entranced' => ['^entrance',0,'0','Entrance',0,1,0,'',''],
 	'gdm' => ['^gdm',2,'--version','GDM',0,1,0,'',''],
 	'gdm3' => ['^gdm',2,'--version','GDM3',0,1,0,'',''],
 	'greetd' => ['^greetd',0,'0','greetd',0,1,0,'',''], # no version
@@ -34193,6 +34221,7 @@ sub set_values {
 	'ldm' => ['^ldm',0,'0','LDM',0,1,0,'',''],
 	'lemurs' => ['^lemurs',0,'0','lemurs',0,1,0,'',''], # unverified
 	'lightdm' => ['^lightdm',2,'--version','LightDM',0,1,1,'',''],
+	'loginx' => ['^loginx',0,'0','loginx',0,1,0,'',''], # unverified
 	'lxdm' => ['^lxdm',0,'0','LXDM',0,1,0,'',''],
 	'ly' => ['^ly',3,'--version','Ly',0,1,0,'',''],
 	'mdm' => ['^mdm',0,'0','MDM',0,1,0,'',''],
@@ -34205,13 +34234,14 @@ sub set_values {
 	'slim' => ['slim version',3,'-v','SLiM',0,1,0,'',''],
 	'slimski' => ['slimski version',3,'-v','slimski',0,1,0,'',''], # slim fork
 	'tbsm' => ['^tbsm',0,'0','tbsm',0,1,0,'',''], # unverified
-	'tdm' => ['^tdm',0,'0','TDM',0,1,0,'',''],
+	'tdm' => ['^tdm',0,'0','TDM',0,1,0,'',''], # could be consold-tdm or tizen dm
 	'udm' => ['^udm',0,'0','udm',0,1,0,'',''],
 	'wdm' => ['^wdm',0,'0','WINGs DM',0,1,0,'',''],
+	'x3dm' => ['^x3dm',0,'0','X3DM',0,1,0,'',''], # unverified
 	'xdm' => ['^xdm',0,'0','XDM',0,1,0,'',''],
 	'xdmctl' => ['^xdm',0,'0','XDM',0,1,0,'',''],# opensuse/redhat may use this to start real dm
 	'xenodm' => ['^xenodm',0,'0','xenodm',0,1,0,'',''],
-	'xlogin' => ['^xlogin',0,'-V','xlogin',0,1,0,'',''], # unverified, probably clogin
+	'xlogin' => ['^xlogin',0,'-V','xlogin',0,1,0,'',''], # unverified, cysco router
 	## Shells - not checked: ion, eshell ##
 	## See ShellData::shell_test() for unhandled but known shells
 	'ash' => ['',3,'pkg','ash',1,0,0,'',''], # special; dash precursor
@@ -36872,7 +36902,7 @@ sub system_item {
 	my ($cont_desk,$ind_dm,$num) = (1,2,0);
 	my ($index);
 	my $data_name = main::key($prefix++,1,0,'System');
-	my ($desktop,$desktop_info,$desktop_key,$dm_key,$toolkit,$wm) = ('','','Desktop','dm','','');
+	my ($desktop,$desktop_info,$desktop_key,$toolkit,$wm) = ('','','Desktop','','');
 	my (@desktop_data,$cs_curr,$cs_avail,$desktop_version,
 	$screensaver_running,$screensaver_avail,$tk_version,$wm_version);
 	my $data = {
@@ -36882,6 +36912,8 @@ sub system_item {
 	if ($show{'host'}){
 		$data->{$data_name}[$index]{main::key($num++,0,1,'Host')} = main::get_hostname();
 	}
+	my $dms = DisplayManager::get();
+	my $dm_key = (!$dms->{'dm'} && $dms->{'lm'}) ? 'Login' : 'DM';
 	my $kernel_data = main::get_kernel_data();
 	$data->{$data_name}[$index]{main::key($num++,1,1,'Kernel')} = $kernel_data->[0];
 	$data->{$data_name}[$index]{main::key($num++,0,2,'arch')} = $kernel_data->[1];
@@ -36967,9 +36999,11 @@ sub system_item {
 			$desktop = "$tty_type$tty";
 		}
 		$desktop_key = 'Console';
-		$dm_key = 'DM';
 		$ind_dm = 1;
 		$cont_desk = 0;
+	}
+	else {
+		$dm_key = lc($dm_key);
 	}
 	$desktop ||= 'N/A';
 	$data->{$data_name}[$index]{main::key($num++,$cont_desk,1,$desktop_key)} = $desktop;
@@ -37006,13 +37040,13 @@ sub system_item {
 				}
 			}
 		}
-		my $dms = main::get_display_manager();
 		# note: version only present if proper extra level so no need to test again
-		if (@$dms || $desktop_key ne 'Console'){
-			if (@$dms && scalar @$dms > 1){
+		if (%$dms || $desktop_key ne 'Console'){
+			my $type = (!$dms->{'dm'} && $dms->{'lm'}) ? $dms->{'lm'}: $dms->{'dm'};
+			if ($type && @$type && scalar @$type > 1){
 				my $i = 0;
 				$data->{$data_name}[$index]{main::key($num++,1,$ind_dm,$dm_key)} = '';
-				foreach my $dm_data (@{$dms}){
+				foreach my $dm_data (@{$type}){
 					$i++;
 					$data->{$data_name}[$index]{main::key($num++,1,($ind_dm + 1),$i)} = $dm_data->[0];
 					if ($dm_data->[1]){
@@ -37024,10 +37058,10 @@ sub system_item {
 				}
 			}
 			else {
-				my $dm = ($dms && $dms->[0][0]) ? $dms->[0][0] : 'N/A';
+				my $dm = ($type && $type->[0][0]) ? $type->[0][0] : 'N/A';
 				$data->{$data_name}[$index]{main::key($num++,1,$ind_dm,$dm_key)} = $dm;
-				if ($dms && $dms->[0][1]){
-					$data->{$data_name}[$index]{main::key($num++,0,($ind_dm + 1),'v')} = $dms->[0][1];
+				if ($type && @{$type} && $type->[0][1]){
+					$data->{$data_name}[$index]{main::key($num++,0,($ind_dm + 1),'v')} = $type->[0][1];
 				}
 			}
 			
