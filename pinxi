@@ -51,7 +51,7 @@ use POSIX qw(ceil uname strftime ttyname);
 my $self_name='pinxi';
 my $self_version='3.3.31';
 my $self_date='2023-12-19';
-my $self_patch='31';
+my $self_patch='32';
 ## END INXI INFO ##
 
 my ($b_pledge,@pledges);
@@ -5575,9 +5575,9 @@ sub show_options {
 	['2', '-R', '', "md-raid: Superblock (if present), algorithm. If resync, 
 	shows progress bar. Hardware RAID Chip vendor:product ID."],
 	['2', '-s', '', "DIMM/SOC voltages (ipmi only)."],
-	['2', '-S', '', "Display manager (dm) in desktop output (e.g. kdm, 
-	gdm3, lightdm); active window manager if detected; desktop toolkit, 
-	if available (Xfce/KDE/Trinity only)."],
+	['2', '-S', '', "Display/Login manager (dm,login) in desktop output (e.g. kdm, 
+	gdm3, lightdm, greetd, seatd); active window manager if detected; desktop 
+	toolkit, if available (Xfce/KDE/Trinity only)."],
 	['2', '--slots', '', "Slot length; slot voltage, if available."],
 	);
 	if ($use{'weather'}){
@@ -5617,7 +5617,7 @@ sub show_options {
 	['2', '-S', '', "Kernel clocksource; if in non console wm/desktop, and if 
 	available: panel/tray/bar/dock info (like lxpanel, xfce4-panel, mate-panel); 
 	window manager version number; virtual terminal number; tools item with 
-	screensavers/lockers running; dm version number."],
+	screensavers/lockers running; display/login manager version number."],
 	);
 	if ($use{'weather'}){
 		push(@$rows, 
@@ -28288,12 +28288,14 @@ sub get_compiler_data {
 	if ($extra > 1){
 		# glob /usr/bin,/usr/local/bin for ccs, strip out all non numeric values
 		if (my @temp = globber("/usr/{local/,}bin/${compiler}{-,}[0-9]*")){
-			# usually like gcc-11 but sometimes gcc-11.2.0
+			# usually: gcc-11, sometimes: gcc-11.2.0, gcc-2.8, gcc48 [FreeBSD]
 			foreach (@temp){
-				if (/\/${compiler}-?(\d+)(\.\d+)?/){
-					# freebsd ships with /usr/local/bin/gcc48, sigh...
+				if (/\/${compiler}-?(\d+\.\d+|\d+)(\.\d+)?/){
+					# freebsd uses /usr/local/bin/gcc48, gcc34 for old gccs. Why?
 					my $working = ($bsd_type && $1 >= 30) ? $1/10 : $1;
-					push(@$compilers, $working) if (!$compiler_version || $compiler_version !~ /^$working\./);
+					if (!$compiler_version || $compiler_version !~ /^$working\b/){
+						push(@$compilers, $working);
+					}
 				}
 			}
 			@$compilers = sort {$a <=> $b} @$compilers if @$compilers;
@@ -28301,98 +28303,9 @@ sub get_compiler_data {
 	}
 	unshift(@$compilers, $compiler_version) if $compiler_version;
 	log_data('dump','@$compilers',$compilers) if $b_log;
-	# print "$compiler\n", Data::Dumper::Dumper $compilers;
+	print "$compiler\n", Data::Dumper::Dumper $compilers if $dbg[62];
 	eval $end if $b_log;
 	return $compilers;
-}
-
-## CompilerVersion
-{
-package CompilerVersion;
-
-sub get {
-	eval $start if $b_log;
-	my $compiler = []; # we want an array ref to return if not set
-	if (my $file = $system_files{'proc-version'}){
-		version_proc($compiler,$file);
-	}
-	elsif ($bsd_type){
-		version_bsd($compiler);
-	}
-	eval $end if $b_log;
-	return $compiler;
-}
-
-# args: 0: compiler by ref
-sub version_bsd {
-	eval $start if $b_log;
-	my $compiler = $_[0];
-	if ($alerts{'sysctl'}->{'action'} && $alerts{'sysctl'}->{'action'} eq 'use'){
-		if ($sysctl{'kernel'}){
-			my @working;
-			foreach (@{$sysctl{'kernel'}}){
-				# Not every line will have a : separator though the processor should make 
-				# most have it. This appears to be 10.x late feature add, I don't see it
-				# on earlier BSDs
-				if (/^kern.compiler_version/){
-					@working = split(/:\s*/, $_);
-					$working[1] =~ /.*(clang|gcc|zigcc)\sversion\s([\S]+)\s.*/;
-					@$compiler = ($1,$2);
-					last;
-				}
-			}
-		}
-		# OpenBSD doesn't show compiler data in sysctl or dboot but it's going to
-		# be Clang until way into the future, and it will be the installed version.
-		if (ref $compiler ne 'ARRAY' || !@$compiler){
-			if (my $path = main::check_program('clang')){
-				($compiler->[0],$compiler->[1]) = ProgramData::full('clang',$path);
-			}
-		}
-	}
-	main::log_data('dump','@$compiler',$compiler) if $b_log;
-	eval $end if $b_log;
-}
-
-# args: 0: compiler by ref; 1: proc file name
-sub version_proc {
-	eval $start if $b_log;
-	my ($compiler,$file) = @_;
-	if (my $result = main::reader($file,'',0)){
-		my $version;
-		if ($fake{'compiler'}){
-			# $result = $result =~ /\*(gcc|clang)\*eval\*/;
-			# $result='Linux version 5.4.0-rc1 (sourav@archlinux-pc) (clang version 9.0.0 (tags/RELEASE_900/final)) #1 SMP PREEMPT Sun Oct 6 18:02:41 IST 2019';
-			# $result='Linux version 5.8.3-fw1 (fst@x86_64.frugalware.org) ( OpenMandriva 11.0.0-0.20200819.1 clang version 11.0.0 (/builddir/build/BUILD/llvm-project-release-11.x/clang 2a0076812cf106fcc34376d9d967dc5f2847693a), LLD 11.0.0)';
-			# $result='Linux version 5.8.0-18-generic (buildd@lgw01-amd64-057) (gcc (Ubuntu 10.2.0-5ubuntu2) 10.2.0, GNU ld (GNU Binutils for Ubuntu) 2.35) #19-Ubuntu SMP Wed Aug 26 15:26:32 UTC 2020';
-			# $result='Linux version 5.8.9-fw1 (fst@x86_64.frugalware.org) (gcc (Frugalware Linux) 9.2.1 20200215, GNU ld (GNU Binutils) 2.35) #1 SMP PREEMPT Tue Sep 15 16:38:57 CEST 2020';
-			# $result='Linux version 5.8.0-2-amd64 (debian-kernel@lists.debian.org) (gcc-10 (Debian 10.2.0-9) 10.2.0, GNU ld (GNU Binutils for Debian) 2.35) #1 SMP Debian 5.8.10-1 (2020-09-19)';
-			# $result='Linux version 5.9.0-5-amd64 (debian-kernel@lists.debian.org) (gcc-10 (Debian 10.2.1-1) 10.2.1 20201207, GNU ld (GNU Binutils for Debian) 2.35.1) #1 SMP Debian 5.9.15-1 (2020-12-17)';
-			# $result='Linux version 2.6.1 (GNU 0.9 GNU-Mach 1.8+git20201007-486/Hurd-0.9 i686-AT386)';
-			# $result='NetBSD version 9.1 (netbsd@localhost) (gcc version 7.5.0) NetBSD 9.1 (GENERIC) #0: Sun Oct 18 19:24:30 UTC 2020';
-			 #$result='Linux version 6.0.8-0-generic (chimera@chimera) (clang version 15.0.4, LLD 15.0.4) #1 SMP PREEMPT_DYNAMIC Fri Nov 11 13:45:29 UTC 2022';
-			# 2023 ubuntu, sigh..
-			# $result='Linux version 6.5.8-1-liquorix-amd64 (steven@liquorix.net) (gcc (Debian 13.2.0-4) 13.2.0, GNU ld (GNU Binutils for Debian) 2.41) #1 ZEN SMP PREEMPT liquorix 6.5-9.1~trixie (2023-10-19)';
-			# $result='Linux version 6.5.0-9-generic (buildd@bos03-amd64-043) (x86_64-linux-gnu-gcc-13 (Ubuntu 13.2.0-4ubuntu3) 13.2.0, GNU ld (GNU Binutils for Ubuntu) 2.41) #9-Ubuntu SMP PREEMPT_DYNAMIC Sat Oct  7 01:35:40 UTC 2023';
-			# $result='Linux version 6.5.13-un-def-alt1 (builder@localhost.localdomain) (gcc-13 (GCC) 13.2.1 20230817 (ALT Sisyphus 13.2.1-alt2), GNU ld (GNU Binutils) 2.41.0.20230826) #1 SMP PREEMPT_DYNAMIC Wed Nov 29 15:54:38 UTC 2023';
-		}
-		# Note: zigcc is only theoretical, but someone is going to try it!
-		# cleanest, old style: 'clang version 9.0.0 (' | 'gcc version 7.5.0'
-		if ($result =~ /(gcc|clang|zigcc).*?version\s([^,\s\)]+)/){
-			@$compiler = ($1,$2);
-		}
-		# new styles: compiler + stuff + x.y.z. Ignores modifiers to number: -4, -ubuntu
-		elsif ($result =~ /(gcc|clang|zigcc).*?\s(\d+(\.\d+){2,4})[)\s,_-]/){
-			@$compiler = ($1,$2);
-		}
-		# failed, let's at least try for compiler type
-		elsif ($result =~ /(gcc|clang|zigcc)/){
-			@$compiler = ($1,'N/A');
-		}
-	}
-	main::log_data('dump','@$compiler',$compiler) if $b_log;
-	eval $end if $b_log;
-}
 }
 
 sub set_dboot_data {
@@ -31939,6 +31852,95 @@ sub get_kernel_clocksource {
 		}
 	}
 	eval $end if $b_log;
+}
+
+## KernelCompiler
+{
+package KernelCompiler;
+
+sub get {
+	eval $start if $b_log;
+	my $compiler = []; # we want an array ref to return if not set
+	if (my $file = $system_files{'proc-version'}){
+		version_proc($compiler,$file);
+	}
+	elsif ($bsd_type){
+		version_bsd($compiler);
+	}
+	eval $end if $b_log;
+	return $compiler;
+}
+
+# args: 0: compiler by ref
+sub version_bsd {
+	eval $start if $b_log;
+	my $compiler = $_[0];
+	if ($alerts{'sysctl'}->{'action'} && $alerts{'sysctl'}->{'action'} eq 'use'){
+		if ($sysctl{'kernel'}){
+			my @working;
+			foreach (@{$sysctl{'kernel'}}){
+				# Not every line will have a : separator though the processor should make 
+				# most have it. This appears to be 10.x late feature add, I don't see it
+				# on earlier BSDs
+				if (/^kern.compiler_version/){
+					@working = split(/:\s*/, $_);
+					$working[1] =~ /.*(clang|gcc|zigcc)\sversion\s([\S]+)\s.*/;
+					@$compiler = ($1,$2);
+					last;
+				}
+			}
+		}
+		# OpenBSD doesn't show compiler data in sysctl or dboot but it's going to
+		# be Clang until way into the future, and it will be the installed version.
+		if (ref $compiler ne 'ARRAY' || !@$compiler){
+			if (my $path = main::check_program('clang')){
+				($compiler->[0],$compiler->[1]) = ProgramData::full('clang',$path);
+			}
+		}
+	}
+	main::log_data('dump','@$compiler',$compiler) if $b_log;
+	eval $end if $b_log;
+}
+
+# args: 0: compiler by ref; 1: proc file name
+sub version_proc {
+	eval $start if $b_log;
+	my ($compiler,$file) = @_;
+	if (my $result = main::reader($file,'',0)){
+		my $version;
+		if ($fake{'compiler'}){
+			# $result = $result =~ /\*(gcc|clang)\*eval\*/;
+			# $result='Linux version 5.4.0-rc1 (sourav@archlinux-pc) (clang version 9.0.0 (tags/RELEASE_900/final)) #1 SMP PREEMPT Sun Oct 6 18:02:41 IST 2019';
+			# $result='Linux version 5.8.3-fw1 (fst@x86_64.frugalware.org) ( OpenMandriva 11.0.0-0.20200819.1 clang version 11.0.0 (/builddir/build/BUILD/llvm-project-release-11.x/clang 2a0076812cf106fcc34376d9d967dc5f2847693a), LLD 11.0.0)';
+			# $result='Linux version 5.8.0-18-generic (buildd@lgw01-amd64-057) (gcc (Ubuntu 10.2.0-5ubuntu2) 10.2.0, GNU ld (GNU Binutils for Ubuntu) 2.35) #19-Ubuntu SMP Wed Aug 26 15:26:32 UTC 2020';
+			# $result='Linux version 5.8.9-fw1 (fst@x86_64.frugalware.org) (gcc (Frugalware Linux) 9.2.1 20200215, GNU ld (GNU Binutils) 2.35) #1 SMP PREEMPT Tue Sep 15 16:38:57 CEST 2020';
+			# $result='Linux version 5.8.0-2-amd64 (debian-kernel@lists.debian.org) (gcc-10 (Debian 10.2.0-9) 10.2.0, GNU ld (GNU Binutils for Debian) 2.35) #1 SMP Debian 5.8.10-1 (2020-09-19)';
+			# $result='Linux version 5.9.0-5-amd64 (debian-kernel@lists.debian.org) (gcc-10 (Debian 10.2.1-1) 10.2.1 20201207, GNU ld (GNU Binutils for Debian) 2.35.1) #1 SMP Debian 5.9.15-1 (2020-12-17)';
+			# $result='Linux version 2.6.1 (GNU 0.9 GNU-Mach 1.8+git20201007-486/Hurd-0.9 i686-AT386)';
+			# $result='NetBSD version 9.1 (netbsd@localhost) (gcc version 7.5.0) NetBSD 9.1 (GENERIC) #0: Sun Oct 18 19:24:30 UTC 2020';
+			 #$result='Linux version 6.0.8-0-generic (chimera@chimera) (clang version 15.0.4, LLD 15.0.4) #1 SMP PREEMPT_DYNAMIC Fri Nov 11 13:45:29 UTC 2022';
+			# 2023 ubuntu, sigh..
+			# $result='Linux version 6.5.8-1-liquorix-amd64 (steven@liquorix.net) (gcc (Debian 13.2.0-4) 13.2.0, GNU ld (GNU Binutils for Debian) 2.41) #1 ZEN SMP PREEMPT liquorix 6.5-9.1~trixie (2023-10-19)';
+			# $result='Linux version 6.5.0-9-generic (buildd@bos03-amd64-043) (x86_64-linux-gnu-gcc-13 (Ubuntu 13.2.0-4ubuntu3) 13.2.0, GNU ld (GNU Binutils for Ubuntu) 2.41) #9-Ubuntu SMP PREEMPT_DYNAMIC Sat Oct  7 01:35:40 UTC 2023';
+			# $result='Linux version 6.5.13-un-def-alt1 (builder@localhost.localdomain) (gcc-13 (GCC) 13.2.1 20230817 (ALT Sisyphus 13.2.1-alt2), GNU ld (GNU Binutils) 2.41.0.20230826) #1 SMP PREEMPT_DYNAMIC Wed Nov 29 15:54:38 UTC 2023';
+		}
+		# Note: zigcc is only theoretical, but someone is going to try it!
+		# cleanest, old style: 'clang version 9.0.0 (' | 'gcc version 7.5.0'
+		if ($result =~ /(gcc|clang|zigcc).*?version\s([^,\s\)]+)/){
+			@$compiler = ($1,$2);
+		}
+		# new styles: compiler + stuff + x.y.z. Ignores modifiers to number: -4, -ubuntu
+		elsif ($result =~ /(gcc|clang|zigcc).*?\s(\d+(\.\d+){2,4})[)\s,_-]/){
+			@$compiler = ($1,$2);
+		}
+		# failed, let's at least try for compiler type
+		elsif ($result =~ /(gcc|clang|zigcc)/){
+			@$compiler = ($1,'N/A');
+		}
+	}
+	main::log_data('dump','@$compiler',$compiler) if $b_log;
+	eval $end if $b_log;
+}
 }
 
 sub get_kernel_data {
@@ -36928,7 +36930,7 @@ sub system_item {
 	$data->{$data_name}[$index]{main::key($num++,0,2,'arch')} = $kernel_data->[1];
 	$data->{$data_name}[$index]{main::key($num++,0,2,'bits')} = main::get_kernel_bits();
 	if ($extra > 0){
-		my $compiler = CompilerVersion::get(); # get compiler data
+		my $compiler = KernelCompiler::get(); # get compiler data
 		if (scalar @$compiler != 2){
 			@$compiler = ('N/A', '');
 		}
