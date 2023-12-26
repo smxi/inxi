@@ -2,12 +2,16 @@
 README for inxi-perl development branch: pinxi
 ================================================================================
 FILE:    README.txt
-VERSION: 1,1
-DATE:    2022-09-21
+VERSION: 1,2
+DATE:    2023-12-25
 
 --------------------------------------------------------------------------------
 CODEBERG SOURCE REPO
 --------------------------------------------------------------------------------
+
+Notice: as of 2023-12-25 the inxi-perl/pinxi branch will no longer receive 
+updates. To get to new pinxi, simply run: pinxi -U then pinxi -U again and you
+will be switched to the new branch version. 
 
 Packagers: Make sure to change your package URLs and repos to use codeberg.org.
 
