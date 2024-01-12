@@ -33,13 +33,13 @@ use Cwd qw(abs_path); # #abs_path realpath getcwd
 use Data::Dumper qw(Dumper); # print_r
 $Data::Dumper::Sortkeys = 1;
 # NOTE: load in SystemDebugger unless encounter issues with require/import
-# use File::Find;
 use File::stat; # needed for Xorg.0.log file mtime comparisons
 use Getopt::Long qw(GetOptions);
 # Note: default auto_abbrev is enabled
 Getopt::Long::Configure ('bundling', 'no_ignore_case', 
 'no_getopt_compat', 'no_auto_abbrev','pass_through');
 use POSIX qw(ceil uname strftime ttyname);
+use Time::HiRes qw(gettimeofday tv_interval usleep);
 # use bigint qw/hex/; # to handle large hex number warnings, but Perl 5.010 and later.
 # use Benchmark qw(:all);_
 # use Devel::Size qw(size total_size);
@@ -88,19 +88,14 @@ my (@btrfs_raid,@glabel,@labels,@lsblk,@lvm,@lvm_raid,@md_raid,@partitions,
 ## Debuggers
 my %debugger = ('level' => 0);
 my (@dbg,%fake,@t0);
-my ($b_hires,$b_log,$b_log_colors,$b_log_full);
+my ($b_log,$b_log_colors,$b_log_full);
 my ($end,$start,$fh_l,$log_file); # log file handle, file
 my ($t1,$t2,$t3) = (0,0,0); # timers
 ## debug / temp tools
 $debugger{'sys'} = 1;
 $client{'test-konvi'} = 0;
 
-# NOTE: redhat removed HiRes from Perl Core Modules. 
-if (eval {require Time::HiRes}){
-	Time::HiRes->import('gettimeofday','tv_interval','usleep');
-	$b_hires = 1;
-}
-@t0 = eval 'Time::HiRes::gettimeofday()' if $b_hires; # let's start it right away
+@t0 = Time::HiRes::gettimeofday(); # let's start it right away
 
 ## Booleans [busybox_ps not used actively]
 my ($b_admin,$b_android,$b_busybox_ps,$b_display,$b_irc,$b_root);
@@ -1371,8 +1366,7 @@ sub begin_logging {
 	my $data = '';
 	$end='main::log_data("fe", (caller(1))[3], "");';
 	$start='main::log_data("fs", (caller(1))[3], \@_);';
-	#$t3 = tv_interval ($t0, [gettimeofday]);
-	$t3 = eval 'Time::HiRes::tv_interval (\@t0, [Time::HiRes::gettimeofday()]);' if $b_hires;
+	$t3 = Time::HiRes::tv_interval (\@t0, [Time::HiRes::gettimeofday()]);
 	# print Dumper $@;
 	my $now = strftime "%Y-%m-%d %H:%M:%S", localtime;
 	return if $debugger{'timers'};
@@ -1391,7 +1385,6 @@ sub begin_logging {
 	# and echo the start data
 	$data = $line2;
 	$data .= "START $self_name LOGGING:\n";
-	$data .= "NOTE: HiRes timer not available.\n" if !$b_hires;
 	$data .= "$now\n";
 	$data .= "Elapsed since start: $t3\n";
 	$data .= "n: $self_name v: $self_version p: $self_patch d: $self_date\n";
@@ -1421,8 +1414,7 @@ sub log_data {
 			$args = "\n${spacer}Args: None";
 		}
 		# $t1 = [gettimeofday];
-		#$t3 = tv_interval ($t0, [gettimeofday]);
-		$t3 = eval 'Time::HiRes::tv_interval(\@t0, [Time::HiRes::gettimeofday()])' if $b_hires;
+		$t3 = Time::HiRes::tv_interval(\@t0, [Time::HiRes::gettimeofday()]);
 		# print Dumper $@;
 		$data = "Start: Function: $two$args\n${spacer}Elapsed: $t3\n";
 		$spacer='';
@@ -1430,8 +1422,7 @@ sub log_data {
 	}
 	elsif ($one eq 'fe'){
 		# print 'timer:', Time::HiRes::tv_interval(\@t0, [Time::HiRes::gettimeofday()]),"\n";
-		#$t3 = tv_interval ($t0, [gettimeofday]);
-		eval '$t3 = Time::HiRes::tv_interval(\@t0, [Time::HiRes::gettimeofday()])' if $b_hires;
+		$t3 = Time::HiRes::tv_interval(\@t0, [Time::HiRes::gettimeofday()]);
 		# print Dumper $t3;
 		$data = "${spacer}Elapsed: $t3\nEnd: Function: $two\n";
 		$spacer='';
@@ -1587,34 +1578,15 @@ sub run_debugger {
 }
 
 sub check_required_items {
-	print "Loading required debugger Perl File:: modules... \n";
-	# Fedora/Redhat doesn't include File::Find File::Copy in 
-	# core modules. why? Or rather, they deliberately removed them.
-	if (main::check_perl_module('File::Find')){
-		File::Find->import;
-	}
-	else {
-		main::error_handler('required-module', 'File', 'File::Find');
-	}
-	if (main::check_perl_module('File::Copy')){
-		File::Copy->import;
-	}
-	else {
-		main::error_handler('required-module', 'File', 'File::Copy');
-	}
-	if (main::check_perl_module('File::Spec::Functions')){
-		File::Spec::Functions->import;
-	}
-	else {
-		main::error_handler('required-module', 'File', 'File::Spec::Functions');
-	}
+	require File::Copy;
+	File::Copy->import;
+	require File::Find;
+	File::Find->import;
+	require File::Spec::Functions;
+	File::Spec::Functions->import;
 	if ($debugger{'level'} > 20){
-		if (main::check_perl_module('Net::FTP')){
-			Net::FTP->import;
-		}
-		else {
-			main::error_handler('required-module', 'Net', 'Net::FTP');
-		}
+		 require Net::FTP;
+		 Net::FTP->import;
 	}
 	print "Checking basic core system programs exist... \n";
 	if ($debugger{'level'} > 19){
@@ -9820,12 +9792,7 @@ sub cpuinfo_data {
 	set_cpu_data(\$cpu);
 	# sleep is also set in front of sysctl_data for BSDs, same idea
 	my $sleep = $cpu_sleep * 1000000;
-	if ($b_hires){
-		eval 'Time::HiRes::usleep($sleep)';
-	}
-	else {
-		select(undef, undef, undef, $cpu_sleep);
-	}
+	Time::HiRes::usleep($sleep);
 	# Run this logic first to make sure we get the speeds as raw as possible. 
 	# Not in function to avoid unnecessary cpu use, we have slept right before.
 	# ARM and legacy systems etc do not always have cpufreq.
@@ -34776,12 +34743,7 @@ sub set_sysctl_data {
 		# just on odd chance we hit a bsd with /proc/cpuinfo, don't want to
 		# sleep 2x
 		if ($use{'bsd-sleep'} && !$system_files{'proc-cpuinfo'}){
-			if ($b_hires){
-				eval 'Time::HiRes::usleep($sleep)';
-			}
-			else {
-				select(undef, undef, undef, $cpu_sleep);
-			}
+			Time::HiRes::usleep($cpu_sleep * 1000000);
 		}
 		@temp = grabber($alerts{'sysctl'}->{'path'} . " -a 2>/dev/null");
 	}
